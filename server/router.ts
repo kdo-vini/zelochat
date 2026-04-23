@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import axios from 'axios';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions.js';
 import {
   getStatus,
@@ -384,6 +385,34 @@ router.patch('/api/sessions/:jid/name', async (req: Request, res: Response) => {
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);
+  }
+});
+
+/**
+ * GET /api/produtos — Proxy para zelopdv.com.br (evita CORS no frontend).
+ * Requer Authorization: Bearer <token> — repassa diretamente para a API.
+ */
+router.get('/api/produtos', async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    res.status(401).json({ error: 'Authorization header ausente.' });
+    return;
+  }
+
+  try {
+    const onlyVisible = req.query.onlyVisible ?? 'true';
+    const url = new URL('https://www.zelopdv.com.br/api/produtos');
+    url.searchParams.set('onlyVisible', String(onlyVisible));
+
+    const upstream = await axios.get(url.toString(), {
+      headers: { Authorization: authHeader, Accept: 'application/json' },
+    });
+
+    res.json(upstream.data);
+  } catch (err: any) {
+    const status = err?.response?.status ?? 502;
+    const msg = err?.response?.data?.error ?? err?.message ?? 'Upstream error';
+    res.status(status).json({ error: msg });
   }
 });
 

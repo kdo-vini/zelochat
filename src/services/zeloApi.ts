@@ -1,4 +1,5 @@
 import type { Product } from '../types';
+import { apiUrl } from '../config';
 
 export type Produto = {
   id: string;
@@ -12,10 +13,9 @@ export async function getProdutos(params: {
   token: string;
   onlyVisible?: boolean;
 }): Promise<Produto[]> {
-  // Importante: o host sem "www" redireciona (307) para "www".
-  // Browsers NÃO seguem redirects em preflight CORS (OPTIONS), causando "Failed to fetch".
-  // Então chamamos direto o destino final.
-  const url = new URL('https://www.zelopdv.com.br/api/produtos');
+  // Chamamos o proxy no Railway para evitar bloqueio de CORS no browser.
+  // O Railway repassa para https://www.zelopdv.com.br/api/produtos server-to-server.
+  const url = new URL(apiUrl('/api/produtos'));
   url.searchParams.set('onlyVisible', String(params.onlyVisible ?? true));
 
   const res = await fetch(url.toString(), {
