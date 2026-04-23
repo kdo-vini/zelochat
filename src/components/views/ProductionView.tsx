@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import {
   X, Phone, MapPin, Clock, Plus, Package, ChevronRight,
-  User, ShoppingBag,
+  User, ShoppingBag, Pencil, Trash2,
 } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
@@ -72,15 +72,28 @@ const makeEmptyForm = (): OrderFormData => ({
   total: '',
 });
 
-function AddOrderModal({
+function OrderModal({
   onClose,
   onSave,
+  editOrder,
 }: {
   onClose: () => void;
   onSave: (data: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+  editOrder?: Order;
 }) {
-  const [form, setForm] = useState<OrderFormData>(makeEmptyForm);
-  const [dateDisplay, setDateDisplay] = useState(() => isoToBR(makeEmptyForm().pickupDate));
+  const initialForm = editOrder
+    ? {
+        customerName: editOrder.customerName,
+        customerPhone: editOrder.customerPhone,
+        pickupDate: editOrder.pickupDate,
+        pickupTime: editOrder.pickupTime,
+        deliveryAddress: editOrder.deliveryAddress ?? '',
+        items: editOrder.items.length > 0 ? editOrder.items : [{ product: '', quantity: 1 }],
+        total: editOrder.total > 0 ? String(editOrder.total).replace('.', ',') : '',
+      }
+    : makeEmptyForm();
+  const [form, setForm] = useState<OrderFormData>(initialForm);
+  const [dateDisplay, setDateDisplay] = useState(() => isoToBR(initialForm.pickupDate));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -150,7 +163,7 @@ function AddOrderModal({
           <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-line)]">
             <div className="flex items-center gap-2">
               <ShoppingBag className="w-4 h-4 text-[var(--color-brand)]" strokeWidth={2} />
-              <h3 className="text-[15px] font-semibold">Novo pedido manual</h3>
+              <h3 className="text-[15px] font-semibold">{editOrder ? 'Editar pedido' : 'Novo pedido manual'}</h3>
             </div>
             <button
               onClick={onClose}
@@ -338,7 +351,7 @@ function AddOrderModal({
               disabled={saving}
               className="flex-1 py-2.5 rounded-lg text-[13.5px] font-semibold bg-[var(--color-brand)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
             >
-              {saving ? 'Salvando…' : 'Salvar pedido'}
+              {saving ? 'Salvando…' : editOrder ? 'Salvar alterações' : 'Salvar pedido'}
             </button>
           </div>
         </div>
@@ -352,10 +365,14 @@ function OrderDrawer({
   order,
   onClose,
   setActiveView,
+  onEdit,
+  onDelete,
 }: {
   order: Order;
   onClose: () => void;
   setActiveView: (v: View) => void;
+  onEdit: () => void;
+  onDelete: (id: string) => void;
 }) {
   return (
     <>
@@ -444,7 +461,28 @@ function OrderDrawer({
           )}
         </div>
 
-        <div className="p-5 border-t border-[var(--color-line)]">
+        <div className="p-5 border-t border-[var(--color-line)] space-y-2">
+          <div className="flex gap-2">
+            <button
+              onClick={onEdit}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-[13.5px] font-semibold bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] hover:bg-[var(--color-line)] transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5" strokeWidth={1.8} />
+              Editar
+            </button>
+            <button
+              onClick={() => {
+                if (confirm(`Excluir pedido de ${order.customerName}?`)) {
+                  onDelete(order.id);
+                  onClose();
+                }
+              }}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-[13.5px] font-semibold bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+              Excluir
+            </button>
+          </div>
           <button
             onClick={onClose}
             className="w-full bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] py-2.5 rounded-lg text-[13.5px] font-semibold hover:bg-[var(--color-line)] transition-colors"
@@ -498,16 +536,21 @@ export const ProductionView = ({
   onDragEnd,
   setActiveView,
   onAddOrder,
+  onEditOrder,
+  onDeleteOrder,
   isAuthenticated,
 }: {
   state: ZeloState;
   onDragEnd: (r: DropResult) => void;
   setActiveView: (v: View) => void;
   onAddOrder: (payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+  onEditOrder: (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+  onDeleteOrder: (id: string) => Promise<void>;
   isAuthenticated: boolean;
 }) => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [feedFilter, setFeedFilter] = useState<Order['status'] | 'all'>('all');
 
   const feedOrders = feedFilter === 'all'
@@ -687,17 +730,29 @@ export const ProductionView = ({
 
       {/* Drawers + modals */}
       <AnimatePresence>
-        {selectedOrder && (
+        {selectedOrder && !editingOrder && (
           <OrderDrawer
             order={selectedOrder}
             onClose={() => { setSelectedOrder(null); }}
             setActiveView={setActiveView}
+            onEdit={() => { setEditingOrder(selectedOrder); setSelectedOrder(null); }}
+            onDelete={async (id) => { await onDeleteOrder(id); }}
           />
         )}
         {showAddModal && (
-          <AddOrderModal
+          <OrderModal
             onClose={() => { setShowAddModal(false); }}
             onSave={onAddOrder}
+          />
+        )}
+        {editingOrder && (
+          <OrderModal
+            editOrder={editingOrder}
+            onClose={() => { setEditingOrder(null); }}
+            onSave={async (payload) => {
+              await onEditOrder(editingOrder.id, payload);
+              setEditingOrder(null);
+            }}
           />
         )}
       </AnimatePresence>

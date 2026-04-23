@@ -41,7 +41,7 @@ export async function getClientResponse(
 
     INFORMAÇÕES DA LANCHONETE:
     - Cardápio Disponível: ${availableProducts}
-    - Horário: ${state.businessInfo.hours}
+    - Horário: ${state.businessInfo.openTime}–${state.businessInfo.closeTime}
     - Fechado: ${state.businessInfo.closedDays.join(", ")}
     - Encomendas: Qualquer quantidade, retirada no local.
     - Datas Bloqueadas: ${blockedDatesStr} (NÃO aceite encomendas nessas datas e explique o EXATO motivo para o cliente).${dailyContextStr}${alertsStr}

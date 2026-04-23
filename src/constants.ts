@@ -13,7 +13,8 @@ export const INITIAL_STATE: ZeloState = {
   drivers: [],
   businessInfo: {
     name: "",
-    hours: "",
+    openTime: "",
+    closeTime: "",
     closedDays: [],
     specialty: "",
     address: "",

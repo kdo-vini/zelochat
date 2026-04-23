@@ -13,6 +13,10 @@ export interface EmpresaPerfil {
   chave_pix: string | null;
   /** Added via migration 003_triggers_and_manager_phone.sql — may be null if migration not yet run */
   manager_phone: string | null;
+  /** Added via migration 004_empresa_horarios.sql — may be null if migration not yet run */
+  horario_abertura: string | null;
+  horario_fechamento: string | null;
+  dias_fechamento: string[] | null;
 }
 
 interface UseEmpresaPerfilResult {
@@ -87,7 +91,32 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] manager_phone not available (run migration 003):', mgrError.message);
     }
 
-    setEmpresa({ ...data, chave_pix: chavePix, manager_phone: managerPhone });
+    let horarioAbertura: string | null = null;
+    let horarioFechamento: string | null = null;
+    let diasFechamento: string[] | null = null;
+    const { data: horariosData, error: horariosError } = await supabase
+      .from('empresa_perfil')
+      .select('horario_abertura, horario_fechamento, dias_fechamento')
+      .eq('id', data.id)
+      .maybeSingle();
+
+    if (!horariosError && horariosData) {
+      const h = horariosData as { horario_abertura?: string | null; horario_fechamento?: string | null; dias_fechamento?: string[] | null };
+      horarioAbertura = h.horario_abertura ?? null;
+      horarioFechamento = h.horario_fechamento ?? null;
+      diasFechamento = h.dias_fechamento ?? null;
+    } else if (horariosError) {
+      console.warn('[useEmpresaPerfil] horarios not available (run migration 004):', horariosError.message);
+    }
+
+    setEmpresa({
+      ...data,
+      chave_pix: chavePix,
+      manager_phone: managerPhone,
+      horario_abertura: horarioAbertura,
+      horario_fechamento: horarioFechamento,
+      dias_fechamento: diasFechamento,
+    });
     setLoading(false);
   }, [session?.user?.id]);
 

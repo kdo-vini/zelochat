@@ -72,7 +72,8 @@ export interface ZeloState {
   drivers: DeliveryDriver[];
   businessInfo: {
     name: string;
-    hours: string;
+    openTime: string;  // HH:MM, e.g. "09:00"
+    closeTime: string; // HH:MM, e.g. "18:00"
     closedDays: string[];
     specialty: string;
     address: string;

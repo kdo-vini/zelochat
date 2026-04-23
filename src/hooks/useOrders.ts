@@ -179,5 +179,26 @@ export function useOrders(session: Session | null) {
     setOrders((prev) => prev.filter((o) => o.id !== id));
   }, []);
 
-  return { orders, loading, error, refresh, addOrder, updateOrderStatus, deleteOrder };
+  const updateOrder = useCallback(async (id: string, patch: Partial<Omit<Order, 'id' | 'createdAt'>>): Promise<void> => {
+    const update: Record<string, unknown> = {};
+    if (patch.customerName    !== undefined) update.customer_name     = patch.customerName;
+    if (patch.customerPhone   !== undefined) update.customer_phone    = patch.customerPhone || null;
+    if (patch.items           !== undefined) update.items             = patch.items;
+    if (patch.pickupDate      !== undefined) update.pickup_date       = patch.pickupDate;
+    if (patch.pickupTime      !== undefined) update.pickup_time       = patch.pickupTime;
+    if (patch.deliveryAddress !== undefined) update.delivery_address  = patch.deliveryAddress ?? null;
+    if (patch.status          !== undefined) update.status            = patch.status;
+    if (patch.total           !== undefined) update.total             = patch.total;
+    if (patch.driverId        !== undefined) update.driver_id         = patch.driverId ?? null;
+
+    const { error: dbError } = await supabase
+      .from('zelochat_orders')
+      .update(update)
+      .eq('id', id);
+
+    if (dbError) throw dbError;
+    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+  }, []);
+
+  return { orders, loading, error, refresh, addOrder, updateOrderStatus, updateOrder, deleteOrder };
 }

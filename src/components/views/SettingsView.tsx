@@ -231,6 +231,20 @@ interface SettingsViewProps {
   isAuthenticated: boolean;
 }
 
+function TimeInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex-1">
+      <label className="block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1">{label}</label>
+      <input
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors"
+      />
+    </div>
+  );
+}
+
 export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: SettingsViewProps) => {
   // Local draft for identity fields — synced from state but independently editable
   const [draft, setDraft] = useState({
@@ -241,6 +255,14 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
     managerPhone: state.businessInfo.managerPhone,
   });
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // Draft for hours section
+  const [hoursDraft, setHoursDraft] = useState({
+    openTime:   state.businessInfo.openTime,
+    closeTime:  state.businessInfo.closeTime,
+    closedDays: state.businessInfo.closedDays,
+  });
+  const [hoursSaveState, setHoursSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   // Keep draft in sync if state.businessInfo is hydrated from Supabase after mount
   useEffect(() => {
@@ -253,12 +275,25 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
     });
   }, [state.businessInfo.name, state.businessInfo.address, state.businessInfo.phone, state.businessInfo.pixKey, state.businessInfo.managerPhone]);
 
+  useEffect(() => {
+    setHoursDraft({
+      openTime:   state.businessInfo.openTime,
+      closeTime:  state.businessInfo.closeTime,
+      closedDays: state.businessInfo.closedDays,
+    });
+  }, [state.businessInfo.openTime, state.businessInfo.closeTime, state.businessInfo.closedDays]);
+
   const isDirty =
     draft.name    !== state.businessInfo.name    ||
     draft.address !== state.businessInfo.address ||
     draft.phone   !== state.businessInfo.phone   ||
     draft.pixKey  !== state.businessInfo.pixKey  ||
     draft.managerPhone !== state.businessInfo.managerPhone;
+
+  const isHoursDirty =
+    hoursDraft.openTime   !== state.businessInfo.openTime   ||
+    hoursDraft.closeTime  !== state.businessInfo.closeTime  ||
+    JSON.stringify(hoursDraft.closedDays) !== JSON.stringify(state.businessInfo.closedDays);
 
   const handleSaveEmpresa = async () => {
     setSaveState('saving');
@@ -290,16 +325,37 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
     }
   };
 
+  const handleSaveHours = async () => {
+    setHoursSaveState('saving');
+    const ok = await saveEmpresa({
+      horario_abertura:  hoursDraft.openTime  || null,
+      horario_fechamento: hoursDraft.closeTime || null,
+      dias_fechamento:   hoursDraft.closedDays,
+    });
+    if (ok) {
+      setState(prev => ({
+        ...prev,
+        businessInfo: {
+          ...prev.businessInfo,
+          openTime:   hoursDraft.openTime,
+          closeTime:  hoursDraft.closeTime,
+          closedDays: hoursDraft.closedDays,
+        },
+      }));
+      setHoursSaveState('saved');
+      setTimeout(() => setHoursSaveState('idle'), 2500);
+    } else {
+      setHoursSaveState('error');
+      setTimeout(() => setHoursSaveState('idle'), 3000);
+    }
+  };
+
   const toggleDay = (day: string) => {
-    const isClosed = state.businessInfo.closedDays.includes(day);
-    setState(prev => ({
+    setHoursDraft(prev => ({
       ...prev,
-      businessInfo: {
-        ...prev.businessInfo,
-        closedDays: isClosed
-          ? prev.businessInfo.closedDays.filter(d => d !== day)
-          : [...prev.businessInfo.closedDays, day],
-      },
+      closedDays: prev.closedDays.includes(day)
+        ? prev.closedDays.filter(d => d !== day)
+        : [...prev.closedDays, day],
     }));
   };
 
@@ -382,17 +438,23 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
 
             <SectionCard icon={Clock} title="Horários e atendimento">
               <div className="space-y-3">
-                <div>
-                  <label className={LABEL}>Horário de funcionamento</label>
-                  <input type="text" value={state.businessInfo.hours}
-                    onChange={e => setState(prev => ({ ...prev, businessInfo: { ...prev.businessInfo, hours: e.target.value } }))}
-                    className={FIELD} />
+                <div className="flex gap-3">
+                  <TimeInput
+                    label="Abre às"
+                    value={hoursDraft.openTime}
+                    onChange={v => setHoursDraft(p => ({ ...p, openTime: v }))}
+                  />
+                  <TimeInput
+                    label="Fecha às"
+                    value={hoursDraft.closeTime}
+                    onChange={v => setHoursDraft(p => ({ ...p, closeTime: v }))}
+                  />
                 </div>
                 <div>
                   <label className={LABEL}>Dias de fechamento</label>
                   <div className="flex gap-2 flex-wrap mt-2">
                     {DAYS.map(day => {
-                      const closed = state.businessInfo.closedDays.includes(day);
+                      const closed = hoursDraft.closedDays.includes(day);
                       return (
                         <button
                           key={day}
@@ -412,6 +474,26 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
                     Dias em vermelho = fechados. A IA não aceitará pedidos nesses dias.
                   </p>
                 </div>
+
+                {isHoursDirty && (
+                  <button
+                    onClick={handleSaveHours}
+                    disabled={hoursSaveState === 'saving' || !isAuthenticated}
+                    className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+                  >
+                    {hoursSaveState === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {hoursSaveState === 'saving' ? 'Salvando…' : 'Salvar horários'}
+                  </button>
+                )}
+                {hoursSaveState === 'saved' && (
+                  <p className="text-[12.5px] text-[var(--color-brand)] text-center font-medium">✓ Salvo com sucesso</p>
+                )}
+                {hoursSaveState === 'error' && (
+                  <p className="text-[12.5px] text-[var(--color-alert)] text-center font-medium">Erro ao salvar. Verifique a conexão.</p>
+                )}
+                {isHoursDirty && !isAuthenticated && (
+                  <p className="text-[12px] text-[var(--color-warn)] text-center">Faça login em Perfil para salvar.</p>
+                )}
               </div>
             </SectionCard>
           </div>
