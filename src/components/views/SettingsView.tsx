@@ -3,6 +3,7 @@ import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, 
 import { ZeloState } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { API_BASE, WS_URL } from '../../config';
+import { maskBrazilianPhone } from '../../domain/chat';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -429,7 +430,7 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
                     type="text"
                     inputMode="tel"
                     value={draft.managerPhone}
-                    onChange={e => setDraft(p => ({ ...p, managerPhone: e.target.value }))}
+                    onChange={e => setDraft(p => ({ ...p, managerPhone: maskBrazilianPhone(e.target.value) }))}
                     placeholder="(XX) XXXXX-XXXX"
                     className={FIELD}
                   />

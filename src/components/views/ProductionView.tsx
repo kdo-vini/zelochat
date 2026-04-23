@@ -6,6 +6,7 @@ import {
   User, ShoppingBag,
 } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
+import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
 import { STATUS_LABELS, STATUS_COLORS } from '../../constants';
 import { format, parseISO, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -188,7 +189,7 @@ function AddOrderModal({
                   <input
                     type="tel"
                     value={form.customerPhone}
-                    onChange={(e) => setField('customerPhone', e.target.value)}
+                    onChange={(e) => setField('customerPhone', maskBrazilianPhone(e.target.value))}
                     placeholder="(XX) XXXXX-XXXX"
                     className="w-full pl-8 pr-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)] focus:ring-1 focus:ring-[var(--color-brand)]/20"
                   />
@@ -224,9 +225,19 @@ function AddOrderModal({
                   Hora *
                 </label>
                 <input
-                  type="time"
+                  type="text"
+                  inputMode="numeric"
                   value={form.pickupTime}
-                  onChange={(e) => setField('pickupTime', e.target.value)}
+                  onChange={(e) => {
+                    const masked = maskTime24h(e.target.value);
+                    if (masked.length === 5) {
+                      const [h, m] = masked.split(':').map(Number);
+                      if (h > 23 || m > 59) return;
+                    }
+                    setField('pickupTime', masked);
+                  }}
+                  placeholder="HH:MM"
+                  maxLength={5}
                   className="w-full px-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
                 />
               </div>
