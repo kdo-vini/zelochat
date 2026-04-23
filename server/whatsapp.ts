@@ -32,8 +32,13 @@ function readTunnelUrl(): string | null {
 }
 
 export function getPublicWebhookUrl(): string {
-  // Priority: explicit env var > cloudflared tunnel file > localhost (dev fallback)
+  // Priority:
+  // 1. Explicit WEBHOOK_PUBLIC_URL (manual override)
+  // 2. RAILWAY_PUBLIC_DOMAIN (auto-injected by Railway)
+  // 3. Cloudflared tunnel file (dev)
+  // 4. Localhost (dev fallback)
   if (process.env.WEBHOOK_PUBLIC_URL) return process.env.WEBHOOK_PUBLIC_URL.replace(/\/$/, '');
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
   const tunnelUrl = readTunnelUrl();
   if (tunnelUrl) return tunnelUrl.replace(/\/$/, '');
   return 'http://localhost:3001';
