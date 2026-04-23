@@ -46,6 +46,7 @@ import { useEmpresaPerfil } from './hooks/useEmpresaPerfil';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
 import { useWhatsAppSessions } from './hooks/useWhatsAppSessions';
 import { getOwnerResponse } from './services/openaiService';
+import { apiUrl } from './config';
 import { mapProdutoToProduct } from './services/zeloApi';
 import { loadInitialState, saveInitialState } from './services/statePersistence';
 import { buildContactKey, normalizePhoneNumber } from './domain/chat';
@@ -353,7 +354,7 @@ export default function App() {
 
   const syncConfigToServer = async (s: ZeloState) => {
     try {
-      await fetch('/api/sync-config', {
+      await fetch(apiUrl('/api/sync-config'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

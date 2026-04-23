@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, Bell, Shield, Check, CloudOff, LogOut } from 'lucide-react';
 import { ZeloState } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
+import { API_BASE, WS_URL } from '../../config';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -30,8 +31,6 @@ export const WhatsAppIntegrationCard = () => {
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const API_BASE = `http://${window.location.hostname}:3001`;
-  const WS_URL = `ws://${window.location.hostname}:3001/ws`;
 
   // Poll the backend every 3s while QR is showing — catches connection even if webhook/tunnel fails
   const startPolling = () => {

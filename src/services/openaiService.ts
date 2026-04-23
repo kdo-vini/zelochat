@@ -1,6 +1,5 @@
 import { ZeloState, ChatMessage } from "../types";
-
-const API_BASE = `http://${window.location.hostname}:3001`;
+import { API_BASE } from "../config";
 
 async function callAI(
   messages: { role: string; content: string }[],

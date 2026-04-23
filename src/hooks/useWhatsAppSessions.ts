@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatAttachment, ChatMessage, ChatSession } from '../types';
+import { WS_URL } from '../config';
 import {
   bindEmpresa,
   deleteSession as deleteSessionApi,
@@ -196,7 +197,7 @@ export function useWhatsAppSessions(token: string | null) {
       return;
     }
 
-    const wsUrl = `ws://${window.location.hostname}:3001/ws`;
+    const wsUrl = WS_URL;
     let disposed = false;
 
     const connect = () => {

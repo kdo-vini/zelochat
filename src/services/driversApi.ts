@@ -1,4 +1,5 @@
 import type { DeliveryDriver } from '../types';
+import { apiUrl } from '../config';
 
 type DriversResponse = { drivers: DeliveryDriver[] };
 type DriverResponse = { driver: DeliveryDriver };
@@ -21,7 +22,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function getDrivers(token: string): Promise<DeliveryDriver[]> {
-  const response = await fetch('/api/drivers', {
+  const response = await fetch(apiUrl('/api/drivers'), {
     headers: authHeaders(token),
   });
 
@@ -33,7 +34,7 @@ export async function createDriver(
   token: string,
   payload: Pick<DeliveryDriver, 'name' | 'phone' | 'status'>,
 ): Promise<DeliveryDriver> {
-  const response = await fetch('/api/drivers', {
+  const response = await fetch(apiUrl('/api/drivers'), {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify(payload),
@@ -48,7 +49,7 @@ export async function updateDriver(
   id: string,
   payload: Partial<Pick<DeliveryDriver, 'name' | 'phone' | 'status'>>,
 ): Promise<DeliveryDriver> {
-  const response = await fetch(`/api/drivers/${encodeURIComponent(id)}`, {
+  const response = await fetch(apiUrl(`/api/drivers/${encodeURIComponent(id)}`), {
     method: 'PUT',
     headers: authHeaders(token),
     body: JSON.stringify(payload),
@@ -59,7 +60,7 @@ export async function updateDriver(
 }
 
 export async function deleteDriver(token: string, id: string): Promise<void> {
-  const response = await fetch(`/api/drivers/${encodeURIComponent(id)}`, {
+  const response = await fetch(apiUrl(`/api/drivers/${encodeURIComponent(id)}`), {
     method: 'DELETE',
     headers: authHeaders(token),
   });

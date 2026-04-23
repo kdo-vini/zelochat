@@ -1,4 +1,5 @@
 import type { ChatAttachment, ChatSession } from '../types';
+import { apiUrl } from '../config';
 
 type SessionsResponse = { sessions: ChatSession[] };
 type SessionResponse = { session: ChatSession };
@@ -25,7 +26,7 @@ function authHeaders(token: string): HeadersInit {
 }
 
 export async function bindEmpresa(token: string): Promise<void> {
-  const response = await fetch('/api/bind-empresa', {
+  const response = await fetch(apiUrl('/api/bind-empresa'), {
     method: 'POST',
     headers: authHeaders(token),
   });
@@ -34,7 +35,7 @@ export async function bindEmpresa(token: string): Promise<void> {
 }
 
 export async function getSessions(token: string): Promise<ChatSession[]> {
-  const response = await fetch('/api/sessions', {
+  const response = await fetch(apiUrl('/api/sessions'), {
     headers: authHeaders(token),
   });
 
@@ -43,7 +44,7 @@ export async function getSessions(token: string): Promise<ChatSession[]> {
 }
 
 export async function getSession(token: string, jid: string): Promise<ChatSession> {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(jid)}`, {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}`), {
     headers: authHeaders(token),
   });
 
@@ -56,7 +57,7 @@ export async function sendMessage(
   to: string,
   payload: SendMessagePayload,
 ): Promise<void> {
-  const response = await fetch('/api/send', {
+  const response = await fetch(apiUrl('/api/send'), {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify({ to, ...payload }),
@@ -66,7 +67,7 @@ export async function sendMessage(
 }
 
 export async function markSessionRead(token: string, jid: string): Promise<void> {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(jid)}/read`, {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/read`), {
     method: 'POST',
     headers: authHeaders(token),
   });
@@ -79,7 +80,7 @@ export async function setSessionAutoReply(
   jid: string,
   enabled: boolean,
 ): Promise<void> {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(jid)}/auto-reply`, {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/auto-reply`), {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify({ enabled }),
@@ -89,7 +90,7 @@ export async function setSessionAutoReply(
 }
 
 export async function deleteSession(token: string, jid: string): Promise<void> {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(jid)}`, {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}`), {
     method: 'DELETE',
     headers: authHeaders(token),
   });
@@ -99,7 +100,7 @@ export async function deleteSession(token: string, jid: string): Promise<void> {
 
 export async function fetchProfilePicture(token: string, jid: string): Promise<string | null> {
   try {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(jid)}/profile-picture`, {
+    const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/profile-picture`), {
       headers: authHeaders(token),
     });
     const body = await parseResponse<{ url: string | null }>(response);
@@ -110,7 +111,7 @@ export async function fetchProfilePicture(token: string, jid: string): Promise<s
 }
 
 export async function updateSessionName(token: string, jid: string, name: string): Promise<void> {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(jid)}/name`, {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/name`), {
     method: 'PATCH',
     headers: authHeaders(token),
     body: JSON.stringify({ name }),
