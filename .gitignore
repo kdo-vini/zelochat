@@ -10,3 +10,4 @@ auth_info_baileys/
 .tunnel-url
 test-results/
 playwright-report/
+supabase/migrations/
