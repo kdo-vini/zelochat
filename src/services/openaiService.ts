@@ -1,7 +1,12 @@
-import { GoogleGenAI } from "@google/genai";
+import { OpenAI } from "openai";
 import { ZeloState, ChatMessage } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new OpenAI({ 
+  apiKey: process.env.OPENAI_API_KEY || 'missing-api-key',
+  dangerouslyAllowBrowser: true 
+});
+
+const MODEL = "gpt-4o-mini";
 
 /**
  * Agente 1: Atendimento ao Cliente (WhatsApp Style)
@@ -25,7 +30,7 @@ export async function getClientResponse(
     ? `\n\nGATILHOS DE ALERTA ATIVOS:\n${activeAlerts.map(t => `- ID: ${t.id} | Condição: ${t.name}`).join('\n')}\n\nREGRA CRÍTICA DE ALERTAS: Se a conversa do cliente atingir a condição descrita em algum dos gatilhos ativos, adicione o texto exato <ALERT>ID_DO_GATILHO</ALERT> no final da sua resposta (escondido do usuário). Exemplo: <ALERT>at-1</ALERT>`
     : '';
 
-  const baseInstructions = `
+  const systemInstruction = `
     Você é o assistente virtual da lanchonete ${state.businessInfo.name}, especialista em ${state.businessInfo.specialty}.
     Sua linguagem deve ser informal, simpática e típica de WhatsApp brasileiro (pode usar emojis, mas sem exagero).
     
@@ -47,24 +52,22 @@ export async function getClientResponse(
     IMPORTANTE: Mantenha as respostas curtas e objetivas, como se estivesse digitando no celular.
   `;
 
-  const systemInstruction = baseInstructions;
-
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: userInput }] }
-      ],
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-      }
+    const messages: any[] = [
+      { role: "system", content: systemInstruction },
+      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+      { role: "user", content: userInput }
+    ];
+
+    const response = await ai.chat.completions.create({
+      model: MODEL,
+      messages,
+      temperature: 0.7,
     });
 
-    return response.text || "Desculpe, deu um erro aqui. Pode repetir?";
+    return response.choices[0].message.content || "Desculpe, deu um erro aqui. Pode repetir?";
   } catch (error) {
-    console.error("Gemini Error:", error);
+    console.error("OpenAI Error:", error);
     return "Ops, tive um probleminha técnico. Pode tentar de novo?";
   }
 }
@@ -88,25 +91,25 @@ export async function getOwnerResponse(managerInput: string): Promise<string[]> 
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [{ role: 'user', parts: [{ text: managerInput }] }],
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-      }
+    const response = await ai.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: managerInput }
+      ],
+      temperature: 0,
     });
 
     try {
-      let text = response.text || "[]";
-      text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      let text = response.choices[0].message.content || "[]";
+      text = text.replace(/\`\`\`json/g, '').replace(/\`\`\`/g, '').trim();
       return JSON.parse(text);
     } catch(e) {
       console.error("Parse fall:", e);
       return [managerInput]; 
     }
   } catch (error) {
-    console.error("Gemini Owner Error:", error);
+    console.error("OpenAI Owner Error:", error);
     return [managerInput];
   }
 }
@@ -135,31 +138,31 @@ export async function getGeneralManagerResponse(
     Tipos de Action suportados:
     - { "type": "BLOCK_DATE", "payload": { "date": "YYYY-MM-DD", "reason": "Motivo claro" } }
     
-    Mapeie os dias do mês corretamente baseando-se no contexto atual (Estamos prestando serviço para Abril de 2026, por exemplo). Formate datas sempre YYYY-MM-DD no payload.
+    Mapeie os dias do mês corretamente baseando-se no contexto atual. Formate datas sempre YYYY-MM-DD no payload.
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: userInput }] }
-      ],
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-      }
+    const messages: any[] = [
+      { role: "system", content: systemInstruction },
+      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+      { role: "user", content: userInput }
+    ];
+
+    const response = await ai.chat.completions.create({
+      model: MODEL,
+      messages,
+      response_format: { type: "json_object" },
+      temperature: 0,
     });
 
     try {
-      let text = response.text || '{"reply": "Não entendi", "actions": []}';
-      text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      let text = response.choices[0].message.content || '{"reply": "Não entendi", "actions": []}';
       return JSON.parse(text);
     } catch (e) {
       return { reply: "Erro ao decodificar minha própria ação.", actions: [] };
     }
   } catch (error) {
-    console.error("Gemini General Manager Error:", error);
+    console.error("OpenAI General Manager Error:", error);
     return { reply: "Tive um erro ao processar seu comando.", actions: [] };
   }
 }
