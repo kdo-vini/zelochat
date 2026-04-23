@@ -263,7 +263,7 @@ export function ChatView({
         {/* Session list */}
         <aside className="w-[300px] flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
           <div className="px-4 py-3.5 border-b border-[var(--color-line)] flex-shrink-0 flex items-center justify-between">
-            <h2 className="text-[14px] font-semibold text-[var(--color-ink)]">Conversas Reais</h2>
+            <h2 className="text-[14px] font-semibold text-[var(--color-ink)]">Lista de Conversas</h2>
             <button
               onClick={() => { setShowNewChatModal(true); setNewChatError(null); }}
               title="Nova conversa"
@@ -490,10 +490,11 @@ export function ChatView({
                 </div>
 
                 <AnimatePresence initial={false}>
-                  {activeSession.messages.map((message) => {
+                  {activeSession.messages.map((message, idx, arr) => {
                     const isSystem = message.kind === 'text' && message.content.includes('[SISTEMA]');
                     const isUser = message.role === 'user';
                     const displayText = isSystem ? message.content.replace('[SISTEMA]', '').trim() : message.content;
+                    const isLastInGroup = isUser && (idx === arr.length - 1 || arr[idx + 1].role !== 'user');
 
                     if (isSystem) {
                       return (
@@ -515,8 +516,17 @@ export function ChatView({
                         key={message.id}
                         initial={{ opacity: 0, y: 4 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className={`flex ${isUser ? 'justify-start' : 'justify-end'}`}
+                        className={`flex items-end gap-2 ${isUser ? 'justify-start' : 'justify-end'}`}
                       >
+                        {isUser && (
+                          <div className="w-7 h-7 flex-shrink-0 rounded-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] overflow-hidden flex items-center justify-center self-end">
+                            {isLastInGroup && profilePics[activeSession.id] ? (
+                              <img src={profilePics[activeSession.id]} alt={activeSession.customerName} className="w-full h-full object-cover" />
+                            ) : isLastInGroup ? (
+                              <User className="w-3.5 h-3.5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+                            ) : null}
+                          </div>
+                        )}
                         <div
                           className={`rounded-xl px-3.5 py-2 shadow-[var(--shadow-card)] ${
                             message.kind === 'image' ? 'max-w-[26rem]' : 'max-w-[72%]'

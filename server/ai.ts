@@ -1,12 +1,18 @@
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
 import { getSession, addAssistantMessage } from './messageHandler.js';
 import { sendTextMessage } from './whatsapp.js';
 import { getConfig } from './configStore.js';
-import { getBoundEmpresaId } from './supabase.js';
+import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { parseStructuredMessage } from '../src/domain/chat.ts';
 
 const OPENAI_MODEL = 'gpt-4o-mini';
+
+// Short day labels used in closedDays config (matches SettingsView DAYS array)
+const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 let ai: OpenAI | null = null;
 
@@ -19,39 +25,147 @@ export function getAI(): OpenAI {
   return ai;
 }
 
-function buildSystemInstruction(empresaId: string): string {
+async function fetchUpcomingOrders(empresaId: string): Promise<string> {
+  try {
+    const supabase = getServiceSupabase();
+    const today = new Date().toISOString().split('T')[0];
+    const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const { data, error } = await supabase
+      .from('zelochat_orders')
+      .select('customer_name, customer_phone, items, pickup_date, pickup_time, status, total')
+      .eq('empresa_id', empresaId)
+      .gte('pickup_date', today)
+      .lte('pickup_date', in7Days)
+      .in('status', ['pending', 'preparing', 'ready'])
+      .order('pickup_date', { ascending: true })
+      .limit(20);
+
+    if (error || !data || data.length === 0) return 'Nenhum pedido agendado nos próximos 7 dias.';
+
+    return data.map((o) => {
+      const items = (o.items as { product: string; quantity: number }[])
+        .map((i) => `${i.quantity}x ${i.product}`)
+        .join(', ');
+      return `- ${o.pickup_date} ${o.pickup_time} | ${o.customer_name} (${o.customer_phone}) | ${items} | R$${Number(o.total).toFixed(2)} | ${o.status}`;
+    }).join('\n');
+  } catch {
+    return 'Agenda indisponível no momento.';
+  }
+}
+
+async function createOrderInDb(
+  empresaId: string,
+  args: {
+    customerName: string;
+    customerPhone: string;
+    items: { product: string; quantity: number }[];
+    pickupDate: string;
+    pickupTime: string;
+    total: number;
+  },
+): Promise<string> {
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from('zelochat_orders')
+    .insert({
+      empresa_id: empresaId,
+      customer_name: args.customerName,
+      customer_phone: args.customerPhone || null,
+      items: args.items,
+      pickup_date: args.pickupDate,
+      pickup_time: args.pickupTime,
+      delivery_address: null,
+      driver_id: null,
+      status: 'pending',
+      total: args.total,
+      source: 'whatsapp',
+    })
+    .select('id')
+    .single();
+
+  if (error) throw new Error(`Falha ao criar pedido: ${error.message}`);
+  return (data as { id: string }).id;
+}
+
+function buildSystemInstruction(empresaId: string, upcomingOrders: string): string {
   const cfg = getConfig(empresaId);
-  const availableProducts = cfg.products.filter(p => p.available)
-    .map(p => `${p.name} (R$ ${p.price.toFixed(2)})`).join(', ') || 'Cardápio não configurado';
+
+  const availableProducts = cfg.products.filter((p) => p.available)
+    .map((p) => `${p.name} (R$ ${p.price.toFixed(2)})`).join(', ') || 'Cardápio não configurado';
+
   const blockedDatesStr = cfg.blockedDates.length > 0
-    ? cfg.blockedDates.map(bd => `${bd.date} (Motivo: ${bd.reason})`).join(', ')
-    : 'Nenhuma data bloqueada';
+    ? cfg.blockedDates.map((bd) => `${bd.date} (${bd.reason})`).join(', ')
+    : 'Nenhuma';
+
   const dailyContextStr = cfg.dailyContext.length > 0
-    ? `\n\nAVISOS DE HOJE:\n${cfg.dailyContext.map(c => `- ${c.text}`).join('\n')}`
+    ? `\n\nAVISOS DE HOJE:\n${cfg.dailyContext.map((c) => `- ${c.text}`).join('\n')}`
     : '';
 
-  return `
-    Você é o assistente virtual da lanchonete ${cfg.name || 'da loja'}, especialista em ${cfg.specialty || 'atendimento'}.
-    Sua linguagem deve ser informal, simpática e típica de WhatsApp brasileiro (pode usar emojis, mas sem exagero).
+  // Closed-day awareness
+  const todayLabel = DAY_LABELS[new Date().getDay()];
+  const isClosedToday = cfg.closedDays.includes(todayLabel);
+  const closedDayWarning = isClosedToday
+    ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
+    : '';
 
-    INFORMAÇÕES DA LANCHONETE:
-    - Cardápio Disponível: ${availableProducts}
-    - Horário: ${cfg.hours || 'Consulte a loja'}
-    - Fechado: ${cfg.closedDays.join(', ') || 'Consulte a loja'}
-    - Encomendas: Qualquer quantidade, retirada no local.
-    - Datas Bloqueadas: ${blockedDatesStr} (NÃO aceite encomendas nessas datas).${dailyContextStr}
+  return `Você é o assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
+Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
 
-    DIRETRIZES PERSONALIZADAS:
-    ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'}
+INFORMAÇÕES DA LANCHONETE:
+- Cardápio disponível: ${availableProducts}
+- Horário de funcionamento: ${cfg.hours || 'Consulte a loja'}
+- Dias fechados: ${cfg.closedDays.join(', ') || 'Nenhum'}
+- Endereço: ${cfg.address || 'Consulte a loja'}
+- Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
+- Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}${closedDayWarning}
 
-    OBJETIVOS:
-    1. Responder dúvidas sobre o cardápio e horários.
-    2. Coletar dados para encomendas: Produto, Quantidade, Data de retirada, Nome e Telefone.
-    3. NUNCA confirme uma encomenda sem coletar: produto, quantidade, data de retirada, nome e telefone.
+AGENDA — PEDIDOS DOS PRÓXIMOS 7 DIAS:
+${upcomingOrders}
 
-    IMPORTANTE: Mantenha as respostas curtas e objetivas, como se estivesse digitando no celular.
-  `.trim();
+DIRETRIZES PERSONALIZADAS:
+${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'}
+
+OBJETIVOS:
+1. Responder dúvidas sobre cardápio, horários e disponibilidade.
+2. Para encomendas, coletar OBRIGATORIAMENTE: produto, quantidade, data de retirada, horário, nome completo e telefone.
+3. Quando o cliente CONFIRMAR um pedido com todos os dados coletados, chamar a função criar_pedido.
+4. NUNCA confirme um pedido sem ter: produto, quantidade, data, horário, nome e telefone.
+5. Após criar o pedido, informar o número de confirmação e instruções de pagamento (Pix: ${cfg.pixKey || 'consulte a loja'}).
+
+IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
+
+const CREATE_ORDER_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'criar_pedido',
+    description: 'Cria um novo pedido no sistema quando o cliente confirmar todos os dados necessários.',
+    parameters: {
+      type: 'object',
+      properties: {
+        customerName: { type: 'string', description: 'Nome completo do cliente' },
+        customerPhone: { type: 'string', description: 'Telefone do cliente com DDD' },
+        items: {
+          type: 'array',
+          description: 'Lista de itens do pedido',
+          items: {
+            type: 'object',
+            properties: {
+              product: { type: 'string', description: 'Nome do produto' },
+              quantity: { type: 'number', description: 'Quantidade' },
+            },
+            required: ['product', 'quantity'],
+          },
+        },
+        pickupDate: { type: 'string', description: 'Data de retirada no formato YYYY-MM-DD' },
+        pickupTime: { type: 'string', description: 'Horário de retirada no formato HH:MM' },
+        total: { type: 'number', description: 'Valor total do pedido em reais' },
+      },
+      required: ['customerName', 'customerPhone', 'items', 'pickupDate', 'pickupTime', 'total'],
+    },
+  },
+};
 
 export async function generateAndSendReply(
   jid: string,
@@ -66,7 +180,8 @@ export async function generateAndSendReply(
   const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
 
-  const systemInstruction = buildSystemInstruction(resolvedEmpresaId);
+  const upcomingOrders = await fetchUpcomingOrders(resolvedEmpresaId);
+  const systemInstruction = buildSystemInstruction(resolvedEmpresaId, upcomingOrders);
 
   try {
     const openai = getAI();
@@ -82,9 +197,48 @@ export async function generateAndSendReply(
       model: OPENAI_MODEL,
       messages,
       temperature: 0.7,
+      tools: [CREATE_ORDER_TOOL],
+      tool_choice: 'auto',
     });
 
-    const replyText = response.choices[0].message.content || 'Desculpe, deu um erro aqui. Pode repetir?';
+    const choice = response.choices[0];
+
+    // Handle tool call: AI wants to create an order
+    if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
+      const toolCall = choice.message.tool_calls[0];
+      if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
+        let replyText: string;
+        try {
+          const args = JSON.parse(toolCall.function.arguments) as {
+            customerName: string;
+            customerPhone: string;
+            items: { product: string; quantity: number }[];
+            pickupDate: string;
+            pickupTime: string;
+            total: number;
+          };
+
+          const orderId = await createOrderInDb(resolvedEmpresaId, args);
+          const shortId = orderId.slice(0, 8).toUpperCase();
+          const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
+          const cfg = getConfig(resolvedEmpresaId);
+
+          replyText = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${args.pickupDate} às ${args.pickupTime}\n💰 Total: R$ ${args.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+
+          console.log(`[AI] Created order #${shortId} for ${jid}`);
+        } catch (err) {
+          replyText = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente em instantes? 🙏';
+          console.error('[AI] Failed to create order:', err);
+        }
+
+        await sendTextMessage(jid, replyText);
+        await addAssistantMessage(jid, replyText, undefined, resolvedEmpresaId);
+        return replyText;
+      }
+    }
+
+    // Normal text reply
+    const replyText = choice.message.content || 'Desculpe, deu um erro aqui. Pode repetir?';
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 
     await sendTextMessage(jid, cleanReply);
