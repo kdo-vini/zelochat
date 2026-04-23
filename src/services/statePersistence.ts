@@ -3,20 +3,13 @@ import type { ZeloState } from '../types';
 
 const STORAGE_KEY = 'zelochat_state_v2';
 
-type PersistedState = Pick<
-  ZeloState,
-  | 'blockedDates'
-  | 'dailyContext'
-  | 'managerHistory'
-  | 'businessInfo'
-  | 'profile'
->;
+// blockedDates and managerHistory are now persisted in Supabase (migration 006).
+// They are intentionally excluded here to avoid stale localStorage data overriding DB values.
+type PersistedState = Pick<ZeloState, 'dailyContext' | 'businessInfo' | 'profile'>;
 
 function getPersistedSlice(state: ZeloState): PersistedState {
   return {
-    blockedDates: state.blockedDates,
     dailyContext: state.dailyContext,
-    managerHistory: state.managerHistory,
     businessInfo: state.businessInfo,
     profile: state.profile,
   };
@@ -33,7 +26,7 @@ export function loadInitialState(): ZeloState {
 
     return {
       ...INITIAL_STATE,
-      ...parsed,
+      dailyContext: parsed.dailyContext ?? INITIAL_STATE.dailyContext,
       businessInfo: {
         ...INITIAL_STATE.businessInfo,
         ...parsed.businessInfo,

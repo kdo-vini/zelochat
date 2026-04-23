@@ -134,6 +134,8 @@ export default function App() {
   const [profilePics, setProfilePics] = useState<Record<string, string>>({});
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const empresaHydratedRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { session, token, loading: authLoading } = useSupabaseSession();
   const { empresa, save: saveEmpresa } = useEmpresaPerfil(session);
@@ -200,6 +202,7 @@ export default function App() {
   // Hydrate businessInfo + profile from the real empresa_perfil when user is authenticated
   useEffect(() => {
     if (!empresa) return;
+    empresaHydratedRef.current = true;
     setState((prev) => ({
       ...prev,
       businessInfo: {
@@ -219,8 +222,21 @@ export default function App() {
         ...(empresa.logo_url ? { avatar: empresa.logo_url } : {}),
       },
       aiInstructions: empresa.ai_instructions ?? prev.aiInstructions,
+      blockedDates:   empresa.blocked_dates   ?? prev.blockedDates,
+      managerHistory: empresa.manager_history ?? prev.managerHistory,
     }));
   }, [empresa]);
+
+  // Persist blockedDates and managerHistory to Supabase (debounced, only after initial hydration)
+  useEffect(() => {
+    if (!empresaHydratedRef.current) return;
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      void saveEmpresa({ blocked_dates: state.blockedDates, manager_history: state.managerHistory });
+    }, 800);
+    return () => { if (persistTimerRef.current) clearTimeout(persistTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.blockedDates, state.managerHistory]);
 
   // Mirror DB-backed quick responses into the shared ZeloState so ChatView keeps working unchanged.
   useEffect(() => {

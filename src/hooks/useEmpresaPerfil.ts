@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../services/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
+import type { ChatMessage } from '../types';
 
 /** Subset of empresa_perfil columns relevant to ZeloChat */
 export interface EmpresaPerfil {
@@ -19,6 +20,9 @@ export interface EmpresaPerfil {
   dias_fechamento: string[] | null;
   /** Added via migration 005_ai_config_and_quick_responses.sql — may be null if migration not yet run */
   ai_instructions: string | null;
+  /** Added via migration 006_blocked_dates_manager_history.sql — may be null if migration not yet run */
+  blocked_dates: { date: string; reason: string }[] | null;
+  manager_history: ChatMessage[] | null;
 }
 
 interface UseEmpresaPerfilResult {
@@ -123,6 +127,21 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] ai_instructions not available (run migration 005):', aiErr.message);
     }
 
+    let blockedDates: { date: string; reason: string }[] | null = null;
+    let managerHistory: ChatMessage[] | null = null;
+    const { data: m006Data, error: m006Err } = await supabase
+      .from('empresa_perfil')
+      .select('blocked_dates, manager_history')
+      .eq('id', data.id)
+      .maybeSingle();
+    if (!m006Err && m006Data) {
+      const d = m006Data as { blocked_dates?: unknown; manager_history?: unknown };
+      blockedDates = Array.isArray(d.blocked_dates) ? (d.blocked_dates as { date: string; reason: string }[]) : null;
+      managerHistory = Array.isArray(d.manager_history) ? (d.manager_history as ChatMessage[]) : null;
+    } else if (m006Err) {
+      console.warn('[useEmpresaPerfil] blocked_dates/manager_history not available (run migration 006):', m006Err.message);
+    }
+
     setEmpresa({
       ...data,
       chave_pix: chavePix,
@@ -131,6 +150,8 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       horario_fechamento: horarioFechamento,
       dias_fechamento: diasFechamento,
       ai_instructions: aiInstructions,
+      blocked_dates: blockedDates,
+      manager_history: managerHistory,
     });
     setLoading(false);
   }, [session?.user?.id]);
@@ -178,6 +199,20 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         } else if (dbError.message.includes('ai_instructions') && patch.ai_instructions !== undefined) {
           console.warn('[useEmpresaPerfil] ai_instructions column missing — saving without it. Run migration 005.');
           const { ai_instructions: _omitted, ...patchWithout } = patch as Partial<EmpresaPerfil>;
+          const { error: retryError } = await supabase
+            .from('empresa_perfil')
+            .update({ ...patchWithout, updated_at: new Date().toISOString() })
+            .eq('id', empresa.id);
+          if (retryError) {
+            setError(retryError.message);
+            return false;
+          }
+        } else if (
+          (dbError.message.includes('blocked_dates') || dbError.message.includes('manager_history')) &&
+          (patch.blocked_dates !== undefined || patch.manager_history !== undefined)
+        ) {
+          console.warn('[useEmpresaPerfil] blocked_dates/manager_history columns missing — saving without them. Run migration 006.');
+          const { blocked_dates: _bd, manager_history: _mh, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })

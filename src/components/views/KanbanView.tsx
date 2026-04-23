@@ -4,7 +4,7 @@ import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { X, Phone, MapPin, Clock } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { STATUS_LABELS } from '../../constants';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isToday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'settings' | 'profile' | 'drivers' | 'catalog';
@@ -26,6 +26,8 @@ export const KanbanView = ({
 }: { state: ZeloState; onDragEnd: (r: DropResult) => void; setActiveView: (v: View) => void }) => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
+  const todayOrders = state.orders.filter(o => isToday(parseISO(o.pickupDate)));
+
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
       <div className="px-8 py-5 bg-[var(--color-surface)] border-b border-[var(--color-line)] flex-shrink-0">
@@ -36,7 +38,7 @@ export const KanbanView = ({
       <div className="flex-1 overflow-hidden relative">
           <div className="h-full flex gap-4 overflow-x-auto p-6 custom-scrollbar">
             {COLUMNS.map(col => {
-              const orders = state.orders.filter(o => o.status === col);
+              const orders = todayOrders.filter(o => o.status === col);
               const style = COLUMN_STYLE[col];
               return (
                 <Droppable key={col} droppableId={col}>
@@ -90,7 +92,7 @@ export const KanbanView = ({
                                 <div className="flex items-center justify-between pt-2.5 border-t border-[var(--color-line)]">
                                   <div className="flex items-center gap-1 text-[12px] text-[var(--color-ink-muted)]">
                                     <Clock className="w-3 h-3" strokeWidth={1.8} />
-                                    {order.pickupTime}
+                                    {order.pickupTime || '—'}
                                   </div>
                                   <span className="text-[13px] font-semibold tabular-nums">{currency(order.total)}</span>
                                 </div>
@@ -112,12 +114,12 @@ export const KanbanView = ({
               );
             })}
           </div>
-          {state.orders.length === 0 && (
+          {todayOrders.length === 0 && (
             <div className="absolute inset-6 flex items-center justify-center rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface)]/90 text-center">
               <div>
-                <p className="text-[14px] font-semibold text-[var(--color-ink-soft)]">Pedidos indisponíveis nesta fase</p>
+                <p className="text-[14px] font-semibold text-[var(--color-ink-soft)]">Nenhum pedido para hoje</p>
                 <p className="mt-1 text-[12.5px] text-[var(--color-ink-muted)]">
-                  O fluxo de produção volta a aparecer aqui quando os pedidos forem mapeados fora dos mocks.
+                  Pedidos agendados para outros dias não aparecem aqui.
                 </p>
               </div>
             </div>
