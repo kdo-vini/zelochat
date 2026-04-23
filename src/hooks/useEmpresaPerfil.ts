@@ -17,6 +17,8 @@ export interface EmpresaPerfil {
   horario_abertura: string | null;
   horario_fechamento: string | null;
   dias_fechamento: string[] | null;
+  /** Added via migration 005_ai_config_and_quick_responses.sql — may be null if migration not yet run */
+  ai_instructions: string | null;
 }
 
 interface UseEmpresaPerfilResult {
@@ -109,6 +111,18 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] horarios not available (run migration 004):', horariosError.message);
     }
 
+    let aiInstructions: string | null = null;
+    const { data: aiData, error: aiErr } = await supabase
+      .from('empresa_perfil')
+      .select('ai_instructions')
+      .eq('id', data.id)
+      .maybeSingle();
+    if (!aiErr && aiData) {
+      aiInstructions = (aiData as { ai_instructions?: string | null }).ai_instructions ?? null;
+    } else if (aiErr) {
+      console.warn('[useEmpresaPerfil] ai_instructions not available (run migration 005):', aiErr.message);
+    }
+
     setEmpresa({
       ...data,
       chave_pix: chavePix,
@@ -116,6 +130,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       horario_abertura: horarioAbertura,
       horario_fechamento: horarioFechamento,
       dias_fechamento: diasFechamento,
+      ai_instructions: aiInstructions,
     });
     setLoading(false);
   }, [session?.user?.id]);
@@ -152,6 +167,17 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         } else if (dbError.message.includes('manager_phone') && patch.manager_phone !== undefined) {
           console.warn('[useEmpresaPerfil] manager_phone column missing — saving without it. Run migration 003.');
           const { manager_phone: _omitted, ...patchWithout } = patch as Partial<EmpresaPerfil>;
+          const { error: retryError } = await supabase
+            .from('empresa_perfil')
+            .update({ ...patchWithout, updated_at: new Date().toISOString() })
+            .eq('id', empresa.id);
+          if (retryError) {
+            setError(retryError.message);
+            return false;
+          }
+        } else if (dbError.message.includes('ai_instructions') && patch.ai_instructions !== undefined) {
+          console.warn('[useEmpresaPerfil] ai_instructions column missing — saving without it. Run migration 005.');
+          const { ai_instructions: _omitted, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })

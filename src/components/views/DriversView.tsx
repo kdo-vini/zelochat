@@ -37,7 +37,13 @@ const EMPTY_DRAFT: DriverDraft = {
 };
 
 function normalizePhone(phone: string): string {
-  return phone.replace(/\D/g, '');
+  const digits = phone.replace(/\D/g, '');
+  return digits.startsWith('55') ? digits : `55${digits}`;
+}
+
+function stripCountryCode(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  return digits.startsWith('55') ? digits.slice(2) : digits;
 }
 
 interface DriversViewProps {
@@ -70,7 +76,8 @@ export const DriversView = ({
 
   const pendingDeliveries = orders.filter((order): order is Order => order.status === 'ready');
   const isEditing = !!draft.id;
-  const isFormValid = draft.name.trim().length > 0 && normalizePhone(draft.phone).length > 0;
+  const localDigits = draft.phone.replace(/\D/g, '');
+  const isFormValid = draft.name.trim().length > 0 && localDigits.length >= 10 && localDigits.length <= 11;
 
   useEffect(() => {
     if (!draft.id) {
@@ -92,7 +99,7 @@ export const DriversView = ({
     setDraft({
       id: driver.id,
       name: driver.name,
-      phone: driver.phone,
+      phone: stripCountryCode(driver.phone),
       status: driver.status,
     });
     setActionError(null);
@@ -223,16 +230,21 @@ export const DriversView = ({
 
                 <div>
                   <label className="block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1">
-                    WhatsApp (com DDI)
+                    WhatsApp
                   </label>
-                  <input
-                    type="text"
-                    value={draft.phone}
-                    onChange={(event) => setDraft((previous) => ({ ...previous, phone: event.target.value }))}
-                    placeholder="5511999999999"
-                    className={`${FIELD} font-mono`}
-                    disabled={!isAuthenticated || submitting}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[13px] font-mono text-[var(--color-ink-muted)] bg-[var(--color-surface-alt)] border border-[var(--color-border)] rounded-lg px-2.5 py-2 select-none whitespace-nowrap">
+                      +55
+                    </span>
+                    <input
+                      type="text"
+                      value={draft.phone}
+                      onChange={(event) => setDraft((previous) => ({ ...previous, phone: event.target.value }))}
+                      placeholder="11999999999"
+                      className={`${FIELD} font-mono flex-1`}
+                      disabled={!isAuthenticated || submitting}
+                    />
+                  </div>
                 </div>
 
                 <div>

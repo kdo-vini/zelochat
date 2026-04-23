@@ -152,6 +152,26 @@ export async function sendTextMessage(jid: string, text: string): Promise<void> 
   );
 }
 
+export async function sendButtonMessage(
+  jid: string,
+  title: string,
+  description: string,
+  footer: string,
+  buttons: { id: string; displayText: string }[],
+): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/message/sendButtons/${INSTANCE_NAME}`,
+    {
+      number: jid,
+      title,
+      description,
+      footer,
+      buttons: buttons.map((b) => ({ type: 'reply', displayText: b.displayText, id: b.id })),
+    },
+    { headers: apiHeaders() },
+  );
+}
+
 export async function sendMediaMessage(
   jid: string,
   params: {

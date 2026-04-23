@@ -259,6 +259,11 @@ export function useWhatsAppSessions(token: string | null) {
         }
       };
 
+      ws.onopen = () => {
+        // Re-bind empresa on every (re)connect so server restarts don't break message routing
+        void bindEmpresa(token);
+      };
+
       ws.onclose = () => {
         if (disposed) return;
         reconnectRef.current = setTimeout(connect, 3000);

@@ -6,8 +6,6 @@ const STORAGE_KEY = 'zelochat_state_v2';
 type PersistedState = Pick<
   ZeloState,
   | 'blockedDates'
-  | 'aiInstructions'
-  | 'quickResponses'
   | 'dailyContext'
   | 'managerHistory'
   | 'businessInfo'
@@ -17,8 +15,6 @@ type PersistedState = Pick<
 function getPersistedSlice(state: ZeloState): PersistedState {
   return {
     blockedDates: state.blockedDates,
-    aiInstructions: state.aiInstructions,
-    quickResponses: state.quickResponses,
     dailyContext: state.dailyContext,
     managerHistory: state.managerHistory,
     businessInfo: state.businessInfo,

@@ -4,13 +4,65 @@ import type {
 } from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
 import { getSession, addAssistantMessage, setAutoReply } from './messageHandler.js';
-import { sendTextMessage } from './whatsapp.js';
+import { sendTextMessage, sendButtonMessage } from './whatsapp.js';
 import { getConfig } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.ts';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
+import { broadcast } from './ws.js';
 
-const OPENAI_MODEL = 'gpt-4o-mini';
+const OPENAI_MODEL = 'gpt-5-mini';
+
+interface PendingOrder {
+  empresaId: string;
+  jid: string;
+  customerName: string;
+  customerPhone: string;
+  items: { product: string; quantity: number }[];
+  pickupDate: string;
+  pickupTime: string;
+  total: number;
+}
+
+const pendingOrders = new Map<string, PendingOrder>();
+
+export function getPendingOrder(jid: string): PendingOrder | undefined {
+  return pendingOrders.get(jid);
+}
+
+export function clearPendingOrder(jid: string): void {
+  pendingOrders.delete(jid);
+}
+
+export async function confirmPendingOrder(jid: string): Promise<void> {
+  const pending = pendingOrders.get(jid);
+  if (!pending) return;
+  pendingOrders.delete(jid);
+
+  try {
+    const orderId = await createOrderInDb(pending.empresaId, pending);
+    const shortId = orderId.slice(0, 8).toUpperCase();
+    const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
+    const cfg = getConfig(pending.empresaId);
+    const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+    await sendTextMessage(jid, reply);
+    await addAssistantMessage(jid, reply, undefined, pending.empresaId);
+    broadcast({ type: 'order_created', data: { orderId, empresaId: pending.empresaId } });
+    console.log(`[AI] Confirmed pending order #${shortId} for ${jid}`);
+  } catch (err) {
+    console.error('[AI] Failed to confirm pending order:', err);
+    const errMsg = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente? 🙏';
+    await sendTextMessage(jid, errMsg);
+    await addAssistantMessage(jid, errMsg, undefined, pending.empresaId);
+  }
+}
+
+export async function cancelPendingOrder(jid: string, empresaId: string): Promise<void> {
+  pendingOrders.delete(jid);
+  const reply = 'Tudo bem! Pedido cancelado. Se quiser fazer outro, é só me chamar 😊';
+  await sendTextMessage(jid, reply);
+  await addAssistantMessage(jid, reply, undefined, empresaId);
+}
 
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -186,10 +238,9 @@ ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'
 
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
-2. Para encomendas, coletar OBRIGATORIAMENTE: produto, quantidade, data de retirada, horário, nome completo e telefone.
-3. Quando o cliente CONFIRMAR um pedido com todos os dados coletados, chamar a função criar_pedido.
-4. NUNCA confirme um pedido sem ter: produto, quantidade, data, horário, nome e telefone.
-5. Após criar o pedido, informar o número de confirmação e instruções de pagamento (Pix: ${cfg.pixKey || 'consulte a loja'}).
+2. Para encomendas, coletar: produto, quantidade, data de retirada, horário e nome do cliente.
+3. ASSIM QUE tiver TODOS os dados (produto, quantidade, data, horário, nome), CHAME A FUNÇÃO criar_pedido IMEDIATAMENTE. NÃO peça confirmação adicional — o cliente já confirmou ao fornecer todos os dados.
+4. NUNCA gere um resumo e peça confirmação com palavras — use SEMPRE a função criar_pedido quando tiver os dados completos.
 
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
@@ -203,7 +254,7 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
       type: 'object',
       properties: {
         customerName: { type: 'string', description: 'Nome completo do cliente' },
-        customerPhone: { type: 'string', description: 'Telefone do cliente com DDD' },
+        customerPhone: { type: 'string', description: 'Telefone do cliente com DDD (opcional — já capturado do WhatsApp)' },
         items: {
           type: 'array',
           description: 'Lista de itens do pedido',
@@ -220,7 +271,7 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
         pickupTime: { type: 'string', description: 'Horário de retirada no formato HH:MM' },
         total: { type: 'number', description: 'Valor total do pedido em reais' },
       },
-      required: ['customerName', 'customerPhone', 'items', 'pickupDate', 'pickupTime', 'total'],
+      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'total'],
     },
   },
 };
@@ -279,7 +330,6 @@ export async function generateAndSendReply(
     const response = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages,
-      temperature: 0.7,
       tools: [CREATE_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
       tool_choice: 'auto',
     });
@@ -301,14 +351,46 @@ export async function generateAndSendReply(
             total: number;
           };
 
-          const orderId = await createOrderInDb(resolvedEmpresaId, args);
-          const shortId = orderId.slice(0, 8).toUpperCase();
-          const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
+          if (!args.customerPhone) args.customerPhone = session.customerPhone;
           const cfg = getConfig(resolvedEmpresaId);
 
-          replyText = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${args.pickupDate} às ${args.pickupTime}\n💰 Total: R$ ${args.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+          // Recalculate total server-side — never trust the model's arithmetic
+          const recalcTotal = args.items.reduce((sum, item) => {
+            const product = cfg.products.find(
+              (p) => p.name.toLowerCase() === item.product.toLowerCase() && p.available,
+            );
+            return sum + (product ? product.price * item.quantity : 0);
+          }, 0);
+          if (recalcTotal > 0) args.total = Math.round(recalcTotal * 100) / 100;
 
-          console.log(`[AI] Created order #${shortId} for ${jid}`);
+          // Store as pending and send native button confirmation
+          pendingOrders.set(jid, { empresaId: resolvedEmpresaId, jid, ...args });
+          const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
+          const summary = `📦 ${itemsList}\n📅 ${args.pickupDate} às ${args.pickupTime}\n💰 R$ ${args.total.toFixed(2)}`;
+
+          try {
+            await sendButtonMessage(
+              jid,
+              `Confirmar pedido — ${args.customerName}`,
+              summary,
+              cfg.name || 'ZeloChat',
+              [
+                { id: 'CONFIRM_ORDER', displayText: '✅ Confirmar' },
+                { id: 'CANCEL_ORDER', displayText: '❌ Cancelar' },
+              ],
+            );
+            // Button sent — store in history; order is created on button click
+            await addAssistantMessage(jid, summary, undefined, resolvedEmpresaId);
+            console.log(`[AI] Pending order queued for button confirmation: ${jid}`);
+            return summary;
+          } catch (btnErr) {
+            // Fallback: buttons not supported — confirm immediately via text
+            console.warn('[AI] sendButtonMessage failed, confirming directly:', btnErr);
+            pendingOrders.delete(jid);
+            const orderId = await createOrderInDb(resolvedEmpresaId, args);
+            const shortId = orderId.slice(0, 8).toUpperCase();
+            replyText = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${args.pickupDate} às ${args.pickupTime}\n💰 Total: R$ ${args.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+          }
         } catch (err) {
           replyText = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente em instantes? 🙏';
           console.error('[AI] Failed to create order:', err);
@@ -378,8 +460,7 @@ export async function generateAndSendReply(
 
         const followUp = await openai.chat.completions.create({
           model: OPENAI_MODEL,
-          temperature: 0.7,
-          messages: [
+              messages: [
             ...messages,
             choice.message,
             { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' },
@@ -405,6 +486,13 @@ export async function generateAndSendReply(
     return cleanReply;
   } catch (error) {
     console.error('[AI] Error generating reply:', error);
+    const errMsg = 'Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 🙏';
+    try {
+      await sendTextMessage(jid, errMsg);
+      await addAssistantMessage(jid, errMsg, undefined, resolvedEmpresaId);
+    } catch {
+      // ignore secondary failure
+    }
     return null;
   }
 }

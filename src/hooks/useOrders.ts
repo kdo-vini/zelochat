@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
+import { WS_URL } from '../config';
 import type { Order } from '../types';
 
 type NewOrder = Omit<Order, 'id' | 'createdAt'>;
@@ -199,6 +200,19 @@ export function useOrders(session: Session | null) {
     if (dbError) throw dbError;
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
   }, []);
+
+  // Refresh orders whenever the server confirms a new WhatsApp order
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const ws = new WebSocket(WS_URL);
+    ws.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data as string);
+        if (parsed.type === 'order_created') void refresh();
+      } catch { /* ignore */ }
+    };
+    return () => ws.close();
+  }, [session?.user?.id, refresh]);
 
   return { orders, loading, error, refresh, addOrder, updateOrderStatus, updateOrder, deleteOrder };
 }

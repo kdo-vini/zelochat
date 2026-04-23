@@ -1,14 +1,22 @@
 import { ZeloState, ChatMessage } from "../types";
 import { API_BASE } from "../config";
+import { supabase } from "./supabaseClient";
 
 async function callAI(
   messages: { role: string; content: string }[],
   temperature = 0.7,
   responseFormat?: 'json'
 ): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('AI proxy error: not authenticated');
+
   const res = await fetch(`${API_BASE}/api/ai/complete`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify({ messages, temperature, responseFormat }),
   });
   if (!res.ok) throw new Error(`AI proxy error: ${res.status}`);
@@ -69,6 +77,27 @@ export async function getClientResponse(
     console.error("[openaiService] getClientResponse failed:", error);
     return "Ops, tive um probleminha técnico. Pode tentar de novo?";
   }
+}
+
+/**
+ * Gera um prompt mestre inicial usando IA — chamado pelo botão ✨ no Cérebro IA.
+ */
+export async function generateAgentInstructions(hint?: string): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('AI proxy error: not authenticated');
+
+  const res = await fetch(`${API_BASE}/api/ai/generate-instructions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ hint: hint?.trim() || undefined }),
+  });
+  if (!res.ok) throw new Error(`AI generate error: ${res.status}`);
+  const data = await res.json() as { instructions: string };
+  return data.instructions || '';
 }
 
 /**

@@ -7,7 +7,7 @@ import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl 
 import { handleIncomingMessage, getSession } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
-import { getBoundEmpresaId } from './supabase.js';
+import { getBoundEmpresaId, setBoundEmpresaId, getServiceSupabase } from './supabase.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -65,6 +65,22 @@ onIncomingMessage(async (msg) => {
 httpServer.listen(PORT, () => {
   console.log(`[Server] Listening on http://localhost:${PORT}`);
   console.log(`[Server] WebSocket on ws://localhost:${PORT}/ws`);
+
+  // Auto-bind empresa at startup so messages are routed without waiting for frontend login
+  getServiceSupabase()
+    .from('empresa_perfil')
+    .select('id')
+    .limit(1)
+    .maybeSingle()
+    .then(({ data }) => {
+      if (data?.id) {
+        setBoundEmpresaId(data.id);
+        console.log(`[Server] Auto-bound empresa: ${data.id}`);
+      } else {
+        console.warn('[Server] No empresa found — messages will be ignored until frontend logs in.');
+      }
+    })
+    .catch((err) => console.warn('[Server] Auto-bind failed:', err));
 
   // Start WhatsApp connection
   startWhatsApp().catch((err) => {

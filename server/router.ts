@@ -22,14 +22,18 @@ import {
   deleteSession,
   updateSessionName,
 } from './messageHandler.js';
-import { generateAndSendReply, getAI } from './ai.js';
-import { setConfig } from './configStore.js';
+import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
+import { getConfig, setConfig } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from './triggers.js';
 import { requireEmpresaId, setBoundEmpresaId } from './supabase.js';
 import type { ChatAttachment } from '../src/types.ts';
 
 const router = Router();
+
+// JIDs that recently had a button action handled — used to suppress duplicate text events
+// that WhatsApp/Whatsmiau sends for the same button click (within 5-second window)
+const recentlyHandled = new Map<string, number>();
 
 /**
  * POST /webhook — Receives events from Whatsmiau (Evolution API v2 format).
@@ -53,9 +57,52 @@ router.post('/webhook', (req: Request, res: Response) => {
     if (remoteJid.endsWith('@g.us')) return;   // ignore group messages
     if (remoteJid.endsWith('@broadcast')) return; // ignore broadcast lists
     if (!remoteJid.endsWith('@s.whatsapp.net')) return; // only individual chats
-    // Tertiary guard: if the "client" JID is our own number, it's a self-sent message
     const botJid = getOwnJid();
     if (botJid && remoteJid === botJid) return;
+
+    // Handle button response (order confirmation)
+    const buttonId: string =
+      data.message?.buttonsResponseMessage?.selectedButtonId ??
+      data.message?.templateButtonReplyMessage?.selectedId ?? '';
+    if (buttonId) {
+      const pending = getPendingOrder(remoteJid);
+      if (pending) {
+        recentlyHandled.set(remoteJid, Date.now()); // mark before async to block duplicate events
+        if (buttonId === 'CONFIRM_ORDER') {
+          void confirmPendingOrder(remoteJid);
+        } else if (buttonId === 'CANCEL_ORDER') {
+          void cancelPendingOrder(remoteJid, pending.empresaId);
+        }
+        return;
+      }
+    }
+
+    // Also catch button clicks that arrive as plain text (WhatsApp sends the event twice)
+    const msgText = (
+      data.message?.conversation ??
+      data.message?.extendedTextMessage?.text ?? ''
+    ).trim();
+    const pendingForText = getPendingOrder(remoteJid);
+    if (pendingForText && msgText) {
+      if (msgText === '✅ Confirmar' || msgText === 'CONFIRM_ORDER') {
+        recentlyHandled.set(remoteJid, Date.now());
+        void confirmPendingOrder(remoteJid);
+        return;
+      }
+      if (msgText === '❌ Cancelar' || msgText === 'CANCEL_ORDER') {
+        recentlyHandled.set(remoteJid, Date.now());
+        void cancelPendingOrder(remoteJid, pendingForText.empresaId);
+        return;
+      }
+    }
+
+    // Suppress any further duplicate events within 5 seconds of a button action
+    const handledTs = recentlyHandled.get(remoteJid);
+    if (handledTs) {
+      if (Date.now() - handledTs < 5000) return; // duplicate — skip AI
+      recentlyHandled.delete(remoteJid);
+    }
+
     dispatchIncomingMessage(data);
   } else if (event === 'connection.update') {
     handleConnectionUpdate(data);
@@ -425,6 +472,66 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);
+  }
+});
+
+/**
+ * POST /api/ai/generate-instructions — Generates a starter master prompt for the agent.
+ * Uses the business profile on the server so a blank textarea can be filled with one click.
+ * Body: { hint?: string } — optional extra guidance from the user.
+ */
+router.post('/api/ai/generate-instructions', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const { hint } = (req.body ?? {}) as { hint?: string };
+    const cfg = getConfig(empresaId);
+
+    const openai = getAI();
+    const systemInstruction = `Você é um engenheiro de prompts. Sua tarefa é escrever DIRETRIZES OPERACIONAIS (NÃO uma mensagem de boas-vindas, NÃO uma resposta ao cliente) que serão usadas como system prompt de um agente de IA que atende clientes de uma lanchonete brasileira no WhatsApp.
+
+O QUE VOCÊ DEVE ESCREVER:
+Uma lista de regras de comportamento em segunda pessoa ("Seja ...", "Responda ...", "Escale ...", "Nunca ..."), curta e direta, 6 a 12 linhas, entre 300 e 900 caracteres.
+
+EXEMPLO DE FORMATO ESPERADO (imite este estilo de imperativos):
+Seja simpático, direto e informal — tom de WhatsApp brasileiro, com emojis moderados.
+Mantenha respostas curtas (1-3 frases).
+Sempre colete nome, produto, quantidade, data e horário de retirada antes de confirmar encomendas.
+Se o cliente demonstrar frustração, raiva ou pedir explicitamente para falar com uma pessoa, escale para atendimento humano.
+Nunca invente preços, horários ou produtos que não estejam no cardápio.
+Confirme os dados do pedido no final, repetindo-os, antes de finalizar.
+
+REGRAS DE SAÍDA:
+- Escreva APENAS as diretrizes, uma por linha, em imperativo.
+- NUNCA escreva uma saudação, apresentação ou mensagem dirigida ao cliente (ex: "Oi!", "Bem-vindo", "Estou aqui pra te ajudar").
+- NÃO use Markdown (sem "#", "-", "*", "•").
+- NÃO use aspas envolvendo o texto, sem preâmbulos tipo "Aqui estão:".
+- Se a lanchonete tiver nome/especialidade, pode mencionar no contexto da diretriz (ex: "Represente a padaria X com orgulho"), mas o foco é COMO se comportar, não O QUE falar.`;
+
+    const userContext = `Contexto da lanchonete (use só para ajustar tom e foco das diretrizes):
+Nome: ${cfg.name || 'não informado'}
+Especialidade: ${cfg.specialty || 'não informada'}
+${hint ? `\nPedido extra do dono: ${hint}` : ''}
+
+Escreva agora as diretrizes operacionais do agente.`;
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.85,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userContext },
+      ],
+    });
+
+    const content = response.choices[0]?.message?.content?.trim() || '';
+    res.json({ instructions: content });
+  } catch (error) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    console.error('[AI Generate Instructions] Error:', error);
+    res.status(500).json({ error: 'Falha ao gerar instruções.' });
   }
 });
 

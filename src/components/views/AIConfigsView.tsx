@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
-import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog } from 'lucide-react';
-import { ZeloState, ChatMessage, Trigger, TriggerKind } from '../../types';
-import { getOwnerResponse, getGeneralManagerResponse } from '../../services/openaiService';
+import React, { useEffect, useRef, useState } from 'react';
+import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check } from 'lucide-react';
+import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
+import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 
@@ -31,6 +31,11 @@ interface AIConfigsViewProps {
   createTrigger: (naturalInput: string) => Promise<Trigger>;
   updateTrigger: (id: string, patch: { name?: string; conditionDescription?: string; active?: boolean; kind?: TriggerKind }) => Promise<Trigger>;
   deleteTrigger: (id: string) => Promise<void>;
+  quickResponses: QuickResponse[];
+  addQuickResponse: () => Promise<QuickResponse>;
+  updateQuickResponse: (id: string, patch: Partial<Pick<QuickResponse, 'trigger' | 'response'>>) => Promise<void>;
+  deleteQuickResponse: (id: string) => Promise<void>;
+  saveAiInstructions: (instructions: string) => Promise<boolean>;
 }
 
 export const AIConfigsView = ({
@@ -41,6 +46,11 @@ export const AIConfigsView = ({
   createTrigger,
   updateTrigger,
   deleteTrigger,
+  quickResponses,
+  addQuickResponse,
+  updateQuickResponse,
+  deleteQuickResponse,
+  saveAiInstructions,
 }: AIConfigsViewProps) => {
   const [managerInput, setManagerInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -48,7 +58,20 @@ export const AIConfigsView = ({
   const [triggerInput, setTriggerInput] = useState('');
   const [triggerBusy, setTriggerBusy] = useState(false);
   const [triggerLocalError, setTriggerLocalError] = useState<string | null>(null);
+  const [promptDraft, setPromptDraft] = useState(state.aiInstructions || '');
+  const [promptDirty, setPromptDirty] = useState(false);
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptJustSaved, setPromptJustSaved] = useState(false);
+  const [promptGenerating, setPromptGenerating] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
+  const qrDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [qrSaveState, setQrSaveState] = useState<Record<string, 'saving' | 'saved'>>({});
   const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  // Sync draft when aiInstructions loads from DB
+  useEffect(() => {
+    if (!promptDirty) setPromptDraft(state.aiInstructions || '');
+  }, [state.aiInstructions, promptDirty]);
 
   const handleCreateTrigger = async () => {
     if (!triggerInput.trim()) return;
@@ -99,6 +122,61 @@ export const AIConfigsView = ({
       });
     } catch (e) { console.error(e); }
     finally { setIsProcessing(false); }
+  };
+
+  const handleGeneratePrompt = async () => {
+    setPromptGenerating(true);
+    setPromptError(null);
+    try {
+      const generated = await generateAgentInstructions(promptDraft.trim() || undefined);
+      if (generated) {
+        setPromptDraft(generated);
+        setPromptDirty(true);
+        setPromptJustSaved(false);
+        promptRef.current?.focus();
+      } else {
+        setPromptError('A IA não retornou conteúdo. Tente novamente.');
+      }
+    } catch (err) {
+      setPromptError(err instanceof Error ? err.message : 'Falha ao gerar instruções.');
+    } finally {
+      setPromptGenerating(false);
+    }
+  };
+
+  const handleSavePrompt = async () => {
+    setPromptSaving(true);
+    setPromptError(null);
+    try {
+      const ok = await saveAiInstructions(promptDraft);
+      if (ok) {
+        setState(prev => ({ ...prev, aiInstructions: promptDraft }));
+        setPromptDirty(false);
+        setPromptJustSaved(true);
+        setTimeout(() => setPromptJustSaved(false), 2000);
+      } else {
+        setPromptError('Não foi possível salvar. Verifique sua conexão.');
+      }
+    } catch (err) {
+      setPromptError(err instanceof Error ? err.message : 'Erro ao salvar.');
+    } finally {
+      setPromptSaving(false);
+    }
+  };
+
+  const scheduleQrSave = (id: string, patch: Partial<Pick<QuickResponse, 'trigger' | 'response'>>) => {
+    if (qrDebounceRef.current[id]) clearTimeout(qrDebounceRef.current[id]);
+    qrDebounceRef.current[id] = setTimeout(async () => {
+      setQrSaveState(prev => ({ ...prev, [id]: 'saving' }));
+      try {
+        await updateQuickResponse(id, patch);
+        setQrSaveState(prev => ({ ...prev, [id]: 'saved' }));
+        setTimeout(() => setQrSaveState(prev => { const next = { ...prev }; delete next[id]; return next; }), 2000);
+      } catch (err) {
+        console.error('[AIConfigs] update QR failed:', err);
+        setQrSaveState(prev => { const next = { ...prev }; delete next[id]; return next; });
+      }
+    }, 400);
   };
 
   return (
@@ -236,13 +314,10 @@ export const AIConfigsView = ({
             <SectionHeader
               icon={Send}
               title="Respostas rápidas (macros)"
-              subtitle="Use /GATILHO no chat para enviar instantaneamente"
+              subtitle="Use /GATILHO no chat para enviar instantaneamente — salvas automaticamente"
               action={
                 <button
-                  onClick={() => setState(prev => ({
-                    ...prev,
-                    quickResponses: [{ id: Date.now().toString(), trigger: '', response: '' }, ...prev.quickResponses],
-                  }))}
+                  onClick={() => { void addQuickResponse().catch((err) => console.error('[AIConfigs] add QR failed:', err)); }}
                   className="h-7 px-2.5 bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] rounded-md text-[12px] font-semibold flex items-center gap-1 hover:bg-[var(--color-line)] transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" /> Adicionar
@@ -250,34 +325,36 @@ export const AIConfigsView = ({
               }
             />
             <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-              {state.quickResponses.length === 0 ? (
+              {quickResponses.length === 0 ? (
                 <p className="text-[13px] text-center text-[var(--color-ink-faint)] mt-6">Nenhum macro configurado.</p>
               ) : (
-                state.quickResponses.map(qr => (
+                quickResponses.map(qr => (
                   <div key={qr.id} className="flex gap-2 items-center bg-[var(--color-surface-muted)] border border-[var(--color-line)] px-3 py-2 rounded-lg group">
                     <span className="text-[12px] font-mono font-bold text-[var(--color-ink-muted)]">/</span>
                     <input
                       type="text"
-                      value={qr.trigger}
-                      onChange={e => setState(prev => ({
-                        ...prev,
-                        quickResponses: prev.quickResponses.map(q => q.id === qr.id ? { ...q, trigger: e.target.value.toUpperCase() } : q),
-                      }))}
+                      defaultValue={qr.trigger}
+                      onChange={e => {
+                        const next = e.target.value.toUpperCase();
+                        e.target.value = next;
+                        scheduleQrSave(qr.id, { trigger: next });
+                      }}
                       className="w-24 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1 text-[12.5px] font-semibold font-mono uppercase outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20"
                       placeholder="GATILHO"
                     />
                     <input
                       type="text"
-                      value={qr.response}
-                      onChange={e => setState(prev => ({
-                        ...prev,
-                        quickResponses: prev.quickResponses.map(q => q.id === qr.id ? { ...q, response: e.target.value } : q),
-                      }))}
+                      defaultValue={qr.response}
+                      onChange={e => scheduleQrSave(qr.id, { response: e.target.value })}
                       className="flex-1 bg-transparent outline-none text-[13px] min-w-0"
                       placeholder="Texto da resposta..."
                     />
+                    <span className="flex-shrink-0 w-4 flex items-center justify-center">
+                      {qrSaveState[qr.id] === 'saving' && <Loader2 className="w-3.5 h-3.5 text-[var(--color-ink-faint)] animate-spin" />}
+                      {qrSaveState[qr.id] === 'saved' && <Check className="w-3.5 h-3.5 text-[var(--color-brand)]" />}
+                    </span>
                     <button
-                      onClick={() => setState(prev => ({ ...prev, quickResponses: prev.quickResponses.filter(q => q.id !== qr.id) }))}
+                      onClick={() => { void deleteQuickResponse(qr.id).catch((err) => console.error('[AIConfigs] delete QR failed:', err)); }}
                       className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)] rounded-md transition-all flex-shrink-0"
                     >
                       <Plus className="w-3.5 h-3.5 rotate-45" />
@@ -380,30 +457,62 @@ export const AIConfigsView = ({
 
         {/* System Prompt */}
         <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-line)]">
-            <div className="flex items-center gap-2">
-              <AlignLeft className="w-4 h-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
-              <div>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-[var(--color-line)]">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlignLeft className="w-4 h-4 text-[var(--color-ink-muted)] flex-shrink-0" strokeWidth={1.8} />
+              <div className="min-w-0">
                 <p className="text-[13.5px] font-semibold">Instruções base do agente</p>
                 <p className="text-[11.5px] text-[var(--color-ink-muted)]">
                   O prompt mestre que define a personalidade e as regras absolutas da IA.
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => promptRef.current?.focus()}
-              className="h-7 px-2.5 bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] rounded-md text-[12px] font-semibold hover:bg-[var(--color-line)] transition-colors"
-            >
-              Editar
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={handleGeneratePrompt}
+                disabled={promptGenerating || promptSaving}
+                title="Gerar com IA (usa o que estiver no campo como direcionamento opcional)"
+                className="h-8 px-3 rounded-md text-[12px] font-semibold flex items-center gap-1.5 bg-gradient-to-r from-[var(--color-brand)] to-[var(--color-brand-deep)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity shadow-sm"
+              >
+                {promptGenerating
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Sparkles className="w-3.5 h-3.5" />}
+                {promptGenerating ? 'Gerando...' : 'Gerar com IA'}
+              </button>
+              <button
+                onClick={handleSavePrompt}
+                disabled={promptSaving || promptGenerating || (!promptDirty && !promptJustSaved)}
+                className={`h-8 px-3 rounded-md text-[12px] font-semibold flex items-center gap-1.5 transition-colors ${
+                  promptJustSaved
+                    ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+                    : promptDirty
+                      ? 'bg-[var(--color-ink)] text-white hover:bg-[var(--color-ink-soft)]'
+                      : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-faint)]'
+                } disabled:cursor-not-allowed`}
+              >
+                {promptSaving
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : promptJustSaved
+                    ? <Check className="w-3.5 h-3.5" />
+                    : <Save className="w-3.5 h-3.5" />}
+                {promptSaving ? 'Salvando...' : promptJustSaved ? 'Salvo' : 'Salvar'}
+              </button>
+            </div>
           </div>
-          <div className="p-4">
+          <div className="p-4 space-y-2">
             <textarea
               ref={promptRef}
-              className="w-full h-32 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-4 text-[13px] font-mono outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] resize-none leading-relaxed transition-colors"
-              defaultValue={state.aiInstructions}
-              onChange={e => setState(prev => ({ ...prev, aiInstructions: e.target.value }))}
+              className="w-full h-40 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-4 text-[13px] font-mono outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] resize-none leading-relaxed transition-colors"
+              value={promptDraft}
+              onChange={e => { setPromptDraft(e.target.value); setPromptDirty(true); setPromptJustSaved(false); }}
+              placeholder="Descreva como sua IA deve falar, o tom, limites e prioridades — ou clique em Gerar com IA."
             />
+            {promptError && (
+              <p className="text-[12px] text-[var(--color-alert)]">{promptError}</p>
+            )}
+            <p className="text-[11.5px] text-[var(--color-ink-faint)]">
+              Salvo no banco por empresa — a IA do WhatsApp usa este texto automaticamente ao responder clientes.
+            </p>
           </div>
         </div>
       </div>

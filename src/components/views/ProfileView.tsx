@@ -222,12 +222,6 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa }: ProfileVi
               >
                 {authLoading2 ? 'Entrando…' : 'Entrar'}
               </button>
-              <p className="text-[12px] text-[var(--color-ink-faint)]">
-                Configure{' '}
-                <code className="font-mono text-[var(--color-ink-muted)]">VITE_SUPABASE_URL</code> e{' '}
-                <code className="font-mono text-[var(--color-ink-muted)]">VITE_SUPABASE_ANON_KEY</code>{' '}
-                em <code className="font-mono text-[var(--color-ink-muted)]">.env.local</code>.
-              </p>
             </div>
           )}
 

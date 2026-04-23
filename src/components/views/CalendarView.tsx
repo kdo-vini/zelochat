@@ -1,34 +1,61 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
   Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   MapPin,
   Phone,
   Plus,
   X,
 } from 'lucide-react';
-import { format, isToday, parseISO } from 'date-fns';
+import {
+  addDays,
+  addMonths,
+  addWeeks,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameMonth,
+  parseISO,
+  startOfMonth,
+  startOfWeek,
+} from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { Order, ZeloState } from '../../types';
 import { STATUS_COLORS, STATUS_LABELS } from '../../constants';
 
+type CalendarMode = 'day' | 'week' | 'month';
+
+const MODE_STORAGE_KEY = 'zelochat_calendar_mode';
+
+const MODE_LABELS: Record<CalendarMode, string> = {
+  day: 'Dia',
+  week: 'Semana',
+  month: 'Mês',
+};
+
 const currency = (n: number) =>
   n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 });
 
-function groupOrdersByDate(orders: Order[]): { date: string; orders: Order[] }[] {
-  const sorted = [...orders].sort((a, b) => {
-    if (a.pickupDate !== b.pickupDate) return a.pickupDate.localeCompare(b.pickupDate);
-    return a.pickupTime.localeCompare(b.pickupTime);
-  });
+function ordersByDate(orders: Order[]): Map<string, Order[]> {
   const map = new Map<string, Order[]>();
-  for (const o of sorted) {
-    const group = map.get(o.pickupDate) ?? [];
-    group.push(o);
-    map.set(o.pickupDate, group);
+  for (const o of orders) {
+    const arr = map.get(o.pickupDate) ?? [];
+    arr.push(o);
+    map.set(o.pickupDate, arr);
   }
-  return Array.from(map.entries()).map(([date, orders]) => ({ date, orders }));
+  for (const arr of map.values()) {
+    arr.sort((a, b) => a.pickupTime.localeCompare(b.pickupTime));
+  }
+  return map;
+}
+
+function dateKey(d: Date): string {
+  return format(d, 'yyyy-MM-dd');
 }
 
 export const CalendarView = ({
@@ -40,29 +67,86 @@ export const CalendarView = ({
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
   onNavigateToKanban: () => void;
 }) => {
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
 
+  const [mode, setMode] = useState<CalendarMode>(() => {
+    try {
+      const raw = localStorage.getItem(MODE_STORAGE_KEY);
+      if (raw === 'day' || raw === 'week' || raw === 'month') return raw;
+    } catch { /* ignore */ }
+    return 'week';
+  });
+  const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [showBlockPanel, setShowBlockPanel] = useState(false);
-  const [newBlockDate, setNewBlockDate] = useState('');
+  const [newBlockDay, setNewBlockDay] = useState('');
+  const [newBlockMonth, setNewBlockMonth] = useState('');
+  const [newBlockYear, setNewBlockYear] = useState('');
   const [newBlockReason, setNewBlockReason] = useState('');
   const [blockError, setBlockError] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
-  const allGroups = groupOrdersByDate(state.orders);
-  const upcomingGroups = allGroups.filter(g => g.date >= today);
-  const pastGroups = allGroups.filter(g => g.date < today);
+  const ordersMap = useMemo(() => ordersByDate(state.orders), [state.orders]);
+  const blockedMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of state.blockedDates) m.set(b.date, b.reason);
+    return m;
+  }, [state.blockedDates]);
+
+  const switchMode = (next: CalendarMode) => {
+    setMode(next);
+    try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch { /* ignore */ }
+  };
+
+  const goPrev = () => {
+    if (mode === 'day') setAnchor((d) => addDays(d, -1));
+    else if (mode === 'week') setAnchor((d) => addWeeks(d, -1));
+    else setAnchor((d) => addMonths(d, -1));
+  };
+  const goNext = () => {
+    if (mode === 'day') setAnchor((d) => addDays(d, 1));
+    else if (mode === 'week') setAnchor((d) => addWeeks(d, 1));
+    else setAnchor((d) => addMonths(d, 1));
+  };
+  const goToday = () => setAnchor(new Date());
+
+  const rangeLabel = useMemo(() => {
+    if (mode === 'day') {
+      const label = format(anchor, "EEEE, dd 'de' MMMM yyyy", { locale: ptBR });
+      return label.charAt(0).toUpperCase() + label.slice(1);
+    }
+    if (mode === 'week') {
+      const start = startOfWeek(anchor, { weekStartsOn: 0 });
+      const end = endOfWeek(anchor, { weekStartsOn: 0 });
+      const sameMonth = isSameMonth(start, end);
+      if (sameMonth) {
+        return `${format(start, 'dd')} – ${format(end, "dd 'de' MMMM yyyy", { locale: ptBR })}`;
+      }
+      return `${format(start, "dd 'de' MMM", { locale: ptBR })} – ${format(end, "dd 'de' MMM yyyy", { locale: ptBR })}`;
+    }
+    const label = format(anchor, "MMMM 'de' yyyy", { locale: ptBR });
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  }, [anchor, mode]);
 
   const handleAddBlock = () => {
-    if (!newBlockDate) { setBlockError('Selecione uma data.'); return; }
+    const d = parseInt(newBlockDay, 10);
+    const m = parseInt(newBlockMonth, 10);
+    const y = parseInt(newBlockYear, 10);
+    if (!newBlockDay || !newBlockMonth || !newBlockYear || isNaN(d) || isNaN(m) || isNaN(y)
+        || d < 1 || d > 31 || m < 1 || m > 12 || y < 2020) {
+      setBlockError('Data inválida.'); return;
+    }
+    const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     if (!newBlockReason.trim()) { setBlockError('Informe o motivo.'); return; }
-    if (state.blockedDates.some(b => b.date === newBlockDate)) {
+    if (state.blockedDates.some(b => b.date === iso)) {
       setBlockError('Esta data já está bloqueada.'); return;
     }
     setState(prev => ({
       ...prev,
-      blockedDates: [...prev.blockedDates, { date: newBlockDate, reason: newBlockReason.trim() }],
+      blockedDates: [...prev.blockedDates, { date: iso, reason: newBlockReason.trim() }],
     }));
-    setNewBlockDate('');
+    setNewBlockDay('');
+    setNewBlockMonth('');
+    setNewBlockYear('');
     setNewBlockReason('');
     setBlockError('');
   };
@@ -77,58 +161,110 @@ export const CalendarView = ({
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex flex-shrink-0 items-center justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-8 py-5">
+      <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-8 py-5">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight">Agenda</h1>
           <p className="text-[13px] text-[var(--color-ink-muted)]">Pedidos por data e horário de retirada</p>
         </div>
-        <button
-          onClick={() => setShowBlockPanel(p => !p)}
-          className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[13px] font-medium transition-colors ${
-            showBlockPanel
-              ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
-              : 'border-[var(--color-line)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-muted)]'
-          }`}
-        >
-          <CalendarIcon className="h-4 w-4" />
-          Datas bloqueadas
-          {state.blockedDates.length > 0 && (
-            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-alert)] px-1 text-[10px] font-bold text-white">
-              {state.blockedDates.length}
-            </span>
-          )}
-        </button>
+
+        <div className="flex items-center gap-2">
+          {/* Mode toggle */}
+          <div className="inline-flex rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-0.5">
+            {(['day', 'week', 'month'] as CalendarMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => switchMode(m)}
+                className={`px-3 h-8 rounded-md text-[12.5px] font-semibold transition-colors ${
+                  mode === m
+                    ? 'bg-[var(--color-ink)] text-white'
+                    : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                }`}
+              >
+                {MODE_LABELS[m]}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => setShowBlockPanel(p => !p)}
+            className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[13px] font-medium transition-colors ${
+              showBlockPanel
+                ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+                : 'border-[var(--color-line)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-muted)]'
+            }`}
+          >
+            <CalendarIcon className="h-4 w-4" />
+            Datas bloqueadas
+            {state.blockedDates.length > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-alert)] px-1 text-[10px] font-bold text-white">
+                {state.blockedDates.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Sub-header: navigation + range label */}
+      <div className="flex flex-shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-surface)] px-8 py-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={goPrev}
+            className="h-8 w-8 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] flex items-center justify-center"
+            aria-label="Anterior"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            onClick={goNext}
+            className="h-8 w-8 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] flex items-center justify-center"
+            aria-label="Próximo"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <button
+            onClick={goToday}
+            className="h-8 px-3 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] text-[12.5px] font-semibold text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]"
+          >
+            Hoje
+          </button>
+          <span className="ml-2 text-[14px] font-semibold text-[var(--color-ink)]">{rangeLabel}</span>
+        </div>
+
+        <span className="text-[12px] text-[var(--color-ink-faint)]">
+          {state.orders.length} pedidos • {state.blockedDates.length} datas bloqueadas
+        </span>
       </div>
 
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Agenda list */}
-        <div className="flex-1 overflow-y-auto px-8 py-6 custom-scrollbar space-y-6">
-          {upcomingGroups.length === 0 && pastGroups.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-24 text-center">
-              <CalendarIcon className="mb-4 h-10 w-10 text-[var(--color-ink-faint)]" />
-              <p className="text-[15px] font-semibold text-[var(--color-ink-soft)]">Nenhum pedido agendado</p>
-              <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">
-                Pedidos com data de retirada aparecem aqui.
-              </p>
-            </div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {mode === 'day' && (
+            <DayView
+              anchor={anchor}
+              todayStr={todayStr}
+              ordersMap={ordersMap}
+              blockedMap={blockedMap}
+              onSelectOrder={setSelectedOrder}
+            />
           )}
-
-          {upcomingGroups.map(group => <DayGroup key={group.date} group={group} state={state} today={today} onSelectOrder={setSelectedOrder} />)}
-
-          {pastGroups.length > 0 && (
-            <>
-              <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-[var(--color-line)]" />
-                <span className="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--color-ink-faint)]">
-                  Pedidos anteriores
-                </span>
-                <div className="h-px flex-1 bg-[var(--color-line)]" />
-              </div>
-              <div className="space-y-6 opacity-60">
-                {pastGroups.map(group => <DayGroup key={group.date} group={group} state={state} today={today} onSelectOrder={setSelectedOrder} />)}
-              </div>
-            </>
+          {mode === 'week' && (
+            <WeekView
+              anchor={anchor}
+              todayStr={todayStr}
+              ordersMap={ordersMap}
+              blockedMap={blockedMap}
+              onSelectOrder={setSelectedOrder}
+              onSelectDay={(d) => { setAnchor(d); switchMode('day'); }}
+            />
+          )}
+          {mode === 'month' && (
+            <MonthView
+              anchor={anchor}
+              todayStr={todayStr}
+              ordersMap={ordersMap}
+              blockedMap={blockedMap}
+              onSelectDay={(d) => { setAnchor(d); switchMode('day'); }}
+            />
           )}
         </div>
 
@@ -154,7 +290,6 @@ export const CalendarView = ({
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
-                  {/* Existing blocked dates */}
                   {state.blockedDates.length === 0 ? (
                     <div className="px-5 py-8 text-center text-[13px] text-[var(--color-ink-faint)]">
                       Nenhuma data bloqueada.
@@ -168,7 +303,7 @@ export const CalendarView = ({
                             <div className="min-w-0">
                               <p className="text-[13px] font-semibold">
                                 {format(parseISO(block.date), "dd 'de' MMM", { locale: ptBR })}
-                                {block.date === today && (
+                                {block.date === todayStr && (
                                   <span className="ml-2 rounded-full bg-[var(--color-warn)] px-1.5 py-0.5 text-[10px] font-bold text-white">
                                     HOJE
                                   </span>
@@ -187,18 +322,41 @@ export const CalendarView = ({
                     </ul>
                   )}
 
-                  {/* Add new block */}
                   <div className="border-t border-[var(--color-line)] px-5 py-4 space-y-3">
                     <p className="text-[12px] font-semibold uppercase tracking-wider text-[var(--color-ink-faint)]">
                       Bloquear nova data
                     </p>
-                    <input
-                      type="date"
-                      value={newBlockDate}
-                      min={today}
-                      onChange={e => { setNewBlockDate(e.target.value); setBlockError(''); }}
-                      className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] outline-none focus:border-[var(--color-brand)] focus:ring-2 focus:ring-[var(--color-brand)]/20"
-                    />
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={2}
+                        placeholder="DD"
+                        value={newBlockDay}
+                        onChange={e => { setNewBlockDay(e.target.value.replace(/\D/g, '')); setBlockError(''); }}
+                        className="w-14 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-2 py-2 text-[13px] text-center outline-none focus:border-[var(--color-brand)] focus:ring-2 focus:ring-[var(--color-brand)]/20"
+                      />
+                      <span className="self-center text-[var(--color-ink-faint)]">/</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={2}
+                        placeholder="MM"
+                        value={newBlockMonth}
+                        onChange={e => { setNewBlockMonth(e.target.value.replace(/\D/g, '')); setBlockError(''); }}
+                        className="w-14 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-2 py-2 text-[13px] text-center outline-none focus:border-[var(--color-brand)] focus:ring-2 focus:ring-[var(--color-brand)]/20"
+                      />
+                      <span className="self-center text-[var(--color-ink-faint)]">/</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={4}
+                        placeholder="AAAA"
+                        value={newBlockYear}
+                        onChange={e => { setNewBlockYear(e.target.value.replace(/\D/g, '')); setBlockError(''); }}
+                        className="flex-1 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-2 py-2 text-[13px] text-center outline-none focus:border-[var(--color-brand)] focus:ring-2 focus:ring-[var(--color-brand)]/20"
+                      />
+                    </div>
                     <input
                       type="text"
                       placeholder="Motivo (ex: Feriado)"
@@ -333,69 +491,240 @@ export const CalendarView = ({
   );
 };
 
-const DayGroup: React.FC<{
-  group: { date: string; orders: Order[] };
-  state: ZeloState;
-  today: string;
-  onSelectOrder: (o: Order) => void;
-}> = ({ group, state, today, onSelectOrder }) => {
-  const dateObj = parseISO(group.date);
-  const todayFlag = isToday(dateObj);
-  const block = state.blockedDates.find(b => b.date === group.date);
+/* ─── Views ──────────────────────────────────────────────────────── */
 
-  const dayLabel = format(dateObj, "EEEE, dd 'de' MMMM", { locale: ptBR });
-  const capitalizedDay = dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1);
+interface DayViewProps {
+  anchor: Date;
+  todayStr: string;
+  ordersMap: Map<string, Order[]>;
+  blockedMap: Map<string, string>;
+  onSelectOrder: (o: Order) => void;
+}
+
+const DayView: React.FC<DayViewProps> = ({ anchor, todayStr, ordersMap, blockedMap, onSelectOrder }) => {
+  const key = dateKey(anchor);
+  const orders = ordersMap.get(key) ?? [];
+  const blocked = blockedMap.get(key);
+  const todayFlag = key === todayStr;
 
   return (
-    <div>
-      {/* Day header */}
-      <div className="mb-3 flex items-center gap-3">
-        <div className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${todayFlag ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-ink-faint)]'}`} />
-        <span className={`text-[13.5px] font-semibold ${todayFlag ? 'text-[var(--color-brand-deep)]' : 'text-[var(--color-ink-soft)]'}`}>
-          {capitalizedDay}
-        </span>
-        {todayFlag && (
-          <span className="rounded-full bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-bold text-white">
-            HOJE
-          </span>
-        )}
-      </div>
-
-      {/* Blocked date warning */}
-      {block && (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-[var(--color-alert)]/20 bg-[var(--color-alert)]/8 px-3 py-2 text-[12.5px] text-[var(--color-alert)]">
+    <div className="px-8 py-6">
+      {blocked && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-[var(--color-alert)]/20 bg-[var(--color-alert)]/8 px-3 py-2 text-[12.5px] text-[var(--color-alert)]">
           <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={2} />
-          Data bloqueada: {block.reason}
+          Data bloqueada: {blocked}
         </div>
       )}
 
-      {/* Order cards */}
-      <div className="space-y-2 pl-5">
-        {group.orders.map(order => (
-          <button
-            key={order.id}
-            onClick={() => onSelectOrder(order)}
-            className="flex w-full items-center gap-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-left shadow-[var(--shadow-card)] transition-all hover:border-[var(--color-brand)]/30 hover:shadow-[var(--shadow-pop)]"
+      {orders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <CalendarIcon className="mb-4 h-10 w-10 text-[var(--color-ink-faint)]" />
+          <p className="text-[15px] font-semibold text-[var(--color-ink-soft)]">
+            {todayFlag ? 'Nenhum pedido para hoje' : 'Nenhum pedido neste dia'}
+          </p>
+          <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">Pedidos com esta data de retirada aparecem aqui.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {orders.map((order) => (
+            <OrderRow key={order.id} order={order} onClick={() => onSelectOrder(order)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface WeekViewProps {
+  anchor: Date;
+  todayStr: string;
+  ordersMap: Map<string, Order[]>;
+  blockedMap: Map<string, string>;
+  onSelectOrder: (o: Order) => void;
+  onSelectDay: (d: Date) => void;
+}
+
+const WeekView: React.FC<WeekViewProps> = ({ anchor, todayStr, ordersMap, blockedMap, onSelectOrder, onSelectDay }) => {
+  const start = startOfWeek(anchor, { weekStartsOn: 0 });
+  const days = eachDayOfInterval({ start, end: endOfWeek(anchor, { weekStartsOn: 0 }) });
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-7 gap-0 border-t border-[var(--color-line)]">
+      {days.map((d) => {
+        const key = dateKey(d);
+        const orders = ordersMap.get(key) ?? [];
+        const blocked = blockedMap.get(key);
+        const todayFlag = key === todayStr;
+        const dayLabel = format(d, 'EEE', { locale: ptBR });
+
+        return (
+          <div
+            key={key}
+            className="min-h-[160px] border-b border-r border-[var(--color-line)] bg-[var(--color-surface)] flex flex-col"
           >
-            <div className="flex items-center gap-1.5 text-[13px] font-semibold tabular-nums text-[var(--color-ink-muted)]">
-              <Clock className="h-3.5 w-3.5" strokeWidth={1.8} />
-              {order.pickupTime}
+            <button
+              onClick={() => onSelectDay(d)}
+              className={`flex items-center justify-between px-3 py-2 border-b border-[var(--color-line)] text-left hover:bg-[var(--color-surface-muted)] transition-colors ${
+                todayFlag ? 'bg-[var(--color-brand-soft)]' : ''
+              }`}
+            >
+              <div>
+                <p className="text-[10.5px] uppercase tracking-wider text-[var(--color-ink-faint)] font-semibold">
+                  {dayLabel}
+                </p>
+                <p className={`text-[15px] font-bold tabular-nums ${
+                  todayFlag ? 'text-[var(--color-brand-deep)]' : 'text-[var(--color-ink)]'
+                }`}>
+                  {format(d, 'dd')}
+                </p>
+              </div>
+              {orders.length > 0 && (
+                <span className="text-[10.5px] font-semibold rounded-full bg-[var(--color-ink)] text-white px-1.5 py-0.5">
+                  {orders.length}
+                </span>
+              )}
+            </button>
+            <div className="flex-1 p-2 space-y-1.5 overflow-y-auto custom-scrollbar">
+              {blocked && (
+                <div className="flex items-center gap-1 rounded border border-[var(--color-alert)]/25 bg-[var(--color-alert)]/10 px-1.5 py-1 text-[10.5px] text-[var(--color-alert)]">
+                  <AlertTriangle className="h-3 w-3 flex-shrink-0" strokeWidth={2} />
+                  <span className="truncate">{blocked}</span>
+                </div>
+              )}
+              {orders.length === 0 && !blocked && (
+                <p className="text-[11px] text-[var(--color-ink-faint)] italic px-1">Sem pedidos</p>
+              )}
+              {orders.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => onSelectOrder(o)}
+                  className="w-full text-left rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-1.5 hover:border-[var(--color-brand)]/40 hover:shadow-sm transition-all"
+                >
+                  <div className="flex items-center gap-1 text-[10.5px] font-semibold tabular-nums text-[var(--color-ink-muted)]">
+                    <Clock className="h-3 w-3" strokeWidth={1.8} />
+                    {o.pickupTime}
+                  </div>
+                  <p className="text-[12px] font-semibold truncate">{o.customerName}</p>
+                  <p className="text-[11px] text-[var(--color-ink-muted)] truncate">
+                    {o.items.map((i) => `${i.quantity}× ${i.product}`).join(', ')}
+                  </p>
+                </button>
+              ))}
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[13.5px] font-semibold truncate">{order.customerName}</p>
-              <p className="text-[12px] text-[var(--color-ink-muted)] truncate">
-                {order.items.map(i => `${i.quantity}× ${i.product}`).join(', ')}
-              </p>
-            </div>
-            <span className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_COLORS[order.status]}`}>
-              {STATUS_LABELS[order.status]}
-            </span>
-            <span className="flex-shrink-0 text-[13px] font-bold tabular-nums text-[var(--color-ink)]">
-              {currency(order.total)}
-            </span>
-          </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+interface MonthViewProps {
+  anchor: Date;
+  todayStr: string;
+  ordersMap: Map<string, Order[]>;
+  blockedMap: Map<string, string>;
+  onSelectDay: (d: Date) => void;
+}
+
+const MonthView: React.FC<MonthViewProps> = ({ anchor, todayStr, ordersMap, blockedMap, onSelectDay }) => {
+  const monthStart = startOfMonth(anchor);
+  const monthEnd = endOfMonth(anchor);
+  const gridStart = startOfWeek(monthStart, { weekStartsOn: 0 });
+  const gridEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
+  const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
+  const weekdayHeaders = eachDayOfInterval({
+    start: startOfWeek(new Date(), { weekStartsOn: 0 }),
+    end: endOfWeek(new Date(), { weekStartsOn: 0 }),
+  });
+
+  return (
+    <div className="flex flex-col">
+      <div className="grid grid-cols-7 border-b border-[var(--color-line)] bg-[var(--color-surface-muted)]">
+        {weekdayHeaders.map((d) => (
+          <div key={format(d, 'i')} className="px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-ink-faint)] text-center">
+            {format(d, 'EEE', { locale: ptBR })}
+          </div>
         ))}
+      </div>
+      <div className="grid grid-cols-7">
+        {days.map((d) => {
+          const key = dateKey(d);
+          const orders = ordersMap.get(key) ?? [];
+          const blocked = blockedMap.get(key);
+          const todayFlag = key === todayStr;
+          const inMonth = isSameMonth(d, anchor);
+          return (
+            <button
+              key={key}
+              onClick={() => onSelectDay(d)}
+              className={`min-h-[110px] border-b border-r border-[var(--color-line)] p-2 text-left transition-colors ${
+                inMonth ? 'bg-[var(--color-surface)]' : 'bg-[var(--color-surface-muted)]/40'
+              } hover:bg-[var(--color-surface-muted)]`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className={`inline-flex items-center justify-center rounded-full w-6 h-6 text-[11.5px] font-semibold tabular-nums ${
+                  todayFlag
+                    ? 'bg-[var(--color-brand)] text-white'
+                    : inMonth ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink-faint)]'
+                }`}>
+                  {format(d, 'd')}
+                </span>
+                {orders.length > 0 && (
+                  <span className="text-[9.5px] font-semibold rounded-full bg-[var(--color-ink)] text-white px-1.5 py-0.5">
+                    {orders.length}
+                  </span>
+                )}
+              </div>
+              {blocked && (
+                <div className="flex items-center gap-1 rounded border border-[var(--color-alert)]/25 bg-[var(--color-alert)]/10 px-1 py-0.5 text-[10px] text-[var(--color-alert)] mb-1">
+                  <AlertTriangle className="h-2.5 w-2.5 flex-shrink-0" strokeWidth={2} />
+                  <span className="truncate">{blocked}</span>
+                </div>
+              )}
+              <div className="space-y-0.5">
+                {orders.slice(0, 3).map((o) => (
+                  <div
+                    key={o.id}
+                    className={`truncate text-[10.5px] px-1 py-0.5 rounded ${STATUS_COLORS[o.status]}`}
+                    title={`${o.pickupTime} • ${o.customerName}`}
+                  >
+                    <span className="font-semibold tabular-nums">{o.pickupTime}</span>{' '}
+                    <span className="font-medium">{o.customerName}</span>
+                  </div>
+                ))}
+                {orders.length > 3 && (
+                  <div className="text-[10px] text-[var(--color-ink-muted)] px-1">+ {orders.length - 3} mais</div>
+                )}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
-}
+};
+
+const OrderRow: React.FC<{ order: Order; onClick: () => void }> = ({ order, onClick }) => (
+  <button
+    onClick={onClick}
+    className="flex w-full items-center gap-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-left shadow-[var(--shadow-card)] transition-all hover:border-[var(--color-brand)]/30 hover:shadow-[var(--shadow-pop)]"
+  >
+    <div className="flex items-center gap-1.5 text-[13px] font-semibold tabular-nums text-[var(--color-ink-muted)]">
+      <Clock className="h-3.5 w-3.5" strokeWidth={1.8} />
+      {order.pickupTime}
+    </div>
+    <div className="flex-1 min-w-0">
+      <p className="text-[13.5px] font-semibold truncate">{order.customerName}</p>
+      <p className="text-[12px] text-[var(--color-ink-muted)] truncate">
+        {order.items.map((i) => `${i.quantity}× ${i.product}`).join(', ')}
+      </p>
+    </div>
+    <span className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_COLORS[order.status]}`}>
+      {STATUS_LABELS[order.status]}
+    </span>
+    <span className="flex-shrink-0 text-[13px] font-bold tabular-nums text-[var(--color-ink)]">
+      {currency(order.total)}
+    </span>
+  </button>
+);
+

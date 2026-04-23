@@ -28,6 +28,7 @@ import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
 import { useProdutos } from './hooks/useProdutos';
 import { useEmpresaPerfil } from './hooks/useEmpresaPerfil';
+import { useQuickResponses } from './hooks/useQuickResponses';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
 import { useWhatsAppSessions } from './hooks/useWhatsAppSessions';
 import { apiUrl } from './config';
@@ -176,12 +177,25 @@ export default function App() {
     updateOrder: updateOrderInSupabase,
     deleteOrder: deleteOrderInSupabase,
   } = useOrders(session);
+  const {
+    items: quickResponses,
+    add: addQuickResponse,
+    update: updateQuickResponse,
+    remove: deleteQuickResponse,
+  } = useQuickResponses(session);
 
   useEffect(() => { saveInitialState(state); }, [state]);
 
   useEffect(() => {
     try { localStorage.setItem('zelochat_sidebar_expanded', String(sidebarExpanded)); } catch {}
   }, [sidebarExpanded]);
+
+  // Redirect to profile (login) when auth finishes loading and there's no session
+  useEffect(() => {
+    if (!authLoading && !session) {
+      setActiveView('profile');
+    }
+  }, [authLoading, session]);
 
   // Hydrate businessInfo + profile from the real empresa_perfil when user is authenticated
   useEffect(() => {
@@ -204,8 +218,26 @@ export default function App() {
         name:   empresa.nome_exibicao ?? prev.profile.name,
         ...(empresa.logo_url ? { avatar: empresa.logo_url } : {}),
       },
+      aiInstructions: empresa.ai_instructions ?? prev.aiInstructions,
     }));
   }, [empresa]);
+
+  // Mirror DB-backed quick responses into the shared ZeloState so ChatView keeps working unchanged.
+  useEffect(() => {
+    setState((prev) => {
+      const same =
+        prev.quickResponses.length === quickResponses.length &&
+        prev.quickResponses.every((q, i) => {
+          const n = quickResponses[i];
+          return n && q.id === n.id && q.trigger === n.trigger && q.response === n.response;
+        });
+      return same ? prev : { ...prev, quickResponses };
+    });
+  }, [quickResponses]);
+
+  const saveAiInstructions = async (instructions: string): Promise<boolean> => {
+    return saveEmpresa({ ai_instructions: instructions });
+  };
 
   useEffect(() => {
     setState((prev) => prev.sessions === sessions ? prev : { ...prev, sessions });
@@ -545,6 +577,11 @@ export default function App() {
                 createTrigger={createTrigger}
                 updateTrigger={updateTriggerRequest}
                 deleteTrigger={deleteTriggerRequest}
+                quickResponses={quickResponses}
+                addQuickResponse={addQuickResponse}
+                updateQuickResponse={updateQuickResponse}
+                deleteQuickResponse={deleteQuickResponse}
+                saveAiInstructions={saveAiInstructions}
               />
             )}
             {activeView === 'settings' && (
