@@ -96,7 +96,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         // If chave_pix column missing, retry without it
         if (dbError.message.includes('chave_pix') && patch.chave_pix !== undefined) {
           console.warn('[useEmpresaPerfil] chave_pix column missing — saving without it. Run migration 001.');
-          const { chave_pix: _omitted, ...patchWithout } = patch as EmpresaPerfil;
+          const { chave_pix: _omitted, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })

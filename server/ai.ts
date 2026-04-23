@@ -1,7 +1,9 @@
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
 import { getSession, addAssistantMessage } from './messageHandler.js';
 import { sendTextMessage } from './whatsapp.js';
 import { getConfig } from './configStore.js';
+import { getBoundEmpresaId } from './supabase.js';
 import { parseStructuredMessage } from '../src/domain/chat.ts';
 
 const OPENAI_MODEL = 'gpt-4o-mini';
@@ -17,11 +19,8 @@ export function getAI(): OpenAI {
   return ai;
 }
 
-/**
- * Builds the system instruction for the AI using live business config synced from the frontend.
- */
-function buildSystemInstruction(): string {
-  const cfg = getConfig();
+function buildSystemInstruction(empresaId: string): string {
+  const cfg = getConfig(empresaId);
   const availableProducts = cfg.products.filter(p => p.available)
     .map(p => `${p.name} (R$ ${p.price.toFixed(2)})`).join(', ') || 'Cardápio não configurado';
   const blockedDatesStr = cfg.blockedDates.length > 0
@@ -32,13 +31,13 @@ function buildSystemInstruction(): string {
     : '';
 
   return `
-    Você é o assistente virtual da lanchonete ${cfg.name}, especialista em ${cfg.specialty}.
+    Você é o assistente virtual da lanchonete ${cfg.name || 'da loja'}, especialista em ${cfg.specialty || 'atendimento'}.
     Sua linguagem deve ser informal, simpática e típica de WhatsApp brasileiro (pode usar emojis, mas sem exagero).
 
     INFORMAÇÕES DA LANCHONETE:
     - Cardápio Disponível: ${availableProducts}
-    - Horário: ${cfg.hours}
-    - Fechado: ${cfg.closedDays.join(', ')}
+    - Horário: ${cfg.hours || 'Consulte a loja'}
+    - Fechado: ${cfg.closedDays.join(', ') || 'Consulte a loja'}
     - Encomendas: Qualquer quantidade, retirada no local.
     - Datas Bloqueadas: ${blockedDatesStr} (NÃO aceite encomendas nessas datas).${dailyContextStr}
 
@@ -54,40 +53,42 @@ function buildSystemInstruction(): string {
   `.trim();
 }
 
-/**
- * Generates an AI reply for a customer session and sends it via WhatsApp.
- */
-export async function generateAndSendReply(jid: string): Promise<string | null> {
-  const session = await getSession(jid);
+export async function generateAndSendReply(
+  jid: string,
+  empresaId?: string,
+): Promise<string | null> {
+  const resolvedEmpresaId = empresaId ?? getBoundEmpresaId();
+  if (!resolvedEmpresaId) {
+    console.warn('[AI] Cannot generate reply — no empresa bound for jid:', jid);
+    return null;
+  }
+
+  const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
 
-  const systemInstruction = buildSystemInstruction();
+  const systemInstruction = buildSystemInstruction(resolvedEmpresaId);
 
   try {
     const openai = getAI();
-    const messages: any[] = [
+    const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemInstruction },
       ...session.messages.map((m) => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
+        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
         content: parseStructuredMessage(m.kind === 'text' ? m.content : m.preview).contentForModel,
-      }))
+      })),
     ];
 
     const response = await openai.chat.completions.create({
       model: OPENAI_MODEL,
-      messages: messages,
+      messages,
       temperature: 0.7,
     });
 
     const replyText = response.choices[0].message.content || 'Desculpe, deu um erro aqui. Pode repetir?';
-
-    // Clean any <ALERT> tags before sending to WhatsApp
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 
     await sendTextMessage(jid, cleanReply);
-
-    // Store in session
-    await addAssistantMessage(jid, cleanReply);
+    await addAssistantMessage(jid, cleanReply, undefined, resolvedEmpresaId);
 
     console.log(`[AI] Replied to ${jid}: ${cleanReply.slice(0, 80)}...`);
     return cleanReply;

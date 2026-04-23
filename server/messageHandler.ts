@@ -457,25 +457,47 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
   const incomingText = extractText(msg);
   let attachment: ChatAttachment | undefined;
 
+  // Allowed document MIME types — blocks executable/HTML payloads from being stored
+  const ALLOWED_DOC_MIMES = new Set([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/plain',
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+    'audio/ogg', 'audio/mpeg',
+    'video/mp4',
+  ]);
+
+  function sanitizeFileName(raw: string | null | undefined, fallback: string): string {
+    if (!raw) return fallback;
+    // Strip path separators and characters that could influence browser behavior
+    return raw.replace(/[/\\<>:"|?*\x00-\x1f]/g, '_').slice(0, 200) || fallback;
+  }
+
   if (msg.message?.imageMessage) {
+    const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
     attachment = {
       type: 'image',
-      mimeType: msg.message.imageMessage.mimetype || 'image/jpeg',
+      mimeType: mime,
       fileName: 'imagem-whatsapp.jpg',
       sizeBytes: msg.message.imageMessage.fileLength
         ? Number(msg.message.imageMessage.fileLength)
         : undefined,
-      dataUrl: extractAttachmentDataUrl(msg, msg.message.imageMessage.mimetype || 'image/jpeg'),
+      dataUrl: extractAttachmentDataUrl(msg, mime),
     };
   } else if (msg.message?.documentMessage) {
+    const rawMime = msg.message.documentMessage.mimetype || 'application/octet-stream';
+    const mime = ALLOWED_DOC_MIMES.has(rawMime) ? rawMime : 'application/octet-stream';
     attachment = {
       type: 'document',
-      mimeType: msg.message.documentMessage.mimetype || 'application/octet-stream',
-      fileName: msg.message.documentMessage.fileName || 'documento',
+      mimeType: mime,
+      fileName: sanitizeFileName(msg.message.documentMessage.fileName, 'documento'),
       sizeBytes: msg.message.documentMessage.fileLength
         ? Number(msg.message.documentMessage.fileLength)
         : undefined,
-      dataUrl: extractAttachmentDataUrl(msg, msg.message.documentMessage.mimetype || 'application/octet-stream'),
+      dataUrl: extractAttachmentDataUrl(msg, mime),
     };
   }
 
@@ -489,15 +511,24 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
   if (!preview) return;
 
   const existing = await fetchSessionFamily(empresaId, jid);
+
+  // Only propose the pushName if the operator hasn't already set a proper name.
+  // An existing non-phone name is treated as operator-intent and must be preserved.
+  const existingName = existing?.primary?.customer_name ?? null;
+  const proposedName = (!existingName || isLikelyPhoneLabel(existingName)) ? pushName : existingName;
+
   const sessionRow = await ensureSession({
     empresaId,
     jid,
-    customerName: pushName,
+    customerName: proposedName,
     customerPhone: formatPhone(phone),
     lastMessage: storedContent,
     lastMessageTime: displayTime,
-    unreadCount: (existing?.rows.reduce((sum, row) => sum + (row.unread_count ?? 0), 0) ?? 0) + 1,
+    // unreadCount intentionally omitted — incremented atomically below via RPC
   });
+
+  // Atomic increment — avoids race condition when two messages arrive simultaneously
+  await getServiceSupabase().rpc('zelochat_increment_unread', { p_session_id: sessionRow.id });
 
   const storedMsg = await insertMessage({
     empresaId,

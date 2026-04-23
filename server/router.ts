@@ -119,15 +119,15 @@ router.get('/api/qr', (_req: Request, res: Response) => {
 });
 
 /**
- * POST /api/whatsapp/disconnect — Logs out from WhatsApp.
+ * POST /api/whatsapp/disconnect — Logs out from WhatsApp. Requires auth.
  */
-router.post('/api/whatsapp/disconnect', async (_req: Request, res: Response) => {
+router.post('/api/whatsapp/disconnect', async (req: Request, res: Response) => {
   try {
+    await requireEmpresaId(req);
     await disconnectWhatsApp();
     res.json({ ok: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    res.status(500).json({ error: msg });
+    sendAuthError(res, err);
   }
 });
 
@@ -294,11 +294,16 @@ router.post('/api/ai/reply', async (req: Request, res: Response) => {
     return;
   }
 
-  const reply = await generateAndSendReply(jid);
-  if (reply) {
-    res.json({ ok: true, reply });
-  } else {
-    res.status(500).json({ error: 'Failed to generate reply' });
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const reply = await generateAndSendReply(jid, empresaId);
+    if (reply) {
+      res.json({ ok: true, reply });
+    } else {
+      res.status(500).json({ error: 'Failed to generate reply' });
+    }
+  } catch (error) {
+    sendAuthError(res, error);
   }
 });
 
@@ -338,7 +343,7 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /api/ai/complete — Proxy for frontend AI calls. Keeps the OpenAI API key server-side only.
+ * POST /api/ai/complete — Proxy for frontend AI calls. Requires auth.
  * Body: { messages: array, temperature?: number, responseFormat?: 'json' }
  */
 router.post('/api/ai/complete', async (req: Request, res: Response) => {
@@ -350,6 +355,7 @@ router.post('/api/ai/complete', async (req: Request, res: Response) => {
   }
 
   try {
+    await requireEmpresaId(req);
     const openai = getAI();
     const params: ChatCompletionCreateParamsNonStreaming = {
       model: 'gpt-4o-mini',
@@ -362,14 +368,23 @@ router.post('/api/ai/complete', async (req: Request, res: Response) => {
     const response = await openai.chat.completions.create(params);
     res.json({ content: response.choices[0].message.content });
   } catch (error: unknown) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
     console.error('[AI Proxy] Error:', error);
     res.status(500).json({ error: 'AI request failed' });
   }
 });
 
 router.get('/api/sessions/:jid/profile-picture', async (req: Request, res: Response) => {
-  const url = await fetchProfilePicture(req.params.jid);
-  res.json({ url });
+  try {
+    await requireEmpresaId(req);
+    const url = await fetchProfilePicture(req.params.jid);
+    res.json({ url });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
 });
 
 router.patch('/api/sessions/:jid/name', async (req: Request, res: Response) => {
@@ -417,15 +432,19 @@ router.get('/api/produtos', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /api/sync-config — Syncs business config from the frontend to the server.
- * Called on app mount and whenever relevant settings change.
+ * POST /api/sync-config — Syncs business config from the frontend per-empresa. Requires auth.
  */
-router.post('/api/sync-config', (req: Request, res: Response) => {
-  const { name, specialty, hours, closedDays, address, pixKey,
-          products, blockedDates, dailyContext, aiInstructions } = req.body;
-  setConfig({ name, specialty, hours, closedDays, address, pixKey,
-              products, blockedDates, dailyContext, aiInstructions });
-  res.json({ ok: true });
+router.post('/api/sync-config', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const { name, specialty, hours, closedDays, address, pixKey,
+            products, blockedDates, dailyContext, aiInstructions } = req.body;
+    setConfig(empresaId, { name, specialty, hours, closedDays, address, pixKey,
+                           products, blockedDates, dailyContext, aiInstructions });
+    res.json({ ok: true });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
 });
 
 export default router;

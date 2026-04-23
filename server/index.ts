@@ -7,6 +7,7 @@ import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl 
 import { handleIncomingMessage, getSession } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
+import { getBoundEmpresaId } from './supabase.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -20,7 +21,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '6mb' }));
 app.use(router);
 
 const httpServer = createServer(app);
@@ -41,8 +42,9 @@ onIncomingMessage(async (msg) => {
   const jid = msg.key?.remoteJid;
   if (!jid) return;
 
-  const session = await getSession(jid);
-  if (session?.autoReply && process.env.OPENAI_API_KEY) {
+  const empresaId = getBoundEmpresaId();
+  const session = await getSession(jid, empresaId ?? undefined);
+  if (session?.autoReply && process.env.OPENAI_API_KEY && empresaId) {
     // Cancel previous pending reply for this JID to debounce rapid messages
     const existing = pendingReplies.get(jid);
     if (existing) clearTimeout(existing);
@@ -50,7 +52,7 @@ onIncomingMessage(async (msg) => {
     const timer = setTimeout(async () => {
       pendingReplies.delete(jid);
       try {
-        await generateAndSendReply(jid);
+        await generateAndSendReply(jid, empresaId);
       } catch (err) {
         console.error('[AutoReply] Error:', err);
       }

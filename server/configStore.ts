@@ -12,10 +12,10 @@ export interface BusinessConfig {
 }
 
 const DEFAULT_CONFIG: BusinessConfig = {
-  name: 'Casa dos Salgados',
-  specialty: 'Coxinhas e salgados variados',
-  hours: 'Segunda a Sábado, 9h às 18h',
-  closedDays: ['Domingo'],
+  name: '',
+  specialty: '',
+  hours: '',
+  closedDays: [],
   address: '',
   pixKey: '',
   products: [],
@@ -24,12 +24,14 @@ const DEFAULT_CONFIG: BusinessConfig = {
   aiInstructions: '',
 };
 
-let config: BusinessConfig = { ...DEFAULT_CONFIG };
+// Keyed by empresaId — one config entry per authenticated empresa.
+const configMap = new Map<string, BusinessConfig>();
 
-export function getConfig(): BusinessConfig {
-  return config;
+export function getConfig(empresaId: string): BusinessConfig {
+  return configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
 }
 
-export function setConfig(c: BusinessConfig): void {
-  config = { ...c };
+export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
+  const existing = configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
+  configMap.set(empresaId, { ...existing, ...c });
 }
