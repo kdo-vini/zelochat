@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 auth_info_baileys/
+.tunnel-url
+test-results/
+playwright-report/

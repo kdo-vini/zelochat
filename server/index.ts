@@ -1,40 +1,61 @@
 import 'dotenv/config';
+import cors from 'cors';
 import express from 'express';
 import { createServer } from 'http';
 import { createWsServer } from './ws.js';
-import { startWhatsApp, onIncomingMessage, getStatus } from './whatsapp.js';
+import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl } from './whatsapp.js';
 import { handleIncomingMessage, getSession } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
 
-const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
+// PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
+// SERVER_PORT is the legacy dev-local setting.
+const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || '3001', 10);
+
+const ALLOWED_ORIGIN = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 const app = express();
-app.use(express.json());
+app.use(cors({
+  origin: ALLOWED_ORIGIN,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json({ limit: '20mb' }));
 app.use(router);
 
 const httpServer = createServer(app);
 createWsServer(httpServer);
 
 // --- Wire up incoming messages → store + auto-reply ---
+const pendingReplies = new Map<string, ReturnType<typeof setTimeout>>();
+
 onIncomingMessage(async (msg) => {
   // 1. Normalize and store the message
-  handleIncomingMessage(msg);
+  try {
+    await handleIncomingMessage(msg);
+  } catch (error) {
+    console.error('[Server] Failed to persist incoming message:', error);
+  }
 
   // 2. Auto-reply if enabled for this session
-  const jid = msg.key.remoteJid;
+  const jid = msg.key?.remoteJid;
   if (!jid) return;
 
-  const session = getSession(jid);
+  const session = await getSession(jid);
   if (session?.autoReply && process.env.OPENAI_API_KEY) {
-    // Small delay to feel more natural
-    setTimeout(async () => {
+    // Cancel previous pending reply for this JID to debounce rapid messages
+    const existing = pendingReplies.get(jid);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(async () => {
+      pendingReplies.delete(jid);
       try {
         await generateAndSendReply(jid);
       } catch (err) {
         console.error('[AutoReply] Error:', err);
       }
     }, 1500);
+    pendingReplies.set(jid, timer);
   }
 });
 
@@ -47,4 +68,16 @@ httpServer.listen(PORT, () => {
   startWhatsApp().catch((err) => {
     console.error('[Server] WhatsApp startup error:', err);
   });
+
+  // Watch for tunnel URL changes every 10s — auto re-register webhook
+  // This makes the system self-healing when cloudflared tunnel restarts with a new URL
+  let lastKnownUrl = getPublicWebhookUrl();
+  setInterval(() => {
+    const current = getPublicWebhookUrl();
+    if (current !== lastKnownUrl) {
+      console.log(`[Server] Tunnel URL changed: ${lastKnownUrl} → ${current}. Re-registering webhook...`);
+      lastKnownUrl = current;
+      registerWebhook(true).catch((err) => console.error('[Server] Webhook re-register failed:', err));
+    }
+  }, 10_000);
 });

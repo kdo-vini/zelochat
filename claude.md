@@ -1,190 +1,100 @@
-# ZeloChat – AI-Powered WhatsApp CRM for Small Food Businesses
+# ZeloChat
 
-## Project Overview
+WhatsApp-native customer service platform for Brazilian lanchonetes. All user-facing text, prompts, and seed data are in **Brazilian Portuguese**.
 
-ZeloChat is a WhatsApp-native customer service platform built for Brazilian lanchonetes (snack shops). It uses AI agents to automatically handle customer inquiries, take orders, and manage daily operations — all through a WhatsApp-style dashboard the business owner uses to monitor and control everything.
+## Commands
 
-**Primary language**: Portuguese (BR). All user-facing strings, prompts, seed data, and UI copy are in Brazilian Portuguese.
-
-## Tech Stack
-
-| Layer            | Technology                          |
-|------------------|-------------------------------------|
-| Frontend         | React 19 + TypeScript               |
-| Build tool       | Vite 6                              |
-| Styling          | Tailwind CSS v4 (`@tailwindcss/vite` plugin) |
-| State management | `useReducer` + React Context (`src/state/`) |
-| AI               | Google Gemini SDK (`@google/genai`)  |
-| WhatsApp         | Baileys (`@whiskeysockets/baileys`) via Express server |
-| Real-time        | WebSocket (`ws`) for server → frontend push |
-| Animations       | Motion (Framer Motion v12)          |
-| Drag & Drop      | `@hello-pangea/dnd`                 |
-| Icons            | Lucide React                        |
-| Dates            | date-fns                            |
+```bash
+npm run dev          # Frontend only — Vite on port 3000
+npm run dev:server   # Backend only — Express/Baileys on port 3001
+npm run dev:all      # Both concurrently
+npm run build        # Production build
+npm run lint         # TypeScript type-check (tsc --noEmit)
+```
 
 ## Architecture
 
-### Directory Structure
-
 ```
-src/                             # React frontend
-├── agents/                      # AI agent definitions (one subfolder per agent)
-│   ├── client/                  # Customer-facing WhatsApp agent
-│   │   ├── agent.ts             # Calls Gemini with client prompt
-│   │   ├── context.ts           # Builds ClientContext from ZeloState
-│   │   ├── prompt.ts            # System instruction builder
-│   │   └── types.ts             # ClientContext interface
-│   ├── manager/                 # General management agent (blocks dates, toggles products)
-│   │   ├── agent.ts             # Calls Gemini, returns JSON { reply, actions[] }
-│   │   └── types.ts             # ManagerAgentResponse, action payload types
-│   ├── owner/                   # Daily context agent (parses operational notes into directives)
-│   │   └── agent.ts             # Calls Gemini, returns string[] directives
-│   └── shared/
-│       └── gemini.ts            # Shared GoogleGenAI instance + model constant
-│
-├── constants/
-│   ├── seedData.ts              # INITIAL_STATE: full ZeloState with demo data
-│   └── statusLabels.ts          # Order status label mapping
-│
-├── domain/                      # Pure business logic (no React, no AI)
-│   ├── alerts/                  # Alert tag parser (<ALERT>id</ALERT>)
-│   ├── calendar/                # Date blocking logic
-│   ├── catalog/                 # Product helpers
-│   └── orders/                  # Order processing logic
-│
-├── hooks/
-│   └── useWhatsApp.ts           # WebSocket hook: connects to Baileys server, dispatches incoming msgs
-│
-├── orchestration/               # Use-case orchestrators (bridge agents ↔ state)
-│   ├── customerChat.ts          # replyAsClient(): user msg → AI → dispatch response
-│   ├── ownerCommands.ts         # processDailyNote(): owner input → directives → state
-│   ├── managerActions.ts        # sendManagerMessage(): manager chat → actions → state
-│   └── ordersOrchestrator.ts
-│
-├── services/
-│   └── geminiService.ts         # LEGACY – original monolith service (being replaced by agents/)
-│
-├── state/                       # React state management
-│   ├── StoreContext.tsx          # StoreProvider + useStore + convenience hooks
-│   ├── rootReducer.ts           # Combines all slice reducers
-│   └── slices/                  # Domain-specific reducers
-│       ├── catalogSlice.ts
-│       ├── calendarSlice.ts
-│       ├── chatSlice.ts         # Includes chat/upsertSession for incoming WhatsApp msgs
-│       ├── configSlice.ts
-│       ├── ordersSlice.ts
-│       └── profileSlice.ts
-│
-├── types/                       # Shared TypeScript interfaces
-│   ├── state.ts                 # ZeloState (root state shape)
-│   ├── chat.ts                  # ChatMessage, ChatSession
-│   ├── orders.ts                # Order, OrderItem
-│   ├── catalog.ts               # Product, QuickResponse
-│   ├── calendar.ts              # BlockedDate, BusinessInfo
-│   └── alerts.ts                # AlertTrigger
-│
-├── App.tsx                      # Main React component (entire UI — large monolith)
-├── main.tsx                     # React entry point
-└── index.css                    # Global styles / Tailwind entry
+src/
+  App.tsx                  # Root component — all global state lives here
+  types.ts                 # Shared TypeScript types (ZeloState, ChatSession, etc.)
+  domain/chat.ts           # Pure utilities: normalizePhoneNumber, formatPhone, JID helpers
+  hooks/
+    useWhatsAppSessions.ts # WebSocket + REST — source of truth for chat sessions
+    useSupabaseSession.ts  # Auth (Supabase JWT token)
+    useProdutos.ts         # Products from Zelo PDV API
+    useDrivers.ts          # Delivery drivers (Supabase)
+    useEmpresaPerfil.ts    # Business profile (Supabase)
+  services/
+    waApi.ts               # All REST calls to /api/* (sessions, send, delete, etc.)
+    openaiService.ts       # AI proxy calls via /api/ai/complete
+    zeloApi.ts             # Zelo PDV product mapping
+    statePersistence.ts    # localStorage state save/load
+    geminiService.ts       # LEGACY — do not modify or expand
+  components/views/        # One file per nav view (DashboardView, KanbanView, etc.)
 
-server/                          # Node.js Baileys WhatsApp server (Express + WebSocket)
-├── index.ts                     # Express bootstrap, wires Baileys → message handler → auto-reply
-├── whatsapp.ts                  # Baileys connection lifecycle (QR, auth, reconnect)
-├── messageHandler.ts            # Incoming message normalizer + in-memory session store
-├── ai.ts                        # Server-side Gemini calls for auto-reply
-├── router.ts                    # REST API: /api/qr, /api/status, /api/send, /api/sessions, etc.
-├── ws.ts                        # WebSocket broadcast helper
-└── tsconfig.json                # Node.js-specific TypeScript config
+server/
+  index.ts        # Express entry point, WebSocket wiring, auto-reply debounce
+  router.ts       # All API routes (/api/sessions, /api/send, /api/drivers, etc.)
+  messageHandler.ts # Supabase read/write for sessions and messages
+  whatsapp.ts     # Baileys socket lifecycle (QR, connect, reconnect)
+  ws.ts           # WebSocket broadcast to frontend
+  ai.ts           # OpenAI reply generation
+  supabase.ts     # Supabase service client + empresa auth
+  configStore.ts  # In-memory business config (synced from frontend)
+  drivers.ts      # Driver CRUD against Supabase
 ```
 
-### Key Patterns
+## Stack
 
-1. **Agent pattern**: Each AI agent lives in `src/agents/<name>/` with its own `agent.ts` (Gemini call), `context.ts` (state → context builder), `prompt.ts` (system instruction), and `types.ts`. Agents are **pure functions** — they don't dispatch or touch React state.
+- **Frontend**: React + Vite + TypeScript + Tailwind + Motion (framer)
+- **Backend**: Express + Baileys (WhatsApp) + tsx (watch mode)
+- **Database**: Supabase (PostgreSQL)
+- **AI**: OpenAI (gpt-4o-mini) via server-side proxy
+- **Auth**: Supabase JWT — token passed as `Authorization: Bearer` to all `/api/*` calls
 
-2. **Orchestration layer**: `src/orchestration/` files are the glue between agents and React state. They receive `dispatch`, call agents, and dispatch the results. This is the only place that combines AI calls + state mutations.
+## Database (Supabase)
 
-3. **State slices**: Follow a `useReducer` + slice pattern. Each slice in `src/state/slices/` handles one domain. The `rootReducer` composes them all. Actions are namespaced: `'catalog/addProduct'`, `'chat/addMessage'`, `'config/addDailyContext'`, etc.
+Tables:
+- `zelochat_sessions` — one row per WhatsApp JID per empresa. Columns: `id, empresa_id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at`
+- `zelochat_messages` — messages linked to a session. Columns: `id, empresa_id, session_id, role, content, sent_at`
+- `zelochat_drivers` — delivery drivers per empresa
+- `empresa_perfil` — business profile (name, address, pix key, logo)
 
-4. **Domain logic**: `src/domain/` contains pure business logic with zero dependencies on React or Gemini. Keep it that way.
+Session "families": a contact may have multiple rows (different JIDs for same phone). `fetchSessionFamily` groups them by normalized phone key — always use it instead of querying by JID directly.
 
-5. **Shared Gemini client**: `src/agents/shared/gemini.ts` exports a singleton `ai` instance and `GEMINI_MODEL` constant. All agents import from here.
+## Environment
 
-6. **Server ↔ Frontend bridge**: The Baileys server (`server/`) pushes incoming WhatsApp messages to the React frontend via WebSocket. The frontend dispatches `chat/upsertSession` to create or update sessions. Outbound messages go through `POST /api/send`.
-
-### AI Agents Summary
-
-| Agent    | Purpose                          | Input                  | Output                        |
-|----------|----------------------------------|------------------------|-------------------------------|
-| Client   | Answer WhatsApp customers        | ClientContext + history | Free-text reply (may include `<ALERT>` tags) |
-| Manager  | Structural config via chat       | Manager history        | JSON `{ reply, actions[] }`   |
-| Owner    | Parse daily operational notes    | Raw text from owner    | `string[]` directives         |
-
-### Server REST API
-
-| Method | Endpoint                      | Purpose                              |
-|--------|-------------------------------|--------------------------------------|
-| GET    | `/api/status`                 | WhatsApp connection status           |
-| GET    | `/api/qr`                    | QR code as base64 data URI           |
-| GET    | `/api/sessions`              | All active WhatsApp sessions         |
-| GET    | `/api/sessions/:jid`         | Single session with messages         |
-| POST   | `/api/send`                  | Send message to WhatsApp contact     |
-| POST   | `/api/ai/reply`              | Generate AI reply and send via WA    |
-| POST   | `/api/sessions/:jid/auto-reply` | Toggle auto-reply for a session   |
-
-### WebSocket Events (server → frontend)
-
-| Event Type     | Data                                      |
-|---------------|-------------------------------------------|
-| `qr`          | Base64 QR code data URI                   |
-| `connection`  | `'connected'` / `'disconnected'` / `'connecting'` |
-| `message`     | `{ sessionId, customerName, customerPhone, message }` |
-| `message_sent`| `{ sessionId, message }` (outbound confirmation) |
-
-## Development Guidelines
-
-### Do
-
-- Write all user-facing text in **Brazilian Portuguese**
-- Keep agents stateless — orchestrators handle dispatch
-- Put pure logic in `src/domain/`, not in agents or components
-- Use existing action types from `rootReducer.ts` when dispatching
-- Use `date-fns` for any date manipulation
-- Follow the existing naming convention: `camelCase` for files, `PascalCase` for components/types
-
-### Don't
-
-- Don't call Gemini directly from React components — go through orchestration
-- Don't put React imports (`useEffect`, `dispatch`, etc.) inside `agents/` or `domain/`
-- Don't modify `services/geminiService.ts` — it's legacy and being phased out
-- Don't hardcode API keys — use `process.env.GEMINI_API_KEY` via Vite's `define` config
-- Don't import Baileys or server code from the frontend — use the REST API / WebSocket
-
-### Environment Variables
-
-```bash
-GEMINI_API_KEY=       # Required for AI functionality
-APP_URL=              # Deployment URL (not used locally)
-SERVER_PORT=3001      # Baileys server port (default 3001)
+```
+OPENAI_API_KEY      # Required for AI auto-reply
+SERVER_PORT         # Baileys/Express port (default 3001)
+FRONTEND_URL        # CORS allowed origin (default http://localhost:3000)
+VITE_SUPABASE_URL   # Supabase project URL (frontend)
+VITE_SUPABASE_ANON_KEY  # Supabase anon key (frontend)
+SUPABASE_URL        # Supabase project URL (server)
+SUPABASE_SERVICE_KEY    # Supabase service role key (server)
 ```
 
-Copy `.env.example` to `.env` and fill in your key.
+## Baileys / WhatsApp gotchas
 
-### Commands
+- **JID format**: `{countryCode+number}@s.whatsapp.net` — e.g. `5514998360854@s.whatsapp.net`. Always include country code (55 for Brazil).
+- **Brazilian numbers**: 10–11 digits without DDI → auto-prefix `55` before building JID. Never trust a raw local number as a JID.
+- **Phone formatting**: `formatPhone` in `messageHandler.ts` formats `5514XXXXXXXXX` → `(14) XXXXX-XXXX`. Only works for 11-digit local numbers after stripping `55`.
+- **Auth state**: stored in `auth_info_baileys/` — delete this folder to force re-scan of QR code.
+- **Profile pictures**: `sock.profilePictureUrl(jid, 'image')` throws if photo is private — always wrap in try/catch and return `null`.
+- **Pre-existing TS errors** in `server/messageHandler.ts` (lines 154, 305) are known and unrelated to new features — ignore them in `npm run lint`.
 
-```bash
-npm install           # Install dependencies
-npm run dev           # Start Vite dev server on port 3000
-npm run dev:server    # Start Baileys server on port 3001 (with watch mode)
-npm run dev:all       # Start both Vite + Baileys server
-npm run build         # Production build
-npm run lint          # TypeScript type-check (tsc --noEmit)
-```
+## UI conventions
 
-### Brainstorming
-construir: API de produtos no zelo pdv, para que o pdv possa enviar os produtos para o zeloChat e montar cardápio.
-corrigir: QR code.
-Fazer com que as notificações sejam enviadas através do numero cadastrado, para um número de whatsapp especificado pelo usuário e cadastrado no sistema (tipo telefone do gerente). colocar sons no app.
+- **Nunca usar dados mockados** em placeholders ou textos visíveis — use padrões genéricos como `(XX) XXXXX-XXXX`
+- Placeholders devem descrever o formato, não simular dados reais
+- `formatPhoneDisplay()` em `App.tsx` formata qualquer número bruto para exibição — usar em todo lugar que exibe telefone
 
-Sair do mock data - ir para um banco de dados, usando Supabase ou Firebase.
-Tudo que é mock no sistema deve virar funcionalidade real.
-novas funcionalidades: escalonamento de atendimento para humano caso no contexto da conversa o usuario peça explicitamente. E se o cliente pedir algo que não está no cardápio, se o cliente fizer pedidos acima de x itens.. escalonamento deve ser configuravel no sistema (ex: acima de 5 centos de mini salgadinho (500 unidades).)
+## Architecture rules
+
+- `src/domain/` has zero React or AI dependencies — keep it that way
+- Never call AI APIs from React components — always go through `/api/ai/complete`
+- Never import Baileys/server code from the frontend — use REST API or WebSocket
+- `geminiService.ts` is legacy — do not modify or expand
+- All chat state mutations go through `useWhatsAppSessions` hook — never mutate `sessions` directly in `App.tsx`
+- Delete operations must hit the backend first (or optimistic update + rollback on error)

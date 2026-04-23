@@ -16,6 +16,7 @@ export interface ChatSession {
   messages: ChatMessage[];
   status: 'active' | 'archived';
   alerts?: string[];
+  autoReply?: boolean;
 }
 
 export interface Order {
@@ -73,13 +74,32 @@ export interface ZeloState {
     notifications: boolean;
     darkMode: boolean;
   };
+  notificationPrefs: {
+    soundNewMessages: boolean;
+    alertLargeOrders: boolean;
+    dailyEmailReport: boolean;
+    alertOutOfStock: boolean;
+  };
 }
 
 export type MessageRole = 'user' | 'assistant';
+
+export type ChatAttachmentType = 'image' | 'document';
+
+export interface ChatAttachment {
+  type: ChatAttachmentType;
+  mimeType: string;
+  fileName: string;
+  dataUrl?: string;
+  sizeBytes?: number;
+}
 
 export interface ChatMessage {
   id: string;
   role: MessageRole;
   content: string;
+  preview: string;
   timestamp: string;
+  kind: 'text' | ChatAttachmentType;
+  attachment?: ChatAttachment;
 }

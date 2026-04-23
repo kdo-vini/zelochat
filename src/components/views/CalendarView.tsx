@@ -1,19 +1,33 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
-import { format, addMonths, subMonths, startOfMonth, endOfMonth, eachDayOfInterval, parseISO, startOfWeek, endOfWeek } from 'date-fns';
+import { AnimatePresence, motion } from 'motion/react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  addMonths,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  parseISO,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+} from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ZeloState } from '../../types';
-import { STATUS_LABELS, STATUS_COLORS } from '../../constants';
 
-export const CalendarView = ({ state, selectedDate, setSelectedDate, showDatePicker, setShowDatePicker }: { 
-  state: ZeloState, 
-  selectedDate: string, 
-  setSelectedDate: (d: string) => void, 
-  showDatePicker: boolean, 
-  setShowDatePicker: (s: boolean) => void 
+export const CalendarView = ({
+  state,
+  selectedDate,
+  setSelectedDate,
+  showDatePicker,
+  setShowDatePicker,
+}: {
+  state: ZeloState;
+  selectedDate: string;
+  setSelectedDate: (d: string) => void;
+  showDatePicker: boolean;
+  setShowDatePicker: (s: boolean) => void;
 }) => {
-  const hours = Array.from({ length: 12 }, (_, i) => `${i + 9}:00`);
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   const days = eachDayOfInterval({
@@ -21,124 +35,111 @@ export const CalendarView = ({ state, selectedDate, setSelectedDate, showDatePic
     end: endOfWeek(endOfMonth(currentMonth)),
   });
 
+  const blockedReason = state.blockedDates.find((item) => item.date === selectedDate)?.reason;
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col p-8 space-y-6 overflow-hidden relative">
-      <header className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-800 truncate mr-4">Agenda: {format(parseISO(selectedDate), "dd 'de' MMMM", { locale: ptBR })}</h2>
-        <div className="flex gap-2 relative">
-           <button 
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-shrink-0 items-center justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-8 py-5">
+        <div>
+          <h1 className="text-[22px] font-semibold tracking-tight">Agenda</h1>
+          <p className="text-[13px] text-[var(--color-ink-muted)]">
+            {format(parseISO(selectedDate), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+          </p>
+        </div>
+
+        <div className="relative">
+          <button
             onClick={() => setShowDatePicker(!showDatePicker)}
-            className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200 text-sm font-medium hover:bg-gray-50 flex items-center gap-2"
-           >
-              <CalendarIcon className="w-4 h-4 text-[#00a884]" />
-              Selecionar Data
-           </button>
-           
-           <AnimatePresence>
+            className="flex h-9 items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[13px] font-medium transition-colors hover:bg-[var(--color-surface-muted)]"
+          >
+            <CalendarIcon className="h-4 w-4 text-[var(--color-brand)]" />
+            Selecionar data
+          </button>
+
+          <AnimatePresence>
             {showDatePicker && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              <motion.div
+                initial={{ opacity: 0, y: 8, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute top-full right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 w-72 z-50 text-gray-800"
+                exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-pop)]"
               >
-                <div className="flex items-center justify-between mb-4">
-                  <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronLeft className="w-5 h-5" /></button>
-                  <span className="font-bold text-sm">{format(currentMonth, "MMMM yyyy", { locale: ptBR })}</span>
-                  <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronRight className="w-5 h-5" /></button>
+                <div className="mb-4 flex items-center justify-between">
+                  <button
+                    onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+                    className="rounded-md p-1.5 transition-colors hover:bg-[var(--color-surface-muted)]"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="text-[13.5px] font-semibold capitalize">
+                    {format(currentMonth, 'MMMM yyyy', { locale: ptBR })}
+                  </span>
+                  <button
+                    onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+                    className="rounded-md p-1.5 transition-colors hover:bg-[var(--color-surface-muted)]"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
                 </div>
-                <div className="grid grid-cols-7 gap-1 mb-2">
-                  {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map(d => (
-                    <div key={d} className="text-[10px] font-bold text-gray-400 text-center">{d}</div>
+
+                <div className="mb-1 grid grid-cols-7 gap-0.5">
+                  {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((label) => (
+                    <div
+                      key={label}
+                      className="py-1 text-center text-[11px] font-semibold text-[var(--color-ink-faint)]"
+                    >
+                      {label}
+                    </div>
                   ))}
                 </div>
-                <div className="grid grid-cols-7 gap-1">
-                  {days.map((day, i) => {
+
+                <div className="grid grid-cols-7 gap-0.5">
+                  {days.map((day) => {
                     const dateStr = format(day, 'yyyy-MM-dd');
-                    const ordersCount = state.orders.filter(o => o.pickupDate === dateStr).length;
                     const isSelected = selectedDate === dateStr;
                     const isCurrentMonth = day.getMonth() === currentMonth.getMonth();
 
                     return (
                       <button
-                        key={i}
+                        key={dateStr}
                         onClick={() => {
                           setSelectedDate(dateStr);
                           setShowDatePicker(false);
                         }}
-                        className={`
-                          h-9 rounded-lg flex flex-col items-center justify-center relative transition-all
-                          ${isSelected ? 'bg-[#00a884] text-white' : 'hover:bg-gray-100'}
-                          ${!isCurrentMonth && !isSelected ? 'text-gray-300' : 'text-gray-700'}
-                        `}
+                        className={`h-9 rounded-lg text-[12.5px] font-medium transition-colors ${
+                          isSelected
+                            ? 'bg-[var(--color-brand)] text-white'
+                            : isCurrentMonth
+                              ? 'hover:bg-[var(--color-surface-muted)]'
+                              : 'text-[var(--color-ink-faint)]'
+                        }`}
                       >
-                        <span className="text-xs font-semibold">{format(day, 'd')}</span>
-                        {ordersCount > 0 && (
-                          <span className={`text-[8px] font-bold ${isSelected ? 'text-white' : 'text-[#00a884]'}`}>
-                            {ordersCount} {ordersCount === 1 ? 'ped' : 'peds'}
-                          </span>
-                        )}
+                        {format(day, 'd')}
                       </button>
                     );
                   })}
                 </div>
               </motion.div>
             )}
-           </AnimatePresence>
-
-           <button className="flex items-center gap-2 bg-[#00a884] text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow-md transition-shadow">
-             <Plus className="w-4 h-4" /> Novo Pedido
-           </button>
+          </AnimatePresence>
         </div>
-      </header>
+      </div>
 
-      <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-y-auto custom-scrollbar relative">
-        <div className="grid grid-cols-[100px_1fr] border-b border-gray-100 sticky top-0 bg-white z-10 shadow-sm">
-           <div className="p-4 border-r border-gray-100 font-bold text-gray-400 text-xs text-center">HORÁRIO</div>
-           <div className="p-4 font-bold text-gray-400 text-xs">PEDIDOS AGENDADOS</div>
+      <div className="flex flex-1 items-center justify-center px-8 py-12">
+        <div className="max-w-xl rounded-2xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface)] px-8 py-12 text-center">
+          <CalendarIcon className="mx-auto mb-4 h-10 w-10 text-[var(--color-ink-faint)]" />
+          <p className="text-[16px] font-semibold text-[var(--color-ink-soft)]">
+            Agenda de pedidos indisponível por enquanto
+          </p>
+          <p className="mt-2 text-[13px] text-[var(--color-ink-muted)]">
+            Nesta etapa os pedidos seguem somente via WhatsApp, então não há lançamentos reais nesta tela.
+          </p>
+          {blockedReason && (
+            <p className="mt-4 text-[12px] font-medium text-[var(--color-alert)]">
+              A data selecionada está bloqueada: {blockedReason}
+            </p>
+          )}
         </div>
-        {hours.map(hour => {
-          const orders = state.orders.filter(o => o.pickupDate === selectedDate && o.pickupTime.startsWith(hour.split(':')[0]));
-          const isBlocked = state.blockedDates.some(bd => bd.date === selectedDate);
-          
-          return (
-            <div key={hour} className="grid grid-cols-[100px_1fr] min-h-[120px] border-b border-gray-50 relative group">
-              <div className="p-4 border-r border-gray-50 text-xs font-bold text-gray-500 bg-gray-50/30 flex flex-col items-center justify-start py-6">
-                {hour}
-                <span className="text-[10px] opacity-30 font-normal">ZeloChat</span>
-              </div>
-              <div className="p-3 relative flex flex-wrap gap-4 content-start">
-                {orders.map(order => (
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    key={order.id} 
-                    className="min-w-[240px] max-w-[300px] bg-[#dcf8c6]/30 border-l-4 border-[#00a884] p-3 rounded-lg shadow-sm text-xs hover:shadow-md transition-all cursor-pointer border border-gray-100"
-                  >
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-gray-800">{order.customerName}</span>
-                      <span className="font-mono bg-white px-1.5 rounded border border-gray-100">{order.pickupTime}</span>
-                    </div>
-                    <p className="text-[10px] text-gray-600 line-clamp-2 italic mb-2">
-                      {order.items.map(i => `${i.quantity}x ${i.product}`).join(', ')}
-                    </p>
-                    <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-wider">
-                      <span className={`${STATUS_COLORS[order.status]?.split(' ')[1] || 'text-[#00a884]'}`}>
-                        {STATUS_LABELS[order.status] || order.status}
-                      </span>
-                      <span className="text-gray-400">R$ {order.total.toFixed(2)}</span>
-                    </div>
-                  </motion.div>
-                ))}
-                {isBlocked && (
-                  <div className="absolute inset-0 bg-red-100/10 backdrop-blur-[1px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    <span className="bg-red-500 text-white text-[10px] px-3 py-1 rounded-full font-bold shadow-lg">DATA BLOQUEADA</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
       </div>
     </div>
   );

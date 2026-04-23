@@ -1,53 +1,58 @@
 import { broadcast } from './ws.js';
-
-/**
- * In-memory store of all WhatsApp sessions and their messages.
- * Keyed by remoteJid (e.g., "5511999998888@s.whatsapp.net").
- */
-
-export interface StoredMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-}
+import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
+import type { ChatAttachment, ChatMessage } from '../src/types.ts';
+import {
+  buildAttachmentPreview,
+  buildContactKey,
+  isLikelyPhoneLabel,
+  normalizePhoneNumber,
+  parseStructuredMessage,
+  serializeStructuredMessage,
+} from '../src/domain/chat.ts';
 
 export interface StoredSession {
-  id: string; // remoteJid
+  id: string;
   customerName: string;
   customerPhone: string;
   lastMessage: string;
   lastMessageTime: string;
   unreadCount: number;
-  messages: StoredMessage[];
+  messages: ChatMessage[];
   status: 'active' | 'archived';
   autoReply: boolean;
 }
 
-const sessions = new Map<string, StoredSession>();
-
-export function getSession(jid: string): StoredSession | undefined {
-  return sessions.get(jid);
+interface SessionRow {
+  id: string;
+  remote_jid: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  last_message: string | null;
+  last_message_time: string | null;
+  unread_count: number | null;
+  status: 'active' | 'archived';
+  auto_reply: boolean | null;
+  updated_at: string;
 }
 
-export function getAllSessions(): StoredSession[] {
-  return Array.from(sessions.values());
+interface MessageRow {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sent_at: string;
 }
 
-/**
- * Extracts a phone number from a WhatsApp JID.
- * "5511999998888@s.whatsapp.net" → "5511999998888"
- */
+interface SessionFamily {
+  primary: SessionRow;
+  latest: SessionRow;
+  rows: SessionRow[];
+}
+
 function phoneFromJid(jid: string): string {
-  return jid.replace(/@.*$/, '');
+  return normalizePhoneNumber(jid.replace(/@.*$/, ''));
 }
 
-/**
- * Formats a phone number for display.
- * "5511999998888" → "(11) 99999-8888"
- */
 function formatPhone(phone: string): string {
-  // Remove country code (55) for Brazilian numbers
   const local = phone.startsWith('55') ? phone.slice(2) : phone;
   if (local.length === 11) {
     return `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`;
@@ -55,128 +60,553 @@ function formatPhone(phone: string): string {
   return phone;
 }
 
-function nowTimestamp(): string {
-  return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+function buildSessionKeyFromRow(row: Pick<SessionRow, 'remote_jid' | 'customer_phone'>): string {
+  return buildContactKey(row.customer_phone || phoneFromJid(row.remote_jid) || row.remote_jid);
 }
 
-function makeId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+function pickPrimarySessionRow(rows: SessionRow[]): SessionRow {
+  return [...rows].sort((left, right) => {
+    const leftNamed = !isLikelyPhoneLabel(left.customer_name);
+    const rightNamed = !isLikelyPhoneLabel(right.customer_name);
+
+    if (leftNamed !== rightNamed) {
+      return rightNamed ? 1 : -1;
+    }
+
+    return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+  })[0];
 }
 
-/**
- * Extracts the text content from a Baileys message object.
- */
+function pickLatestSessionRow(rows: SessionRow[]): SessionRow {
+  return [...rows].sort(
+    (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
+  )[0];
+}
+
+function resolveCustomerName(rows: SessionRow[], fallback: string): string {
+  const namedRow = rows.find((row) => !isLikelyPhoneLabel(row.customer_name));
+  return namedRow?.customer_name || fallback;
+}
+
+function resolveCustomerPhone(rows: SessionRow[], fallbackJid: string): string {
+  const phone =
+    rows.find((row) => normalizePhoneNumber(row.customer_phone || ''))?.customer_phone ||
+    formatPhone(phoneFromJid(fallbackJid));
+
+  return phone;
+}
+
+function formatClock(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  return date.toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function resolveMessageDate(msg: any): Date {
+  const raw = msg?.messageTimestamp;
+  const numeric = Number(raw);
+
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const millis = numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    const parsed = new Date(millis);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date();
+}
+
 function extractText(msg: any): string | null {
-  const m = msg.message;
-  if (!m) return null;
+  const message = msg.message;
+  if (!message) return null;
 
-  if (m.conversation) return m.conversation;
-  if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
-  if (m.imageMessage?.caption) return `[📷 Imagem] ${m.imageMessage.caption}`;
-  if (m.imageMessage) return '[📷 Imagem]';
-  if (m.videoMessage?.caption) return `[🎥 Vídeo] ${m.videoMessage.caption}`;
-  if (m.videoMessage) return '[🎥 Vídeo]';
-  if (m.audioMessage) return '[🎵 Áudio]';
-  if (m.documentMessage) return `[📎 ${m.documentMessage.fileName || 'Documento'}]`;
-  if (m.stickerMessage) return '[🏷️ Sticker]';
-  if (m.contactMessage) return '[👤 Contato]';
-  if (m.locationMessage) return '[📍 Localização]';
+  if (message.conversation) return message.conversation;
+  if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
+  if (message.imageMessage?.caption) return `[Imagem] ${message.imageMessage.caption}`;
+  if (message.imageMessage) return '[Imagem]';
+  if (message.videoMessage?.caption) return `[Video] ${message.videoMessage.caption}`;
+  if (message.videoMessage) return '[Video]';
+  if (message.audioMessage) return '[Audio]';
+  if (message.documentMessage) return `[Documento ${message.documentMessage.fileName || ''}]`.trim();
+  if (message.stickerMessage) return '[Sticker]';
+  if (message.contactMessage) return '[Contato]';
+  if (message.locationMessage) return '[Localizacao]';
 
   return null;
 }
 
-/**
- * Handles an incoming Baileys message: creates or updates the session,
- * stores the message, and broadcasts to the frontend.
- */
-export function handleIncomingMessage(msg: any): void {
+function extractAttachmentDataUrl(msg: any, mimeType: string): string | undefined {
+  // Evolution API v2 / Whatsmiau sends base64 directly in the webhook payload (webhookBase64: true)
+  const raw: string = msg.base64 ?? '';
+  if (!raw) return undefined;
+  return raw.startsWith('data:') ? raw : `data:${mimeType};base64,${raw}`;
+}
+
+function mapMessage(row: MessageRow): ChatMessage {
+  const parsed = parseStructuredMessage(row.content);
+  return {
+    id: row.id,
+    role: row.role,
+    content: parsed.text,
+    preview: parsed.preview,
+    timestamp: formatClock(row.sent_at),
+    kind: parsed.kind,
+    attachment: parsed.attachment,
+  };
+}
+
+function mapSession(family: SessionFamily, messages: ChatMessage[] = []): StoredSession {
+  const customerName = resolveCustomerName(
+    family.rows,
+    formatPhone(phoneFromJid(family.latest.remote_jid)),
+  );
+  const customerPhone = resolveCustomerPhone(family.rows, family.latest.remote_jid);
+  const lastMessage = parseStructuredMessage(family.latest.last_message || '').preview;
+
+  return {
+    id: family.latest.remote_jid,
+    customerName,
+    customerPhone,
+    lastMessage,
+    lastMessageTime: family.latest.last_message_time || '',
+    unreadCount: family.rows.reduce((sum, row) => sum + (row.unread_count ?? 0), 0),
+    messages,
+    status: family.rows.some((row) => row.status === 'active') ? 'active' : 'archived',
+    autoReply: family.primary.auto_reply ?? family.latest.auto_reply ?? true,
+  };
+}
+
+async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from('zelochat_sessions')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at')
+    .eq('empresa_id', empresaId)
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as SessionRow[]) ?? [];
+}
+
+async function fetchSessionFamily(empresaId: string, jid: string): Promise<SessionFamily | null> {
+  const rows = await fetchAllSessionRows(empresaId);
+  const targetKey = buildContactKey(phoneFromJid(jid) || jid);
+  const familyRows = rows.filter(
+    (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey,
+  );
+
+  if (familyRows.length === 0) {
+    return null;
+  }
+
+  return {
+    primary: pickPrimarySessionRow(familyRows),
+    latest: pickLatestSessionRow(familyRows),
+    rows: familyRows,
+  };
+}
+
+async function ensureSession(params: {
+  empresaId: string;
+  jid: string;
+  customerName?: string;
+  customerPhone?: string;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unreadCount?: number;
+}): Promise<SessionRow> {
+  const supabase = getServiceSupabase();
+  const family = await fetchSessionFamily(params.empresaId, params.jid);
+  const existing = family?.primary ?? null;
+  const formattedPhone = params.customerPhone ?? formatPhone(phoneFromJid(params.jid));
+  const preferredNameCandidates = [
+    params.customerName,
+    ...(family?.rows.map((row) => row.customer_name || '').filter(Boolean) ?? []),
+    formatPhone(phoneFromJid(params.jid)),
+  ];
+  const customerName =
+    preferredNameCandidates.find((candidate) => !isLikelyPhoneLabel(candidate)) ||
+    preferredNameCandidates[0] ||
+    formatPhone(phoneFromJid(params.jid));
+
+  const payload = {
+    empresa_id: params.empresaId,
+    remote_jid: params.jid,
+    customer_name: customerName,
+    customer_phone: formattedPhone,
+    last_message: params.lastMessage ?? existing?.last_message ?? '',
+    last_message_time: params.lastMessageTime ?? existing?.last_message_time ?? '',
+    unread_count: params.unreadCount ?? existing?.unread_count ?? 0,
+    status: existing?.status ?? 'active',
+    auto_reply: existing?.auto_reply ?? true,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from('zelochat_sessions')
+      .update(payload)
+      .eq('id', existing.id)
+      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at')
+      .single();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return data as SessionRow;
+  }
+
+  const { data, error } = await supabase
+    .from('zelochat_sessions')
+    .insert(payload)
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at')
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as SessionRow;
+}
+
+async function insertMessage(params: {
+  empresaId: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sentAt: string;
+}): Promise<StoredMessage> {
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from('zelochat_messages')
+    .insert({
+      empresa_id: params.empresaId,
+      session_id: params.sessionId,
+      role: params.role,
+      content: params.content,
+      sent_at: params.sentAt,
+    })
+    .select('id, role, content, sent_at')
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return mapMessage(data as MessageRow);
+}
+
+export async function getSession(jid: string, empresaId = getBoundEmpresaId()): Promise<StoredSession | null> {
+  if (!empresaId) {
+    return null;
+  }
+
+  const supabase = getServiceSupabase();
+  const family = await fetchSessionFamily(empresaId, jid);
+
+  if (!family) {
+    return null;
+  }
+
+  const { data: messages, error } = await supabase
+    .from('zelochat_messages')
+    .select('id, role, content, sent_at')
+    .eq('empresa_id', empresaId)
+    .in('session_id', family.rows.map((row) => row.id))
+    .order('sent_at', { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return mapSession(family, (messages as MessageRow[]).map(mapMessage));
+}
+
+export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<StoredSession[]> {
+  if (!empresaId) {
+    return [];
+  }
+
+  const allRows = await fetchAllSessionRows(empresaId);
+  // Exclude group chats (@g.us) and any non-individual JIDs
+  const rows = allRows.filter(row => row.remote_jid.endsWith('@s.whatsapp.net'));
+  const families = new Map<string, SessionRow[]>();
+
+  for (const row of rows) {
+    const key = buildSessionKeyFromRow(row);
+    const family = families.get(key) ?? [];
+    family.push(row);
+    families.set(key, family);
+  }
+
+  return [...families.values()]
+    .sort((a, b) =>
+      new Date(pickLatestSessionRow(b).updated_at).getTime() -
+      new Date(pickLatestSessionRow(a).updated_at).getTime(),
+    )
+    .map((rowsForContact) => {
+      const family: SessionFamily = {
+        primary: pickPrimarySessionRow(rowsForContact),
+        latest: pickLatestSessionRow(rowsForContact),
+        rows: rowsForContact,
+      };
+      return mapSession(family);
+    });
+}
+
+export async function markSessionAsRead(jid: string, empresaId = getBoundEmpresaId()): Promise<void> {
+  if (!empresaId) {
+    return;
+  }
+
+  const family = await fetchSessionFamily(empresaId, jid);
+  if (!family) {
+    return;
+  }
+
+  const supabase = getServiceSupabase();
+  const { error } = await supabase
+    .from('zelochat_sessions')
+    .update({
+      unread_count: 0,
+      updated_at: new Date().toISOString(),
+    })
+    .in('id', family.rows.map((row) => row.id));
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function deleteSession(jid: string, empresaId = getBoundEmpresaId()): Promise<void> {
+  if (!empresaId) {
+    return;
+  }
+
+  const family = await fetchSessionFamily(empresaId, jid);
+  if (!family) {
+    return;
+  }
+
+  const supabase = getServiceSupabase();
+  const sessionIds = family.rows.map((row) => row.id);
+
+  const { error: messagesError } = await supabase
+    .from('zelochat_messages')
+    .delete()
+    .eq('empresa_id', empresaId)
+    .in('session_id', sessionIds);
+
+  if (messagesError) {
+    throw new Error(messagesError.message);
+  }
+
+  const { error: sessionsError } = await supabase
+    .from('zelochat_sessions')
+    .delete()
+    .eq('empresa_id', empresaId)
+    .in('id', sessionIds);
+
+  if (sessionsError) {
+    throw new Error(sessionsError.message);
+  }
+}
+
+export async function updateSessionName(
+  jid: string,
+  name: string,
+  empresaId = getBoundEmpresaId(),
+): Promise<void> {
+  if (!empresaId) return;
+
+  const family = await fetchSessionFamily(empresaId, jid);
+  if (!family) return;
+
+  const supabase = getServiceSupabase();
+  const { error } = await supabase
+    .from('zelochat_sessions')
+    .update({ customer_name: name.trim(), updated_at: new Date().toISOString() })
+    .in('id', family.rows.map((row) => row.id));
+
+  if (error) throw new Error(error.message);
+}
+
+export async function handleIncomingMessage(msg: any): Promise<void> {
+  const empresaId = getBoundEmpresaId();
+  if (!empresaId) {
+    console.warn('[MessageHandler] Ignoring inbound message because no empresa is bound yet.');
+    return;
+  }
+
   const jid = msg.key.remoteJid;
   if (!jid) return;
 
-  const text = extractText(msg);
-  if (!text) return;
+  console.log(`[MessageHandler] Incoming message — JID: ${jid} | pushName: ${msg.pushName}`);
 
   const phone = phoneFromJid(jid);
-  const pushName = msg.pushName || phone;
-  const timestamp = nowTimestamp();
-  const messageId = makeId();
+  const pushName = msg.pushName || formatPhone(phone);
+  const sentAt = resolveMessageDate(msg);
+  const displayTime = formatClock(sentAt);
+  const incomingText = extractText(msg);
+  let attachment: ChatAttachment | undefined;
 
-  let session = sessions.get(jid);
-
-  if (!session) {
-    // Create a new session for this contact
-    session = {
-      id: jid,
-      customerName: pushName,
-      customerPhone: formatPhone(phone),
-      lastMessage: text,
-      lastMessageTime: timestamp,
-      unreadCount: 1,
-      messages: [],
-      status: 'active',
-      autoReply: true, // Auto-reply ON by default
+  if (msg.message?.imageMessage) {
+    attachment = {
+      type: 'image',
+      mimeType: msg.message.imageMessage.mimetype || 'image/jpeg',
+      fileName: 'imagem-whatsapp.jpg',
+      sizeBytes: msg.message.imageMessage.fileLength
+        ? Number(msg.message.imageMessage.fileLength)
+        : undefined,
+      dataUrl: extractAttachmentDataUrl(msg, msg.message.imageMessage.mimetype || 'image/jpeg'),
     };
-    sessions.set(jid, session);
+  } else if (msg.message?.documentMessage) {
+    attachment = {
+      type: 'document',
+      mimeType: msg.message.documentMessage.mimetype || 'application/octet-stream',
+      fileName: msg.message.documentMessage.fileName || 'documento',
+      sizeBytes: msg.message.documentMessage.fileLength
+        ? Number(msg.message.documentMessage.fileLength)
+        : undefined,
+      dataUrl: extractAttachmentDataUrl(msg, msg.message.documentMessage.mimetype || 'application/octet-stream'),
+    };
   }
 
-  const storedMsg: StoredMessage = {
-    id: messageId,
+  const preview =
+    attachment ? buildAttachmentPreview(attachment, incomingText || '') : incomingText;
+  const storedContent = serializeStructuredMessage({
+    text: incomingText || '',
+    attachment,
+  });
+
+  if (!preview) return;
+
+  const existing = await fetchSessionFamily(empresaId, jid);
+  const sessionRow = await ensureSession({
+    empresaId,
+    jid,
+    customerName: pushName,
+    customerPhone: formatPhone(phone),
+    lastMessage: storedContent,
+    lastMessageTime: displayTime,
+    unreadCount: (existing?.rows.reduce((sum, row) => sum + (row.unread_count ?? 0), 0) ?? 0) + 1,
+  });
+
+  const storedMsg = await insertMessage({
+    empresaId,
+    sessionId: sessionRow.id,
     role: 'user',
-    content: text,
-    timestamp,
-  };
+    content: storedContent,
+    sentAt: sentAt.toISOString(),
+  });
 
-  session.messages.push(storedMsg);
-  session.lastMessage = text;
-  session.lastMessageTime = timestamp;
-  session.unreadCount += 1;
+  const family = await fetchSessionFamily(empresaId, jid);
+  const mappedSession = family
+    ? mapSession(family)
+    : {
+        id: sessionRow.remote_jid,
+        customerName: sessionRow.customer_name || pushName,
+        customerPhone: sessionRow.customer_phone || formatPhone(phone),
+        lastMessage: preview,
+        lastMessageTime: displayTime,
+        unreadCount: sessionRow.unread_count ?? 0,
+        messages: [],
+        status: sessionRow.status,
+        autoReply: sessionRow.auto_reply ?? true,
+      };
 
-  // Broadcast to frontend
   broadcast({
     type: 'message',
     data: {
-      sessionId: jid,
-      customerName: session.customerName,
-      customerPhone: session.customerPhone,
+      sessionId: mappedSession.id,
+      customerName: mappedSession.customerName,
+      customerPhone: mappedSession.customerPhone,
       message: storedMsg,
-      autoReply: session.autoReply,
+      autoReply: mappedSession.autoReply,
+      unreadCount: mappedSession.unreadCount,
+      lastMessage: preview,
+      lastMessageTime: displayTime,
     },
   });
 }
 
-/**
- * Adds an assistant (outbound) message to the session store.
- */
-export function addAssistantMessage(jid: string, content: string): void {
-  const session = sessions.get(jid);
-  if (!session) return;
+export async function addAssistantMessage(
+  jid: string,
+  content: string,
+  attachment?: ChatAttachment,
+  empresaId = getBoundEmpresaId(),
+): Promise<void> {
+  if (!empresaId) {
+    console.warn('[MessageHandler] Ignoring outbound persistence because no empresa is bound yet.');
+    return;
+  }
 
-  const storedMsg: StoredMessage = {
-    id: makeId(),
+  const storedContent = serializeStructuredMessage({ text: content, attachment });
+  const preview = attachment ? buildAttachmentPreview(attachment, content) : content;
+  const sessionRow = await ensureSession({
+    empresaId,
+    jid,
+    customerPhone: formatPhone(phoneFromJid(jid)),
+    lastMessage: storedContent,
+    lastMessageTime: formatClock(new Date()),
+  });
+
+  const storedMsg = await insertMessage({
+    empresaId,
+    sessionId: sessionRow.id,
     role: 'assistant',
-    content,
-    timestamp: nowTimestamp(),
-  };
+    content: storedContent,
+    sentAt: new Date().toISOString(),
+  });
 
-  session.messages.push(storedMsg);
-  session.lastMessage = content;
-  session.lastMessageTime = storedMsg.timestamp;
+  const family = await fetchSessionFamily(empresaId, jid);
+  const mappedSession = family ? mapSession(family) : null;
 
   broadcast({
     type: 'message_sent',
     data: {
-      sessionId: jid,
+      sessionId: mappedSession?.id || jid,
+      customerName: mappedSession?.customerName,
+      customerPhone: mappedSession?.customerPhone,
       message: storedMsg,
+      autoReply: mappedSession?.autoReply,
+      lastMessage: preview,
+      lastMessageTime: storedMsg.timestamp,
     },
   });
 }
 
-/**
- * Toggles auto-reply for a session.
- */
-export function setAutoReply(jid: string, enabled: boolean): void {
-  const session = sessions.get(jid);
-  if (session) {
-    session.autoReply = enabled;
+export async function setAutoReply(
+  jid: string,
+  enabled: boolean,
+  empresaId = getBoundEmpresaId(),
+): Promise<void> {
+  if (!empresaId) {
+    return;
+  }
+
+  const family = await fetchSessionFamily(empresaId, jid);
+  if (!family) {
+    return;
+  }
+
+  const supabase = getServiceSupabase();
+  const { error } = await supabase
+    .from('zelochat_sessions')
+    .update({
+      auto_reply: enabled,
+      updated_at: new Date().toISOString(),
+    })
+    .in('id', family.rows.map((row) => row.id));
+
+  if (error) {
+    throw new Error(error.message);
   }
 }
