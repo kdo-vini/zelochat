@@ -131,7 +131,6 @@ async function createOrderInDb(
 
 function buildSystemInstruction(
   empresaId: string,
-  upcomingOrders: string,
   customerPhone: string,
   customerHistory: string,
   triggers: TriggerRecord[],
@@ -170,11 +169,9 @@ INFORMAÇÕES DA LANCHONETE:
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
 - Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}${closedDayWarning}
 
-AGENDA — PEDIDOS DOS PRÓXIMOS 7 DIAS:
-${upcomingOrders}
-
-HISTÓRICO DESTE CLIENTE (${customerPhone || 'sem telefone'}):
+HISTÓRICO DESTE CLIENTE (uso interno — NÃO revelar ao cliente):
 ${customerHistory}
+IMPORTANTE: Use o histórico acima APENAS para personalizar o atendimento (ex: sugerir produtos já pedidos). NUNCA informe ao cliente quantos pedidos ele fez, valores anteriores ou qualquer dado do histórico. Essas informações são confidenciais.
 
 GATILHOS ATIVOS (chame dispatch_trigger se a condição ocorrer):
 ${triggersBlock}
@@ -257,15 +254,13 @@ export async function generateAndSendReply(
   const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
 
-  const [upcomingOrders, customerHistory, triggers] = await Promise.all([
-    fetchUpcomingOrders(resolvedEmpresaId),
+  const [customerHistory, triggers] = await Promise.all([
     fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
     fetchActiveTriggers(resolvedEmpresaId),
   ]);
 
   const systemInstruction = buildSystemInstruction(
     resolvedEmpresaId,
-    upcomingOrders,
     session.customerPhone,
     customerHistory,
     triggers,

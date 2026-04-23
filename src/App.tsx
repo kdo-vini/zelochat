@@ -125,11 +125,6 @@ export default function App() {
   const [activeView, setActiveView] = useState<View>('chat');
   const [state, setState] = useState<ZeloState>(() => loadInitialState());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(() => {
     try {
       return localStorage.getItem('zelochat_sidebar_expanded') !== 'false';
@@ -178,6 +173,8 @@ export default function App() {
     orders: supabaseOrders,
     addOrder: addOrderToSupabase,
     updateOrderStatus: updateOrderStatusInSupabase,
+    updateOrder: updateOrderInSupabase,
+    deleteOrder: deleteOrderInSupabase,
   } = useOrders(session);
 
   useEffect(() => { saveInitialState(state); }, [state]);
@@ -193,11 +190,14 @@ export default function App() {
       ...prev,
       businessInfo: {
         ...prev.businessInfo,
-        name:    empresa.nome_exibicao ?? prev.businessInfo.name,
-        address: empresa.endereco      ?? prev.businessInfo.address,
-        phone:   empresa.contato       ?? prev.businessInfo.phone,
-        pixKey:  empresa.chave_pix     ?? prev.businessInfo.pixKey,
-        managerPhone: empresa.manager_phone ?? prev.businessInfo.managerPhone,
+        name:         empresa.nome_exibicao    ?? prev.businessInfo.name,
+        address:      empresa.endereco         ?? prev.businessInfo.address,
+        phone:        empresa.contato          ?? prev.businessInfo.phone,
+        pixKey:       empresa.chave_pix        ?? prev.businessInfo.pixKey,
+        managerPhone: empresa.manager_phone    ?? prev.businessInfo.managerPhone,
+        openTime:     empresa.horario_abertura  ?? prev.businessInfo.openTime,
+        closeTime:    empresa.horario_fechamento ?? prev.businessInfo.closeTime,
+        closedDays:   empresa.dias_fechamento   ?? prev.businessInfo.closedDays,
       },
       profile: {
         ...prev.profile,
@@ -293,7 +293,7 @@ export default function App() {
         body: JSON.stringify({
           name: s.businessInfo.name,
           specialty: s.businessInfo.specialty,
-          hours: s.businessInfo.hours,
+          hours: `${s.businessInfo.openTime}–${s.businessInfo.closeTime}`,
           closedDays: s.businessInfo.closedDays,
           address: s.businessInfo.address,
           pixKey: s.businessInfo.pixKey,
@@ -334,6 +334,19 @@ export default function App() {
   const handleAddOrder = async (payload: Omit<Order, 'id' | 'createdAt'>) => {
     const order = await addOrderToSupabase(payload);
     setState((prev) => ({ ...prev, orders: [order, ...prev.orders] }));
+  };
+
+  const handleEditOrder = async (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => {
+    await updateOrderInSupabase(id, payload);
+    setState((prev) => ({
+      ...prev,
+      orders: prev.orders.map((o) => o.id === id ? { ...o, ...payload } : o),
+    }));
+  };
+
+  const handleDeleteOrder = async (id: string) => {
+    await deleteOrderInSupabase(id);
+    setState((prev) => ({ ...prev, orders: prev.orders.filter((o) => o.id !== id) }));
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -499,6 +512,8 @@ export default function App() {
                   onDragEnd={onDragEnd}
                   setActiveView={setActiveView}
                   onAddOrder={handleAddOrder}
+                  onEditOrder={handleEditOrder}
+                  onDeleteOrder={handleDeleteOrder}
                   isAuthenticated={!!token}
                 />
               </DragDropContext>
@@ -506,10 +521,8 @@ export default function App() {
             {activeView === 'calendar' && (
               <CalendarView
                 state={state}
-                selectedDate={selectedDate}
-                setSelectedDate={setSelectedDate}
-                showDatePicker={showDatePicker}
-                setShowDatePicker={setShowDatePicker}
+                setState={setState}
+                onNavigateToKanban={() => setActiveView('kanban')}
               />
             )}
             {activeView === 'catalog' && (
