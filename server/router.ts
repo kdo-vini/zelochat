@@ -11,6 +11,7 @@ import {
   fetchProfilePicture,
   handleConnectionUpdate,
   dispatchIncomingMessage,
+  getOwnJid,
 } from './whatsapp.js';
 import {
   getAllSessions,
@@ -45,11 +46,16 @@ router.post('/webhook', (req: Request, res: Response) => {
   if (event === 'messages.upsert') {
     if (!data.message) return;
     if (data.key?.fromMe) return;
+    // Secondary guard: outbound messages wrapped by multi-device protocol
+    if (data.message?.deviceSentMessage) return;
     const remoteJid: string = data.key?.remoteJid ?? '';
     if (remoteJid === 'status@broadcast') return;
     if (remoteJid.endsWith('@g.us')) return;   // ignore group messages
     if (remoteJid.endsWith('@broadcast')) return; // ignore broadcast lists
     if (!remoteJid.endsWith('@s.whatsapp.net')) return; // only individual chats
+    // Tertiary guard: if the "client" JID is our own number, it's a self-sent message
+    const botJid = getOwnJid();
+    if (botJid && remoteJid === botJid) return;
     dispatchIncomingMessage(data);
   } else if (event === 'connection.update') {
     handleConnectionUpdate(data);

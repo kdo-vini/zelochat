@@ -7,6 +7,16 @@ const BASE_URL = (process.env.WHATSMIAU_BASE_URL || 'https://api.whatsmiau.dev')
 const API_KEY = process.env.WHATSMIAU_API_KEY || '';
 export let INSTANCE_NAME = process.env.WHATSMIAU_INSTANCE || 'zelochat';
 let instanceInternalId = ''; // MongoDB _id from Whatsmiau API
+let ownJid = ''; // JID of the linked WhatsApp number (e.g. "5511999@s.whatsapp.net")
+
+export function getOwnJid(): string {
+  return ownJid;
+}
+
+function setOwnJid(raw: string): void {
+  if (!raw) return;
+  ownJid = raw.includes('@') ? raw : `${raw}@s.whatsapp.net`;
+}
 
 export type ConnectionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected';
 
@@ -120,6 +130,7 @@ export function handleConnectionUpdate(data: any): void {
     currentQR = null;
     reconnectAttempts = 0;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    setOwnJid(data?.ownerJid ?? data?.instance?.ownerJid ?? '');
     broadcast({ type: 'connection', data: 'connected' });
     console.log('[WhatsApp] Connected!');
   } else if (state === 'close') {
@@ -254,6 +265,7 @@ export async function startWhatsApp(): Promise<void> {
     if (resolvedInstance) {
       INSTANCE_NAME = resolveName(resolvedInstance) || INSTANCE_NAME;
       instanceInternalId = resolvedInstance.id ?? '';
+      setOwnJid(resolvedInstance.ownerJid ?? resolvedInstance.owner ?? resolvedInstance.phoneNumber ?? '');
       console.log(`[WhatsApp] Using instance "${INSTANCE_NAME}" (id: ${instanceInternalId}).`);
 
       // Check if already connected via status field (connectionState endpoint is not supported)
