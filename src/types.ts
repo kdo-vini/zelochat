@@ -46,6 +46,19 @@ export interface DeliveryDriver {
   status: 'available' | 'busy' | 'offline';
 }
 
+export type TriggerKind = 'notify_manager' | 'escalate_human';
+
+export interface Trigger {
+  id: string;
+  empresaId: string;
+  kind: TriggerKind;
+  name: string;
+  conditionDescription: string;
+  naturalInput: string;
+  active: boolean;
+  createdAt: string;
+}
+
 export interface ZeloState {
   products: Product[];
   blockedDates: { date: string, reason: string }[];
@@ -54,7 +67,7 @@ export interface ZeloState {
   aiInstructions: string;
   quickResponses: QuickResponse[];
   dailyContext: { id: string, text: string }[];
-  alertTriggers: { id: string, name: string, active: boolean }[];
+  triggers: Trigger[];
   managerHistory: ChatMessage[];
   drivers: DeliveryDriver[];
   businessInfo: {
@@ -65,6 +78,7 @@ export interface ZeloState {
     address: string;
     phone: string;
     pixKey: string;
+    managerPhone: string;
   };
   profile: {
     name: string;
@@ -73,12 +87,6 @@ export interface ZeloState {
     avatar: string;
     notifications: boolean;
     darkMode: boolean;
-  };
-  notificationPrefs: {
-    soundNewMessages: boolean;
-    alertLargeOrders: boolean;
-    dailyEmailReport: boolean;
-    alertOutOfStock: boolean;
   };
 }
 

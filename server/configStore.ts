@@ -9,6 +9,7 @@ export interface BusinessConfig {
   blockedDates: { date: string; reason: string }[];
   dailyContext: { id: string; text: string }[];
   aiInstructions: string;
+  managerPhone: string;
 }
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -22,6 +23,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   blockedDates: [],
   dailyContext: [],
   aiInstructions: '',
+  managerPhone: '',
 };
 
 // Keyed by empresaId — one config entry per authenticated empresa.

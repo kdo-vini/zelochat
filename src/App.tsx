@@ -24,6 +24,7 @@ import { ProfileView } from './components/views/ProfileView';
 import { DriversView } from './components/views/DriversView';
 import { CatalogView } from './components/views/CatalogView';
 import { useDrivers } from './hooks/useDrivers';
+import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
 import { useProdutos } from './hooks/useProdutos';
 import { useEmpresaPerfil } from './hooks/useEmpresaPerfil';
@@ -167,6 +168,13 @@ export default function App() {
     deleteDriver,
   } = useDrivers(token);
   const {
+    triggers,
+    error: triggersError,
+    createTrigger,
+    updateTrigger: updateTriggerRequest,
+    deleteTrigger: deleteTriggerRequest,
+  } = useTriggers(token);
+  const {
     orders: supabaseOrders,
     addOrder: addOrderToSupabase,
     updateOrderStatus: updateOrderStatusInSupabase,
@@ -189,6 +197,7 @@ export default function App() {
         address: empresa.endereco      ?? prev.businessInfo.address,
         phone:   empresa.contato       ?? prev.businessInfo.phone,
         pixKey:  empresa.chave_pix     ?? prev.businessInfo.pixKey,
+        managerPhone: empresa.manager_phone ?? prev.businessInfo.managerPhone,
       },
       profile: {
         ...prev.profile,
@@ -292,6 +301,7 @@ export default function App() {
           blockedDates: s.blockedDates,
           dailyContext: s.dailyContext,
           aiInstructions: s.aiInstructions,
+          managerPhone: s.businessInfo.managerPhone,
         }),
       });
     } catch { /* backend offline during frontend work */ }
@@ -514,7 +524,15 @@ export default function App() {
               />
             )}
             {activeView === 'ai-configs' && (
-              <AIConfigsView state={state} setState={setState} />
+              <AIConfigsView
+                state={state}
+                setState={setState}
+                triggers={triggers}
+                triggersError={triggersError}
+                createTrigger={createTrigger}
+                updateTrigger={updateTriggerRequest}
+                deleteTrigger={deleteTriggerRequest}
+              />
             )}
             {activeView === 'settings' && (
               <SettingsView

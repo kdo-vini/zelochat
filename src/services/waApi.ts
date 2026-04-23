@@ -1,4 +1,4 @@
-import type { ChatAttachment, ChatSession } from '../types';
+import type { ChatAttachment, ChatSession, Trigger, TriggerKind } from '../types';
 import { apiUrl } from '../config';
 
 type SessionsResponse = { sessions: ChatSession[] };
@@ -108,6 +108,46 @@ export async function fetchProfilePicture(token: string, jid: string): Promise<s
   } catch {
     return null;
   }
+}
+
+export async function listTriggers(token: string): Promise<Trigger[]> {
+  const response = await fetch(apiUrl('/api/triggers'), {
+    headers: authHeaders(token),
+  });
+  const body = await parseResponse<{ triggers: Trigger[] }>(response);
+  return body.triggers;
+}
+
+export async function createTrigger(token: string, naturalInput: string): Promise<Trigger> {
+  const response = await fetch(apiUrl('/api/triggers'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ naturalInput }),
+  });
+  const body = await parseResponse<{ trigger: Trigger }>(response);
+  return body.trigger;
+}
+
+export async function updateTrigger(
+  token: string,
+  id: string,
+  patch: { name?: string; conditionDescription?: string; active?: boolean; kind?: TriggerKind },
+): Promise<Trigger> {
+  const response = await fetch(apiUrl(`/api/triggers/${encodeURIComponent(id)}`), {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(patch),
+  });
+  const body = await parseResponse<{ trigger: Trigger }>(response);
+  return body.trigger;
+}
+
+export async function deleteTrigger(token: string, id: string): Promise<void> {
+  const response = await fetch(apiUrl(`/api/triggers/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+  await parseResponse(response);
 }
 
 export async function updateSessionName(token: string, jid: string, name: string): Promise<void> {

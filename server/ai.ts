@@ -3,15 +3,15 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
-import { getSession, addAssistantMessage } from './messageHandler.js';
+import { getSession, addAssistantMessage, setAutoReply } from './messageHandler.js';
 import { sendTextMessage } from './whatsapp.js';
 import { getConfig } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
-import { parseStructuredMessage } from '../src/domain/chat.ts';
+import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.ts';
+import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 
 const OPENAI_MODEL = 'gpt-4o-mini';
 
-// Short day labels used in closedDays config (matches SettingsView DAYS array)
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 let ai: OpenAI | null = null;
@@ -23,6 +23,14 @@ export function getAI(): OpenAI {
     ai = new OpenAI({ apiKey: key });
   }
   return ai;
+}
+
+function phoneToJid(phone: string): string | null {
+  let digits = normalizePhoneNumber(phone);
+  if (!digits) return null;
+  if (digits.length >= 10 && digits.length <= 11) digits = `55${digits}`;
+  if (digits.length < 12) return null;
+  return `${digits}@s.whatsapp.net`;
 }
 
 async function fetchUpcomingOrders(empresaId: string): Promise<string> {
@@ -51,6 +59,39 @@ async function fetchUpcomingOrders(empresaId: string): Promise<string> {
     }).join('\n');
   } catch {
     return 'Agenda indisponível no momento.';
+  }
+}
+
+async function fetchCustomerHistory(empresaId: string, customerPhone: string): Promise<string> {
+  const digits = normalizePhoneNumber(customerPhone || '');
+  if (!digits) return 'Cliente novo.';
+
+  try {
+    const supabase = getServiceSupabase();
+    const { data, error } = await supabase
+      .from('zelochat_orders')
+      .select('items, pickup_date, pickup_time, status, total, customer_phone')
+      .eq('empresa_id', empresaId)
+      .order('pickup_date', { ascending: false })
+      .limit(30);
+
+    if (error || !data || data.length === 0) return 'Cliente novo.';
+
+    const matches = data.filter((o) => {
+      const rowDigits = normalizePhoneNumber(String(o.customer_phone ?? ''));
+      return rowDigits && (rowDigits.endsWith(digits) || digits.endsWith(rowDigits));
+    }).slice(0, 5);
+
+    if (matches.length === 0) return 'Cliente novo.';
+
+    return matches.map((o) => {
+      const items = (o.items as { product: string; quantity: number }[])
+        .map((i) => `${i.quantity}x ${i.product}`)
+        .join(', ');
+      return `- ${o.pickup_date} ${o.pickup_time} | ${items} | R$${Number(o.total).toFixed(2)} | ${o.status}`;
+    }).join('\n');
+  } catch {
+    return 'Histórico indisponível.';
   }
 }
 
@@ -88,7 +129,13 @@ async function createOrderInDb(
   return (data as { id: string }).id;
 }
 
-function buildSystemInstruction(empresaId: string, upcomingOrders: string): string {
+function buildSystemInstruction(
+  empresaId: string,
+  upcomingOrders: string,
+  customerPhone: string,
+  customerHistory: string,
+  triggers: TriggerRecord[],
+): string {
   const cfg = getConfig(empresaId);
 
   const availableProducts = cfg.products.filter((p) => p.available)
@@ -102,12 +149,15 @@ function buildSystemInstruction(empresaId: string, upcomingOrders: string): stri
     ? `\n\nAVISOS DE HOJE:\n${cfg.dailyContext.map((c) => `- ${c.text}`).join('\n')}`
     : '';
 
-  // Closed-day awareness
   const todayLabel = DAY_LABELS[new Date().getDay()];
   const isClosedToday = cfg.closedDays.includes(todayLabel);
   const closedDayWarning = isClosedToday
     ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
     : '';
+
+  const triggersBlock = triggers.length > 0
+    ? triggers.map((t) => `- id=${t.id} [${t.kind}] "${t.name}": ${t.conditionDescription}`).join('\n')
+    : '- (nenhum gatilho configurado)';
 
   return `Você é o assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
@@ -122,6 +172,17 @@ INFORMAÇÕES DA LANCHONETE:
 
 AGENDA — PEDIDOS DOS PRÓXIMOS 7 DIAS:
 ${upcomingOrders}
+
+HISTÓRICO DESTE CLIENTE (${customerPhone || 'sem telefone'}):
+${customerHistory}
+
+GATILHOS ATIVOS (chame dispatch_trigger se a condição ocorrer):
+${triggersBlock}
+
+INSTRUÇÕES DE GATILHO:
+- Chame dispatch_trigger NO MÁXIMO UMA VEZ por condição que ocorrer na conversa.
+- Se for escalate_human, você NÃO escreve mais nada — o sistema cuida do handoff com o cliente.
+- Se for notify_manager, continue a conversa normalmente após a notificação.
 
 DIRETRIZES PERSONALIZADAS:
 ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'}
@@ -167,6 +228,22 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
   },
 };
 
+const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'dispatch_trigger',
+    description: 'Dispara um gatilho configurado pelo dono quando sua condição ocorre na conversa.',
+    parameters: {
+      type: 'object',
+      properties: {
+        trigger_id: { type: 'string', description: 'ID do gatilho a disparar' },
+        reason: { type: 'string', description: 'Resumo curto do que aconteceu na conversa' },
+      },
+      required: ['trigger_id', 'reason'],
+    },
+  },
+};
+
 export async function generateAndSendReply(
   jid: string,
   empresaId?: string,
@@ -180,8 +257,19 @@ export async function generateAndSendReply(
   const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
 
-  const upcomingOrders = await fetchUpcomingOrders(resolvedEmpresaId);
-  const systemInstruction = buildSystemInstruction(resolvedEmpresaId, upcomingOrders);
+  const [upcomingOrders, customerHistory, triggers] = await Promise.all([
+    fetchUpcomingOrders(resolvedEmpresaId),
+    fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
+    fetchActiveTriggers(resolvedEmpresaId),
+  ]);
+
+  const systemInstruction = buildSystemInstruction(
+    resolvedEmpresaId,
+    upcomingOrders,
+    session.customerPhone,
+    customerHistory,
+    triggers,
+  );
 
   try {
     const openai = getAI();
@@ -197,15 +285,15 @@ export async function generateAndSendReply(
       model: OPENAI_MODEL,
       messages,
       temperature: 0.7,
-      tools: [CREATE_ORDER_TOOL],
+      tools: [CREATE_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
       tool_choice: 'auto',
     });
 
     const choice = response.choices[0];
 
-    // Handle tool call: AI wants to create an order
     if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
       const toolCall = choice.message.tool_calls[0];
+
       if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
         let replyText: string;
         try {
@@ -235,9 +323,83 @@ export async function generateAndSendReply(
         await addAssistantMessage(jid, replyText, undefined, resolvedEmpresaId);
         return replyText;
       }
+
+      if (toolCall.type === 'function' && toolCall.function.name === 'dispatch_trigger') {
+        let parsedArgs: { trigger_id?: string; reason?: string } = {};
+        try {
+          parsedArgs = JSON.parse(toolCall.function.arguments);
+        } catch {
+          /* fall through */
+        }
+
+        const trig = triggers.find((t) => t.id === parsedArgs.trigger_id);
+        const reason = (parsedArgs.reason || '').trim() || 'condição atendida';
+        const cfg = getConfig(resolvedEmpresaId);
+        const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
+
+        if (!trig) {
+          console.warn('[AI] Unknown trigger_id from model:', parsedArgs.trigger_id);
+          const fallback = choice.message.content?.trim()
+            || 'Tudo certo! Se precisar de algo mais, é só chamar. 😊';
+          await sendTextMessage(jid, fallback);
+          await addAssistantMessage(jid, fallback, undefined, resolvedEmpresaId);
+          return fallback;
+        }
+
+        if (trig.kind === 'escalate_human') {
+          await setAutoReply(jid, false, resolvedEmpresaId);
+          const handoff = 'Entendi! Vou chamar um atendente pra te ajudar com isso. Só um instante 🙏';
+          await sendTextMessage(jid, handoff);
+          await addAssistantMessage(jid, handoff, undefined, resolvedEmpresaId);
+          if (managerJid) {
+            try {
+              await sendTextMessage(
+                managerJid,
+                `🆘 *Atendimento humano* — ${trig.name}\nCliente: ${session.customerName} (${session.customerPhone})\nMotivo: ${reason}\nAuto-resposta desativada.`,
+              );
+            } catch (err) {
+              console.warn('[AI] Failed to notify manager (escalate):', err);
+            }
+          } else {
+            console.warn('[AI] Escalation triggered but managerPhone not configured.');
+          }
+          console.log(`[AI] Escalated to human (${trig.name}) for ${jid}`);
+          return handoff;
+        }
+
+        // notify_manager — alert and continue the conversation
+        if (managerJid) {
+          try {
+            await sendTextMessage(
+              managerJid,
+              `🔔 *${trig.name}*\nCliente: ${session.customerName} (${session.customerPhone})\nMotivo: ${reason}`,
+            );
+          } catch (err) {
+            console.warn('[AI] Failed to notify manager (alert):', err);
+          }
+        } else {
+          console.warn('[AI] notify_manager triggered but managerPhone not configured.');
+        }
+
+        const followUp = await openai.chat.completions.create({
+          model: OPENAI_MODEL,
+          temperature: 0.7,
+          messages: [
+            ...messages,
+            choice.message,
+            { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' },
+          ],
+        });
+        const followText = followUp.choices[0]?.message?.content?.trim()
+          || 'Beleza! Já anotei aqui. 👍';
+        const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
+        await sendTextMessage(jid, cleanFollow);
+        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
+        console.log(`[AI] Dispatched notify_manager (${trig.name}) for ${jid}`);
+        return cleanFollow;
+      }
     }
 
-    // Normal text reply
     const replyText = choice.message.content || 'Desculpe, deu um erro aqui. Pode repetir?';
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 

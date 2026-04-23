@@ -24,6 +24,7 @@ import {
 import { generateAndSendReply, getAI } from './ai.js';
 import { setConfig } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
+import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from './triggers.js';
 import { requireEmpresaId, setBoundEmpresaId } from './supabase.js';
 import type { ChatAttachment } from '../src/types.ts';
 
@@ -92,6 +93,32 @@ function sendDriverError(res: Response, error: unknown): void {
 
   if (message.includes('zelochat_drivers_empresa_id_phone_key')) {
     res.status(409).json({ error: 'Já existe um entregador com esse WhatsApp nesta empresa.' });
+    return;
+  }
+
+  res.status(500).json({ error: message });
+}
+
+function sendTriggerError(res: Response, error: unknown): void {
+  const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+
+  if (message === 'UNAUTHORIZED' || message === 'EMPRESA_NOT_FOUND') {
+    sendAuthError(res, error);
+    return;
+  }
+
+  if (message === 'INVALID_TRIGGER_PAYLOAD') {
+    res.status(400).json({ error: 'Descrição do gatilho não pode ser vazia.' });
+    return;
+  }
+
+  if (message === 'INVALID_TRIGGER_PARSE') {
+    res.status(400).json({ error: 'Não consegui entender esse gatilho. Tente descrever com mais detalhes.' });
+    return;
+  }
+
+  if (message === 'INVALID_TRIGGER_KIND') {
+    res.status(400).json({ error: 'Tipo de gatilho inválido.' });
     return;
   }
 
@@ -286,6 +313,59 @@ router.delete('/api/drivers/:id', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/api/triggers', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const triggers = await listTriggers(empresaId);
+    res.json({ triggers });
+  } catch (error) {
+    sendTriggerError(res, error);
+  }
+});
+
+router.post('/api/triggers', async (req: Request, res: Response) => {
+  const { naturalInput } = (req.body ?? {}) as { naturalInput?: string };
+  if (!naturalInput?.trim()) {
+    res.status(400).json({ error: 'Descreva o gatilho em português.' });
+    return;
+  }
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const trigger = await createTrigger(empresaId, naturalInput);
+    res.status(201).json({ trigger });
+  } catch (error) {
+    sendTriggerError(res, error);
+  }
+});
+
+router.patch('/api/triggers/:id', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const trigger = await updateTrigger(empresaId, req.params.id, req.body ?? {});
+    if (!trigger) {
+      res.status(404).json({ error: 'Gatilho não encontrado.' });
+      return;
+    }
+    res.json({ trigger });
+  } catch (error) {
+    sendTriggerError(res, error);
+  }
+});
+
+router.delete('/api/triggers/:id', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const deleted = await deleteTrigger(empresaId, req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Gatilho não encontrado.' });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    sendTriggerError(res, error);
+  }
+});
+
 router.post('/api/ai/reply', async (req: Request, res: Response) => {
   const { jid } = req.body;
 
@@ -438,9 +518,9 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, closedDays, address, pixKey,
-            products, blockedDates, dailyContext, aiInstructions } = req.body;
+            products, blockedDates, dailyContext, aiInstructions, managerPhone } = req.body;
     setConfig(empresaId, { name, specialty, hours, closedDays, address, pixKey,
-                           products, blockedDates, dailyContext, aiInstructions });
+                           products, blockedDates, dailyContext, aiInstructions, managerPhone });
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);

@@ -33,10 +33,7 @@ export async function getClientResponse(
     ? `\n\nATENÇÃO - BASE DE CONHECIMENTO MOMENTÂNEA (AVISOS DE HOJE):\n${state.dailyContext.map(c => `- ${c.text}`).join('\n')}\n!!! VOCÊ DEVE OBEDECER E INFORMAR O CLIENTE SOBRE ESTAS REGRAS ACIMA SE O ASSUNTO FOR MENCIONADO !!!`
     : '';
 
-  const activeAlerts = state.alertTriggers?.filter(t => t.active) || [];
-  const alertsStr = activeAlerts.length > 0
-    ? `\n\nGATILHOS DE ALERTA ATIVOS:\n${activeAlerts.map(t => `- ID: ${t.id} | Condição: ${t.name}`).join('\n')}\n\nREGRA CRÍTICA DE ALERTAS: Se a conversa do cliente atingir a condição descrita em algum dos gatilhos ativos, adicione o texto exato <ALERT>ID_DO_GATILHO</ALERT> no final da sua resposta (escondido do usuário). Exemplo: <ALERT>at-1</ALERT>`
-    : '';
+  const alertsStr = '';
 
   const systemInstruction = `
     Você é o assistente virtual da lanchonete ${state.businessInfo.name}, especialista em ${state.businessInfo.specialty}.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, Bell, Shield, Check, CloudOff, LogOut } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut } from 'lucide-react';
 import { ZeloState } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { API_BASE, WS_URL } from '../../config';
@@ -221,13 +221,6 @@ export const WhatsAppIntegrationCard = () => {
   );
 };
 
-const NOTIF_ITEMS: { key: keyof ZeloState['notificationPrefs']; label: string; desc: string }[] = [
-  { key: 'soundNewMessages', label: 'Som para novas mensagens', desc: 'Toca um som ao receber mensagem.' },
-  { key: 'alertLargeOrders', label: 'Pedidos acima de R$ 200', desc: 'Alerta especial para pedidos grandes.' },
-  { key: 'dailyEmailReport', label: 'Relatório diário por e-mail', desc: 'Resumo de atendimentos todo dia.' },
-  { key: 'alertOutOfStock', label: 'Alertar produto indisponível', desc: 'Notifica quando estoque acabar.' },
-];
-
 const DAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 
 interface SettingsViewProps {
@@ -244,6 +237,7 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
     address: state.businessInfo.address,
     phone:   state.businessInfo.phone,
     pixKey:  state.businessInfo.pixKey,
+    managerPhone: state.businessInfo.managerPhone,
   });
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
@@ -254,14 +248,16 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
       address: state.businessInfo.address,
       phone:   state.businessInfo.phone,
       pixKey:  state.businessInfo.pixKey,
+      managerPhone: state.businessInfo.managerPhone,
     });
-  }, [state.businessInfo.name, state.businessInfo.address, state.businessInfo.phone, state.businessInfo.pixKey]);
+  }, [state.businessInfo.name, state.businessInfo.address, state.businessInfo.phone, state.businessInfo.pixKey, state.businessInfo.managerPhone]);
 
   const isDirty =
     draft.name    !== state.businessInfo.name    ||
     draft.address !== state.businessInfo.address ||
     draft.phone   !== state.businessInfo.phone   ||
-    draft.pixKey  !== state.businessInfo.pixKey;
+    draft.pixKey  !== state.businessInfo.pixKey  ||
+    draft.managerPhone !== state.businessInfo.managerPhone;
 
   const handleSaveEmpresa = async () => {
     setSaveState('saving');
@@ -270,6 +266,7 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
       endereco:      draft.address || undefined,
       contato:       draft.phone   || undefined,
       chave_pix:     draft.pixKey  || undefined,
+      manager_phone: draft.managerPhone || null,
     });
     if (ok) {
       // Commit to global state
@@ -281,6 +278,7 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
           address: draft.address,
           phone:   draft.phone,
           pixKey:  draft.pixKey,
+          managerPhone: draft.managerPhone,
         },
       }));
       setSaveState('saved');
@@ -302,10 +300,6 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
           : [...prev.businessInfo.closedDays, day],
       },
     }));
-  };
-
-  const toggleNotif = (key: keyof ZeloState['notificationPrefs']) => {
-    setState(prev => ({ ...prev, notificationPrefs: { ...prev.notificationPrefs, [key]: !prev.notificationPrefs[key] } }));
   };
 
   return (
@@ -424,26 +418,25 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
           <div className="space-y-5">
             <WhatsAppIntegrationCard />
 
-            <SectionCard icon={Bell} title="Notificações">
+            <SectionCard icon={UserCog} title="Gerente">
               <div className="space-y-3">
-                {NOTIF_ITEMS.map(item => (
-                  <div key={item.key} className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-[13.5px] font-medium">{item.label}</p>
-                      <p className="text-[12px] text-[var(--color-ink-muted)]">{item.desc}</p>
-                    </div>
-                    <button
-                      onClick={() => toggleNotif(item.key)}
-                      className={`w-10 h-[22px] rounded-full relative flex-shrink-0 transition-colors ${
-                        state.notificationPrefs[item.key] ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
-                      }`}
-                    >
-                      <span className={`absolute top-[3px] w-4 h-4 bg-white rounded-full shadow-sm transition-all ${
-                        state.notificationPrefs[item.key] ? 'right-[3px]' : 'left-[3px]'
-                      }`} />
-                    </button>
-                  </div>
-                ))}
+                <p className="text-[12.5px] text-[var(--color-ink-muted)]">
+                  WhatsApp pessoal do gerente. Os gatilhos configurados enviam notificações e escalações direto para esse número.
+                </p>
+                <div>
+                  <label className={LABEL}>WhatsApp do gerente</label>
+                  <input
+                    type="text"
+                    inputMode="tel"
+                    value={draft.managerPhone}
+                    onChange={e => setDraft(p => ({ ...p, managerPhone: e.target.value }))}
+                    placeholder="(XX) XXXXX-XXXX"
+                    className={FIELD}
+                  />
+                  <p className="text-[11.5px] text-[var(--color-ink-faint)] mt-1.5">
+                    Inclua DDD. Usamos esse número só para alertas — nunca para o cliente.
+                  </p>
+                </div>
               </div>
             </SectionCard>
 

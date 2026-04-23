@@ -13,6 +13,9 @@ export type ConnectionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected
 let connectionStatus: ConnectionStatus = 'disconnected';
 let currentQR: string | null = null;
 let incomingMessageHandler: ((msg: any) => void) | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000; // 5 min cap
 
 function apiHeaders() {
   return { apikey: API_KEY };
@@ -91,18 +94,39 @@ export function dispatchIncomingMessage(msg: any): void {
   }
 }
 
+function scheduleReconnect(): void {
+  if (reconnectTimer) return; // already scheduled
+  const delay = Math.min(5_000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY_MS);
+  reconnectAttempts++;
+  console.log(`[WhatsApp] Scheduling reconnect attempt #${reconnectAttempts} in ${delay / 1000}s...`);
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    if (connectionStatus === 'connected') return;
+    console.log(`[WhatsApp] Reconnect attempt #${reconnectAttempts}...`);
+    try {
+      await fetchQR();
+    } catch (err) {
+      console.error('[WhatsApp] Reconnect failed:', err instanceof Error ? err.message : err);
+      scheduleReconnect();
+    }
+  }, delay);
+}
+
 export function handleConnectionUpdate(data: any): void {
   const state: string = data?.state ?? data?.instance?.state ?? '';
 
   if (state === 'open') {
     connectionStatus = 'connected';
     currentQR = null;
+    reconnectAttempts = 0;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     broadcast({ type: 'connection', data: 'connected' });
     console.log('[WhatsApp] Connected!');
   } else if (state === 'close') {
     connectionStatus = 'disconnected';
     broadcast({ type: 'connection', data: 'disconnected' });
-    console.log('[WhatsApp] Disconnected.');
+    console.log('[WhatsApp] Disconnected — will auto-reconnect.');
+    scheduleReconnect();
   } else if (state === 'connecting') {
     connectionStatus = 'connecting';
     broadcast({ type: 'connection', data: 'connecting' });
@@ -257,6 +281,14 @@ export async function startWhatsApp(): Promise<void> {
   if (connectionStatus === 'connected') return;
 
   await fetchQR();
+
+  // 3. Periodic health check — reconnect if Whatsmiau drops the session silently
+  setInterval(async () => {
+    if (connectionStatus === 'connected') return;
+    if (reconnectTimer) return; // reconnect already in progress
+    console.log('[WhatsApp] Health check: not connected — triggering reconnect.');
+    scheduleReconnect();
+  }, 5 * 60 * 1000); // every 5 minutes
 }
 
 export async function disconnectWhatsApp(): Promise<void> {

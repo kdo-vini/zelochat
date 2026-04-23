@@ -8,7 +8,7 @@ export const INITIAL_STATE: ZeloState = {
   aiInstructions: "",
   quickResponses: [],
   dailyContext: [],
-  alertTriggers: [],
+  triggers: [],
   managerHistory: [],
   drivers: [],
   businessInfo: {
@@ -19,6 +19,7 @@ export const INITIAL_STATE: ZeloState = {
     address: "",
     phone: "",
     pixKey: "",
+    managerPhone: "",
   },
   profile: {
     name: "",
@@ -27,12 +28,6 @@ export const INITIAL_STATE: ZeloState = {
     avatar: "",
     notifications: true,
     darkMode: false,
-  },
-  notificationPrefs: {
-    soundNewMessages: true,
-    alertLargeOrders: true,
-    dailyEmailReport: false,
-    alertOutOfStock: true,
   },
 };
 

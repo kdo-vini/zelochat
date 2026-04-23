@@ -41,15 +41,35 @@ interface OrderFormData {
   total: string;
 }
 
-const EMPTY_FORM: OrderFormData = {
+const brasiliaDateISO = () => {
+  const [day, month, year] = new Date()
+    .toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    .split('/');
+  return `${year}-${month}-${day}`;
+};
+
+const brasiliaTimeHHMM = () =>
+  new Date().toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+const isoToBR = (iso: string) => {
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+const makeEmptyForm = (): OrderFormData => ({
   customerName: '',
   customerPhone: '',
-  pickupDate: new Date().toISOString().split('T')[0],
-  pickupTime: '',
+  pickupDate: brasiliaDateISO(),
+  pickupTime: brasiliaTimeHHMM(),
   deliveryAddress: '',
   items: [{ product: '', quantity: 1 }],
   total: '',
-};
+});
 
 function AddOrderModal({
   onClose,
@@ -58,7 +78,8 @@ function AddOrderModal({
   onClose: () => void;
   onSave: (data: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
 }) {
-  const [form, setForm] = useState<OrderFormData>(EMPTY_FORM);
+  const [form, setForm] = useState<OrderFormData>(makeEmptyForm);
+  const [dateDisplay, setDateDisplay] = useState(() => isoToBR(makeEmptyForm().pickupDate));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -179,9 +200,21 @@ function AddOrderModal({
                   Data *
                 </label>
                 <input
-                  type="date"
-                  value={form.pickupDate}
-                  onChange={(e) => setField('pickupDate', e.target.value)}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="DD/MM/AAAA"
+                  value={dateDisplay}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
+                    let display = digits;
+                    if (digits.length > 4) display = `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4)}`;
+                    else if (digits.length > 2) display = `${digits.slice(0,2)}/${digits.slice(2)}`;
+                    setDateDisplay(display);
+                    if (digits.length === 8) {
+                      const [d, m, y] = [digits.slice(0,2), digits.slice(2,4), digits.slice(4,8)];
+                      setField('pickupDate', `${y}-${m}-${d}`);
+                    }
+                  }}
                   className="w-full px-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
                 />
               </div>

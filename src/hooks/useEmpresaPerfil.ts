@@ -11,6 +11,8 @@ export interface EmpresaPerfil {
   logo_url: string | null;
   /** Added via migration 001_empresa_perfil_chave_pix.sql — may be null if migration not yet run */
   chave_pix: string | null;
+  /** Added via migration 003_triggers_and_manager_phone.sql — may be null if migration not yet run */
+  manager_phone: string | null;
 }
 
 interface UseEmpresaPerfilResult {
@@ -72,7 +74,20 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] chave_pix not available (run migration 001):', pixError.message);
     }
 
-    setEmpresa({ ...data, chave_pix: chavePix });
+    let managerPhone: string | null = null;
+    const { data: mgrData, error: mgrError } = await supabase
+      .from('empresa_perfil')
+      .select('manager_phone')
+      .eq('id', data.id)
+      .maybeSingle();
+
+    if (!mgrError && mgrData) {
+      managerPhone = (mgrData as { manager_phone?: string | null }).manager_phone ?? null;
+    } else if (mgrError) {
+      console.warn('[useEmpresaPerfil] manager_phone not available (run migration 003):', mgrError.message);
+    }
+
+    setEmpresa({ ...data, chave_pix: chavePix, manager_phone: managerPhone });
     setLoading(false);
   }, [session?.user?.id]);
 
@@ -97,6 +112,17 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         if (dbError.message.includes('chave_pix') && patch.chave_pix !== undefined) {
           console.warn('[useEmpresaPerfil] chave_pix column missing — saving without it. Run migration 001.');
           const { chave_pix: _omitted, ...patchWithout } = patch as Partial<EmpresaPerfil>;
+          const { error: retryError } = await supabase
+            .from('empresa_perfil')
+            .update({ ...patchWithout, updated_at: new Date().toISOString() })
+            .eq('id', empresa.id);
+          if (retryError) {
+            setError(retryError.message);
+            return false;
+          }
+        } else if (dbError.message.includes('manager_phone') && patch.manager_phone !== undefined) {
+          console.warn('[useEmpresaPerfil] manager_phone column missing — saving without it. Run migration 003.');
+          const { manager_phone: _omitted, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })

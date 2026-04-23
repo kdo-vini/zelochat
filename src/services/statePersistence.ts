@@ -9,11 +9,9 @@ type PersistedState = Pick<
   | 'aiInstructions'
   | 'quickResponses'
   | 'dailyContext'
-  | 'alertTriggers'
   | 'managerHistory'
   | 'businessInfo'
   | 'profile'
-  | 'notificationPrefs'
 >;
 
 function getPersistedSlice(state: ZeloState): PersistedState {
@@ -22,11 +20,9 @@ function getPersistedSlice(state: ZeloState): PersistedState {
     aiInstructions: state.aiInstructions,
     quickResponses: state.quickResponses,
     dailyContext: state.dailyContext,
-    alertTriggers: state.alertTriggers,
     managerHistory: state.managerHistory,
     businessInfo: state.businessInfo,
     profile: state.profile,
-    notificationPrefs: state.notificationPrefs,
   };
 }
 
@@ -49,10 +45,6 @@ export function loadInitialState(): ZeloState {
       profile: {
         ...INITIAL_STATE.profile,
         ...parsed.profile,
-      },
-      notificationPrefs: {
-        ...INITIAL_STATE.notificationPrefs,
-        ...parsed.notificationPrefs,
       },
     };
   } catch {
