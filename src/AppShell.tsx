@@ -308,19 +308,25 @@ export default function AppShell() {
     void markRead(activeSessionId);
   }, [activeSessionId, hydrateSession, markRead]);
 
-  // Busca fotos de perfil para sessões ainda não carregadas.
-  // Armazena '' imediatamente para não re-requisitar JIDs sem foto a cada update de sessão.
+  // Carrega fotos de perfil que já vieram populadas no objeto da sessão, ou consulta via API como fallback
   useEffect(() => {
     if (!token || sessions.length === 0) return;
     const missing = sessions.filter((s) => !(s.id in profilePics));
     if (missing.length === 0) return;
-    const placeholders: Record<string, string> = {};
-    missing.forEach((s) => { placeholders[s.id] = ''; });
-    setProfilePics((prev) => ({ ...prev, ...placeholders }));
+    const updates: Record<string, string> = {};
     missing.forEach((s) => {
-      void fetchProfilePicture(s.id).then((url) => {
-        if (url) setProfilePics((prev) => ({ ...prev, [s.id]: url }));
-      });
+      // Se a sessão já tem a foto (vinda do banco), use-a. Senão, marca vazia.
+      updates[s.id] = s.profilePicUrl || '';
+    });
+    setProfilePics((prev) => ({ ...prev, ...updates }));
+    
+    // Fallback: se não tiver no banco, tenta buscar (embora saibamos que no Whatsmiau V2 não retorna)
+    missing.forEach((s) => {
+      if (!s.profilePicUrl) {
+        void fetchProfilePicture(s.id).then((url) => {
+          if (url) setProfilePics((prev) => ({ ...prev, [s.id]: url }));
+        });
+      }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, token]);

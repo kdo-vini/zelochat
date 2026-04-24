@@ -27,6 +27,7 @@ type SessionEventPayload = {
 type WsEvent =
   | { type: 'message'; data: SessionEventPayload }
   | { type: 'message_sent'; data: SessionEventPayload }
+  | { type: 'contact_update'; data: { remoteJid: string, pushName: string, profilePicUrl?: string } }
   | { type: 'qr' | 'connection'; data: unknown };
 
 function upsertMessage(messages: ChatMessage[], next: ChatMessage): ChatMessage[] {
@@ -209,6 +210,15 @@ export function useWhatsAppSessions(token: string | null) {
       ws.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data) as WsEvent;
+
+          if (parsed.type === 'contact_update') {
+            setSessions((previous) => previous.map((session) => 
+              session.id === (parsed.data as any).remoteJid && (parsed.data as any).profilePicUrl
+                ? { ...session, profilePicUrl: (parsed.data as any).profilePicUrl, customerName: (parsed.data as any).pushName || session.customerName }
+                : session
+            ));
+            return;
+          }
 
           if (parsed.type !== 'message' && parsed.type !== 'message_sent') {
             return;

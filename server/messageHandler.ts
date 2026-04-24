@@ -20,6 +20,7 @@ export interface StoredSession {
   messages: ChatMessage[];
   status: 'active' | 'archived';
   autoReply: boolean;
+  profilePicUrl?: string;
 }
 
 interface SessionRow {
@@ -32,6 +33,7 @@ interface SessionRow {
   unread_count: number | null;
   status: 'active' | 'archived';
   auto_reply: boolean | null;
+  profile_pic_url: string | null;
   updated_at: string;
 }
 
@@ -202,6 +204,7 @@ function mapSession(family: SessionFamily, messages: ChatMessage[] = []): Stored
     messages,
     status: family.rows.some((row) => row.status === 'active') ? 'active' : 'archived',
     autoReply: family.primary.auto_reply ?? family.latest.auto_reply ?? true,
+    profilePicUrl: family.primary.profile_pic_url || family.latest.profile_pic_url || undefined,
   };
 }
 
@@ -209,7 +212,7 @@ async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
     .from('zelochat_sessions')
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, updated_at')
     .eq('empresa_id', empresaId)
     .order('updated_at', { ascending: false });
 
@@ -238,7 +241,7 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
   };
 }
 
-async function ensureSession(params: {
+export async function ensureSession(params: {
   empresaId: string;
   jid: string;
   customerName?: string;
@@ -246,6 +249,7 @@ async function ensureSession(params: {
   lastMessage?: string;
   lastMessageTime?: string;
   unreadCount?: number;
+  profilePicUrl?: string;
 }): Promise<SessionRow> {
   const supabase = getServiceSupabase();
   const family = await fetchSessionFamily(params.empresaId, params.jid);
@@ -271,6 +275,7 @@ async function ensureSession(params: {
     unread_count: params.unreadCount ?? existing?.unread_count ?? 0,
     status: existing?.status ?? 'active',
     auto_reply: existing?.auto_reply ?? true,
+    profile_pic_url: params.profilePicUrl ?? existing?.profile_pic_url ?? null,
     updated_at: new Date().toISOString(),
   };
 
@@ -279,7 +284,7 @@ async function ensureSession(params: {
       .from('zelochat_sessions')
       .update(payload)
       .eq('id', existing.id)
-      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at')
+      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, updated_at')
       .single();
 
     if (error) {
@@ -292,7 +297,7 @@ async function ensureSession(params: {
   const { data, error } = await supabase
     .from('zelochat_sessions')
     .insert(payload)
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, updated_at')
     .single();
 
   if (error) {
@@ -300,6 +305,18 @@ async function ensureSession(params: {
   }
 
   return data as SessionRow;
+}
+
+export async function updateSessionProfilePic(empresaId: string, jid: string, profilePicUrl: string) {
+  const supabase = getServiceSupabase();
+  const family = await fetchSessionFamily(empresaId, jid);
+  const existing = family?.primary ?? null;
+  if (existing) {
+    await supabase
+      .from('zelochat_sessions')
+      .update({ profile_pic_url: profilePicUrl })
+      .eq('id', existing.id);
+  }
 }
 
 async function insertMessage(params: {

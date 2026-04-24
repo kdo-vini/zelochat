@@ -28,6 +28,7 @@ import {
   getAllSessions,
   getSession,
   addAssistantMessage,
+  updateSessionProfilePic,
   setAutoReply,
   markSessionAsRead,
   deleteSession,
@@ -144,6 +145,14 @@ router.post('/webhook', (req: Request, res: Response) => {
       const pushName: string = c?.pushName ?? '';
       if (remoteJid && pushName) {
         broadcast({ type: 'contact_update', data: { remoteJid, pushName, profilePicUrl: c?.profilePicUrl } });
+        
+        // Save profile picture to database
+        const empresaId = getBoundEmpresaId();
+        if (empresaId && c?.profilePicUrl) {
+          updateSessionProfilePic(empresaId, remoteJid, c.profilePicUrl).catch(err => {
+            console.error('[Webhook] Failed to save profile picture:', err);
+          });
+        }
       }
     }
   }

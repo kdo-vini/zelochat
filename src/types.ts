@@ -17,6 +17,7 @@ export interface ChatSession {
   status: 'active' | 'archived';
   alerts?: string[];
   autoReply?: boolean;
+  profilePicUrl?: string;
 }
 
 export interface Order {
