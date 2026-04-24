@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions.js';
+import { broadcast } from './ws.js';
 import {
   getStatus,
   getQR,
@@ -13,6 +14,13 @@ import {
   handleConnectionUpdate,
   dispatchIncomingMessage,
   getOwnJid,
+  markWhatsAppMessageAsRead,
+  validateWhatsAppNumbers,
+  sendListMessage,
+  sendLocationMessage,
+  sendReaction,
+  sendPollMessage,
+  revokeMessage,
 } from './whatsapp.js';
 import {
   getAllSessions,
@@ -107,6 +115,35 @@ router.post('/webhook', (req: Request, res: Response) => {
     dispatchIncomingMessage(data);
   } else if (event === 'connection.update') {
     handleConnectionUpdate(data);
+  } else if (event === 'messages.update') {
+    // Delivery / read receipts — broadcast to frontend so it can update message ticks
+    const updates = Array.isArray(data) ? data : [data];
+    for (const u of updates) {
+      if (!u?.keyId && !u?.messageId) continue;
+      broadcast({
+        type: 'message_status',
+        data: {
+          messageId: u.keyId ?? u.messageId,
+          remoteJid: u.remoteJid,
+          status: u.status, // 'DELIVERY_ACK' | 'READ'
+        },
+      });
+    }
+  } else if (event === 'messages.delete') {
+    const deletions = Array.isArray(data) ? data : [data];
+    for (const d of deletions) {
+      if (!d?.id) continue;
+      broadcast({ type: 'message_deleted', data: { messageId: d.id, remoteJid: d.remoteJid } });
+    }
+  } else if (event === 'contacts.upsert') {
+    const contacts = Array.isArray(data) ? data : [data];
+    for (const c of contacts) {
+      const remoteJid: string = c?.remoteJid ?? '';
+      const pushName: string = c?.pushName ?? '';
+      if (remoteJid && pushName) {
+        broadcast({ type: 'contact_update', data: { remoteJid, pushName, profilePicUrl: c?.profilePicUrl } });
+      }
+    }
   }
 });
 
@@ -477,6 +514,22 @@ router.post('/api/sessions/:jid/read', async (req: Request, res: Response) => {
   }
 });
 
+// Mark a specific WhatsApp message as read (requires the WA message ID, not the DB UUID)
+router.post('/api/sessions/:jid/mark-read', async (req: Request, res: Response) => {
+  const { messageId } = req.body as { messageId?: string };
+  if (!messageId) {
+    res.status(400).json({ error: 'Campo obrigatório: messageId.' });
+    return;
+  }
+  try {
+    await requireEmpresaId(req);
+    await markWhatsAppMessageAsRead(req.params.jid, messageId);
+    res.json({ ok: true });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
 router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
@@ -649,6 +702,128 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);
+  }
+});
+
+// ─── Validate WhatsApp numbers ────────────────────────────────────────────────
+
+router.post('/api/whatsapp/validate-numbers', async (req: Request, res: Response) => {
+  const { numbers } = req.body as { numbers?: string[] };
+  if (!Array.isArray(numbers) || numbers.length === 0) {
+    res.status(400).json({ error: 'Campo "numbers" é obrigatório e deve ser um array.' });
+    return;
+  }
+  try {
+    await requireEmpresaId(req);
+    const result = await validateWhatsAppNumbers(numbers);
+    res.json({ result });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+// ─── Send interactive list ────────────────────────────────────────────────────
+
+router.post('/api/send/list', async (req: Request, res: Response) => {
+  const { to, title, description, buttonText, footerText, sections } = req.body ?? {};
+  if (!to || !description || !buttonText || !Array.isArray(sections)) {
+    res.status(400).json({ error: 'Campos obrigatórios: to, description, buttonText, sections.' });
+    return;
+  }
+  try {
+    await requireEmpresaId(req);
+    await sendListMessage(to, { title, description, buttonText, footerText, sections });
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Send location ────────────────────────────────────────────────────────────
+
+router.post('/api/send/location', async (req: Request, res: Response) => {
+  const { to, latitude, longitude, name, address } = req.body ?? {};
+  if (!to || latitude == null || longitude == null) {
+    res.status(400).json({ error: 'Campos obrigatórios: to, latitude, longitude.' });
+    return;
+  }
+  try {
+    await requireEmpresaId(req);
+    await sendLocationMessage(to, { latitude, longitude, name, address });
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Send reaction ────────────────────────────────────────────────────────────
+
+router.post('/api/send/reaction', async (req: Request, res: Response) => {
+  const { to, messageId, reaction, fromMe } = req.body ?? {};
+  if (!to || !messageId || !reaction) {
+    res.status(400).json({ error: 'Campos obrigatórios: to, messageId, reaction.' });
+    return;
+  }
+  try {
+    await requireEmpresaId(req);
+    await sendReaction(to, messageId, reaction, fromMe ?? false);
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Send poll ────────────────────────────────────────────────────────────────
+
+router.post('/api/send/poll', async (req: Request, res: Response) => {
+  const { to, name, values, selectableCount } = req.body ?? {};
+  if (!to || !name || !Array.isArray(values) || values.length === 0) {
+    res.status(400).json({ error: 'Campos obrigatórios: to, name, values (array).' });
+    return;
+  }
+  try {
+    await requireEmpresaId(req);
+    await sendPollMessage(to, { name, values, selectableCount });
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Revoke message ───────────────────────────────────────────────────────────
+
+router.delete('/api/messages/:id', async (req: Request, res: Response) => {
+  const { remoteJid, fromMe } = req.body ?? {};
+  if (!remoteJid) {
+    res.status(400).json({ error: 'Campo obrigatório: remoteJid.' });
+    return;
+  }
+  try {
+    await requireEmpresaId(req);
+    await revokeMessage(remoteJid, req.params.id, fromMe ?? true);
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    res.status(500).json({ error: error.message });
   }
 });
 

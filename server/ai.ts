@@ -4,7 +4,7 @@ import type {
 } from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
 import { getSession, addAssistantMessage, setAutoReply } from './messageHandler.js';
-import { sendTextMessage, sendButtonMessage } from './whatsapp.js';
+import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.ts';
@@ -316,6 +316,9 @@ export async function generateAndSendReply(
     customerHistory,
     triggers,
   );
+
+  // Signal "typing" while we wait for the AI — non-blocking, ignore failures
+  void sendPresence(jid, 'composing');
 
   try {
     const openai = getAI();

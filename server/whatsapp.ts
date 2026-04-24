@@ -72,7 +72,7 @@ export async function registerWebhook(force = false): Promise<boolean> {
           url: webhookUrl,
           webhookByEvents: false,
           webhookBase64: true,
-          events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
+          events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
         },
       },
       { headers: apiHeaders() },
@@ -152,12 +152,19 @@ export async function sendTextMessage(jid: string, text: string): Promise<void> 
   );
 }
 
+export interface ButtonDef {
+  id: string;
+  displayText: string;
+  type?: 'reply' | 'pix';
+  pixData?: { currency: string; keyType: string; key: string };
+}
+
 export async function sendButtonMessage(
   jid: string,
   title: string,
   description: string,
   footer: string,
-  buttons: { id: string; displayText: string }[],
+  buttons: ButtonDef[],
 ): Promise<void> {
   await axios.post(
     `${BASE_URL}/message/sendButtons/${INSTANCE_NAME}`,
@@ -166,7 +173,12 @@ export async function sendButtonMessage(
       title,
       description,
       footer,
-      buttons: buttons.map((b) => ({ type: 'reply', displayText: b.displayText, id: b.id })),
+      buttons: buttons.map((b) => {
+        if (b.type === 'pix' && b.pixData) {
+          return { type: 'pix', displayText: b.displayText, id: b.id, ...b.pixData };
+        }
+        return { type: 'reply', displayText: b.displayText, id: b.id };
+      }),
     },
     { headers: apiHeaders() },
   );
@@ -343,4 +355,117 @@ export async function disconnectWhatsApp(): Promise<void> {
   currentQR = null;
   broadcast({ type: 'connection', data: 'disconnected' });
   console.log('[WhatsApp] Disconnected by user.');
+}
+
+// ─── Typing / Presence ───────────────────────────────────────────────────────
+
+export type PresenceType = 'composing' | 'paused' | 'available' | 'unavailable';
+
+export async function sendPresence(jid: string, presence: PresenceType, delayMs = 0): Promise<void> {
+  try {
+    await axios.post(
+      `${BASE_URL}/chat/sendPresence/${INSTANCE_NAME}`,
+      { number: jid, presence, ...(delayMs > 0 ? { delay: delayMs } : {}) },
+      { headers: apiHeaders() },
+    );
+  } catch (err) {
+    // Non-fatal — don't let presence failure block message delivery
+    console.warn('[WhatsApp] sendPresence error:', err instanceof Error ? err.message : err);
+  }
+}
+
+// ─── Mark as Read ─────────────────────────────────────────────────────────────
+
+export async function markWhatsAppMessageAsRead(jid: string, messageId: string): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/chat/markMessageAsRead/${INSTANCE_NAME}`,
+    { readMessages: [{ remoteJid: jid, id: messageId }] },
+    { headers: apiHeaders() },
+  );
+}
+
+// ─── Validate Numbers ─────────────────────────────────────────────────────────
+
+export async function validateWhatsAppNumbers(
+  numbers: string[],
+): Promise<{ number: string; exists: boolean; jid?: string }[]> {
+  const res = await axios.post(
+    `${BASE_URL}/chat/whatsappNumbers/${INSTANCE_NAME}`,
+    { numbers },
+    { headers: apiHeaders() },
+  );
+  return res.data ?? [];
+}
+
+// ─── Interactive List ─────────────────────────────────────────────────────────
+
+export interface ListRow { title: string; description?: string; rowId: string }
+export interface ListSection { title: string; rows: ListRow[] }
+
+export async function sendListMessage(
+  jid: string,
+  params: {
+    title?: string;
+    description: string;
+    buttonText: string;
+    footerText?: string;
+    sections: ListSection[];
+    delay?: number;
+  },
+): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/message/sendList/${INSTANCE_NAME}`,
+    { number: jid, ...params },
+    { headers: apiHeaders() },
+  );
+}
+
+// ─── Location ─────────────────────────────────────────────────────────────────
+
+export async function sendLocationMessage(
+  jid: string,
+  params: { latitude: number; longitude: number; name?: string; address?: string; delay?: number },
+): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/message/sendLocation/${INSTANCE_NAME}`,
+    { number: jid, ...params },
+    { headers: apiHeaders() },
+  );
+}
+
+// ─── Reaction ─────────────────────────────────────────────────────────────────
+
+export async function sendReaction(
+  jid: string,
+  messageId: string,
+  reaction: string,
+  fromMe = false,
+): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/message/sendReaction/${INSTANCE_NAME}`,
+    { reaction, key: { remoteJid: jid, id: messageId, fromMe } },
+    { headers: apiHeaders() },
+  );
+}
+
+// ─── Poll ─────────────────────────────────────────────────────────────────────
+
+export async function sendPollMessage(
+  jid: string,
+  params: { name: string; values: string[]; selectableCount?: number; delay?: number },
+): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/message/sendPoll/${INSTANCE_NAME}`,
+    { number: jid, ...params },
+    { headers: apiHeaders() },
+  );
+}
+
+// ─── Revoke Message ───────────────────────────────────────────────────────────
+
+export async function revokeMessage(jid: string, messageId: string, fromMe = true): Promise<void> {
+  await axios.delete(`${BASE_URL}/chat/deleteMessageForEveryone/${INSTANCE_NAME}`, {
+    headers: apiHeaders(),
+    data: { id: messageId, remoteJid: jid, fromMe },
+  });
 }
