@@ -76,7 +76,16 @@ export const WhatsAppIntegrationCard = () => {
           if (p.type === 'qr') { setQrCode(p.data); setWaStatus('qr'); setIsLoading(false); startPolling(); }
           if (p.type === 'connection') {
             setWaStatus(p.data);
-            if (p.data === 'connected') { setQrCode(null); setError(null); stopPolling(); }
+            if (p.data === 'connected') {
+              setQrCode(null);
+              setError(null);
+              stopPolling();
+              // Confirm with Whatsmiau so we don't trust a racy in-memory flag.
+              apiFetch(`${API_BASE}/api/status?verify=1`)
+                .then(r => r.json())
+                .then(d => { if (d.status) setWaStatus(d.status); })
+                .catch(() => {});
+            }
           }
         } catch {}
       };
@@ -133,9 +142,18 @@ export const WhatsAppIntegrationCard = () => {
       const res = await apiFetch(`${API_BASE}/api/whatsapp/disconnect`, { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.ok) {
-        // Server already awaited the Whatsmiau logout — safe to flip UI state.
+        // Server already awaited the Whatsmiau logout — flip UI optimistically,
+        // then re-verify against upstream so we catch silent failures.
         setWaStatus('disconnected');
         setQrCode(null);
+        try {
+          const verify = await apiFetch(`${API_BASE}/api/status?verify=1`);
+          const v = await verify.json();
+          if (v.status && v.status !== 'disconnected') {
+            setWaStatus(v.status);
+            setError('O WhatsApp ainda aparece conectado no Whatsmiau. Tente novamente.');
+          }
+        } catch { /* verification is best-effort */ }
       } else {
         setError(data.error ?? 'Erro ao desconectar.');
         // Don't flip UI to 'disconnected' on failure — user should retry.

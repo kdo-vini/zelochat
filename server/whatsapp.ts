@@ -401,16 +401,11 @@ export async function disconnectWhatsApp(): Promise<void> {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   reconnectAttempts = 0;
 
-  // Idempotent: if we have no instance id, we are either already logged out or
-  // never had a session. Still wipe local state and return cleanly.
-  const targetId = instanceInternalId || INSTANCE_NAME;
-
-  // Tell Whatsmiau to actually revoke the device (not just drop the socket).
-  // Wait for it to complete so the HTTP response only returns after the
-  // upstream state has actually flipped.
-  if (targetId) {
+  // Whatsmiau v2 logout is keyed by instance name (not the MongoDB _id).
+  // Endpoint: DELETE /instance/logout/:name  — docs: https://whatsmiau.dev/docs#instance-logout
+  if (INSTANCE_NAME) {
     try {
-      await axios.delete(`${BASE_URL}/evolution/instance/logout/${targetId}`, {
+      await axios.delete(`${BASE_URL}/instance/logout/${INSTANCE_NAME}`, {
         headers: apiHeaders(),
         timeout: 15_000,
       });
@@ -424,6 +419,7 @@ export async function disconnectWhatsApp(): Promise<void> {
       } else {
         // Non-fatal: roll back the flag so the user can retry, but surface the error.
         console.error('[WhatsApp] Logout request failed:', err instanceof Error ? err.message : err);
+        manuallyDisconnected = false;
         throw new Error('Falha ao desconectar no Whatsmiau. Tente novamente.');
       }
     }
@@ -439,6 +435,40 @@ export async function disconnectWhatsApp(): Promise<void> {
 
   broadcast({ type: 'connection', data: 'disconnected' });
   console.log('[WhatsApp] Disconnected by user.');
+}
+
+/**
+ * Queries Whatsmiau for the instance's actual status and syncs our in-memory
+ * `connectionStatus` to ground truth. Broadcasts to WS if the state changed.
+ *
+ * Use this after disconnect/connect actions to avoid showing stale UI when
+ * the upstream state diverges from our local cache (e.g. if the logout
+ * request silently failed or the device re-paired on its own).
+ */
+export async function syncStatusFromUpstream(): Promise<ConnectionStatus> {
+  try {
+    const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, {
+      headers: apiHeaders(),
+      timeout: 10_000,
+    });
+    const list: any[] = Array.isArray(instances) ? instances : (instances?.data ?? []);
+    const instance = list.find(
+      (i) => (i.whatsmiau_instance_id ?? i.name ?? '') === INSTANCE_NAME || i.id === instanceInternalId,
+    );
+    const upstreamStatus: string = instance?.status ?? '';
+    const resolved: ConnectionStatus =
+      upstreamStatus === 'CONNECTED' || upstreamStatus === 'open' ? 'connected' : 'disconnected';
+
+    if (resolved !== connectionStatus) {
+      connectionStatus = resolved;
+      if (resolved === 'disconnected') currentQR = null;
+      broadcast({ type: 'connection', data: resolved });
+      console.log(`[WhatsApp] Status synced from upstream → ${resolved}`);
+    }
+  } catch (err) {
+    console.warn('[WhatsApp] syncStatusFromUpstream failed:', err instanceof Error ? err.message : err);
+  }
+  return connectionStatus;
 }
 
 /**

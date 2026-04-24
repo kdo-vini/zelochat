@@ -22,6 +22,7 @@ import {
   sendReaction,
   sendPollMessage,
   revokeMessage,
+  syncStatusFromUpstream,
 } from './whatsapp.js';
 import {
   getAllSessions,
@@ -219,8 +220,16 @@ function sendTriggerError(res: Response, error: unknown): void {
 
 /**
  * GET /api/status — Returns the current WhatsApp connection status.
+ * Pass `?verify=1` to re-query Whatsmiau for ground truth before responding;
+ * the frontend uses this after disconnect/connect actions so the UI never
+ * sits on a stale in-memory cache.
  */
-router.get('/api/status', (_req: Request, res: Response) => {
+router.get('/api/status', async (req: Request, res: Response) => {
+  if (req.query.verify === '1') {
+    const status = await syncStatusFromUpstream();
+    res.json({ status });
+    return;
+  }
   res.json({ status: getStatus() });
 });
 
