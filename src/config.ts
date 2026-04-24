@@ -20,3 +20,31 @@ export const WS_URL: string = (() => {
 /** Prefixes a relative `/api/...` path with the API base. */
 export const apiUrl = (path: string): string =>
   `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+
+/**
+ * Thrown when the backend (Railway/WhatsApp server) is unreachable —
+ * usually because the server is offline, the domain isn't configured,
+ * or CORS is blocking the request.
+ */
+export class WaServerOfflineError extends Error {
+  constructor(message = 'Servidor WhatsApp offline. Verifique se o servidor está ativo e tente novamente.') {
+    super(message);
+    this.name = 'WaServerOfflineError';
+  }
+}
+
+/**
+ * Wraps `fetch` so that network-level failures (TypeError: Failed to fetch)
+ * surface as a user-friendly "servidor offline" error instead of a raw browser message.
+ * Use this for any call to the backend (`/api/*`).
+ */
+export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new WaServerOfflineError();
+    }
+    throw err;
+  }
+}

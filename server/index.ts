@@ -13,11 +13,20 @@ import { getBoundEmpresaId, setBoundEmpresaId, getServiceSupabase } from './supa
 // SERVER_PORT is the legacy dev-local setting.
 const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || '3001', 10);
 
-const ALLOWED_ORIGIN = process.env.FRONTEND_URL || 'http://localhost:3000';
+// FRONTEND_URL accepts a comma-separated list of allowed origins so that multiple
+// deployed domains (e.g. chat.zelopdv.com.br alongside the legacy domain) can
+// share one backend without hitting CORS.
+const ALLOWED_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:3000')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const app = express();
 app.use(cors({
-  origin: ALLOWED_ORIGIN,
+  origin: (origin, cb) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error(`Origin not allowed by CORS: ${origin}`));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));

@@ -28,6 +28,9 @@ export function getFriendlyErrorMessage(err: unknown): string {
   if (msg.includes('rate limit') || msg.includes('too many requests')) {
     return 'Muitas tentativas. Aguarde alguns minutos e tente novamente.';
   }
+  if (msg.includes('servidor whatsapp offline')) {
+    return 'Servidor WhatsApp offline. Verifique se o servidor está ativo e tente novamente.';
+  }
   if (msg.includes('network') || msg.includes('failed to fetch')) {
     return 'Erro de conexão. Verifique sua internet e tente novamente.';
   }

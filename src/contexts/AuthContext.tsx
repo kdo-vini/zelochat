@@ -62,7 +62,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
+      setSession((prev) => {
+        // Only invalidate the profile check when the user actually changes.
+        // Supabase fires TOKEN_REFRESHED periodically with the same user — those
+        // must not flip profileChecked back to false (would cause AuthGuard to
+        // flash the spinner or bounce to /onboarding).
+        if (prev?.user?.id !== newSession?.user?.id) {
+          setProfileChecked(false);
+          setProfileComplete(false);
+        }
+        return newSession;
+      });
       if (newSession?.user?.id) {
         void checkProfile(newSession.user.id);
       } else {

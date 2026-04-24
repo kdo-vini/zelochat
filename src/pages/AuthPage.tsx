@@ -346,7 +346,7 @@ export default function AuthPage() {
             </div>
 
             {mode === 'login' ? (
-              <LoginForm onSuccess={() => navigate('/onboarding')} />
+              <LoginForm onSuccess={() => navigate('/app')} />
             ) : (
               <SignupForm onSwitchToLogin={() => switchMode('login')} />
             )}

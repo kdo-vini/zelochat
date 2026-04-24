@@ -7,6 +7,7 @@ import {
   getQR,
   fetchQR,
   disconnectWhatsApp,
+  reconnectWhatsApp,
   sendTextMessage,
   sendMediaMessage,
   sendWhatsAppAudio,
@@ -35,7 +36,7 @@ import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, g
 import { getConfig, setConfig } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from './triggers.js';
-import { requireEmpresaId, setBoundEmpresaId, uploadMediaForSend } from './supabase.js';
+import { requireEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import type { ChatAttachment } from '../src/types.ts';
 
 const router = Router();
@@ -238,22 +239,35 @@ router.get('/api/qr', (_req: Request, res: Response) => {
 
 /**
  * POST /api/whatsapp/disconnect — Logs out from WhatsApp. Requires auth.
+ *
+ * Awaits the upstream Whatsmiau logout so the device is actually revoked
+ * before we respond. Safe to call multiple times (idempotent).
  */
 router.post('/api/whatsapp/disconnect', async (req: Request, res: Response) => {
   try {
     await requireEmpresaId(req);
     await disconnectWhatsApp();
-    res.json({ ok: true });
+    res.json({ ok: true, status: getStatus() });
   } catch (err) {
-    sendAuthError(res, err);
+    if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, err);
+      return;
+    }
+    const msg = err instanceof Error ? err.message : 'Erro ao desconectar.';
+    res.status(500).json({ error: msg, status: getStatus() });
   }
 });
 
 /**
  * POST /api/qr/refresh — Requests a fresh QR code from Whatsmiau.
+ *
+ * Also re-arms the connection logic: if the user previously clicked
+ * "Desconectar" we need to clear the manually-disconnected flag before
+ * fetchQR() will actually do anything.
  */
 router.post('/api/qr/refresh', async (_req: Request, res: Response) => {
   try {
+    await reconnectWhatsApp();
     await fetchQR();
     const qr = getQR();
     const status = getStatus();
@@ -353,7 +367,56 @@ router.post('/api/bind-empresa', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     setBoundEmpresaId(empresaId);
+    // Hydrate the in-memory kill-switch from the DB so restarts preserve the dono's choice
+    try {
+      const { data } = await getServiceSupabase()
+        .from('empresa_perfil')
+        .select('ai_enabled')
+        .eq('id', empresaId)
+        .maybeSingle();
+      const enabled = (data as { ai_enabled?: boolean } | null)?.ai_enabled;
+      if (typeof enabled === 'boolean') setConfig(empresaId, { aiEnabled: enabled });
+    } catch (err) {
+      // Column may not exist yet (migration 008 not applied) — default true
+      console.warn('[Router] ai_enabled column unavailable:', err);
+    }
     res.json({ ok: true, empresaId });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * GET /api/ai-enabled — returns the empresa's global AI kill-switch state.
+ */
+router.get('/api/ai-enabled', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    res.json({ enabled: getConfig(empresaId).aiEnabled !== false });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * POST /api/ai-enabled — toggles the global AI kill-switch. Persisted in empresa_perfil.
+ * Body: { enabled: boolean }
+ */
+router.post('/api/ai-enabled', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const enabled = Boolean(req.body?.enabled);
+    setConfig(empresaId, { aiEnabled: enabled });
+    try {
+      await getServiceSupabase()
+        .from('empresa_perfil')
+        .update({ ai_enabled: enabled, updated_at: new Date().toISOString() })
+        .eq('id', empresaId);
+    } catch (err) {
+      console.warn('[Router] ai_enabled persist failed (column missing?):', err);
+    }
+    broadcast({ type: 'ai_enabled', data: { enabled } });
+    res.json({ ok: true, enabled });
   } catch (error) {
     sendAuthError(res, error);
   }
@@ -696,9 +759,10 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, closedDays, address, pixKey,
-            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone } = req.body;
+            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone, aiEnabled } = req.body;
     setConfig(empresaId, { name, specialty, hours, closedDays, address, pixKey,
-                           products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone });
+                           products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
+                           ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}) });
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);

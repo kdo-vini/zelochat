@@ -627,6 +627,7 @@ export default function AppShell() {
                 setState={setState}
                 saveEmpresa={saveEmpresa}
                 isAuthenticated={!!token}
+                token={token}
               />
             )}
             {activeView === 'profile' && (

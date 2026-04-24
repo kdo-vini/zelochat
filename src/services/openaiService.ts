@@ -1,5 +1,5 @@
 import { ZeloState, ChatMessage } from "../types";
-import { API_BASE } from "../config";
+import { API_BASE, apiFetch } from "../config";
 import { supabase } from "./supabaseClient";
 
 async function callAI(
@@ -11,7 +11,7 @@ async function callAI(
   const token = session?.access_token;
   if (!token) throw new Error('AI proxy error: not authenticated');
 
-  const res = await fetch(`${API_BASE}/api/ai/complete`, {
+  const res = await apiFetch(`${API_BASE}/api/ai/complete`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -87,7 +87,7 @@ export async function generateAgentInstructions(hint?: string): Promise<string> 
   const token = session?.access_token;
   if (!token) throw new Error('AI proxy error: not authenticated');
 
-  const res = await fetch(`${API_BASE}/api/ai/generate-instructions`, {
+  const res = await apiFetch(`${API_BASE}/api/ai/generate-instructions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

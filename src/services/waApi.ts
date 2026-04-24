@@ -1,5 +1,5 @@
 import type { ChatAttachment, ChatSession, Trigger, TriggerKind } from '../types';
-import { apiUrl } from '../config';
+import { apiUrl, apiFetch } from '../config';
 
 type SessionsResponse = { sessions: ChatSession[] };
 type SessionResponse = { session: ChatSession };
@@ -26,7 +26,7 @@ function authHeaders(token: string): HeadersInit {
 }
 
 export async function bindEmpresa(token: string): Promise<void> {
-  const response = await fetch(apiUrl('/api/bind-empresa'), {
+  const response = await apiFetch(apiUrl('/api/bind-empresa'), {
     method: 'POST',
     headers: authHeaders(token),
   });
@@ -35,7 +35,7 @@ export async function bindEmpresa(token: string): Promise<void> {
 }
 
 export async function getSessions(token: string): Promise<ChatSession[]> {
-  const response = await fetch(apiUrl('/api/sessions'), {
+  const response = await apiFetch(apiUrl('/api/sessions'), {
     headers: authHeaders(token),
   });
 
@@ -44,7 +44,7 @@ export async function getSessions(token: string): Promise<ChatSession[]> {
 }
 
 export async function getSession(token: string, jid: string): Promise<ChatSession> {
-  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}`), {
+  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}`), {
     headers: authHeaders(token),
   });
 
@@ -57,7 +57,7 @@ export async function sendMessage(
   to: string,
   payload: SendMessagePayload,
 ): Promise<void> {
-  const response = await fetch(apiUrl('/api/send'), {
+  const response = await apiFetch(apiUrl('/api/send'), {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify({ to, ...payload }),
@@ -67,7 +67,7 @@ export async function sendMessage(
 }
 
 export async function markSessionRead(token: string, jid: string): Promise<void> {
-  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/read`), {
+  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/read`), {
     method: 'POST',
     headers: authHeaders(token),
   });
@@ -80,7 +80,7 @@ export async function setSessionAutoReply(
   jid: string,
   enabled: boolean,
 ): Promise<void> {
-  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/auto-reply`), {
+  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/auto-reply`), {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify({ enabled }),
@@ -90,7 +90,7 @@ export async function setSessionAutoReply(
 }
 
 export async function deleteSession(token: string, jid: string): Promise<void> {
-  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}`), {
+  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}`), {
     method: 'DELETE',
     headers: authHeaders(token),
   });
@@ -100,7 +100,7 @@ export async function deleteSession(token: string, jid: string): Promise<void> {
 
 export async function fetchProfilePicture(token: string, jid: string): Promise<string | null> {
   try {
-    const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/profile-picture`), {
+    const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/profile-picture`), {
       headers: authHeaders(token),
     });
     const body = await parseResponse<{ url: string | null }>(response);
@@ -111,7 +111,7 @@ export async function fetchProfilePicture(token: string, jid: string): Promise<s
 }
 
 export async function listTriggers(token: string): Promise<Trigger[]> {
-  const response = await fetch(apiUrl('/api/triggers'), {
+  const response = await apiFetch(apiUrl('/api/triggers'), {
     headers: authHeaders(token),
   });
   const body = await parseResponse<{ triggers: Trigger[] }>(response);
@@ -119,7 +119,7 @@ export async function listTriggers(token: string): Promise<Trigger[]> {
 }
 
 export async function createTrigger(token: string, naturalInput: string): Promise<Trigger> {
-  const response = await fetch(apiUrl('/api/triggers'), {
+  const response = await apiFetch(apiUrl('/api/triggers'), {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify({ naturalInput }),
@@ -133,7 +133,7 @@ export async function updateTrigger(
   id: string,
   patch: { name?: string; conditionDescription?: string; active?: boolean; kind?: TriggerKind },
 ): Promise<Trigger> {
-  const response = await fetch(apiUrl(`/api/triggers/${encodeURIComponent(id)}`), {
+  const response = await apiFetch(apiUrl(`/api/triggers/${encodeURIComponent(id)}`), {
     method: 'PATCH',
     headers: authHeaders(token),
     body: JSON.stringify(patch),
@@ -143,7 +143,7 @@ export async function updateTrigger(
 }
 
 export async function deleteTrigger(token: string, id: string): Promise<void> {
-  const response = await fetch(apiUrl(`/api/triggers/${encodeURIComponent(id)}`), {
+  const response = await apiFetch(apiUrl(`/api/triggers/${encodeURIComponent(id)}`), {
     method: 'DELETE',
     headers: authHeaders(token),
   });
@@ -151,10 +151,27 @@ export async function deleteTrigger(token: string, id: string): Promise<void> {
 }
 
 export async function updateSessionName(token: string, jid: string, name: string): Promise<void> {
-  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/name`), {
+  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/name`), {
     method: 'PATCH',
     headers: authHeaders(token),
     body: JSON.stringify({ name }),
+  });
+  await parseResponse(response);
+}
+
+export async function getAiEnabled(token: string): Promise<boolean> {
+  const response = await apiFetch(apiUrl('/api/ai-enabled'), {
+    headers: authHeaders(token),
+  });
+  const body = await parseResponse<{ enabled: boolean }>(response);
+  return body.enabled !== false;
+}
+
+export async function setAiEnabled(token: string, enabled: boolean): Promise<void> {
+  const response = await apiFetch(apiUrl('/api/ai-enabled'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ enabled }),
   });
   await parseResponse(response);
 }

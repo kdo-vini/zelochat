@@ -1,5 +1,5 @@
 import type { Product } from '../types';
-import { apiUrl } from '../config';
+import { apiUrl, apiFetch } from '../config';
 
 export type Produto = {
   id: string;
@@ -18,7 +18,7 @@ export async function getProdutos(params: {
   const url = new URL(apiUrl('/api/produtos'));
   url.searchParams.set('onlyVisible', String(params.onlyVisible ?? true));
 
-  const res = await fetch(url.toString(), {
+  const res = await apiFetch(url.toString(), {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${params.token}`,

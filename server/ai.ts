@@ -326,6 +326,12 @@ export async function generateAndSendReply(
     return null;
   }
 
+  // Global kill-switch — dono can disable the assistant without dropping the WhatsApp session.
+  if (getConfig(resolvedEmpresaId).aiEnabled === false) {
+    console.log(`[AI] Global AI disabled for empresa ${resolvedEmpresaId} — skipping reply to ${jid}`);
+    return null;
+  }
+
   const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
 

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff } from 'lucide-react';
 import { ZeloState } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
-import { API_BASE, WS_URL } from '../../config';
+import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
 import { maskBrazilianPhone } from '../../domain/chat';
+import { getAiEnabled, setAiEnabled as setAiEnabledApi } from '../../services/waApi';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -38,7 +39,7 @@ export const WhatsAppIntegrationCard = () => {
     if (pollRef.current) return; // already polling
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/qr/refresh`, { method: 'POST' });
+        const res = await apiFetch(`${API_BASE}/api/qr/refresh`, { method: 'POST' });
         const data = await res.json();
         if (data.status === 'connected' || data.qr === null && !data.error) {
           setWaStatus('connected');
@@ -63,11 +64,11 @@ export const WhatsAppIntegrationCard = () => {
       wsRef.current = ws;
       ws.onopen = () => {
         setError(null);
-        fetch(`${API_BASE}/api/status`).then(r => r.json()).then(d => {
+        apiFetch(`${API_BASE}/api/status`).then(r => r.json()).then(d => {
           setWaStatus(d.status);
           if (d.status === 'qr') startPolling();
         }).catch(() => setError('Servidor WhatsApp offline'));
-        fetch(`${API_BASE}/api/qr`).then(r => r.json()).then(d => { if (d.qr) setQrCode(d.qr); }).catch(() => {});
+        apiFetch(`${API_BASE}/api/qr`).then(r => r.json()).then(d => { if (d.qr) setQrCode(d.qr); }).catch(() => {});
       };
       ws.onmessage = (ev) => {
         try {
@@ -94,7 +95,7 @@ export const WhatsAppIntegrationCard = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/qr/refresh`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/qr/refresh`, { method: 'POST' });
       const data = await res.json();
       if (data.qr) {
         setQrCode(data.qr);
@@ -108,8 +109,12 @@ export const WhatsAppIntegrationCard = () => {
       } else {
         setError('WhatsApp não respondeu. Verifique a conexão com o servidor e tente novamente.');
       }
-    } catch {
-      setError('Servidor não encontrado. Execute: npm run dev:server');
+    } catch (err) {
+      setError(
+        err instanceof WaServerOfflineError
+          ? err.message
+          : 'Não foi possível contatar o servidor WhatsApp. Tente novamente em instantes.',
+      );
     } finally {
       setIsLoading(false);
     }
@@ -119,18 +124,28 @@ export const WhatsAppIntegrationCard = () => {
     if (!confirm('Desconectar o WhatsApp? Você precisará escanear o QR Code novamente para reconectar.')) return;
     setIsDisconnecting(true);
     setError(null);
+
+    // Stop QR polling immediately so /api/qr/refresh can't race the disconnect
+    // request and re-trigger session re-pairing on the server during logout.
+    stopPolling();
+
     try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/disconnect`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/whatsapp/disconnect`, { method: 'POST' });
       const data = await res.json();
-      if (data.ok) {
+      if (res.ok && data.ok) {
+        // Server already awaited the Whatsmiau logout — safe to flip UI state.
         setWaStatus('disconnected');
         setQrCode(null);
-        stopPolling();
       } else {
         setError(data.error ?? 'Erro ao desconectar.');
+        // Don't flip UI to 'disconnected' on failure — user should retry.
       }
-    } catch {
-      setError('Servidor não encontrado.');
+    } catch (err) {
+      setError(
+        err instanceof WaServerOfflineError
+          ? err.message
+          : 'Não foi possível contatar o servidor WhatsApp.',
+      );
     } finally {
       setIsDisconnecting(false);
     }
@@ -222,6 +237,98 @@ export const WhatsAppIntegrationCard = () => {
   );
 };
 
+/**
+ * Global AI kill-switch card — lets the dono silence auto-replies without disconnecting WhatsApp.
+ * Messages still arrive in real time; only the bot stays quiet.
+ */
+interface AiGlobalToggleCardProps {
+  token: string | null;
+}
+export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) { setEnabled(null); return; }
+    let cancelled = false;
+    getAiEnabled(token)
+      .then((v) => { if (!cancelled) setEnabled(v); })
+      .catch(() => { if (!cancelled) setEnabled(true); });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const toggle = async () => {
+    if (!token || enabled === null || saving) return;
+    const next = !enabled;
+    setSaving(true);
+    setError(null);
+    setEnabled(next); // optimistic
+    try {
+      await setAiEnabledApi(token, next);
+    } catch (err) {
+      setEnabled(!next); // rollback
+      setError(err instanceof WaServerOfflineError ? err.message : 'Não foi possível salvar. Tente novamente.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isOn = enabled !== false;
+  const Icon = isOn ? Bot : BotOff;
+
+  return (
+    <SectionCard icon={Bot} title="Assistente de IA">
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <p className="text-[13.5px] font-semibold">
+              {isOn ? 'IA respondendo automaticamente' : 'IA desativada — atendimento manual'}
+            </p>
+            <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-0.5">
+              {isOn
+                ? 'Mensagens recebidas são respondidas pela IA quando o chat está em modo automático.'
+                : 'As mensagens continuam chegando em tempo real, mas a IA não responde em nenhum chat. Você responde manualmente.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isOn}
+            onClick={toggle}
+            disabled={!token || enabled === null || saving}
+            className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 ${
+              isOn ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line)]'
+            }`}
+          >
+            <span
+              className={`inline-block w-5 h-5 bg-white rounded-full shadow transform transition-transform ${
+                isOn ? 'translate-x-[22px]' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className={`flex items-center gap-2 text-[12px] px-3 py-2 rounded-lg ${
+          isOn
+            ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+            : 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
+        }`}>
+          <Icon className="w-3.5 h-3.5" strokeWidth={2} />
+          <span>{isOn ? 'Ativada globalmente' : 'Desativada globalmente'}</span>
+        </div>
+
+        {!token && (
+          <p className="text-[12px] text-[var(--color-warn)]">Faça login para controlar a IA.</p>
+        )}
+        {error && (
+          <p className="text-[12px] text-[var(--color-alert)]">{error}</p>
+        )}
+      </div>
+    </SectionCard>
+  );
+};
+
 const DAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 
 interface SettingsViewProps {
@@ -229,6 +336,7 @@ interface SettingsViewProps {
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
   saveEmpresa: (patch: Partial<Omit<EmpresaPerfil, 'id'>>) => Promise<boolean>;
   isAuthenticated: boolean;
+  token: string | null;
 }
 
 function TimeInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
@@ -245,7 +353,7 @@ function TimeInput({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
-export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: SettingsViewProps) => {
+export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated, token }: SettingsViewProps) => {
   // Local draft for identity fields — synced from state but independently editable
   const [draft, setDraft] = useState({
     name:    state.businessInfo.name,
@@ -500,6 +608,8 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated }: 
 
           <div className="space-y-5">
             <WhatsAppIntegrationCard />
+
+            <AiGlobalToggleCard token={token} />
 
             <SectionCard icon={UserCog} title="Gerente">
               <div className="space-y-3">

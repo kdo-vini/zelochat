@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 
-export type WsEventType = 'qr' | 'connection' | 'message' | 'message_sent' | 'order_created' | 'message_status' | 'message_deleted' | 'contact_update';
+export type WsEventType = 'qr' | 'connection' | 'message' | 'message_sent' | 'order_created' | 'message_status' | 'message_deleted' | 'contact_update' | 'ai_enabled';
 
 export interface WsEvent {
   type: WsEventType;

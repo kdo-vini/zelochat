@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import { broadcast } from './ws.js';
 
@@ -26,6 +26,27 @@ let incomingMessageHandler: ((msg: any) => void) | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000; // 5 min cap
+
+// When true, the reconnect scheduler and health check short-circuit so that a
+// user-initiated logout is not immediately undone by the auto-reconnect loop.
+// Reset to false on explicit reconnect attempts (fetchQR / startWhatsApp).
+let manuallyDisconnected = false;
+
+export function isManuallyDisconnected(): boolean {
+  return manuallyDisconnected;
+}
+
+const AUTH_INFO_DIR = resolve('auth_info_baileys');
+function wipeAuthInfo(): void {
+  try {
+    if (existsSync(AUTH_INFO_DIR)) {
+      rmSync(AUTH_INFO_DIR, { recursive: true, force: true });
+      console.log('[WhatsApp] auth_info_baileys folder removed.');
+    }
+  } catch (err) {
+    console.warn('[WhatsApp] Failed to remove auth_info_baileys:', err instanceof Error ? err.message : err);
+  }
+}
 
 function apiHeaders() {
   return { apikey: API_KEY };
@@ -105,12 +126,17 @@ export function dispatchIncomingMessage(msg: any): void {
 }
 
 function scheduleReconnect(): void {
+  if (manuallyDisconnected) {
+    console.log('[WhatsApp] Reconnect suppressed — manually disconnected.');
+    return;
+  }
   if (reconnectTimer) return; // already scheduled
   const delay = Math.min(5_000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY_MS);
   reconnectAttempts++;
   console.log(`[WhatsApp] Scheduling reconnect attempt #${reconnectAttempts} in ${delay / 1000}s...`);
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
+    if (manuallyDisconnected) return; // user disconnected while timer was pending
     if (connectionStatus === 'connected') return;
     console.log(`[WhatsApp] Reconnect attempt #${reconnectAttempts}...`);
     try {
@@ -126,6 +152,12 @@ export function handleConnectionUpdate(data: any): void {
   const state: string = data?.state ?? data?.instance?.state ?? '';
 
   if (state === 'open') {
+    // If the user just manually disconnected, ignore a racing 'open' event.
+    // Whatsmiau may fire this right before it processes our logout call.
+    if (manuallyDisconnected) {
+      console.log('[WhatsApp] Ignoring late connection.update=open after manual disconnect.');
+      return;
+    }
     connectionStatus = 'connected';
     currentQR = null;
     reconnectAttempts = 0;
@@ -135,10 +167,16 @@ export function handleConnectionUpdate(data: any): void {
     console.log('[WhatsApp] Connected!');
   } else if (state === 'close') {
     connectionStatus = 'disconnected';
+    currentQR = null;
     broadcast({ type: 'connection', data: 'disconnected' });
+    if (manuallyDisconnected) {
+      console.log('[WhatsApp] Disconnected by user — auto-reconnect suppressed.');
+      return;
+    }
     console.log('[WhatsApp] Disconnected — will auto-reconnect.');
     scheduleReconnect();
   } else if (state === 'connecting') {
+    if (manuallyDisconnected) return; // ignore stale connecting events
     connectionStatus = 'connecting';
     broadcast({ type: 'connection', data: 'connecting' });
   }
@@ -223,6 +261,15 @@ export async function fetchProfilePicture(jid: string): Promise<string | null> {
 }
 
 export async function fetchQR(): Promise<void> {
+  // If user manually disconnected, do not silently re-pair. Caller must first
+  // call reconnectWhatsApp() (wired to an explicit "Gerar QR Code" click).
+  if (manuallyDisconnected) {
+    console.log('[WhatsApp] fetchQR skipped — session was manually disconnected.');
+    connectionStatus = 'disconnected';
+    currentQR = null;
+    return;
+  }
+
   // 1. Check real connection state via instances list (connectionState endpoint is not supported)
   try {
     const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, {
@@ -337,6 +384,7 @@ export async function startWhatsApp(): Promise<void> {
 
   // 3. Periodic health check — reconnect if Whatsmiau drops the session silently
   setInterval(async () => {
+    if (manuallyDisconnected) return;     // respect explicit user logout
     if (connectionStatus === 'connected') return;
     if (reconnectTimer) return; // reconnect already in progress
     console.log('[WhatsApp] Health check: not connected — triggering reconnect.');
@@ -345,16 +393,65 @@ export async function startWhatsApp(): Promise<void> {
 }
 
 export async function disconnectWhatsApp(): Promise<void> {
-  if (!instanceInternalId) {
-    throw new Error('ID da instância não encontrado. Reinicie o servidor e tente novamente.');
+  // Set the flag *first* so that any concurrent webhook events (connection.update),
+  // reconnect timers, or /api/qr/refresh polls short-circuit immediately.
+  manuallyDisconnected = true;
+
+  // Stop any pending reconnect attempts.
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  reconnectAttempts = 0;
+
+  // Idempotent: if we have no instance id, we are either already logged out or
+  // never had a session. Still wipe local state and return cleanly.
+  const targetId = instanceInternalId || INSTANCE_NAME;
+
+  // Tell Whatsmiau to actually revoke the device (not just drop the socket).
+  // Wait for it to complete so the HTTP response only returns after the
+  // upstream state has actually flipped.
+  if (targetId) {
+    try {
+      await axios.delete(`${BASE_URL}/evolution/instance/logout/${targetId}`, {
+        headers: apiHeaders(),
+        timeout: 15_000,
+      });
+      console.log('[WhatsApp] Whatsmiau logout confirmed.');
+    } catch (err: any) {
+      const status = err?.response?.status;
+      // 404 / 400 → instance is already logged out upstream. Treat as success
+      // so repeated clicks don't error.
+      if (status === 404 || status === 400) {
+        console.log('[WhatsApp] Logout: instance already disconnected upstream.');
+      } else {
+        // Non-fatal: roll back the flag so the user can retry, but surface the error.
+        console.error('[WhatsApp] Logout request failed:', err instanceof Error ? err.message : err);
+        throw new Error('Falha ao desconectar no Whatsmiau. Tente novamente.');
+      }
+    }
   }
-  await axios.delete(`${BASE_URL}/evolution/instance/logout/${instanceInternalId}`, {
-    headers: apiHeaders(),
-  });
+
+  // Wipe legacy local Baileys auth so a stale creds.json can never silently re-auth.
+  wipeAuthInfo();
+
+  // Clear in-memory session state.
   connectionStatus = 'disconnected';
   currentQR = null;
+  ownJid = '';
+
   broadcast({ type: 'connection', data: 'disconnected' });
   console.log('[WhatsApp] Disconnected by user.');
+}
+
+/**
+ * Re-arms the connection logic after a manual disconnect. Call this from the
+ * explicit "Gerar QR Code" path so that fetchQR() and the reconnect scheduler
+ * start working again.
+ */
+export async function reconnectWhatsApp(): Promise<void> {
+  if (manuallyDisconnected) {
+    console.log('[WhatsApp] Clearing manual-disconnect flag — user requested new QR.');
+    manuallyDisconnected = false;
+    reconnectAttempts = 0;
+  }
 }
 
 // ─── Typing / Presence ───────────────────────────────────────────────────────

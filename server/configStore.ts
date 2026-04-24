@@ -17,6 +17,8 @@ export interface BusinessConfig {
   dailyContext: { id: string; text: string }[];
   aiInstructions: string;
   managerPhone: string;
+  /** Global kill-switch for auto-reply. When false, messages still arrive in the UI but the AI stays silent. */
+  aiEnabled: boolean;
 }
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -32,6 +34,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   dailyContext: [],
   aiInstructions: '',
   managerPhone: '',
+  aiEnabled: true,
 };
 
 // Keyed by empresaId — one config entry per authenticated empresa.
