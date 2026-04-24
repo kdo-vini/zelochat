@@ -7,6 +7,7 @@ import {
   Download,
   FileText,
   ImagePlus,
+  Loader2,
   Mic,
   MicOff,
   MoreVertical,
@@ -111,6 +112,7 @@ export function ChatView({
   const [newChatError, setNewChatError] = useState<string | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -227,6 +229,7 @@ export function ChatView({
   const handleOwnerSend = async () => {
     const text = ownerInput.trim();
     if (!text && !pendingAttachment) return;
+    if (isSending) return;
     setChatActionError(null);
 
     if (!pendingAttachment && text.startsWith('/')) {
@@ -234,8 +237,10 @@ export function ChatView({
       const qr = quickResponses.find((r) => r.trigger === cmd);
       if (qr) {
         if (!activeSessionId) { setChatActionError('Selecione uma conversa para enviar a resposta rápida.'); return; }
+        setIsSending(true);
         try { await send(activeSessionId, { text: qr.response }); setOwnerInput(''); }
         catch (e) { setChatActionError(e instanceof Error ? e.message : 'Não foi possível enviar.'); }
+        finally { setIsSending(false); }
         return;
       }
       try {
@@ -248,12 +253,15 @@ export function ChatView({
     }
 
     if (!activeSessionId) { setChatActionError('Selecione uma conversa para enviar uma mensagem.'); return; }
+    setIsSending(true);
     try {
       await send(activeSessionId, { text, attachment: pendingAttachment ?? undefined });
       setOwnerInput('');
       setPendingAttachment(null);
     } catch (e) {
       setChatActionError(e instanceof Error ? e.message : 'Não foi possível enviar.');
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -710,7 +718,7 @@ export function ChatView({
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => imageInputRef.current?.click()}
-                      disabled={attachmentLoading}
+                      disabled={attachmentLoading || isSending}
                       className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
                       title="Enviar imagem"
                     >
@@ -718,7 +726,7 @@ export function ChatView({
                     </button>
                     <button
                       onClick={() => documentInputRef.current?.click()}
-                      disabled={attachmentLoading || isRecording}
+                      disabled={attachmentLoading || isRecording || isSending}
                       className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
                       title="Enviar documento"
                     >
@@ -726,7 +734,7 @@ export function ChatView({
                     </button>
                     <button
                       onClick={isRecording ? handleStopRecording : handleStartRecording}
-                      disabled={attachmentLoading || !!pendingAttachment}
+                      disabled={attachmentLoading || !!pendingAttachment || isSending}
                       className={`flex h-10 w-10 items-center justify-center rounded-xl shadow-[var(--shadow-card)] transition-colors disabled:opacity-50 ${
                         isRecording
                           ? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
@@ -742,9 +750,10 @@ export function ChatView({
                       type="text"
                       value={ownerInput}
                       onChange={(e) => setOwnerInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && void handleOwnerSend()}
+                      onKeyDown={(e) => e.key === 'Enter' && !isSending && void handleOwnerSend()}
+                      disabled={isSending}
                       placeholder={pendingAttachment ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /macro'}
-                      className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-9"
+                      className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-9 disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
                       {pendingAttachment ? (
@@ -758,13 +767,19 @@ export function ChatView({
                   </div>
                   <button
                     onClick={() => void handleOwnerSend()}
+                    disabled={isSending || (!ownerInput.trim() && !pendingAttachment)}
                     className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all flex-shrink-0 ${
-                      ownerInput || pendingAttachment
-                        ? 'bg-[var(--color-brand)] text-white shadow-[var(--shadow-card)] hover:bg-[var(--color-brand-deep)]'
-                        : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-faint)]'
+                      isSending
+                        ? 'bg-[var(--color-brand)] text-white shadow-[var(--shadow-card)] cursor-not-allowed'
+                        : ownerInput || pendingAttachment
+                          ? 'bg-[var(--color-brand)] text-white shadow-[var(--shadow-card)] hover:bg-[var(--color-brand-deep)]'
+                          : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-faint)]'
                     }`}
                   >
-                    <Send className="w-4 h-4" strokeWidth={2} />
+                    {isSending
+                      ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} />
+                      : <Send className="w-4 h-4" strokeWidth={2} />
+                    }
                   </button>
                 </div>
               </div>
