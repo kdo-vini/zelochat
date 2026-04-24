@@ -93,7 +93,7 @@ export interface ZeloState {
 
 export type MessageRole = 'user' | 'assistant';
 
-export type ChatAttachmentType = 'image' | 'document';
+export type ChatAttachmentType = 'image' | 'document' | 'audio';
 
 export interface ChatAttachment {
   type: ChatAttachmentType;

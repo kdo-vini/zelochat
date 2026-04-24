@@ -75,6 +75,37 @@ SUPABASE_URL        # Supabase project URL (server)
 SUPABASE_SERVICE_KEY    # Supabase service role key (server)
 ```
 
+## Whatsmiau API (Evolution API v2 wrapper)
+
+Base URL: `https://api.whatsmiau.dev` — docs: `https://whatsmiau.dev/docs`
+
+**Sending media** — `POST /message/sendMedia/{instance}`:
+```json
+{ "number": "5511999998888", "mediatype": "image", "media": "https://public-url.com/file.jpg", "caption": "Texto", "mimetype": "image/jpeg", "fileName": "foto.jpg" }
+```
+- `media` **must be a public HTTPS URL** — base64 strings are NOT accepted (treated as URL → 503/500)
+- Flow: upload to Supabase Storage (`zelochat-media` bucket, public) → get public URL → send URL → auto-delete after 10 min
+- `mediatype`: `"image"` | `"document"` | `"audio"` | `"video"`
+
+**Receiving media** — webhook with `webhookBase64: true`:
+- Whatsmiau embeds base64 in the payload at `data.base64` (or `data.message.imageMessage.base64` as fallback)
+- Reconstruct as `data:${mimeType};base64,${raw}` for storage/display
+
+**Webhook** — `POST /webhook/set/{instance}`:
+```json
+{ "webhook": { "enabled": true, "url": "https://...", "webhookByEvents": false, "webhookBase64": true, "events": ["MESSAGES_UPSERT","CONNECTION_UPDATE","CONTACTS_UPSERT"] } }
+```
+
+**Sending audio (PTT)** — `POST /message/sendWhatsAppAudio/{instance}` (different endpoint!):
+```json
+{ "number": "5511999998888", "audio": "https://public-url.com/voice.mp3", "encoding": true }
+```
+- Field is `audio`, NOT `media` — sending audio through `sendMedia` with `mediatype:"audio"` is wrong
+- Same URL-only constraint: upload to Supabase Storage first, then send URL
+- `encoding: true` re-encodes before sending (recommended for compatibility)
+
+**Sending text** — `POST /message/sendText/{instance}`: `{ "number": "...", "text": "..." }`
+
 ## Baileys / WhatsApp gotchas
 
 - **JID format**: `{countryCode+number}@s.whatsapp.net` — e.g. `5514998360854@s.whatsapp.net`. Always include country code (55 for Brazil).

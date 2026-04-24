@@ -68,6 +68,10 @@ export function buildAttachmentPreview(
     return trimmed ? `[Imagem] ${trimmed}` : '[Imagem]';
   }
 
+  if (attachment.type === 'audio') {
+    return '[Áudio]';
+  }
+
   const name = attachment.fileName?.trim();
   if (trimmed) {
     return `[Documento] ${trimmed}`;

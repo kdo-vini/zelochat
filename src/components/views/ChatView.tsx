@@ -7,6 +7,8 @@ import {
   Download,
   FileText,
   ImagePlus,
+  Mic,
+  MicOff,
   MoreVertical,
   Paperclip,
   Pencil,
@@ -108,6 +110,10 @@ export function ChatView({
   const [newChatLoading, setNewChatLoading] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
 
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
@@ -189,6 +195,33 @@ export function ChatView({
     } catch (err) {
       setChatActionError(err instanceof Error ? err.message : 'Não foi possível salvar o nome.');
     }
+  };
+
+  const handleStartRecording = async () => {
+    setChatActionError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        const dataUrl = await readFileAsDataUrl(new File([blob], `audio.${mimeType.split('/')[1].split(';')[0]}`, { type: mimeType }));
+        setPendingAttachment({ type: 'audio', mimeType, fileName: `audio.${mimeType.split('/')[1].split(';')[0]}`, sizeBytes: blob.size, dataUrl });
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      setChatActionError('Não foi possível acessar o microfone. Verifique as permissões do navegador.');
+    }
+  };
+
+  const handleStopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    setIsRecording(false);
   };
 
   const handleOwnerSend = async () => {
@@ -550,6 +583,23 @@ export function ChatView({
                             )
                           )}
 
+                          {message.kind === 'audio' && message.attachment && (
+                            <div className="mb-2">
+                              {message.attachment.dataUrl ? (
+                                <audio
+                                  controls
+                                  src={message.attachment.dataUrl}
+                                  className="w-full max-w-[260px] rounded-lg"
+                                />
+                              ) : (
+                                <div className="flex items-center gap-2 rounded-xl bg-[var(--color-surface-muted)] px-3 py-2 text-[12px] text-[var(--color-ink-muted)]">
+                                  <Mic className="h-4 w-4 flex-shrink-0" strokeWidth={1.8} />
+                                  Áudio recebido
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           {message.kind === 'document' && message.attachment && (
                             <a
                               href={message.attachment.dataUrl}
@@ -632,6 +682,10 @@ export function ChatView({
                         alt={pendingAttachment.fileName}
                         className="h-16 w-16 rounded-xl object-cover"
                       />
+                    ) : pendingAttachment.type === 'audio' ? (
+                      <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+                        <Mic className="h-6 w-6" strokeWidth={1.8} />
+                      </div>
                     ) : (
                       <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
                         <FileText className="h-6 w-6" strokeWidth={1.8} />
@@ -640,7 +694,7 @@ export function ChatView({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13px] font-semibold text-[var(--color-ink)]">{pendingAttachment.fileName}</p>
                       <p className="text-[12px] text-[var(--color-ink-muted)]">
-                        {pendingAttachment.type === 'image' ? 'Imagem pronta para envio' : 'Documento pronto para envio'} • {formatAttachmentSize(pendingAttachment.sizeBytes)}
+                        {pendingAttachment.type === 'image' ? 'Imagem pronta para envio' : pendingAttachment.type === 'audio' ? 'Áudio pronto para envio' : 'Documento pronto para envio'} • {formatAttachmentSize(pendingAttachment.sizeBytes)}
                       </p>
                     </div>
                     <button
@@ -664,11 +718,23 @@ export function ChatView({
                     </button>
                     <button
                       onClick={() => documentInputRef.current?.click()}
-                      disabled={attachmentLoading}
+                      disabled={attachmentLoading || isRecording}
                       className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
                       title="Enviar documento"
                     >
                       <Paperclip className="h-4.5 w-4.5" strokeWidth={1.8} />
+                    </button>
+                    <button
+                      onClick={isRecording ? handleStopRecording : handleStartRecording}
+                      disabled={attachmentLoading || !!pendingAttachment}
+                      className={`flex h-10 w-10 items-center justify-center rounded-xl shadow-[var(--shadow-card)] transition-colors disabled:opacity-50 ${
+                        isRecording
+                          ? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
+                          : 'bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                      }`}
+                      title={isRecording ? 'Parar gravação' : 'Gravar áudio'}
+                    >
+                      {isRecording ? <MicOff className="h-4.5 w-4.5" strokeWidth={1.8} /> : <Mic className="h-4.5 w-4.5" strokeWidth={1.8} />}
                     </button>
                   </div>
                   <div className="relative flex-1">

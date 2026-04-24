@@ -175,7 +175,7 @@ export async function sendButtonMessage(
 export async function sendMediaMessage(
   jid: string,
   params: {
-    mediatype: 'image' | 'document' | 'video' | 'audio';
+    mediatype: 'image' | 'document' | 'video';
     mimetype: string;
     media: string;
     caption?: string;
@@ -185,6 +185,15 @@ export async function sendMediaMessage(
   await axios.post(
     `${BASE_URL}/message/sendMedia/${INSTANCE_NAME}`,
     { number: jid, ...params },
+    { headers: apiHeaders() },
+  );
+}
+
+// PTT audio — uses a dedicated endpoint (sendWhatsAppAudio) per Whatsmiau docs
+export async function sendWhatsAppAudio(jid: string, audioUrl: string): Promise<void> {
+  await axios.post(
+    `${BASE_URL}/message/sendWhatsAppAudio/${INSTANCE_NAME}`,
+    { number: jid, audio: audioUrl, encoding: true },
     { headers: apiHeaders() },
   );
 }

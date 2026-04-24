@@ -8,6 +8,7 @@ import {
   disconnectWhatsApp,
   sendTextMessage,
   sendMediaMessage,
+  sendWhatsAppAudio,
   fetchProfilePicture,
   handleConnectionUpdate,
   dispatchIncomingMessage,
@@ -26,7 +27,7 @@ import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, g
 import { getConfig, setConfig } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from './triggers.js';
-import { requireEmpresaId, setBoundEmpresaId } from './supabase.js';
+import { requireEmpresaId, setBoundEmpresaId, uploadMediaForSend } from './supabase.js';
 import type { ChatAttachment } from '../src/types.ts';
 
 const router = Router();
@@ -277,13 +278,24 @@ router.post('/api/send', async (req: Request, res: Response) => {
     const trimmedMessage = message?.trim() ?? '';
 
     if (attachment?.dataUrl) {
-      await sendMediaMessage(to, {
-        mediatype: attachment.type === 'image' ? 'image' : 'document',
-        mimetype: attachment.mimeType,
-        media: attachment.dataUrl,
-        caption: trimmedMessage || undefined,
-        fileName: attachment.fileName,
-      });
+      // Whatsmiau only accepts public URLs — upload to Supabase Storage first
+      const mediaUrl = await uploadMediaForSend(
+        attachment.dataUrl,
+        attachment.fileName,
+        attachment.mimeType,
+      );
+      if (attachment.type === 'audio') {
+        // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)
+        await sendWhatsAppAudio(to, mediaUrl);
+      } else {
+        await sendMediaMessage(to, {
+          mediatype: attachment.type === 'image' ? 'image' : 'document',
+          mimetype: attachment.mimeType,
+          media: mediaUrl,
+          caption: trimmedMessage || undefined,
+          fileName: attachment.fileName,
+        });
+      }
     } else {
       await sendTextMessage(to, trimmedMessage);
     }

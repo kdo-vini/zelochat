@@ -77,6 +77,35 @@ export async function requireEmpresaId(req: Request): Promise<string> {
   return resolveEmpresaIdFromToken(token);
 }
 
+const MEDIA_BUCKET = 'zelochat-media';
+const MEDIA_TTL_MS = 10 * 60 * 1000; // 10 minutes — enough for Whatsmiau to download
+
+export async function uploadMediaForSend(
+  dataUrl: string,
+  fileName: string,
+  mimeType: string,
+): Promise<string> {
+  const supabase = getServiceSupabase();
+  const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+  const buffer = Buffer.from(base64, 'base64');
+  const key = `send/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+  const { error } = await supabase.storage
+    .from(MEDIA_BUCKET)
+    .upload(key, buffer, { contentType: mimeType, upsert: false });
+
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  const { data } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(key);
+
+  // Clean up after Whatsmiau has had time to download the file
+  setTimeout(() => {
+    void supabase.storage.from(MEDIA_BUCKET).remove([key]);
+  }, MEDIA_TTL_MS);
+
+  return data.publicUrl;
+}
+
 export function setBoundEmpresaId(empresaId: string): void {
   boundEmpresaId = empresaId;
 }

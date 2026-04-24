@@ -139,10 +139,19 @@ function extractText(msg: any): string | null {
 }
 
 function extractAttachmentDataUrl(msg: any, mimeType: string): string | undefined {
-  // Evolution API v2 / Whatsmiau sends base64 directly in the webhook payload (webhookBase64: true)
-  const raw: string = msg.base64 ?? '';
+  // Whatsmiau/Evolution API v2 with webhookBase64:true may place base64 at different paths
+  const raw: string =
+    msg.base64 ??
+    msg.message?.imageMessage?.base64 ??
+    msg.message?.documentMessage?.base64 ??
+    msg.message?.audioMessage?.base64 ??
+    msg.message?.videoMessage?.base64 ??
+    '';
   if (!raw) return undefined;
-  return raw.startsWith('data:') ? raw : `data:${mimeType};base64,${raw}`;
+  // Normalize: strip existing "data:..." prefix to avoid double-encoding, then rebuild cleanly
+  const pure = raw.startsWith('data:') ? raw.split(',')[1] ?? '' : raw;
+  if (!pure) return undefined;
+  return `data:${mimeType};base64,${pure}`;
 }
 
 function mapMessage(row: MessageRow): ChatMessage {
@@ -484,6 +493,17 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
       fileName: 'imagem-whatsapp.jpg',
       sizeBytes: msg.message.imageMessage.fileLength
         ? Number(msg.message.imageMessage.fileLength)
+        : undefined,
+      dataUrl: extractAttachmentDataUrl(msg, mime),
+    };
+  } else if (msg.message?.audioMessage) {
+    const mime = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
+    attachment = {
+      type: 'audio',
+      mimeType: mime,
+      fileName: 'audio-whatsapp.ogg',
+      sizeBytes: msg.message.audioMessage.fileLength
+        ? Number(msg.message.audioMessage.fileLength)
         : undefined,
       dataUrl: extractAttachmentDataUrl(msg, mime),
     };
