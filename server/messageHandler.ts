@@ -325,7 +325,7 @@ async function insertMessage(params: {
   role: 'user' | 'assistant';
   content: string;
   sentAt: string;
-}): Promise<MessageRow> {
+}): Promise<ChatMessage> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
     .from('zelochat_messages')
