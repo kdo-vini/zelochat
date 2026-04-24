@@ -72,10 +72,13 @@ router.post('/webhook', (req: Request, res: Response) => {
     const botJid = getOwnJid();
     if (botJid && remoteJid === botJid) return;
 
-    // Handle button response (order confirmation)
+    const interactiveId = data.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson
+      ? JSON.parse(data.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson).id
+      : '';
     const buttonId: string =
       data.message?.buttonsResponseMessage?.selectedButtonId ??
-      data.message?.templateButtonReplyMessage?.selectedId ?? '';
+      data.message?.templateButtonReplyMessage?.selectedId ??
+      interactiveId ?? '';
     if (buttonId) {
       const pending = getPendingOrder(remoteJid);
       if (pending) {
@@ -90,9 +93,11 @@ router.post('/webhook', (req: Request, res: Response) => {
     }
 
     // Also catch button clicks that arrive as plain text (WhatsApp sends the event twice)
+    const interactiveText = data.message?.interactiveResponseMessage?.body?.text ?? '';
     const msgText = (
       data.message?.conversation ??
-      data.message?.extendedTextMessage?.text ?? ''
+      data.message?.extendedTextMessage?.text ??
+      interactiveText
     ).trim();
     const pendingForText = getPendingOrder(remoteJid);
     if (pendingForText && msgText) {

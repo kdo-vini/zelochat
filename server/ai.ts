@@ -3,7 +3,7 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
-import { getSession, addAssistantMessage, setAutoReply } from './messageHandler.js';
+import { getSession, addAssistantMessage, addToolMessage, setAutoReply } from './messageHandler.js';
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig, type CatalogCategoriaGroup } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
@@ -36,8 +36,12 @@ export function clearPendingOrder(jid: string): void {
 }
 
 export async function confirmPendingOrder(jid: string): Promise<void> {
+  console.log('[AI] confirmPendingOrder called for JID:', jid);
   const pending = pendingOrders.get(jid);
-  if (!pending) return;
+  if (!pending) {
+    console.warn('[AI] confirmPendingOrder: No pending order found for JID:', jid);
+    return;
+  }
   pendingOrders.delete(jid);
 
   try {
@@ -156,9 +160,11 @@ async function createOrderInDb(
     items: { product: string; quantity: number }[];
     pickupDate: string;
     pickupTime: string;
+    paymentMethod?: string;
     total: number;
   },
 ): Promise<string> {
+  console.log('[AI] Creating order in DB for empresa:', empresaId, 'args:', JSON.stringify(args));
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
     .from('zelochat_orders')
@@ -169,6 +175,7 @@ async function createOrderInDb(
       items: args.items,
       pickup_date: args.pickupDate,
       pickup_time: args.pickupTime,
+      payment_method: args.paymentMethod || null,
       delivery_address: null,
       driver_id: null,
       status: 'pending',
@@ -178,7 +185,11 @@ async function createOrderInDb(
     .select('id')
     .single();
 
-  if (error) throw new Error(`Falha ao criar pedido: ${error.message}`);
+  if (error) {
+    console.error('[AI] Supabase order insert error:', error);
+    throw new Error(`Falha ao criar pedido: ${error.message}`);
+  }
+  console.log('[AI] Order created successfully ID:', data?.id);
   return (data as { id: string }).id;
 }
 
@@ -416,8 +427,12 @@ export async function generateAndSendReply(
                 { id: 'CANCEL_ORDER', displayText: '❌ Cancelar' },
               ],
             );
-            // Button sent — store in history; order is created on button click
-            await addAssistantMessage(jid, summary, undefined, resolvedEmpresaId);
+            
+            // CRITICAL: Must record both the tool result AND the assistant's tool call in history.
+            // Otherwise, OpenAI will error on the next user message due to inconsistent history.
+            await addToolMessage(jid, `Aguardando confirmação do cliente: ${summary}`, toolCall.id, resolvedEmpresaId);
+            await addAssistantMessage(jid, summary, [toolCall], resolvedEmpresaId);
+
             console.log(`[AI] Pending order queued for button confirmation: ${jid}`);
             return summary;
           } catch (btnErr) {
@@ -455,16 +470,22 @@ export async function generateAndSendReply(
           console.warn('[AI] Unknown trigger_id from model:', parsedArgs.trigger_id);
           const fallback = choice.message.content?.trim()
             || 'Tudo certo! Se precisar de algo mais, é só chamar. 😊';
+          
+          await addToolMessage(jid, `Erro: gatilho ${parsedArgs.trigger_id} não encontrado`, toolCall.id, resolvedEmpresaId);
+          await addAssistantMessage(jid, fallback, [toolCall], resolvedEmpresaId);
+          
           await sendTextMessage(jid, fallback);
-          await addAssistantMessage(jid, fallback, undefined, resolvedEmpresaId);
           return fallback;
         }
 
         if (trig.kind === 'escalate_human') {
           await setAutoReply(jid, false, resolvedEmpresaId);
           const handoff = 'Entendi! Vou chamar um atendente pra te ajudar com isso. Só um instante 🙏';
+          
+          await addToolMessage(jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId);
+          await addAssistantMessage(jid, handoff, [toolCall], resolvedEmpresaId);
+          
           await sendTextMessage(jid, handoff);
-          await addAssistantMessage(jid, handoff, undefined, resolvedEmpresaId);
           if (managerJid) {
             try {
               await sendTextMessage(
@@ -497,12 +518,15 @@ export async function generateAndSendReply(
 
         const followUp = await openai.chat.completions.create({
           model: OPENAI_MODEL,
-              messages: [
+          messages: [
             ...messages,
             choice.message,
-            { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' },
+            { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any,
           ],
         });
+        
+        await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
+        await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Beleza! Já anotei aqui. 👍';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
@@ -521,8 +545,11 @@ export async function generateAndSendReply(
 
     console.log(`[AI] Replied to ${jid}: ${cleanReply.slice(0, 80)}...`);
     return cleanReply;
-  } catch (error) {
+  } catch (error: any) {
     console.error('[AI] Error generating reply:', error);
+    if (error?.response?.data) {
+      console.error('[AI] OpenAI Error data:', JSON.stringify(error.response.data));
+    }
     const errMsg = 'Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 🙏';
     try {
       await sendTextMessage(jid, errMsg);

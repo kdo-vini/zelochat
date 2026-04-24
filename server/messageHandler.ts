@@ -39,8 +39,10 @@ interface SessionRow {
 
 interface MessageRow {
   id: string;
-  role: 'user' | 'assistant';
-  content: string;
+  role: string;
+  content: string | null;
+  tool_calls: any[] | null;
+  tool_call_id: string | null;
   sent_at: string;
 }
 
@@ -136,6 +138,9 @@ function extractText(msg: any): string | null {
   if (message.stickerMessage) return '[Sticker]';
   if (message.contactMessage) return '[Contato]';
   if (message.locationMessage) return '[Localizacao]';
+  if (message.interactiveResponseMessage?.body?.text) return message.interactiveResponseMessage.body.text;
+  if (message.buttonsResponseMessage?.selectedDisplayText) return message.buttonsResponseMessage.selectedDisplayText;
+  if (message.templateButtonReplyMessage?.selectedDisplayText) return message.templateButtonReplyMessage.selectedDisplayText;
 
   return null;
 }
@@ -174,15 +179,17 @@ async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: st
 }
 
 function mapMessage(row: MessageRow): ChatMessage {
-  const parsed = parseStructuredMessage(row.content);
+  const parsed = parseStructuredMessage(row.content || '');
   return {
     id: row.id,
-    role: row.role,
-    content: parsed.text,
+    role: row.role as MessageRole,
+    content: row.content,
     preview: parsed.preview,
     timestamp: formatClock(row.sent_at),
     kind: parsed.kind,
     attachment: parsed.attachment,
+    tool_calls: row.tool_calls || undefined,
+    tool_call_id: row.tool_call_id || undefined,
   };
 }
 
@@ -322,9 +329,11 @@ export async function updateSessionProfilePic(empresaId: string, jid: string, pr
 async function insertMessage(params: {
   empresaId: string;
   sessionId: string;
-  role: 'user' | 'assistant';
-  content: string;
+  role: MessageRole;
+  content: string | null;
   sentAt: string;
+  tool_calls?: any[] | null;
+  tool_call_id?: string | null;
 }): Promise<ChatMessage> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
@@ -334,9 +343,11 @@ async function insertMessage(params: {
       session_id: params.sessionId,
       role: params.role,
       content: params.content,
+      tool_calls: params.tool_calls || null,
+      tool_call_id: params.tool_call_id || null,
       sent_at: params.sentAt,
     })
-    .select('id, role, content, sent_at')
+    .select('id, role, content, tool_calls, tool_call_id, sent_at')
     .single();
 
   if (error) {
@@ -360,7 +371,7 @@ export async function getSession(jid: string, empresaId = getBoundEmpresaId()): 
 
   const { data: messages, error } = await supabase
     .from('zelochat_messages')
-    .select('id, role, content, sent_at')
+    .select('id, role, content, tool_calls, tool_call_id, sent_at')
     .eq('empresa_id', empresaId)
     .in('session_id', family.rows.map((row) => row.id))
     .order('sent_at', { ascending: true });
@@ -624,8 +635,8 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
 
 export async function addAssistantMessage(
   jid: string,
-  content: string,
-  attachment?: ChatAttachment,
+  content: string | null,
+  toolCalls?: any[],
   empresaId = getBoundEmpresaId(),
 ): Promise<void> {
   if (!empresaId) {
@@ -633,13 +644,13 @@ export async function addAssistantMessage(
     return;
   }
 
-  const storedContent = serializeStructuredMessage({ text: content, attachment });
-  const preview = attachment ? buildAttachmentPreview(attachment, content) : content;
+  const storedContent = content ? serializeStructuredMessage({ text: content }) : null;
+  const preview = content || (toolCalls ? '[Ação interna]' : '');
   const sessionRow = await ensureSession({
     empresaId,
     jid,
     customerPhone: formatPhone(phoneFromJid(jid)),
-    lastMessage: storedContent,
+    lastMessage: storedContent || '',
     lastMessageTime: formatClock(new Date()),
   });
 
@@ -648,6 +659,7 @@ export async function addAssistantMessage(
     sessionId: sessionRow.id,
     role: 'assistant',
     content: storedContent,
+    tool_calls: toolCalls,
     sentAt: new Date().toISOString(),
   });
 
@@ -663,6 +675,46 @@ export async function addAssistantMessage(
       message: storedMsg,
       autoReply: mappedSession?.autoReply,
       lastMessage: preview,
+      lastMessageTime: storedMsg.timestamp,
+    },
+  });
+}
+
+export async function addToolMessage(
+  jid: string,
+  content: string,
+  toolCallId: string,
+  empresaId = getBoundEmpresaId(),
+): Promise<void> {
+  if (!empresaId) return;
+
+  const sessionRow = await ensureSession({
+    empresaId,
+    jid,
+    customerPhone: formatPhone(phoneFromJid(jid)),
+  });
+
+  const storedMsg = await insertMessage({
+    empresaId,
+    sessionId: sessionRow.id,
+    role: 'tool',
+    content,
+    tool_call_id: toolCallId,
+    sentAt: new Date().toISOString(),
+  });
+
+  const family = await fetchSessionFamily(empresaId, jid);
+  const mappedSession = family ? mapSession(family) : null;
+
+  broadcast({
+    type: 'message_sent',
+    data: {
+      sessionId: mappedSession?.id || jid,
+      customerName: mappedSession?.customerName,
+      customerPhone: mappedSession?.customerPhone,
+      message: storedMsg,
+      autoReply: mappedSession?.autoReply,
+      lastMessage: '[Tool Result]',
       lastMessageTime: storedMsg.timestamp,
     },
   });

@@ -92,7 +92,7 @@ export interface ZeloState {
   };
 }
 
-export type MessageRole = 'user' | 'assistant';
+export type MessageRole = 'user' | 'assistant' | 'tool' | 'system';
 
 export type ChatAttachmentType = 'image' | 'document' | 'audio' | 'video';
 
@@ -109,10 +109,12 @@ export interface ChatAttachment {
 export interface ChatMessage {
   id: string;
   role: MessageRole;
-  content: string;
+  content: string | null;
   preview: string;
   timestamp: string;
   kind: 'text' | ChatAttachmentType;
   attachment?: ChatAttachment;
   status?: MessageStatus;
+  tool_calls?: any[];
+  tool_call_id?: string;
 }
