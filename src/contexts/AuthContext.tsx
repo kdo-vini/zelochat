@@ -37,10 +37,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkProfile = async (userId: string) => {
     const { data } = await supabase
       .from('empresa_perfil')
-      .select('id, nome_exibicao, contato')
+      .select('id, zelochat_onboarding_done')
       .eq('user_id', userId)
       .maybeSingle();
-    setProfileComplete(!!(data?.nome_exibicao && data?.contato));
+    setProfileComplete(!!data?.zelochat_onboarding_done);
     setProfileChecked(true);
   };
 

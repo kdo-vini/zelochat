@@ -35,6 +35,14 @@ export default function OnboardingPage() {
   // Step 2 fields
   const [phone, setPhone] = useState('');
 
+  const maskPhone = (value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 11);
+    if (digits.length <= 2) return digits.length ? `(${digits}` : '';
+    if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+    if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  };
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -49,7 +57,7 @@ export default function OnboardingPage() {
   };
 
   const isStep1Valid = companyName.trim().length > 0 && businessType !== '';
-  const isStep2Valid = phone.trim().length > 0;
+  const isStep2Valid = phone.replace(/\D/g, '').length >= 10;
 
   const handleStep1Next = () => {
     setErrorMsg('');
@@ -79,8 +87,9 @@ export default function OnboardingPage() {
     const payload: Record<string, unknown> = {
       user_id: user.id,
       nome_exibicao: companyName.trim(),
-      contato: phone.trim(),
+      contato: phone.replace(/\D/g, ''),
       tipo_negocio: businessType,
+      zelochat_onboarding_done: true,
       updated_at: new Date().toISOString(),
     };
 
@@ -240,7 +249,7 @@ export default function OnboardingPage() {
                       type="tel"
                       required
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onChange={(e) => setPhone(maskPhone(e.target.value))}
                       placeholder="(XX) XXXXX-XXXX"
                       className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
                     />
