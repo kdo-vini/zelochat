@@ -236,21 +236,50 @@ function buildSystemInstruction(
     ? `\n\nAVISOS DE HOJE:\n${cfg.dailyContext.map((c) => `- ${c.text}`).join('\n')}`
     : '';
 
-  const todayLabel = DAY_LABELS[new Date().getDay()];
+  const todayLabelRaw = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', weekday: 'short',
+  }).format(new Date()).toLowerCase();
+  const todayLabelMap: Record<string, string> = {
+    'dom.': 'Dom', 'seg.': 'Seg', 'ter.': 'Ter', 'qua.': 'Qua',
+    'qui.': 'Qui', 'sex.': 'Sex', 'sáb.': 'Sáb',
+  };
+  const todayLabel = todayLabelMap[todayLabelRaw] ?? todayLabelRaw;
   const isClosedToday = cfg.closedDays.includes(todayLabel);
   const closedDayWarning = isClosedToday
     ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
     : '';
 
-  // Build full current date context — critical so model never hallucinates the year
+  // Build full current date context — use Brazil timezone so Railway (UTC) never skips a day
   const now = new Date();
-  const todayISO = now.toISOString().split('T')[0]; // YYYY-MM-DD
-  const tomorrowISO = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
-  // Next N days lookup so the model can resolve "sábado próximo" etc.
+  function toIsoBrazil(d: Date): string {
+    // Format in Brazil timezone (America/Sao_Paulo = UTC-3 / UTC-2 DST)
+    const parts = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(d);
+    const y = parts.find(p => p.type === 'year')?.value ?? '';
+    const mo = parts.find(p => p.type === 'month')?.value ?? '';
+    const dy = parts.find(p => p.type === 'day')?.value ?? '';
+    return `${y}-${mo}-${dy}`;
+  }
+  function dayLabelBrazil(d: Date): string {
+    const dow = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo', weekday: 'short',
+    }).format(d);
+    // Map pt-BR short names to our DAY_LABELS array
+    const map: Record<string, string> = {
+      'dom.': 'Dom', 'seg.': 'Seg', 'ter.': 'Ter', 'qua.': 'Qua',
+      'qui.': 'Qui', 'sex.': 'Sex', 'sáb.': 'Sáb',
+    };
+    return map[dow.toLowerCase()] ?? dow;
+  }
+
+  const todayISO = toIsoBrazil(now);
+  const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000));
   const nextDays: string[] = [];
   for (let i = 1; i <= 7; i++) {
     const d = new Date(now.getTime() + i * 86400000);
-    nextDays.push(`${DAY_LABELS[d.getDay()]} = ${d.toISOString().split('T')[0]}`);
+    nextDays.push(`${dayLabelBrazil(d)} = ${toIsoBrazil(d)}`);
   }
   const nextDaysStr = nextDays.join(', ');
 
