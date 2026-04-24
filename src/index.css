@@ -86,11 +86,3 @@ body {
 .focus-ring:focus-visible {
   outline-color: var(--color-brand);
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --color-wa-bubble-in: #1F2C34;
-    --color-wa-bubble-out: #005C4B;
-  }
-}
