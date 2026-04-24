@@ -242,12 +242,31 @@ function buildSystemInstruction(
     ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
     : '';
 
+  // Build full current date context — critical so model never hallucinates the year
+  const now = new Date();
+  const todayISO = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const tomorrowISO = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
+  // Next N days lookup so the model can resolve "sábado próximo" etc.
+  const nextDays: string[] = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(now.getTime() + i * 86400000);
+    nextDays.push(`${DAY_LABELS[d.getDay()]} = ${d.toISOString().split('T')[0]}`);
+  }
+  const nextDaysStr = nextDays.join(', ');
+
   const triggersBlock = triggers.length > 0
     ? triggers.map((t) => `- id=${t.id} [${t.kind}] "${t.name}": ${t.conditionDescription}`).join('\n')
     : '- (nenhum gatilho configurado)';
 
   return `Você é o assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
+
+DATA E HORA ATUAL (use SEMPRE, NUNCA invente datas ou anos):
+- Hoje é ${todayLabel}, ${todayISO}
+- Amanhã é ${tomorrowISO}
+- Próximos 7 dias: ${nextDaysStr}
+- Ao interpretar datas relativas ("sábado", "semana que vem", "amanhã"), calcule SEMPRE a partir da data de hoje acima.
+- Se o cliente disser apenas o dia da semana, confirme antes de criar o pedido: "Seria para [dia], [YYYY-MM-DD]?"
 
 INFORMAÇÕES DA LANCHONETE:
 - Cardápio disponível: ${availableProducts}${catalogHierarchyStr}
@@ -274,10 +293,11 @@ ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'
 
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
-2. Para encomendas, coletar: produto, quantidade, data de retirada, horário, nome do cliente E forma de pagamento. Se o cliente não informar a forma de pagamento, pergunte qual será (ex: Pix, Dinheiro, Cartão).
-3. ASSIM QUE tiver TODOS os dados (produto, quantidade, data, horário, nome, forma de pagamento), CHAME A FUNÇÃO criar_pedido IMEDIATAMENTE. NÃO peça confirmação adicional — o cliente já confirmou ao fornecer todos os dados.
-4. NUNCA gere um resumo e peça confirmação com palavras — use SEMPRE a função criar_pedido quando tiver os dados completos.
-5. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar o comprovante após o pagamento.
+2. Para encomendas, coletar: produto, quantidade, data de retirada, horário, nome do cliente E forma de pagamento.
+3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta: "Seria para sábado, [YYYY-MM-DD]?" e aguarde confirmação antes de criar o pedido.
+4. ASSIM QUE tiver TODOS os dados confirmados (produto, quantidade, data exata, horário, nome, pagamento), CHAME criar_pedido IMEDIATAMENTE.
+5. NUNCA gere um resumo pedindo confirmação em texto — o botão de confirmação no sistema já faz isso.
+6. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.
 
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
@@ -364,14 +384,25 @@ export async function generateAndSendReply(
   // Signal "typing" while we wait for the AI — non-blocking, ignore failures
   void sendPresence(jid, 'composing');
 
+  // Guard: if there is a pending order for this JID waiting for button confirmation,
+  // do NOT send messages to the AI — it would create a duplicate order.
+  if (getPendingOrder(jid)) {
+    console.log(`[AI] Skipping AI reply for ${jid} — pending order awaiting button confirmation`);
+    return null;
+  }
+
   try {
     const openai = getAI();
+
+    // Build messages array, correctly handling tool/system/assistant roles
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemInstruction },
-      ...session.messages.map((m) => ({
-        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: parseStructuredMessage(m.kind === 'text' ? m.content : m.preview).contentForModel,
-      })),
+      ...session.messages
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({
+          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.content ? parseStructuredMessage(m.kind === 'text' ? m.content : m.preview).contentForModel : '',
+        })),
     ];
 
     const response = await openai.chat.completions.create({
