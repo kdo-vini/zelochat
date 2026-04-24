@@ -236,7 +236,19 @@ export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerN
   if (isSystem) return null;
 
   const hasTail = isLastInGroup;
-  const displayText = message.content;
+  
+  let displayText = message.content;
+  if (message.kind === 'image') {
+    if (displayText === '[Imagem]') displayText = '';
+    else if (displayText.startsWith('[Imagem] ')) displayText = displayText.substring(9);
+  } else if (message.kind === 'video') {
+    if (displayText === '[Video]') displayText = '';
+    else if (displayText.startsWith('[Video] ')) displayText = displayText.substring(8);
+  } else if (message.kind === 'audio') {
+    if (displayText === '[Audio]') displayText = '';
+  } else if (message.kind === 'document') {
+    if (displayText.startsWith('[Documento')) displayText = '';
+  }
 
   /* ── Bubble wrapper styles (WhatsApp-accurate) ── */
   const bubbleStyle: React.CSSProperties = {
