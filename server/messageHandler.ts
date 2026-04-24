@@ -343,7 +343,7 @@ async function insertMessage(params: {
     throw new Error(error.message);
   }
 
-  return mapMessage(data as MessageRow);
+  return mapMessage(data as any as MessageRow);
 }
 
 export async function getSession(jid: string, empresaId = getBoundEmpresaId()): Promise<StoredSession | null> {
@@ -369,7 +369,7 @@ export async function getSession(jid: string, empresaId = getBoundEmpresaId()): 
     throw new Error(error.message);
   }
 
-  return mapSession(family, (messages as MessageRow[]).map(mapMessage));
+  return mapSession(family, (messages as any as MessageRow[]).map(mapMessage));
 }
 
 export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<StoredSession[]> {

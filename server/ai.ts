@@ -11,7 +11,7 @@ import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
 
-const OPENAI_MODEL = 'gpt-5-mini';
+const OPENAI_MODEL = 'gpt-4o-mini';
 
 interface PendingOrder {
   empresaId: string;
@@ -21,6 +21,7 @@ interface PendingOrder {
   items: { product: string; quantity: number }[];
   pickupDate: string;
   pickupTime: string;
+  paymentMethod?: string;
   total: number;
 }
 
@@ -44,7 +45,7 @@ export async function confirmPendingOrder(jid: string): Promise<void> {
     const shortId = orderId.slice(0, 8).toUpperCase();
     const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
     const cfg = getConfig(pending.empresaId);
-    const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+    const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
     await sendTextMessage(jid, reply);
     await addAssistantMessage(jid, reply, undefined, pending.empresaId);
     broadcast({ type: 'order_created', data: { orderId, empresaId: pending.empresaId } });
@@ -262,9 +263,10 @@ ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'
 
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
-2. Para encomendas, coletar: produto, quantidade, data de retirada, horário e nome do cliente.
-3. ASSIM QUE tiver TODOS os dados (produto, quantidade, data, horário, nome), CHAME A FUNÇÃO criar_pedido IMEDIATAMENTE. NÃO peça confirmação adicional — o cliente já confirmou ao fornecer todos os dados.
+2. Para encomendas, coletar: produto, quantidade, data de retirada, horário, nome do cliente E forma de pagamento. Se o cliente não informar a forma de pagamento, pergunte qual será (ex: Pix, Dinheiro, Cartão).
+3. ASSIM QUE tiver TODOS os dados (produto, quantidade, data, horário, nome, forma de pagamento), CHAME A FUNÇÃO criar_pedido IMEDIATAMENTE. NÃO peça confirmação adicional — o cliente já confirmou ao fornecer todos os dados.
 4. NUNCA gere um resumo e peça confirmação com palavras — use SEMPRE a função criar_pedido quando tiver os dados completos.
+5. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar o comprovante após o pagamento.
 
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
@@ -293,9 +295,10 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
         },
         pickupDate: { type: 'string', description: 'Data de retirada no formato YYYY-MM-DD' },
         pickupTime: { type: 'string', description: 'Horário de retirada no formato HH:MM' },
+        paymentMethod: { type: 'string', description: 'Forma de pagamento escolhida pelo cliente (ex: Pix, Dinheiro, Cartão)' },
         total: { type: 'number', description: 'Valor total do pedido em reais' },
       },
-      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'total'],
+      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'paymentMethod', 'total'],
     },
   },
 };
@@ -381,6 +384,7 @@ export async function generateAndSendReply(
             items: { product: string; quantity: number }[];
             pickupDate: string;
             pickupTime: string;
+            paymentMethod: string;
             total: number;
           };
 
@@ -399,7 +403,7 @@ export async function generateAndSendReply(
           // Store as pending and send native button confirmation
           pendingOrders.set(jid, { empresaId: resolvedEmpresaId, jid, ...args });
           const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
-          const summary = `📦 ${itemsList}\n📅 ${args.pickupDate} às ${args.pickupTime}\n💰 R$ ${args.total.toFixed(2)}`;
+          const summary = `📦 ${itemsList}\n📅 ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 R$ ${args.total.toFixed(2)}`;
 
           try {
             await sendButtonMessage(
@@ -422,7 +426,7 @@ export async function generateAndSendReply(
             pendingOrders.delete(jid);
             const orderId = await createOrderInDb(resolvedEmpresaId, args);
             const shortId = orderId.slice(0, 8).toUpperCase();
-            replyText = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${args.pickupDate} às ${args.pickupTime}\n💰 Total: R$ ${args.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+            replyText = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
           }
         } catch (err) {
           replyText = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente em instantes? 🙏';

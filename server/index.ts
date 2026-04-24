@@ -76,20 +76,23 @@ httpServer.listen(PORT, () => {
   console.log(`[Server] WebSocket on ws://localhost:${PORT}/ws`);
 
   // Auto-bind empresa at startup so messages are routed without waiting for frontend login
-  getServiceSupabase()
-    .from('empresa_perfil')
-    .select('id')
-    .limit(1)
-    .maybeSingle()
-    .then(({ data }) => {
+  (async () => {
+    try {
+      const { data } = await getServiceSupabase()
+        .from('empresa_perfil')
+        .select('id')
+        .limit(1)
+        .maybeSingle();
       if (data?.id) {
         setBoundEmpresaId(data.id);
         console.log(`[Server] Auto-bound empresa: ${data.id}`);
       } else {
         console.warn('[Server] No empresa found — messages will be ignored until frontend logs in.');
       }
-    })
-    .catch((err) => console.warn('[Server] Auto-bind failed:', err));
+    } catch (err) {
+      console.warn('[Server] Auto-bind failed:', err);
+    }
+  })();
 
   // Start WhatsApp connection
   startWhatsApp().catch((err) => {
