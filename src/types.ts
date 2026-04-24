@@ -93,7 +93,9 @@ export interface ZeloState {
 
 export type MessageRole = 'user' | 'assistant';
 
-export type ChatAttachmentType = 'image' | 'document' | 'audio';
+export type ChatAttachmentType = 'image' | 'document' | 'audio' | 'video';
+
+export type MessageStatus = 'sent' | 'delivered' | 'read';
 
 export interface ChatAttachment {
   type: ChatAttachmentType;
@@ -111,4 +113,5 @@ export interface ChatMessage {
   timestamp: string;
   kind: 'text' | ChatAttachmentType;
   attachment?: ChatAttachment;
+  status?: MessageStatus;
 }

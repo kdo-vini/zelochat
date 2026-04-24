@@ -3,11 +3,10 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Bot,
   Check,
-  CheckCheck,
-  Download,
   FileText,
   ImagePlus,
   Loader2,
+  MessageCircle,
   Mic,
   MicOff,
   MoreVertical,
@@ -25,7 +24,7 @@ import {
 import { normalizePhoneNumber } from '../../domain/chat';
 import { getOwnerResponse } from '../../services/openaiService';
 import type { ChatAttachment, ChatSession, QuickResponse } from '../../types';
-import { MessageCircle } from 'lucide-react';
+import { MessageBubble } from './MessageBubble';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -523,7 +522,7 @@ export function ChatView({
               </div>
 
               {/* Messages */}
-              <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-1.5">
+              <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-1">
                 <div className="self-center mb-2">
                   <span className="text-[11px] font-medium text-[var(--color-ink-faint)] bg-[var(--color-wa-panel)]/60 px-3 py-1 rounded-full">
                     Criptografia de ponta a ponta
@@ -533,9 +532,7 @@ export function ChatView({
                 <AnimatePresence initial={false}>
                   {activeSession.messages.map((message, idx, arr) => {
                     const isSystem = message.kind === 'text' && message.content.includes('[SISTEMA]');
-                    const isUser = message.role === 'user';
-                    const displayText = isSystem ? message.content.replace('[SISTEMA]', '').trim() : message.content;
-                    const isLastInGroup = isUser && (idx === arr.length - 1 || arr[idx + 1].role !== 'user');
+                    const systemText = message.content.replace('[SISTEMA]', '').trim();
 
                     if (isSystem) {
                       return (
@@ -546,100 +543,28 @@ export function ChatView({
                           className="self-center my-1"
                         >
                           <span className="inline-block text-[11.5px] font-medium bg-[var(--color-warn-soft)] text-[var(--color-warn)] px-3 py-1 rounded-full">
-                            {displayText}
+                            {systemText}
                           </span>
                         </motion.div>
                       );
                     }
+
+                    const isLastInGroup =
+                      idx === arr.length - 1 || arr[idx + 1].role !== message.role;
 
                     return (
                       <motion.div
                         key={message.id}
                         initial={{ opacity: 0, y: 4 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className={`flex items-end gap-2 ${isUser ? 'justify-start' : 'justify-end'}`}
+                        transition={{ duration: 0.15 }}
                       >
-                        {isUser && (
-                          <div className="w-7 h-7 flex-shrink-0 rounded-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] overflow-hidden flex items-center justify-center self-end">
-                            {isLastInGroup && profilePics[activeSession.id] ? (
-                              <img src={profilePics[activeSession.id]} alt={activeSession.customerName} className="w-full h-full object-cover" />
-                            ) : isLastInGroup ? (
-                              <User className="w-3.5 h-3.5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
-                            ) : null}
-                          </div>
-                        )}
-                        <div
-                          className={`rounded-xl px-3.5 py-2 shadow-[var(--shadow-card)] ${
-                            message.kind === 'image' ? 'max-w-[26rem]' : 'max-w-[72%]'
-                          } ${
-                            isUser
-                              ? 'bg-[var(--color-wa-bubble-in)] rounded-tl-sm text-[var(--color-ink)]'
-                              : 'bg-[var(--color-wa-bubble-out)] rounded-tr-sm text-[var(--color-ink)]'
-                          }`}
-                        >
-                          {message.kind === 'image' && (
-                            message.attachment?.dataUrl ? (
-                              <img
-                                src={message.attachment.dataUrl}
-                                alt={message.attachment.fileName}
-                                className="mb-2 max-h-72 w-full rounded-xl object-cover"
-                              />
-                            ) : (
-                              <div className="mb-2 flex h-44 items-center justify-center rounded-xl bg-[var(--color-surface-muted)] text-[12px] text-[var(--color-ink-muted)]">
-                                Imagem recebida
-                              </div>
-                            )
-                          )}
-
-                          {message.kind === 'audio' && message.attachment && (
-                            <div className="mb-2">
-                              {message.attachment.dataUrl ? (
-                                <audio
-                                  controls
-                                  src={message.attachment.dataUrl}
-                                  className="w-full max-w-[260px] rounded-lg"
-                                />
-                              ) : (
-                                <div className="flex items-center gap-2 rounded-xl bg-[var(--color-surface-muted)] px-3 py-2 text-[12px] text-[var(--color-ink-muted)]">
-                                  <Mic className="h-4 w-4 flex-shrink-0" strokeWidth={1.8} />
-                                  Áudio recebido
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {message.kind === 'document' && message.attachment && (
-                            <a
-                              href={message.attachment.dataUrl}
-                              download={message.attachment.fileName}
-                              className="mb-2 flex items-center gap-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/85 px-3 py-2 transition-colors hover:bg-[var(--color-surface)]"
-                            >
-                              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
-                                <FileText className="h-4.5 w-4.5" strokeWidth={1.8} />
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-[12.5px] font-semibold text-[var(--color-ink)]">
-                                  {message.attachment.fileName}
-                                </p>
-                                <p className="text-[11px] text-[var(--color-ink-muted)]">
-                                  {formatAttachmentSize(message.attachment.sizeBytes)}
-                                </p>
-                              </div>
-                              {message.attachment.dataUrl && (
-                                <Download className="h-4 w-4 flex-shrink-0 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
-                              )}
-                            </a>
-                          )}
-
-                          {displayText && <p className="text-[14px] leading-relaxed">{displayText}</p>}
-
-                          <div className="mt-1 flex items-center justify-end gap-1">
-                            <span className="text-[10.5px] text-[var(--color-ink-faint)]">{message.timestamp}</span>
-                            {!isUser && (
-                              <CheckCheck className="w-3 h-3 text-[var(--color-brand)]" strokeWidth={2} />
-                            )}
-                          </div>
-                        </div>
+                        <MessageBubble
+                          message={message}
+                          isLastInGroup={isLastInGroup}
+                          profilePicUrl={profilePics[activeSession.id]}
+                          customerName={activeSession.customerName}
+                        />
                       </motion.div>
                     );
                   })}

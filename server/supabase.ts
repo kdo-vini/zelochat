@@ -113,3 +113,25 @@ export function setBoundEmpresaId(empresaId: string): void {
 export function getBoundEmpresaId(): string | null {
   return boundEmpresaId;
 }
+
+/**
+ * Uploads received media (incoming messages) to Supabase Storage.
+ * Unlike uploadMediaForSend, these files are NOT auto-deleted — users need to view them later.
+ */
+export async function uploadReceivedMedia(
+  buffer: Buffer,
+  fileName: string,
+  mimeType: string,
+): Promise<string> {
+  const supabase = getServiceSupabase();
+  const key = `received/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+  const { error } = await supabase.storage
+    .from(MEDIA_BUCKET)
+    .upload(key, buffer, { contentType: mimeType, upsert: false });
+
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  const { data } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(key);
+  return data.publicUrl;
+}
