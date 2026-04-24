@@ -343,7 +343,7 @@ async function insertMessage(params: {
     throw new Error(error.message);
   }
 
-  return mapMessage(data as any as MessageRow);
+  return mapMessage(data as MessageRow);
 }
 
 export async function getSession(jid: string, empresaId = getBoundEmpresaId()): Promise<StoredSession | null> {
@@ -369,7 +369,7 @@ export async function getSession(jid: string, empresaId = getBoundEmpresaId()): 
     throw new Error(error.message);
   }
 
-  return mapSession(family, (messages as any as MessageRow[]).map(mapMessage));
+  return mapSession(family, (messages as MessageRow[]).map(mapMessage));
 }
 
 export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<StoredSession[]> {
@@ -596,16 +596,16 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
   const mappedSession = family
     ? mapSession(family)
     : {
-        id: sessionRow.remote_jid,
-        customerName: sessionRow.customer_name || pushName,
-        customerPhone: sessionRow.customer_phone || formatPhone(phone),
-        lastMessage: preview,
-        lastMessageTime: displayTime,
-        unreadCount: sessionRow.unread_count ?? 0,
-        messages: [],
-        status: sessionRow.status,
-        autoReply: sessionRow.auto_reply ?? true,
-      };
+      id: sessionRow.remote_jid,
+      customerName: sessionRow.customer_name || pushName,
+      customerPhone: sessionRow.customer_phone || formatPhone(phone),
+      lastMessage: preview,
+      lastMessageTime: displayTime,
+      unreadCount: sessionRow.unread_count ?? 0,
+      messages: [],
+      status: sessionRow.status,
+      autoReply: sessionRow.auto_reply ?? true,
+    };
 
   broadcast({
     type: 'message',
