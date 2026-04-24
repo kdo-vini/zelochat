@@ -139,7 +139,7 @@ function extractText(msg: any): string | null {
 }
 
 function extractAttachmentDataUrl(msg: any, mimeType: string): string | undefined {
-  // Whatsmiau/Evolution API v2 with webhookBase64:true may place base64 at different paths
+  // 1. Base64 path — only present when webhook.base64=true is set on the instance
   const raw: string =
     msg.base64 ??
     msg.message?.imageMessage?.base64 ??
@@ -147,11 +147,22 @@ function extractAttachmentDataUrl(msg: any, mimeType: string): string | undefine
     msg.message?.audioMessage?.base64 ??
     msg.message?.videoMessage?.base64 ??
     '';
-  if (!raw) return undefined;
-  // Normalize: strip existing "data:..." prefix to avoid double-encoding, then rebuild cleanly
-  const pure = raw.startsWith('data:') ? raw.split(',')[1] ?? '' : raw;
-  if (!pure) return undefined;
-  return `data:${mimeType};base64,${pure}`;
+  if (raw) {
+    // Normalize: strip existing "data:..." prefix to avoid double-encoding, then rebuild cleanly
+    const pure = raw.startsWith('data:') ? raw.split(',')[1] ?? '' : raw;
+    if (pure) return `data:${mimeType};base64,${pure}`;
+  }
+
+  // 2. URL path — Whatsmiau v2 sends a public mediaUrl at the root of `data`, and also
+  //    embeds the CDN url inside the per-type message object. Both work as <img src> / <audio src>.
+  const publicUrl: string =
+    msg.mediaUrl ??
+    msg.message?.imageMessage?.url ??
+    msg.message?.audioMessage?.url ??
+    msg.message?.videoMessage?.url ??
+    msg.message?.documentMessage?.url ??
+    '';
+  return publicUrl || undefined;
 }
 
 function mapMessage(row: MessageRow): ChatMessage {
