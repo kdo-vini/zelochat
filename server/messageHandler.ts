@@ -1,5 +1,5 @@
 import { broadcast } from './ws.js';
-import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
+import { getBoundEmpresaId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import type { ChatAttachment, ChatMessage } from '../src/types.ts';
 import {
   buildAttachmentPreview,
@@ -138,31 +138,37 @@ function extractText(msg: any): string | null {
   return null;
 }
 
-function extractAttachmentDataUrl(msg: any, mimeType: string): string | undefined {
-  // 1. Base64 path — only present when webhook.base64=true is set on the instance
-  const raw: string =
-    msg.base64 ??
-    msg.message?.imageMessage?.base64 ??
-    msg.message?.documentMessage?.base64 ??
-    msg.message?.audioMessage?.base64 ??
-    msg.message?.videoMessage?.base64 ??
-    '';
-  if (raw) {
-    // Normalize: strip existing "data:..." prefix to avoid double-encoding, then rebuild cleanly
-    const pure = raw.startsWith('data:') ? raw.split(',')[1] ?? '' : raw;
-    if (pure) return `data:${mimeType};base64,${pure}`;
+/**
+ * Extracts the media data from an incoming webhook message.
+ * Priority: base64 (uploaded to Supabase) → public mediaUrl from Whatsmiau.
+ * Encrypted WhatsApp CDN URLs (mmg.whatsapp.net) are NOT usable directly.
+ */
+async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string): Promise<string | undefined> {
+  // 1. Public mediaUrl — Whatsmiau provides this after uploading to its own Google Cloud storage
+  const mediaUrl: string = msg.message?.mediaUrl ?? '';
+  if (mediaUrl && !mediaUrl.includes('mmg.whatsapp.net') && !mediaUrl.endsWith('.enc')) {
+    return mediaUrl;
   }
 
-  // 2. URL path — Whatsmiau v2 sends a public mediaUrl at the root of `data`, and also
-  //    embeds the CDN url inside the per-type message object. Both work as <img src> / <audio src>.
-  const publicUrl: string =
-    msg.mediaUrl ??
-    msg.message?.imageMessage?.url ??
-    msg.message?.audioMessage?.url ??
-    msg.message?.videoMessage?.url ??
-    msg.message?.documentMessage?.url ??
-    '';
-  return publicUrl || undefined;
+  // 2. Base64 path — fallback if Whatsmiau provides raw base64 instead of a URL
+  const raw: string = msg.message?.base64 ?? '';
+  if (raw) {
+    const pure = raw.startsWith('data:') ? raw.split(',')[1] ?? '' : raw;
+    if (pure) {
+      // Upload to Supabase for a persistent public URL
+      try {
+        const buffer = Buffer.from(pure, 'base64');
+        return await uploadReceivedMedia(buffer, fileName, mimeType);
+      } catch (err) {
+        console.warn('[Media] Supabase upload failed, using data URI:', err);
+        return `data:${mimeType};base64,${pure}`;
+      }
+    }
+  }
+
+  // No usable media data
+  console.warn('[Media] No usable media found for', mimeType);
+  return undefined;
 }
 
 function mapMessage(row: MessageRow): ChatMessage {
@@ -505,7 +511,7 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
       sizeBytes: msg.message.imageMessage.fileLength
         ? Number(msg.message.imageMessage.fileLength)
         : undefined,
-      dataUrl: extractAttachmentDataUrl(msg, mime),
+      dataUrl: await extractAttachmentDataUrl(msg, mime, 'imagem-whatsapp.jpg'),
     };
   } else if (msg.message?.audioMessage) {
     const mime = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
@@ -516,7 +522,7 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
       sizeBytes: msg.message.audioMessage.fileLength
         ? Number(msg.message.audioMessage.fileLength)
         : undefined,
-      dataUrl: extractAttachmentDataUrl(msg, mime),
+      dataUrl: await extractAttachmentDataUrl(msg, mime, 'audio-whatsapp.ogg'),
     };
   } else if (msg.message?.documentMessage) {
     const rawMime = msg.message.documentMessage.mimetype || 'application/octet-stream';
@@ -528,7 +534,7 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
       sizeBytes: msg.message.documentMessage.fileLength
         ? Number(msg.message.documentMessage.fileLength)
         : undefined,
-      dataUrl: extractAttachmentDataUrl(msg, mime),
+      dataUrl: await extractAttachmentDataUrl(msg, mime, sanitizeFileName(msg.message.documentMessage.fileName, 'documento')),
     };
   }
 

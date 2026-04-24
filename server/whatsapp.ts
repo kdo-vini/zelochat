@@ -85,6 +85,9 @@ export async function registerWebhook(force = false): Promise<boolean> {
   if (!force && webhookUrl === lastRegisteredWebhook) return true;
 
   try {
+    // 1. Register via /webhook/set — standard webhook URL + events setup
+    //    NOTE: webhookBase64 here means "encode entire payload in base64" (NOT media)
+    //    so we intentionally do NOT set it.
     await axios.post(
       `${BASE_URL}/webhook/set/${INSTANCE_NAME}`,
       {
@@ -92,12 +95,44 @@ export async function registerWebhook(force = false): Promise<boolean> {
           enabled: true,
           url: webhookUrl,
           webhookByEvents: false,
-          webhookBase64: true,
+          base64: true, // This enables media base64
           events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
         },
       },
       { headers: apiHeaders() },
     );
+
+    // 2. Update instance to enable media base64 — per docs, this endpoint's
+    //    base64 field means "mídias nos eventos vêm codificadas em base64"
+    try {
+      const updateRes = await axios.put(
+        `${BASE_URL}/v2/instance/update/${INSTANCE_NAME}`,
+        {
+          webhook: {
+            enabled: true,
+            url: webhookUrl,
+            base64: true,
+            events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
+          },
+        },
+        { headers: { ...apiHeaders(), 'Content-Type': 'application/json' } },
+      );
+      console.log('[WhatsApp] Instance update response:', JSON.stringify(updateRes.data)?.slice(0, 400));
+    } catch (updateErr: any) {
+      console.warn('[WhatsApp] Instance update for base64 failed:', updateErr?.response?.status, updateErr?.response?.data ?? (updateErr instanceof Error ? updateErr.message : updateErr));
+    }
+
+    // 3. Verify the current webhook config shows base64=true
+    try {
+      const findRes = await axios.get(
+        `${BASE_URL}/v2/webhook/find/${INSTANCE_NAME}`,
+        { headers: apiHeaders() },
+      );
+      console.log('[WhatsApp] Current webhook config:', JSON.stringify(findRes.data)?.slice(0, 600));
+    } catch {
+      // non-fatal
+    }
+
     lastRegisteredWebhook = webhookUrl;
     console.log(`[WhatsApp] Webhook registered → ${webhookUrl}`);
     return true;
