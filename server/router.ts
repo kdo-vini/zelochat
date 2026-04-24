@@ -39,7 +39,7 @@ import { getConfig, setConfig } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from './triggers.js';
 import { requireEmpresaId, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
-import type { ChatAttachment } from '../src/types.ts';
+import type { ChatAttachment } from '../src/types.js';
 
 const router = Router();
 

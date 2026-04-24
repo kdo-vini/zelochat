@@ -1,6 +1,6 @@
 import { broadcast } from './ws.js';
 import { getBoundEmpresaId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
-import type { ChatAttachment, ChatMessage } from '../src/types.ts';
+import type { ChatAttachment, ChatMessage } from '../src/types.js';
 import {
   buildAttachmentPreview,
   buildContactKey,
@@ -8,7 +8,7 @@ import {
   normalizePhoneNumber,
   parseStructuredMessage,
   serializeStructuredMessage,
-} from '../src/domain/chat.ts';
+} from '../src/domain/chat.js';
 
 export interface StoredSession {
   id: string;

@@ -7,7 +7,7 @@ import { getSession, addAssistantMessage, setAutoReply } from './messageHandler.
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig, type CatalogCategoriaGroup } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
-import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.ts';
+import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
 
