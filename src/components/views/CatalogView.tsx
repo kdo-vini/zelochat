@@ -1,139 +1,596 @@
-import React, { useMemo, useState } from 'react';
-import { RefreshCw, Search, ShoppingBag } from 'lucide-react';
-import type { Produto } from '../../services/zeloApi';
-import type { ZeloState } from '../../types';
+import React, { useMemo, useState, type ReactNode } from 'react';
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  ShoppingBag,
+  Trash2,
+  ExternalLink,
+} from 'lucide-react';
+import type { Categoria, ProdutoRow, Subcategoria } from '../../hooks/useCatalog';
+import {
+  CategoriaModal,
+  ConfirmDelete,
+  ProductModal,
+  SubcategoriaModal,
+} from './catalog/CatalogModals';
 
 interface Props {
-  state: ZeloState;
   isAuthenticated: boolean;
   authLoading: boolean;
-  produtosLoading: boolean;
-  produtosError: string | null;
-  produtosPdv: Produto[];
-  refreshProdutos: () => Promise<void>;
+  loading: boolean;
+  error: string | null;
+  categorias: Categoria[];
+  subcategorias: Subcategoria[];
+  produtos: ProdutoRow[];
+  refresh: () => Promise<void>;
+  createCategoria: (input: { nome: string; ordem?: number }) => Promise<Categoria>;
+  updateCategoria: (id: number, patch: { nome?: string; ordem?: number }) => Promise<void>;
+  deleteCategoria: (id: number) => Promise<void>;
+  createSubcategoria: (input: { nome: string; id_categoria: number; ordem?: number }) => Promise<Subcategoria>;
+  updateSubcategoria: (id: number, patch: { nome?: string; id_categoria?: number; ordem?: number }) => Promise<void>;
+  deleteSubcategoria: (id: number) => Promise<void>;
+  createProduto: (input: {
+    nome: string;
+    preco: number;
+    id_categoria: number | null;
+    id_subcategoria: number | null;
+    ocultar_no_pdv?: boolean;
+  }) => Promise<ProdutoRow>;
+  updateProduto: (
+    id: number,
+    patch: {
+      nome?: string;
+      preco?: number;
+      id_categoria?: number | null;
+      id_subcategoria?: number | null;
+      ocultar_no_pdv?: boolean;
+    },
+  ) => Promise<void>;
+  deleteProduto: (id: number) => Promise<void>;
 }
 
+type CatModalState =
+  | { kind: 'categoria'; initial: Categoria | null }
+  | { kind: 'subcategoria'; initial: Subcategoria | null; defaultCategoriaId: number | null }
+  | { kind: 'produto'; initial: ProdutoRow | null; defaultCategoriaId: number | null; defaultSubcategoriaId: number | null }
+  | null;
+
+type DeleteState =
+  | { kind: 'categoria'; item: Categoria }
+  | { kind: 'subcategoria'; item: Subcategoria }
+  | { kind: 'produto'; item: ProdutoRow }
+  | null;
+
 export const CatalogView = ({
-  state,
   isAuthenticated,
   authLoading,
-  produtosLoading,
-  produtosError,
-  produtosPdv,
-  refreshProdutos,
+  loading,
+  error,
+  categorias,
+  subcategorias,
+  produtos,
+  refresh,
+  createCategoria,
+  updateCategoria,
+  deleteCategoria,
+  createSubcategoria,
+  updateSubcategoria,
+  deleteSubcategoria,
+  createProduto,
+  updateProduto,
+  deleteProduto,
 }: Props) => {
   const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [modal, setModal] = useState<CatModalState>(null);
+  const [del, setDel] = useState<DeleteState>(null);
 
-  const produtosFiltrados = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return produtosPdv;
-    return produtosPdv.filter((produto) => produto.nome.toLowerCase().includes(normalized));
-  }, [produtosPdv, query]);
+  const normalized = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!normalized) return produtos;
+    return produtos.filter((p) => p.nome.toLowerCase().includes(normalized));
+  }, [produtos, normalized]);
+
+  const tree = useMemo(() => buildTree(categorias, subcategorias, filtered), [categorias, subcategorias, filtered]);
+  const orphanProducts = useMemo(() => filtered.filter((p) => p.id_categoria == null), [filtered]);
+
+  const toggleCat = (id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const expandAll = () => setExpanded(new Set(categorias.map((c) => c.id)));
+  const collapseAll = () => setExpanded(new Set());
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto p-8">
       <div className="space-y-6">
-        <header className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <ShoppingBag className="h-6 w-6 text-[#00a884]" />
+        <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-start gap-3">
+            <ShoppingBag className="mt-0.5 h-6 w-6 text-[#25D366]" />
             <div>
-              <h2 className="text-2xl font-bold text-gray-800">Cardápio do PDV</h2>
+              <h2 className="text-2xl font-bold text-gray-800">Cardápio</h2>
               <p className="text-sm text-gray-500">
-                Esta tela usa somente os produtos reais vindos da API do Zelo PDV.
+                Cadastre categorias, subcategorias e produtos. A IA usa esses dados para responder clientes no WhatsApp.
               </p>
             </div>
           </div>
 
-          <button
-            onClick={() => void refreshProdutos()}
-            disabled={authLoading || produtosLoading}
-            className="flex items-center gap-2 rounded-lg bg-[#00a884] px-4 py-2 text-sm font-bold text-white transition-colors disabled:bg-gray-300"
-          >
-            <RefreshCw className={`h-4 w-4 ${produtosLoading ? 'animate-spin' : ''}`} />
-            {produtosLoading ? 'Atualizando...' : 'Atualizar'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => void refresh()}
+              disabled={authLoading || loading}
+              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Atualizar
+            </button>
+            <button
+              onClick={() => setModal({ kind: 'categoria', initial: null })}
+              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              <FolderPlus className="h-4 w-4" /> Nova categoria
+            </button>
+            <button
+              onClick={() => setModal({ kind: 'produto', initial: null, defaultCategoriaId: null, defaultSubcategoriaId: null })}
+              className="flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1EBE5D]"
+            >
+              <Plus className="h-4 w-4" /> Novo produto
+            </button>
+          </div>
         </header>
 
         <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-          <div className="mb-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <h3 className="text-sm font-bold text-gray-800">Produtos sincronizados</h3>
+              <h3 className="text-sm font-bold text-gray-800">{produtos.length} produtos cadastrados</h3>
               <p className="text-xs text-gray-500">
-                {state.products.length} itens normalizados para IA e {produtosPdv.length} registros brutos no PDV
+                {categorias.length} categorias · {subcategorias.length} subcategorias
               </p>
             </div>
 
-            <div className="flex items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
-              <Search className="h-4 w-4 text-gray-400" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Buscar produto..."
-                className="w-full bg-transparent text-sm outline-none md:w-64"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={expandAll}
+                className="text-xs font-semibold text-gray-500 hover:text-gray-800"
+              >
+                Expandir tudo
+              </button>
+              <span className="text-gray-300">·</span>
+              <button
+                onClick={collapseAll}
+                className="text-xs font-semibold text-gray-500 hover:text-gray-800"
+              >
+                Recolher tudo
+              </button>
+              <div className="ml-2 flex items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
+                <Search className="h-4 w-4 text-gray-400" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Buscar produto..."
+                  className="w-full bg-transparent text-sm outline-none md:w-56"
+                />
+              </div>
             </div>
           </div>
 
-          {produtosError && (
+          {error && (
             <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3">
-              <p className="text-xs font-medium text-red-700">{produtosError}</p>
+              <p className="text-xs font-medium text-red-700">{error}</p>
             </div>
           )}
 
-          {!authLoading && !isAuthenticated && !produtosLoading && !produtosError && (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs font-medium text-amber-800">
-                Faça login no Supabase em Perfil para carregar os produtos do PDV.
-              </p>
+          {!authLoading && !isAuthenticated && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs font-medium text-amber-800">Faça login para carregar o cardápio.</p>
             </div>
           )}
 
-          <div className="overflow-hidden rounded-xl border border-gray-100">
-            {produtosFiltrados.length === 0 ? (
-              <div className="p-6 text-center text-sm text-gray-500">
-                {produtosLoading ? 'Carregando cardápio...' : 'Nenhum produto encontrado.'}
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-100">
-                {produtosFiltrados.map((produto) => (
-                  <div
-                    key={produto.id}
-                    className="flex items-start justify-between gap-4 bg-white p-4"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-gray-800">{produto.nome}</p>
-                      <p className="text-[11px] text-gray-500">
-                        ID: <span className="font-mono">{produto.id}</span>
-                        {produto.id_categoria ? (
-                          <>
-                            {' '}• Categoria: <span className="font-mono">{produto.id_categoria}</span>
-                          </>
-                        ) : null}
-                      </p>
-                      <span
-                        className={`mt-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          produto.ocultar_no_pdv
-                            ? 'bg-gray-100 text-gray-500'
-                            : 'bg-green-100 text-green-700'
-                        }`}
-                      >
-                        {produto.ocultar_no_pdv ? 'Oculto no PDV' : 'Visível no PDV'}
-                      </span>
-                    </div>
+          {isAuthenticated && !loading && categorias.length === 0 && produtos.length === 0 && !error && (
+            <EmptyState
+              onCreateCategoria={() => setModal({ kind: 'categoria', initial: null })}
+              onCreateProduto={() => setModal({ kind: 'produto', initial: null, defaultCategoriaId: null, defaultSubcategoriaId: null })}
+            />
+          )}
 
-                    <div className="text-right">
-                      <p className="text-[10px] font-bold uppercase text-gray-400">Preço</p>
-                      <p className="text-sm font-mono text-gray-800">
-                        R$ {Number(produto.preco).toFixed(2)}
-                      </p>
-                    </div>
+          {isAuthenticated && (loading || categorias.length > 0 || produtos.length > 0) && (
+            <div className="space-y-3">
+              {tree.map((node) => (
+                <CategoriaCard
+                  key={node.categoria.id}
+                  node={node}
+                  expanded={expanded.has(node.categoria.id)}
+                  forceExpanded={Boolean(normalized)}
+                  toggle={() => toggleCat(node.categoria.id)}
+                  onEditCategoria={() => setModal({ kind: 'categoria', initial: node.categoria })}
+                  onDeleteCategoria={() => setDel({ kind: 'categoria', item: node.categoria })}
+                  onNewSubcategoria={() =>
+                    setModal({ kind: 'subcategoria', initial: null, defaultCategoriaId: node.categoria.id })
+                  }
+                  onNewProduto={(subId) =>
+                    setModal({
+                      kind: 'produto',
+                      initial: null,
+                      defaultCategoriaId: node.categoria.id,
+                      defaultSubcategoriaId: subId,
+                    })
+                  }
+                  onEditSubcategoria={(sub) => setModal({ kind: 'subcategoria', initial: sub, defaultCategoriaId: sub.id_categoria })}
+                  onDeleteSubcategoria={(sub) => setDel({ kind: 'subcategoria', item: sub })}
+                  onEditProduto={(p) =>
+                    setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
+                  }
+                  onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
+                />
+              ))}
+
+              {orphanProducts.length > 0 && (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4">
+                  <p className="mb-3 text-xs font-semibold text-gray-500">Sem categoria ({orphanProducts.length})</p>
+                  <div className="space-y-2">
+                    {orphanProducts.map((p) => (
+                      <ProdutoRowItem
+                        key={p.id}
+                        produto={p}
+                        onEdit={() =>
+                          setModal({ kind: 'produto', initial: p, defaultCategoriaId: null, defaultSubcategoriaId: null })
+                        }
+                        onDelete={() => setDel({ kind: 'produto', item: p })}
+                      />
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+
+              {normalized && filtered.length === 0 && (
+                <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">
+                  Nenhum produto encontrado para "{query}".
+                </div>
+              )}
+            </div>
+          )}
+
+          <p className="mt-6 border-t border-gray-100 pt-4 text-[12px] text-gray-500">
+            Para detalhes avançados (complementos, variações, imagens), acesse o{' '}
+            <a
+              href="https://zelopdv.com.br"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-semibold text-[#0B7A3B] hover:underline"
+            >
+              ZeloPDV <ExternalLink className="h-3 w-3" />
+            </a>
+            .
+          </p>
         </section>
+      </div>
+
+      {/* Modals */}
+      <CategoriaModal
+        open={modal?.kind === 'categoria'}
+        initial={modal?.kind === 'categoria' ? modal.initial : null}
+        onClose={() => setModal(null)}
+        onSubmit={async (input) => {
+          if (modal?.kind === 'categoria' && modal.initial) {
+            await updateCategoria(modal.initial.id, input);
+          } else {
+            await createCategoria(input);
+          }
+        }}
+      />
+
+      <SubcategoriaModal
+        open={modal?.kind === 'subcategoria'}
+        initial={modal?.kind === 'subcategoria' ? modal.initial : null}
+        defaultCategoriaId={modal?.kind === 'subcategoria' ? modal.defaultCategoriaId : null}
+        categorias={categorias}
+        onClose={() => setModal(null)}
+        onSubmit={async (input) => {
+          if (modal?.kind === 'subcategoria' && modal.initial) {
+            await updateSubcategoria(modal.initial.id, input);
+          } else {
+            await createSubcategoria(input);
+          }
+        }}
+      />
+
+      <ProductModal
+        open={modal?.kind === 'produto'}
+        initial={modal?.kind === 'produto' ? modal.initial : null}
+        defaultCategoriaId={modal?.kind === 'produto' ? modal.defaultCategoriaId : null}
+        defaultSubcategoriaId={modal?.kind === 'produto' ? modal.defaultSubcategoriaId : null}
+        categorias={categorias}
+        subcategorias={subcategorias}
+        onClose={() => setModal(null)}
+        onSubmit={async (input) => {
+          if (modal?.kind === 'produto' && modal.initial) {
+            await updateProduto(modal.initial.id, input);
+          } else {
+            await createProduto(input);
+          }
+        }}
+      />
+
+      <ConfirmDelete
+        open={del !== null}
+        title={
+          del?.kind === 'produto'
+            ? 'Excluir produto?'
+            : del?.kind === 'subcategoria'
+              ? 'Excluir subcategoria?'
+              : 'Excluir categoria?'
+        }
+        message={
+          del?.kind === 'produto'
+            ? `O produto "${del.item.nome}" será removido permanentemente.`
+            : del?.kind === 'subcategoria'
+              ? `A subcategoria "${del.item.nome}" será removida. Produtos ligados a ela ficarão sem subcategoria.`
+              : del?.kind === 'categoria'
+                ? `A categoria "${del.item.nome}" e suas subcategorias serão removidas. Produtos ficarão sem categoria.`
+                : ''
+        }
+        onClose={() => setDel(null)}
+        onConfirm={async () => {
+          if (!del) return;
+          if (del.kind === 'categoria') await deleteCategoria(del.item.id);
+          else if (del.kind === 'subcategoria') await deleteSubcategoria(del.item.id);
+          else if (del.kind === 'produto') await deleteProduto(del.item.id);
+        }}
+      />
+    </div>
+  );
+};
+
+// ---------- Sub components ----------
+
+type TreeNode = {
+  categoria: Categoria;
+  produtosDireto: ProdutoRow[];
+  subcategorias: Array<{ subcategoria: Subcategoria; produtos: ProdutoRow[] }>;
+};
+
+function buildTree(categorias: Categoria[], subcategorias: Subcategoria[], produtos: ProdutoRow[]): TreeNode[] {
+  return categorias.map((categoria) => {
+    const subs = subcategorias.filter((s) => s.id_categoria === categoria.id);
+    const produtosByCategoria = produtos.filter((p) => p.id_categoria === categoria.id);
+    const produtosDireto = produtosByCategoria.filter((p) => p.id_subcategoria == null);
+    const subNodes = subs.map((sub) => ({
+      subcategoria: sub,
+      produtos: produtosByCategoria.filter((p) => p.id_subcategoria === sub.id),
+    }));
+    return { categoria, produtosDireto, subcategorias: subNodes };
+  });
+}
+
+type CategoriaCardProps = {
+  node: TreeNode;
+  expanded: boolean;
+  forceExpanded: boolean;
+  toggle: () => void;
+  onEditCategoria: () => void;
+  onDeleteCategoria: () => void;
+  onNewSubcategoria: () => void;
+  onNewProduto: (subId: number | null) => void;
+  onEditSubcategoria: (sub: Subcategoria) => void;
+  onDeleteSubcategoria: (sub: Subcategoria) => void;
+  onEditProduto: (p: ProdutoRow) => void;
+  onDeleteProduto: (p: ProdutoRow) => void;
+};
+
+const CategoriaCard: React.FC<CategoriaCardProps> = ({
+  node,
+  expanded,
+  forceExpanded,
+  toggle,
+  onEditCategoria,
+  onDeleteCategoria,
+  onNewSubcategoria,
+  onNewProduto,
+  onEditSubcategoria,
+  onDeleteSubcategoria,
+  onEditProduto,
+  onDeleteProduto,
+}) => {
+  const isOpen = expanded || forceExpanded;
+  const totalProdutos = node.produtosDireto.length + node.subcategorias.reduce((acc, s) => acc + s.produtos.length, 0);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-gray-100 bg-white">
+      <div className="flex items-center gap-2 bg-gray-50 px-3 py-3">
+        <button
+          onClick={toggle}
+          className="rounded-lg p-1 text-gray-500 hover:bg-white"
+          aria-label={isOpen ? 'Recolher' : 'Expandir'}
+        >
+          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+
+        <button onClick={toggle} className="flex-1 text-left">
+          <span className="text-sm font-bold text-gray-800">{node.categoria.nome}</span>
+          <span className="ml-2 text-xs text-gray-500">
+            {totalProdutos} {totalProdutos === 1 ? 'produto' : 'produtos'}
+            {node.subcategorias.length > 0 ? ` · ${node.subcategorias.length} subcategoria${node.subcategorias.length === 1 ? '' : 's'}` : ''}
+          </span>
+        </button>
+
+        <div className="flex items-center gap-1">
+          <IconBtn title="Nova subcategoria" onClick={onNewSubcategoria}>
+            <FolderPlus className="h-4 w-4" />
+          </IconBtn>
+          <IconBtn title="Novo produto nesta categoria" onClick={() => onNewProduto(null)}>
+            <Plus className="h-4 w-4" />
+          </IconBtn>
+          <IconBtn title="Editar categoria" onClick={onEditCategoria}>
+            <Pencil className="h-4 w-4" />
+          </IconBtn>
+          <IconBtn title="Excluir categoria" onClick={onDeleteCategoria} destructive>
+            <Trash2 className="h-4 w-4" />
+          </IconBtn>
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className="divide-y divide-gray-100">
+          {node.produtosDireto.map((p) => (
+            <div key={p.id} className="px-4 py-2">
+              <ProdutoRowItem produto={p} onEdit={() => onEditProduto(p)} onDelete={() => onDeleteProduto(p)} />
+            </div>
+          ))}
+
+          {node.subcategorias.map(({ subcategoria, produtos }) => (
+            <div key={subcategoria.id} className="px-4 py-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-[12px] font-semibold uppercase tracking-wide text-gray-500">
+                  {subcategoria.nome}
+                </span>
+                <span className="text-[11px] text-gray-400">
+                  {produtos.length} {produtos.length === 1 ? 'produto' : 'produtos'}
+                </span>
+                <div className="ml-auto flex items-center gap-1">
+                  <IconBtn title="Novo produto nesta subcategoria" onClick={() => onNewProduto(subcategoria.id)}>
+                    <Plus className="h-3.5 w-3.5" />
+                  </IconBtn>
+                  <IconBtn title="Editar subcategoria" onClick={() => onEditSubcategoria(subcategoria)}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </IconBtn>
+                  <IconBtn title="Excluir subcategoria" onClick={() => onDeleteSubcategoria(subcategoria)} destructive>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </IconBtn>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                {produtos.map((p) => (
+                  <ProdutoRowItem key={p.id} produto={p} onEdit={() => onEditProduto(p)} onDelete={() => onDeleteProduto(p)} />
+                ))}
+                {produtos.length === 0 && (
+                  <p className="py-1 text-[12px] italic text-gray-400">
+                    Nenhum produto aqui ainda.
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {node.produtosDireto.length === 0 && node.subcategorias.length === 0 && (
+            <div className="px-4 py-5 text-center text-xs text-gray-500">
+              Nenhum produto nesta categoria.{' '}
+              <button
+                onClick={() => onNewProduto(null)}
+                className="font-semibold text-[#0B7A3B] hover:underline"
+              >
+                Adicionar produto
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+type ProdutoRowItemProps = {
+  produto: ProdutoRow;
+  onEdit: () => void;
+  onDelete: () => void;
+};
+
+const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({ produto, onEdit, onDelete }) => {
+  return (
+    <div className="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-50">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-gray-800">{produto.nome}</span>
+          {produto.ocultar_no_pdv && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
+              Oculto
+            </span>
+          )}
+        </div>
+      </div>
+
+      <span className="font-mono text-sm text-gray-700">R$ {produto.preco.toFixed(2)}</span>
+
+      <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <IconBtn title="Editar produto" onClick={onEdit}>
+          <Pencil className="h-3.5 w-3.5" />
+        </IconBtn>
+        <IconBtn title="Excluir produto" onClick={onDelete} destructive>
+          <Trash2 className="h-3.5 w-3.5" />
+        </IconBtn>
       </div>
     </div>
   );
 };
+
+function IconBtn({
+  title,
+  onClick,
+  destructive,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  destructive?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={`rounded-lg p-1.5 transition-colors ${
+        destructive
+          ? 'text-gray-400 hover:bg-red-50 hover:text-red-600'
+          : 'text-gray-500 hover:bg-white hover:text-gray-800'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function EmptyState({
+  onCreateCategoria,
+  onCreateProduto,
+}: {
+  onCreateCategoria: () => void;
+  onCreateProduto: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-4 py-12 text-center">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#25D366]/10">
+        <ShoppingBag className="h-8 w-8 text-[#25D366]" />
+      </div>
+      <div>
+        <h3 className="text-base font-bold text-gray-800">Comece cadastrando seu cardápio</h3>
+        <p className="mt-1 text-sm text-gray-500">
+          Categorias, subcategorias e produtos. Tudo em um só lugar.
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={onCreateCategoria}
+          className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+        >
+          <FolderPlus className="h-4 w-4" /> Criar categoria
+        </button>
+        <button
+          onClick={onCreateProduto}
+          className="flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1EBE5D]"
+        >
+          <Plus className="h-4 w-4" /> Criar produto
+        </button>
+      </div>
+    </div>
+  );
+}

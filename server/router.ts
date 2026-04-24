@@ -696,9 +696,9 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, closedDays, address, pixKey,
-            products, blockedDates, dailyContext, aiInstructions, managerPhone } = req.body;
+            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone } = req.body;
     setConfig(empresaId, { name, specialty, hours, closedDays, address, pixKey,
-                           products, blockedDates, dailyContext, aiInstructions, managerPhone });
+                           products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone });
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);

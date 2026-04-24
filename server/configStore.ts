@@ -1,3 +1,9 @@
+export interface CatalogCategoriaGroup {
+  nome: string;
+  subcategorias: { nome: string; produtos: { name: string; price: number; available: boolean }[] }[];
+  produtosDireto: { name: string; price: number; available: boolean }[];
+}
+
 export interface BusinessConfig {
   name: string;
   specialty: string;
@@ -6,6 +12,7 @@ export interface BusinessConfig {
   address: string;
   pixKey: string;
   products: { name: string; price: number; available: boolean }[];
+  catalogHierarchy: CatalogCategoriaGroup[];
   blockedDates: { date: string; reason: string }[];
   dailyContext: { id: string; text: string }[];
   aiInstructions: string;
@@ -20,6 +27,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   address: '',
   pixKey: '',
   products: [],
+  catalogHierarchy: [],
   blockedDates: [],
   dailyContext: [],
   aiInstructions: '',

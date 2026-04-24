@@ -5,7 +5,7 @@ import type {
 import { OpenAI } from 'openai';
 import { getSession, addAssistantMessage, setAutoReply } from './messageHandler.js';
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
-import { getConfig } from './configStore.js';
+import { getConfig, type CatalogCategoriaGroup } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.ts';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
@@ -181,6 +181,28 @@ async function createOrderInDb(
   return (data as { id: string }).id;
 }
 
+function buildCatalogHierarchyBlock(hierarchy: CatalogCategoriaGroup[] | undefined): string {
+  if (!hierarchy || hierarchy.length === 0) return '';
+  const lines: string[] = [];
+  for (const cat of hierarchy) {
+    const subs = cat.subcategorias.filter((s) => s.produtos.some((p) => p.available));
+    const direto = cat.produtosDireto.filter((p) => p.available);
+    if (subs.length === 0 && direto.length === 0) continue;
+    lines.push(`  • ${cat.nome}`);
+    for (const prod of direto) {
+      lines.push(`    - ${prod.name} (R$ ${prod.price.toFixed(2)})`);
+    }
+    for (const sub of subs) {
+      lines.push(`    ◦ ${sub.nome}`);
+      for (const prod of sub.produtos.filter((p) => p.available)) {
+        lines.push(`      - ${prod.name} (R$ ${prod.price.toFixed(2)})`);
+      }
+    }
+  }
+  if (lines.length === 0) return '';
+  return `\n- Cardápio organizado por categoria:\n${lines.join('\n')}`;
+}
+
 function buildSystemInstruction(
   empresaId: string,
   customerPhone: string,
@@ -191,6 +213,8 @@ function buildSystemInstruction(
 
   const availableProducts = cfg.products.filter((p) => p.available)
     .map((p) => `${p.name} (R$ ${p.price.toFixed(2)})`).join(', ') || 'Cardápio não configurado';
+
+  const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
 
   const blockedDatesStr = cfg.blockedDates.length > 0
     ? cfg.blockedDates.map((bd) => `${bd.date} (${bd.reason})`).join(', ')
@@ -214,7 +238,7 @@ function buildSystemInstruction(
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
 
 INFORMAÇÕES DA LANCHONETE:
-- Cardápio disponível: ${availableProducts}
+- Cardápio disponível: ${availableProducts}${catalogHierarchyStr}
 - Horário de funcionamento: ${cfg.hours || 'Consulte a loja'}
 - Dias fechados: ${cfg.closedDays.join(', ') || 'Nenhum'}
 - Endereço: ${cfg.address || 'Consulte a loja'}

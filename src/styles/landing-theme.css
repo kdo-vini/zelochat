@@ -1,0 +1,27 @@
+.landing-theme {
+  --lc-brand: #25D366;
+  --lc-brand-hover: #1EBE5D;
+  --lc-dark: #0B1120;
+  --lc-dark-surface: #1E293B;
+  --lc-white: #FFFFFF;
+  --lc-neutral-100: #E5E7EB;
+  --lc-neutral-500: #64748B;
+  --lc-neutral-900: #0F172A;
+}
+
+body.landing-theme {
+  background: var(--lc-white);
+  color: var(--lc-neutral-900);
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.landing-theme ::selection {
+  background: rgba(37, 211, 102, 0.25);
+  color: var(--lc-neutral-900);
+}
+
+@keyframes lc-pulse-dot {
+  0%, 100% { opacity: 0.4; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}

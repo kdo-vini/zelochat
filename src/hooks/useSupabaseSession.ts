@@ -1,39 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from '../services/supabaseClient';
+/**
+ * useSupabaseSession — thin shim over AuthContext.
+ * Preserved as a separate hook so existing server-facing hooks
+ * (useWhatsAppSessions, useOrders, etc.) keep working unchanged.
+ * There is exactly one supabase.auth subscription in the app — inside AuthContext.
+ */
+import { useAuth } from '../contexts/AuthContext';
 
 export function useSupabaseSession() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        if (!mounted) return;
-        setSession(data.session ?? null);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setSession(null);
-        setLoading(false);
-      });
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-    });
-
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
-  }, []);
-
-  const token = useMemo(() => session?.access_token ?? null, [session?.access_token]);
-
+  const { session, token, loading } = useAuth();
   return { session, token, loading };
 }
-
