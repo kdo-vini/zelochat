@@ -11,3 +11,4 @@ auth_info_baileys/
 test-results/
 playwright-report/
 supabase/migrations/
+*.md
