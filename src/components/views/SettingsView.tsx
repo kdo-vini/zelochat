@@ -23,7 +23,7 @@ const SectionCard = ({ icon: Icon, title, children }: {
   </div>
 );
 
-export const WhatsAppIntegrationCard = () => {
+export const WhatsAppIntegrationCard = ({ token }: { token: string | null }) => {
   const [waStatus, setWaStatus] = useState<'disconnected' | 'qr' | 'connecting' | 'connected'>('disconnected');
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -139,7 +139,10 @@ export const WhatsAppIntegrationCard = () => {
     stopPolling();
 
     try {
-      const res = await apiFetch(`${API_BASE}/api/whatsapp/disconnect`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/whatsapp/disconnect`, {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      });
       const data = await res.json();
       if (res.ok && data.ok) {
         // Server already awaited the Whatsmiau logout — flip UI optimistically,
@@ -625,7 +628,7 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated, to
           </div>
 
           <div className="space-y-5">
-            <WhatsAppIntegrationCard />
+            <WhatsAppIntegrationCard token={token} />
 
             <AiGlobalToggleCard token={token} />
 
