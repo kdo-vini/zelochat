@@ -402,10 +402,12 @@ export async function disconnectWhatsApp(): Promise<void> {
   reconnectAttempts = 0;
 
   // Whatsmiau v2 logout is keyed by instance name (not the MongoDB _id).
-  // Endpoint: DELETE /instance/logout/:name  — docs: https://whatsmiau.dev/docs#instance-logout
+  // Endpoint lives under /v2/ — docs: https://whatsmiau.dev/docs#instance-logout
   if (INSTANCE_NAME) {
+    const logoutUrl = `${BASE_URL}/v2/instance/logout/${INSTANCE_NAME}`;
+    console.log(`[WhatsApp] Logout URL: ${logoutUrl}`);
     try {
-      await axios.delete(`${BASE_URL}/instance/logout/${INSTANCE_NAME}`, {
+      await axios.delete(logoutUrl, {
         headers: apiHeaders(),
         timeout: 15_000,
       });
