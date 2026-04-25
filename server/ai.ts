@@ -548,8 +548,8 @@ ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
 2. Para encomendas, coletar: produto, quantidade, data de retirada, horário, nome do cliente E forma de pagamento.
-3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde confirmação antes de criar o pedido.
-4. ASSIM QUE tiver TODOS os dados confirmados, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
+3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde a resposta antes de prosseguir.
+4. ASSIM QUE tiver TODOS os dados COLETADOS, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
 5. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
 6. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.
 
@@ -560,7 +560,7 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'criar_pedido',
-    description: 'Cria um novo pedido no sistema quando o cliente confirmar todos os dados necessários.',
+    description: 'Gera o resumo interativo do pedido para o cliente aprovar. Chame esta função IMEDIATAMENTE assim que coletar todos os dados necessários (produto, quantidade, data, horário, nome e pagamento), SEM pedir confirmação por texto antes.',
     parameters: {
       type: 'object',
       properties: {
