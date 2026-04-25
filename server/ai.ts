@@ -14,6 +14,14 @@ import { broadcast } from './ws.js';
 const OPENAI_MODEL = 'gpt-4o-mini';
 const PENDING_ORDER_TTL_MIN = 30;
 
+/**
+ * JIDs (key: `${empresaId}:${jid}`) where an order was confirmed recently.
+ * Guards against the AI calling criar_pedido again on the next customer message
+ * (e.g. "Obrigado!") right after a successful confirmation.
+ */
+const justConfirmedMap = new Map<string, number>();
+const JUST_CONFIRMED_TTL_MS = 5 * 60 * 1000; // 5 min cooldown after confirmation
+
 interface PendingOrder {
   empresaId: string;
   jid: string;
@@ -140,6 +148,8 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   await sendTextMessage(jid, reply);
   await addAssistantMessage(jid, reply, undefined, pending.empresaId);
   broadcast({ type: 'order_created', data: { orderId, empresaId: pending.empresaId } });
+  // Mark this JID so generateAndSendReply blocks any accidental criar_pedido for 5 min.
+  justConfirmedMap.set(`${pending.empresaId}:${jid}`, Date.now());
   console.log(`[AI] Confirmed pending order #${shortId} for ${jid}`);
 }
 
@@ -539,8 +549,8 @@ OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
 2. Para encomendas, coletar: produto, quantidade, data de retirada, horário, nome do cliente E forma de pagamento.
 3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde confirmação antes de criar o pedido.
-4. ASSIM QUE tiver TODOS os dados confirmados (produto, quantidade, data exata, horário, nome, pagamento), CHAME criar_pedido IMEDIATAMENTE.
-5. NUNCA gere um resumo pedindo confirmação em texto — o botão de confirmação no sistema já faz isso.
+4. ASSIM QUE tiver TODOS os dados confirmados, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
+5. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
 6. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.
 
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
@@ -631,12 +641,28 @@ export async function generateAndSendReply(
   const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
 
-  // FIX H4: if there is a pending order and the customer typed text instead of clicking
-  // the confirm/cancel button, treat it as edit intent — clear the pending state and let
-  // the AI handle the new turn. Otherwise the message would be silently dropped.
+  // GUARDRAIL: if a pending order exists and the customer sent text (not a button click),
+  // route affirmatives → confirm directly, negatives → cancel directly, ambiguous → edit.
+  // This prevents the AI from being re-invoked and creating a duplicate pending order.
   const pendingForEdit = await getPendingOrder(jid, resolvedEmpresaId);
   if (pendingForEdit) {
-    console.log(`[AI] Pending order detected as text-during-pending for ${jid} — clearing and re-engaging.`);
+    const lastMsg = session.messages.at(-1);
+    const lastText = (lastMsg?.content ?? '').toLowerCase().trim();
+    const isAffirmative = /^(sim|s\b|ok\b|confirmar|confirma\b|pode\b|quero\b|tá\b|ta\b|certo|yes\b|ótimo|otimo|otim|finaliz|isso|exato|perfeito|bora|tudo certo|tá certo|pode ser|vai|vai sim|claro)/.test(lastText);
+    const isNegative = /^(não|nao|n\b|cancelar|cancela\b|desistir|desisto|para\b|pare\b|esquece|no\b|nop|cancela)/.test(lastText);
+
+    if (isAffirmative) {
+      console.log(`[AI] Pending order: affirmative text detected ("${lastText}") — auto-confirming`);
+      await confirmPendingOrder(jid, resolvedEmpresaId);
+      return 'confirmed';
+    }
+    if (isNegative) {
+      console.log(`[AI] Pending order: negative text detected ("${lastText}") — auto-cancelling`);
+      await cancelPendingOrder(jid, resolvedEmpresaId);
+      return 'cancelled';
+    }
+    // Ambiguous text → treat as edit intent (clear pending, re-engage AI)
+    console.log(`[AI] Pending order detected as edit-intent for ${jid} — clearing and re-engaging.`);
     await clearPendingOrder(jid, resolvedEmpresaId);
     const editAck = 'Beleza, vamos ajustar! Me conta o que mudou. 😊';
     await sendTextMessage(jid, editAck);
@@ -699,8 +725,20 @@ export async function generateAndSendReply(
       const toolCall = choice.message.tool_calls[0];
 
       if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
+        // GUARDRAIL: block duplicate criar_pedido if this JID had an order confirmed recently.
+        const confirmKey = `${resolvedEmpresaId}:${jid}`;
+        const confirmedAt = justConfirmedMap.get(confirmKey);
+        if (confirmedAt && Date.now() - confirmedAt < JUST_CONFIRMED_TTL_MS) {
+          console.log(`[AI] Blocking duplicate criar_pedido for ${jid} — order was confirmed ${Math.round((Date.now() - confirmedAt) / 1000)}s ago`);
+          const dupMsg = 'Seu pedido já foi confirmado! 😊 Qualquer dúvida é só chamar.';
+          await sendTextMessage(jid, dupMsg);
+          await addAssistantMessage(jid, dupMsg, undefined, resolvedEmpresaId);
+          return dupMsg;
+        }
+
         let replyText: string;
         try {
+
           const args = JSON.parse(toolCall.function.arguments) as {
             customerName: string;
             customerPhone: string;
