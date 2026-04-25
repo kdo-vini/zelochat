@@ -178,6 +178,13 @@ function toIsoBrazil(d: Date): string {
   return `${y}-${mo}-${dy}`;
 }
 
+/** Converts a YYYY-MM-DD string to Brazilian display format DD/MM/YYYY. */
+function isoToDisplayBR(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-');
+  if (!y || !m || !d) return isoDate;
+  return `${d}/${m}/${y}`;
+}
+
 function dayLabelBrazil(d: Date): string {
   const dow = new Intl.DateTimeFormat('pt-BR', {
     timeZone: 'America/Sao_Paulo', weekday: 'short',
@@ -471,10 +478,13 @@ function buildSystemInstruction(
 
   const todayISO = toIsoBrazil(now);
   const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000));
+  const todayBR = isoToDisplayBR(todayISO);
+  const tomorrowBR = isoToDisplayBR(tomorrowISO);
   const nextDays: string[] = [];
   for (let i = 1; i <= 7; i++) {
     const d = new Date(now.getTime() + i * 86400000);
-    nextDays.push(`${dayLabelBrazil(d)} = ${toIsoBrazil(d)}`);
+    const iso = toIsoBrazil(d);
+    nextDays.push(`${dayLabelBrazil(d)} = ${isoToDisplayBR(iso)} (${iso})`);
   }
   const nextDaysStr = nextDays.join(', ');
 
@@ -486,11 +496,17 @@ function buildSystemInstruction(
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
 
 DATA E HORA ATUAL (use SEMPRE, NUNCA invente datas ou anos):
-- Hoje é ${todayLabel}, ${todayISO}
-- Amanhã é ${tomorrowISO}
+- Hoje é ${todayLabel}, ${todayBR} (interno: ${todayISO})
+- Amanhã é ${tomorrowBR} (interno: ${tomorrowISO})
 - Próximos 7 dias: ${nextDaysStr}
 - Ao interpretar datas relativas ("sábado", "semana que vem", "amanhã"), calcule SEMPRE a partir da data de hoje acima.
-- Se o cliente disser apenas o dia da semana, confirme antes de criar o pedido: "Seria para [dia], [YYYY-MM-DD]?"
+- Se o cliente disser apenas o dia da semana, confirme antes de criar o pedido: "Seria para [dia], [DD/MM/AAAA]?"
+
+FORMATO DE DATAS E HORAS (OBRIGATÓRIO):
+- Ao falar COM O CLIENTE, use SEMPRE o formato brasileiro: DD/MM/AAAA para datas e HH:MM para horários.
+  Exemplos corretos: "25/04/2026", "às 14h", "às 09h30"
+  Exemplos PROIBIDOS: "2026-04-25", "14:00", "9h00"
+- Nas tool calls (criar_pedido), use o formato interno YYYY-MM-DD para pickupDate e HH:MM para pickupTime.
 
 INFORMAÇÕES DA LANCHONETE:
 - Cardápio disponível: ${availableProducts}${catalogHierarchyStr}
@@ -522,7 +538,7 @@ ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
 2. Para encomendas, coletar: produto, quantidade, data de retirada, horário, nome do cliente E forma de pagamento.
-3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta: "Seria para sábado, [YYYY-MM-DD]?" e aguarde confirmação antes de criar o pedido.
+3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde confirmação antes de criar o pedido.
 4. ASSIM QUE tiver TODOS os dados confirmados (produto, quantidade, data exata, horário, nome, pagamento), CHAME criar_pedido IMEDIATAMENTE.
 5. NUNCA gere um resumo pedindo confirmação em texto — o botão de confirmação no sistema já faz isso.
 6. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.
