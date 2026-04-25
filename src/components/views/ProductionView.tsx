@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import {
   X, Phone, MapPin, Clock, Plus, Package, ChevronRight,
-  User, ShoppingBag, Pencil, Trash2,
+  User, ShoppingBag, Pencil, Trash2, CreditCard, Truck, Store, Calendar,
 } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
@@ -38,6 +38,7 @@ interface OrderFormData {
   pickupDate: string;
   pickupTime: string;
   deliveryAddress: string;
+  paymentMethod: string;
   items: { product: string; quantity: number }[];
   total: string;
 }
@@ -68,9 +69,12 @@ const makeEmptyForm = (): OrderFormData => ({
   pickupDate: brasiliaDateISO(),
   pickupTime: brasiliaTimeHHMM(),
   deliveryAddress: '',
+  paymentMethod: '',
   items: [{ product: '', quantity: 1 }],
   total: '',
 });
+
+const PAYMENT_OPTIONS = ['Pix', 'Dinheiro', 'Cartão'] as const;
 
 function OrderModal({
   onClose,
@@ -88,6 +92,7 @@ function OrderModal({
         pickupDate: editOrder.pickupDate,
         pickupTime: editOrder.pickupTime,
         deliveryAddress: editOrder.deliveryAddress ?? '',
+        paymentMethod: editOrder.paymentMethod ?? '',
         items: editOrder.items.length > 0 ? editOrder.items : [{ product: '', quantity: 1 }],
         total: editOrder.total > 0 ? String(editOrder.total).replace('.', ',') : '',
       }
@@ -130,6 +135,7 @@ function OrderModal({
         pickupDate:      form.pickupDate,
         pickupTime:      form.pickupTime,
         deliveryAddress: form.deliveryAddress.trim() || undefined,
+        paymentMethod:   form.paymentMethod.trim() || undefined,
         status:          'pending',
         total:           parseFloat(form.total.replace(',', '.')) || 0,
       });
@@ -304,7 +310,7 @@ function OrderModal({
             {/* Delivery address */}
             <div>
               <label className="block text-[12px] font-semibold text-[var(--color-ink-muted)] mb-1.5">
-                Endereço de entrega (opcional)
+                Endereço de entrega (deixe vazio para retirada)
               </label>
               <div className="relative">
                 <MapPin className="absolute left-3 top-3 w-3.5 h-3.5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
@@ -314,6 +320,36 @@ function OrderModal({
                   onChange={(e) => setField('deliveryAddress', e.target.value)}
                   placeholder="Rua, número, bairro"
                   className="w-full pl-8 pr-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
+                />
+              </div>
+            </div>
+
+            {/* Payment method */}
+            <div>
+              <label className="block text-[12px] font-semibold text-[var(--color-ink-muted)] mb-1.5">
+                Forma de pagamento
+              </label>
+              <div className="flex gap-1.5 flex-wrap">
+                {PAYMENT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setField('paymentMethod', form.paymentMethod === opt ? '' : opt)}
+                    className={`px-3 py-1.5 rounded-lg text-[12.5px] font-semibold border transition-colors ${
+                      form.paymentMethod === opt
+                        ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
+                        : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] border-[var(--color-line)] hover:border-[var(--color-brand)]/40'
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                ))}
+                <input
+                  type="text"
+                  value={PAYMENT_OPTIONS.includes(form.paymentMethod as typeof PAYMENT_OPTIONS[number]) ? '' : form.paymentMethod}
+                  onChange={(e) => setField('paymentMethod', e.target.value)}
+                  placeholder="Outro…"
+                  className="flex-1 min-w-[100px] px-3 py-1.5 text-[12.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
                 />
               </div>
             </div>
@@ -394,9 +430,22 @@ function OrderDrawer({
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar">
-          <div className={`inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full ${COLUMN_STYLE[order.status].header} bg-[var(--color-surface-muted)]`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${COLUMN_STYLE[order.status].dot}`} />
-            {STATUS_LABELS[order.status]}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className={`inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full ${COLUMN_STYLE[order.status].header} bg-[var(--color-surface-muted)]`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${COLUMN_STYLE[order.status].dot}`} />
+              {STATUS_LABELS[order.status]}
+            </div>
+            {order.deliveryAddress ? (
+              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+                <Truck className="w-3 h-3" strokeWidth={2} />
+                Delivery
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)]">
+                <Store className="w-3 h-3" strokeWidth={2} />
+                Retirada
+              </div>
+            )}
           </div>
 
           <section>
@@ -411,12 +460,35 @@ function OrderDrawer({
           </section>
 
           <section>
-            <p className="text-[11.5px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wider mb-2">Retirada</p>
-            <p className="text-[13.5px]">
-              {format(parseISO(order.pickupDate), "dd 'de' MMMM", { locale: ptBR })}
-              {' às '}
-              <span className="font-semibold">{order.pickupTime}</span>
+            <p className="text-[11.5px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wider mb-2">
+              {order.deliveryAddress ? 'Entrega agendada' : 'Retirada'}
             </p>
+            <div className="flex items-center gap-1.5 text-[13.5px]">
+              <Calendar className="w-3.5 h-3.5 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+              <span>
+                {format(parseISO(order.pickupDate), "dd 'de' MMMM", { locale: ptBR })}
+                {' às '}
+                <span className="font-semibold">{order.pickupTime}</span>
+              </span>
+            </div>
+          </section>
+
+          {order.deliveryAddress && (
+            <section>
+              <p className="text-[11.5px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wider mb-2">Endereço</p>
+              <div className="flex items-start gap-2 text-[13px] text-[var(--color-ink-soft)] bg-[var(--color-surface-muted)] rounded-lg px-3 py-2">
+                <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                <span className="leading-snug">{order.deliveryAddress}</span>
+              </div>
+            </section>
+          )}
+
+          <section>
+            <p className="text-[11.5px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wider mb-2">Forma de pagamento</p>
+            <div className="flex items-center gap-2 text-[13.5px] text-[var(--color-ink-soft)]">
+              <CreditCard className="w-3.5 h-3.5 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+              <span className="font-medium">{order.paymentMethod || 'Não informada'}</span>
+            </div>
           </section>
 
           <section>
@@ -433,16 +505,6 @@ function OrderDrawer({
               ))}
             </ul>
           </section>
-
-          {order.deliveryAddress && (
-            <section>
-              <p className="text-[11.5px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wider mb-2">Entrega</p>
-              <div className="flex items-start gap-2 text-[13px] text-[var(--color-ink-muted)]">
-                <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" strokeWidth={1.8} />
-                {order.deliveryAddress}
-              </div>
-            </section>
-          )}
 
           <section className="bg-[var(--color-brand-soft)] rounded-xl px-4 py-3 flex justify-between items-center">
             <span className="text-[13px] font-medium text-[var(--color-brand-deep)]">Total</span>
@@ -496,8 +558,26 @@ function OrderDrawer({
 }
 
 /* ─── Order feed sidebar card ────────────────────────────────── */
-function FeedCard({ order, selected, onClick }: { order: Order; selected: boolean; onClick: () => void }) {
+function FeedCard({
+  order,
+  selected,
+  onClick,
+  scheduled = false,
+}: {
+  order: Order;
+  selected: boolean;
+  onClick: () => void;
+  scheduled?: boolean;
+}) {
   const style = COLUMN_STYLE[order.status];
+  const isDelivery = !!order.deliveryAddress;
+  // Scheduled orders: show pickup date+time prominently so the operator can plan the day.
+  // Today's orders: show "x min atrás" since the planning concern is recency.
+  const pickupBadge = (() => {
+    try {
+      return `${format(parseISO(order.pickupDate), 'dd/MM', { locale: ptBR })} • ${order.pickupTime}`;
+    } catch { return order.pickupTime; }
+  })();
   return (
     <motion.button
       layout
@@ -513,18 +593,32 @@ function FeedCard({ order, selected, onClick }: { order: Order; selected: boolea
       }`}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <p className="text-[13.5px] font-semibold leading-tight">{order.customerName}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13.5px] font-semibold leading-tight truncate">{order.customerName}</p>
+          <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-[var(--color-ink-faint)]">
+            {isDelivery ? <Truck className="w-3 h-3" strokeWidth={1.8} /> : <Store className="w-3 h-3" strokeWidth={1.8} />}
+            <span>{isDelivery ? 'Delivery' : 'Retirada'}</span>
+          </div>
+        </div>
         <ChevronRight className="w-3.5 h-3.5 text-[var(--color-ink-faint)] flex-shrink-0 mt-0.5" strokeWidth={2} />
       </div>
       <p className="text-[12px] text-[var(--color-ink-muted)] truncate mb-2">
         {order.items.map((it) => `${it.quantity}× ${it.product}`).join(', ')}
       </p>
+      {scheduled && (
+        <div className="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-[var(--color-brand-deep)] bg-[var(--color-brand-soft)] rounded-md px-2 py-1">
+          <Calendar className="w-3 h-3" strokeWidth={2} />
+          <span>{pickupBadge}</span>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${style.header} bg-[var(--color-surface-muted)]`}>
           <span className={`w-1 h-1 rounded-full ${style.dot}`} />
           {STATUS_LABELS[order.status]}
         </span>
-        <span className="text-[11px] text-[var(--color-ink-faint)]">{timeAgo(order.createdAt)}</span>
+        <span className="text-[11px] text-[var(--color-ink-faint)]">
+          {scheduled ? pickupBadge : timeAgo(order.createdAt)}
+        </span>
       </div>
     </motion.button>
   );
@@ -556,6 +650,13 @@ export const ProductionView = ({
   const feedOrders = feedFilter === 'all'
     ? state.orders
     : state.orders.filter((o) => o.status === feedFilter);
+
+  // Split the feed by pickup date relative to today (Brasília TZ to match how the date is stored).
+  // "Hoje" = pickup_date <= today (today + any past dates not yet delivered/cleaned up).
+  // "Agendados" = pickup_date > today.
+  const todayKey = brasiliaDateISO();
+  const todayOrders = feedOrders.filter((o) => (o.pickupDate || '') <= todayKey);
+  const scheduledOrders = feedOrders.filter((o) => (o.pickupDate || '') > todayKey);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -606,7 +707,7 @@ export const ProductionView = ({
           </div>
 
           {/* Scrollable feed */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
             <AnimatePresence initial={false}>
               {feedOrders.length === 0 ? (
                 <motion.div
@@ -626,15 +727,59 @@ export const ProductionView = ({
                   </button>
                 </motion.div>
               ) : (
-                feedOrders.map((order) => (
-                  <React.Fragment key={order.id}>
-                    <FeedCard
-                      order={order}
-                      selected={selectedOrder?.id === order.id}
-                      onClick={() => { setSelectedOrder(order); }}
-                    />
-                  </React.Fragment>
-                ))
+                <>
+                  <div>
+                    <div className="flex items-center justify-between px-1 mb-1.5">
+                      <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                        Hoje
+                      </span>
+                      <span className="text-[10.5px] font-semibold tabular-nums text-[var(--color-ink-faint)]">
+                        {todayOrders.length}
+                      </span>
+                    </div>
+                    {todayOrders.length === 0 ? (
+                      <p className="text-[11.5px] text-[var(--color-ink-faint)] px-1 py-2">Sem pedidos para hoje.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {todayOrders.map((order) => (
+                          <React.Fragment key={order.id}>
+                            <FeedCard
+                              order={order}
+                              selected={selectedOrder?.id === order.id}
+                              onClick={() => { setSelectedOrder(order); }}
+                            />
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {scheduledOrders.length > 0 && (
+                    <div className="pt-1">
+                      <div className="flex items-center justify-between px-1 mb-1.5">
+                        <span className="flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                          <Calendar className="w-3 h-3" strokeWidth={2} />
+                          Agendados
+                        </span>
+                        <span className="text-[10.5px] font-semibold tabular-nums text-[var(--color-ink-faint)]">
+                          {scheduledOrders.length}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {scheduledOrders.map((order) => (
+                          <React.Fragment key={order.id}>
+                            <FeedCard
+                              order={order}
+                              selected={selectedOrder?.id === order.id}
+                              onClick={() => { setSelectedOrder(order); }}
+                              scheduled
+                            />
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </AnimatePresence>
           </div>
@@ -701,9 +846,22 @@ export const ProductionView = ({
                                     )}
                                   </div>
                                   <div className="flex items-center justify-between pt-2 border-t border-[var(--color-line)]">
-                                    <div className="flex items-center gap-1 text-[11.5px] text-[var(--color-ink-muted)]">
-                                      <Clock className="w-3 h-3" strokeWidth={1.8} />
-                                      {order.pickupTime}
+                                    <div className={`flex items-center gap-1 text-[11.5px] ${
+                                      order.pickupDate > todayKey
+                                        ? 'text-[var(--color-brand-deep)] font-semibold'
+                                        : 'text-[var(--color-ink-muted)]'
+                                    }`}>
+                                      {order.pickupDate > todayKey ? (
+                                        <Calendar className="w-3 h-3" strokeWidth={2} />
+                                      ) : (
+                                        <Clock className="w-3 h-3" strokeWidth={1.8} />
+                                      )}
+                                      {order.pickupDate > todayKey
+                                        ? (() => {
+                                            try { return `${format(parseISO(order.pickupDate), 'dd/MM', { locale: ptBR })} ${order.pickupTime}`; }
+                                            catch { return order.pickupTime; }
+                                          })()
+                                        : order.pickupTime}
                                     </div>
                                     <span className="text-[12.5px] font-semibold tabular-nums">{currency(order.total)}</span>
                                   </div>

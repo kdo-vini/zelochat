@@ -27,8 +27,9 @@ export interface Order {
   items: { product: string; quantity: number }[];
   pickupDate: string; // YYYY-MM-DD
   pickupTime: string; // HH:MM
-  deliveryAddress?: string; // Optional delivery address
+  deliveryAddress?: string; // Optional delivery address (presence implies delivery, not pickup)
   driverId?: string; // Assigned motoboy
+  paymentMethod?: string; // e.g. "Pix", "Dinheiro", "Cartão"
   status: 'pending' | 'preparing' | 'ready' | 'delivered';
   total: number;
   createdAt: string;

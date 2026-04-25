@@ -21,7 +21,7 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
-import { normalizePhoneNumber } from '../../domain/chat';
+import { formatLastMessageTime, normalizePhoneNumber } from '../../domain/chat';
 import { getOwnerResponse } from '../../services/openaiService';
 import type { ChatAttachment, ChatSession, QuickResponse } from '../../types';
 import { MessageBubble } from './MessageBubble';
@@ -114,6 +114,48 @@ export function ChatView({
   const [isSending, setIsSending] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  // Conversation list width — persisted so the operator's preferred layout survives reloads.
+  // Bounds keep at least the avatar+name visible on the lower end and prevent the list from
+  // crowding out the chat panel on the upper end.
+  const LIST_WIDTH_KEY = 'zelochat:chatListWidth';
+  const LIST_WIDTH_MIN = 240;
+  const LIST_WIDTH_MAX = 520;
+  const LIST_WIDTH_DEFAULT = 300;
+  const [listWidth, setListWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return LIST_WIDTH_DEFAULT;
+    const stored = Number(window.localStorage.getItem(LIST_WIDTH_KEY));
+    if (!Number.isFinite(stored) || stored <= 0) return LIST_WIDTH_DEFAULT;
+    return Math.min(LIST_WIDTH_MAX, Math.max(LIST_WIDTH_MIN, stored));
+  });
+  const isResizingRef = useRef(false);
+
+  const handleListResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const next = Math.min(LIST_WIDTH_MAX, Math.max(LIST_WIDTH_MIN, ev.clientX));
+      setListWidth(next);
+    };
+    const onUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      // Persist on release so we don't write 200× during the drag.
+      setListWidth((current) => {
+        try { window.localStorage.setItem(LIST_WIDTH_KEY, String(current)); } catch { /* ignore */ }
+        return current;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -301,7 +343,10 @@ export function ChatView({
     <>
       <div className="flex flex-1 overflow-hidden">
         {/* Session list */}
-        <aside className="w-[300px] flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
+        <aside
+          style={{ width: listWidth }}
+          className="relative flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]"
+        >
           <div className="px-4 py-3.5 border-b border-[var(--color-line)] flex-shrink-0 flex items-center justify-between">
             <h2 className="text-[14px] font-semibold text-[var(--color-ink)]">Lista de Conversas</h2>
             <button
@@ -375,7 +420,7 @@ export function ChatView({
                     <div className="flex items-center justify-between mb-0.5">
                       <h3 className="text-[13.5px] font-semibold text-[var(--color-ink)] truncate">{s.customerName}</h3>
                       <span className={`text-[11px] text-[var(--color-ink-faint)] flex-shrink-0 ml-1 transition-opacity ${hoveredSessionId === s.id ? 'opacity-0' : ''}`}>
-                        {s.lastMessageTime}
+                        {formatLastMessageTime(s.lastMessageTime)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2">
@@ -410,6 +455,21 @@ export function ChatView({
                 )}
               </div>
             ))}
+          </div>
+
+          {/* Drag handle to resize the conversation list. The thin visible bar sits on the
+              border itself; the wider invisible hit area gives a generous grab target without
+              shifting the layout. */}
+          <div
+            onMouseDown={handleListResizeStart}
+            onDoubleClick={() => {
+              setListWidth(LIST_WIDTH_DEFAULT);
+              try { window.localStorage.setItem(LIST_WIDTH_KEY, String(LIST_WIDTH_DEFAULT)); } catch { /* ignore */ }
+            }}
+            title="Arraste para redimensionar (duplo clique para padrão)"
+            className="absolute top-0 right-[-3px] z-10 h-full w-[6px] cursor-col-resize group"
+          >
+            <div className="h-full w-px mx-auto bg-transparent group-hover:bg-[var(--color-brand)] transition-colors" />
           </div>
         </aside>
 
@@ -818,7 +878,7 @@ export function ChatView({
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-[12.5px] text-[var(--color-ink-muted)]">Última mensagem</span>
-                    <span className="text-[12px] text-[var(--color-ink-faint)]">{activeSession.lastMessageTime}</span>
+                    <span className="text-[12px] text-[var(--color-ink-faint)]">{formatLastMessageTime(activeSession.lastMessageTime)}</span>
                   </div>
                 </div>
               </div>

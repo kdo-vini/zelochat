@@ -103,6 +103,46 @@ export function serializeStructuredMessage(params: {
   return `${STRUCTURED_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 }
 
+/**
+ * Renders a session's "last message" timestamp relative to today, always in Brasília time.
+ * Accepts ISO 8601 strings (current format) and bare "HH:MM" strings (legacy data
+ * stored before the format migration — assumed to be today, value passed through as-is
+ * since we can't know which TZ produced it).
+ */
+export function formatLastMessageTime(value: string | null | undefined): string {
+  if (!value) return '';
+
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    return `Hoje às ${value}`;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  const TZ = 'America/Sao_Paulo';
+  // YYYY-MM-DD in Brasília TZ — used as a stable day key regardless of viewer timezone.
+  const brasiliaDayKey = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ });
+
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const time = date.toLocaleTimeString('pt-BR', {
+    timeZone: TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  if (brasiliaDayKey(date) === brasiliaDayKey(now)) return `Hoje às ${time}`;
+  if (brasiliaDayKey(date) === brasiliaDayKey(yesterday)) return `Ontem às ${time}`;
+
+  const dayMonth = date.toLocaleDateString('pt-BR', {
+    timeZone: TZ,
+    day: '2-digit',
+    month: '2-digit',
+  });
+  return `${dayMonth} às ${time}`;
+}
+
 export function parseStructuredMessage(content: string): ParsedChatContent {
   if (!content.startsWith(STRUCTURED_MESSAGE_PREFIX)) {
     return {

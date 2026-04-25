@@ -114,7 +114,11 @@ function resolveCustomerPhone(rows: SessionRow[], fallbackJid: string): string {
 
 function formatClock(value: string | Date): string {
   const date = value instanceof Date ? value : new Date(value);
+  // Always render in Brasília time regardless of where the server runs (Railway/Render
+  // run UTC; local dev runs whatever the OS is set to). Without this pin, deploys
+  // shift bubble timestamps by the server's UTC offset.
   return date.toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
     hour: '2-digit',
     minute: '2-digit',
   });
@@ -205,7 +209,7 @@ function mapMessage(row: MessageRow): ChatMessage {
   };
 }
 
-function mapSession(family: SessionFamily, messages: ChatMessage[] = []): StoredSession {
+function mapSession(family: SessionFamily, messages: ChatMessage[] = [], latestCustomerSentAt?: string): StoredSession {
   const customerName = resolveCustomerName(
     family.rows,
     formatPhone(phoneFromJid(family.latest.remote_jid)),
@@ -218,7 +222,9 @@ function mapSession(family: SessionFamily, messages: ChatMessage[] = []): Stored
     customerName,
     customerPhone,
     lastMessage,
-    lastMessageTime: family.latest.last_message_time || '',
+    // Prefer the ISO sent_at from zelochat_messages so legacy "HH:MM" strings stored
+    // when the server ran in UTC are self-healed without a data migration.
+    lastMessageTime: latestCustomerSentAt || family.latest.last_message_time || '',
     unreadCount: family.rows.reduce((sum, row) => sum + (row.unread_count ?? 0), 0),
     messages,
     status: family.rows.some((row) => row.status === 'active') ? 'active' : 'archived',
@@ -392,7 +398,9 @@ export async function getSession(jid: string, empresaId = getBoundEmpresaId()): 
     throw new Error(error.message);
   }
 
-  return mapSession(family, (messages as MessageRow[]).map(mapMessage));
+  const msgRows = (messages as MessageRow[]);
+  const latestUserSentAt = [...msgRows].reverse().find(m => m.role === 'user')?.sent_at;
+  return mapSession(family, msgRows.map(mapMessage), latestUserSentAt);
 }
 
 export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<StoredSession[]> {
@@ -412,6 +420,25 @@ export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<S
     families.set(key, family);
   }
 
+  // Batch-load the latest customer message timestamp per session to self-heal
+  // legacy "HH:MM" strings that were stored when the server ran in UTC.
+  const allSessionIds = rows.map(r => r.id);
+  const latestCustomerSentAtBySessionId = new Map<string, string>();
+  if (allSessionIds.length > 0) {
+    const { data: latestMsgs } = await getServiceSupabase()
+      .from('zelochat_messages')
+      .select('session_id, sent_at')
+      .eq('empresa_id', empresaId)
+      .eq('role', 'user')
+      .in('session_id', allSessionIds)
+      .order('sent_at', { ascending: false });
+    for (const m of (latestMsgs ?? []) as { session_id: string; sent_at: string }[]) {
+      if (!latestCustomerSentAtBySessionId.has(m.session_id)) {
+        latestCustomerSentAtBySessionId.set(m.session_id, m.sent_at);
+      }
+    }
+  }
+
   return [...families.values()]
     .sort((a, b) =>
       new Date(pickLatestSessionRow(b).updated_at).getTime() -
@@ -423,7 +450,13 @@ export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<S
         latest: pickLatestSessionRow(rowsForContact),
         rows: rowsForContact,
       };
-      return mapSession(family);
+      // Pick the most recent customer sent_at across all rows in this contact family
+      const latestCustomerSentAt = rowsForContact
+        .map(r => latestCustomerSentAtBySessionId.get(r.id))
+        .filter((v): v is string => Boolean(v))
+        .sort()
+        .at(-1);
+      return mapSession(family, [], latestCustomerSentAt);
     });
 }
 
@@ -608,13 +641,17 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   const existingName = existing?.primary?.customer_name ?? null;
   const proposedName = (!existingName || isLikelyPhoneLabel(existingName)) ? pushName : existingName;
 
+  // Store ISO timestamp so the frontend can render "Hoje às HH:MM" / "Ontem às HH:MM"
+  // / "DD/MM às HH:MM" relative to the viewer's clock. The legacy "HH:MM" format was
+  // ambiguous (a message at 23:01 yesterday looked identical to one at 23:01 today).
+  const lastMessageTimeIso = sentAt.toISOString();
   const sessionRow = await ensureSession({
     empresaId: resolvedEmpresaId,
     jid,
     customerName: proposedName,
     customerPhone: formatPhone(phone),
     lastMessage: storedContent,
-    lastMessageTime: displayTime,
+    lastMessageTime: lastMessageTimeIso,
     // unreadCount intentionally omitted — incremented atomically below via RPC
   });
 
@@ -654,7 +691,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       autoReply: mappedSession.autoReply,
       unreadCount: mappedSession.unreadCount,
       lastMessage: preview,
-      lastMessageTime: displayTime,
+      lastMessageTime: lastMessageTimeIso,
     },
   });
 }
@@ -677,12 +714,15 @@ export async function addAssistantMessage(
   const preview = attachment
     ? buildAttachmentPreview(attachment, text)
     : text || (toolCalls ? '[Ação interna]' : '');
+  // Do NOT update last_message_time here — that field reflects the *customer's* last
+  // message specifically (so the conversation list shows "Ontem às 23:01" relative to
+  // the customer's send time, not when the operator/AI replied). Sort order in the
+  // list is driven by updated_at, which still bumps via ensureSession.
   const sessionRow = await ensureSession({
     empresaId,
     jid,
     customerPhone: formatPhone(phoneFromJid(jid)),
     lastMessage: storedContent || '',
-    lastMessageTime: formatClock(new Date()),
   });
 
   const storedMsg = await insertMessage({
@@ -706,7 +746,9 @@ export async function addAssistantMessage(
       message: storedMsg,
       autoReply: mappedSession?.autoReply,
       lastMessage: preview,
-      lastMessageTime: storedMsg.timestamp,
+      // Use the family's stored last_message_time (customer's last send) so the list
+      // doesn't briefly flip to the operator's send time and back on refresh.
+      lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
     },
   });
 }
@@ -746,7 +788,7 @@ export async function addToolMessage(
       message: storedMsg,
       autoReply: mappedSession?.autoReply,
       lastMessage: '[Tool Result]',
-      lastMessageTime: storedMsg.timestamp,
+      lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
     },
   });
 }
