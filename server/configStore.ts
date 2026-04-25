@@ -19,6 +19,8 @@ export interface BusinessConfig {
   managerPhone: string;
   /** Global kill-switch for auto-reply. When false, messages still arrive in the UI but the AI stays silent. */
   aiEnabled: boolean;
+  /** Allow the AI to proactively reference unconfirmed pending orders in conversation. */
+  aiCanReengagePending: boolean;
 }
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -35,6 +37,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   aiInstructions: '',
   managerPhone: '',
   aiEnabled: true,
+  aiCanReengagePending: false,
 };
 
 // Keyed by empresaId — one config entry per authenticated empresa.

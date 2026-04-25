@@ -22,7 +22,7 @@ export type ConnectionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected
 
 let connectionStatus: ConnectionStatus = 'disconnected';
 let currentQR: string | null = null;
-let incomingMessageHandler: ((msg: any) => void) | null = null;
+let incomingMessageHandler: ((msg: any, empresaId: string | null) => void) | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000; // 5 min cap
@@ -150,13 +150,18 @@ export function getQR(): string | null {
   return currentQR;
 }
 
-export function onIncomingMessage(handler: (msg: any) => void): void {
+export function onIncomingMessage(handler: (msg: any, empresaId: string | null) => void): void {
   incomingMessageHandler = handler;
 }
 
-export function dispatchIncomingMessage(msg: any): void {
+/**
+ * Forwards a webhook message to the registered handler. `empresaId` is the
+ * value resolved from the apikey token (review fix C3) — it tells the handler
+ * which tenant the message belongs to without relying on a global singleton.
+ */
+export function dispatchIncomingMessage(msg: any, empresaId: string | null = null): void {
   if (incomingMessageHandler) {
-    incomingMessageHandler(msg);
+    incomingMessageHandler(msg, empresaId);
   }
 }
 

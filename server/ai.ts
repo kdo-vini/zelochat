@@ -12,6 +12,7 @@ import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
 
 const OPENAI_MODEL = 'gpt-4o-mini';
+const PENDING_ORDER_TTL_MIN = 30;
 
 interface PendingOrder {
   empresaId: string;
@@ -23,50 +24,169 @@ interface PendingOrder {
   pickupTime: string;
   paymentMethod?: string;
   total: number;
+  toolCallId?: string;
 }
 
-const pendingOrders = new Map<string, PendingOrder>();
-
-export function getPendingOrder(jid: string): PendingOrder | undefined {
-  return pendingOrders.get(jid);
+interface PendingOrderRow {
+  empresa_id: string;
+  remote_jid: string;
+  customer_name: string;
+  customer_phone: string | null;
+  items: { product: string; quantity: number }[];
+  pickup_date: string;
+  pickup_time: string;
+  payment_method: string | null;
+  total: number | string;
+  tool_call_id: string | null;
 }
 
-export function clearPendingOrder(jid: string): void {
-  pendingOrders.delete(jid);
+function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
+  return {
+    empresaId: row.empresa_id,
+    jid: row.remote_jid,
+    customerName: row.customer_name,
+    customerPhone: row.customer_phone || '',
+    items: row.items,
+    pickupDate: row.pickup_date,
+    pickupTime: row.pickup_time,
+    paymentMethod: row.payment_method || undefined,
+    total: Number(row.total),
+    toolCallId: row.tool_call_id || undefined,
+  };
 }
 
-export async function confirmPendingOrder(jid: string): Promise<void> {
+/**
+ * Returns the active pending order for this JID, or null if none/expired.
+ * Source of truth is Supabase — survives server restarts (review fix C2).
+ */
+export async function getPendingOrder(jid: string, empresaId: string): Promise<PendingOrder | null> {
+  try {
+    const { data, error } = await getServiceSupabase()
+      .from('zelochat_pending_orders')
+      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id')
+      .eq('empresa_id', empresaId)
+      .eq('remote_jid', jid)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle();
+    if (error) {
+      console.error('[AI] getPendingOrder query error:', error);
+      return null;
+    }
+    return data ? rowToPendingOrder(data as PendingOrderRow) : null;
+  } catch (err) {
+    console.error('[AI] getPendingOrder threw:', err);
+    return null;
+  }
+}
+
+async function setPendingOrder(order: PendingOrder): Promise<void> {
+  const expiresAt = new Date(Date.now() + PENDING_ORDER_TTL_MIN * 60 * 1000).toISOString();
+  const { error } = await getServiceSupabase()
+    .from('zelochat_pending_orders')
+    .upsert(
+      {
+        empresa_id: order.empresaId,
+        remote_jid: order.jid,
+        customer_name: order.customerName,
+        customer_phone: order.customerPhone || null,
+        items: order.items,
+        pickup_date: order.pickupDate,
+        pickup_time: order.pickupTime,
+        payment_method: order.paymentMethod || null,
+        total: order.total,
+        tool_call_id: order.toolCallId || null,
+        expires_at: expiresAt,
+      },
+      { onConflict: 'empresa_id,remote_jid' },
+    );
+  if (error) throw new Error(`Falha ao salvar pedido pendente: ${error.message}`);
+}
+
+export async function clearPendingOrder(jid: string, empresaId: string): Promise<void> {
+  await getServiceSupabase()
+    .from('zelochat_pending_orders')
+    .delete()
+    .eq('empresa_id', empresaId)
+    .eq('remote_jid', jid);
+}
+
+export async function confirmPendingOrder(jid: string, empresaId: string): Promise<void> {
   console.log('[AI] confirmPendingOrder called for JID:', jid);
-  const pending = pendingOrders.get(jid);
+  const pending = await getPendingOrder(jid, empresaId);
   if (!pending) {
     console.warn('[AI] confirmPendingOrder: No pending order found for JID:', jid);
     return;
   }
-  pendingOrders.delete(jid);
 
+  // FIX H1: insert FIRST, delete only on success. If the insert fails the pending row
+  // stays in place and the customer can click Confirmar again without re-entering data.
+  let orderId: string;
   try {
-    const orderId = await createOrderInDb(pending.empresaId, pending);
-    const shortId = orderId.slice(0, 8).toUpperCase();
-    const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
-    const cfg = getConfig(pending.empresaId);
-    const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
-    await sendTextMessage(jid, reply);
-    await addAssistantMessage(jid, reply, undefined, pending.empresaId);
-    broadcast({ type: 'order_created', data: { orderId, empresaId: pending.empresaId } });
-    console.log(`[AI] Confirmed pending order #${shortId} for ${jid}`);
+    orderId = await createOrderInDb(pending.empresaId, pending);
   } catch (err) {
-    console.error('[AI] Failed to confirm pending order:', err);
-    const errMsg = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente? 🙏';
+    console.error('[AI] Failed to insert order, keeping pending row:', err);
+    const errMsg = 'Desculpe, tive um problema momentâneo. Toque em "✅ Confirmar" de novo, por favor. 🙏';
     await sendTextMessage(jid, errMsg);
     await addAssistantMessage(jid, errMsg, undefined, pending.empresaId);
+    return;
   }
+
+  await clearPendingOrder(jid, pending.empresaId);
+
+  const shortId = orderId.slice(0, 8).toUpperCase();
+  const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
+  const cfg = getConfig(pending.empresaId);
+  const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+  await sendTextMessage(jid, reply);
+  await addAssistantMessage(jid, reply, undefined, pending.empresaId);
+  broadcast({ type: 'order_created', data: { orderId, empresaId: pending.empresaId } });
+  console.log(`[AI] Confirmed pending order #${shortId} for ${jid}`);
 }
 
 export async function cancelPendingOrder(jid: string, empresaId: string): Promise<void> {
-  pendingOrders.delete(jid);
+  await clearPendingOrder(jid, empresaId);
   const reply = 'Tudo bem! Pedido cancelado. Se quiser fazer outro, é só me chamar 😊';
   await sendTextMessage(jid, reply);
   await addAssistantMessage(jid, reply, undefined, empresaId);
+}
+
+/**
+ * Strips characters that could turn user-controlled text into a prompt-injection
+ * vector when interpolated into the system prompt (review fix H2).
+ * Apply at every boundary where customer/operator input gets concatenated into
+ * model-visible strings: customer_name, items[].product, phone, free-text reasons.
+ */
+function safeForPrompt(value: unknown, maxLen = 200): string {
+  return String(value ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[`<>]/g, '')
+    .slice(0, maxLen);
+}
+
+/**
+ * Brazil-timezone date helpers (review fix H5). Hoisted to module scope so any
+ * function that needs "today" / "tomorrow" in BRT does not accidentally use UTC.
+ */
+function toIsoBrazil(d: Date): string {
+  const parts = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year')?.value ?? '';
+  const mo = parts.find((p) => p.type === 'month')?.value ?? '';
+  const dy = parts.find((p) => p.type === 'day')?.value ?? '';
+  return `${y}-${mo}-${dy}`;
+}
+
+function dayLabelBrazil(d: Date): string {
+  const dow = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', weekday: 'short',
+  }).format(d).toLowerCase().replace(/\./g, '');
+  const map: Record<string, string> = {
+    'dom': 'Dom', 'seg': 'Seg', 'ter': 'Ter', 'qua': 'Qua',
+    'qui': 'Qui', 'sex': 'Sex', 'sáb': 'Sáb',
+  };
+  return map[dow] ?? dow;
 }
 
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -82,6 +202,10 @@ export function getAI(): OpenAI {
   return ai;
 }
 
+function getAvailableProducts(empresaId: string): { name: string; price: number; available: boolean }[] {
+  return getConfig(empresaId).products.filter((p) => p.available);
+}
+
 function phoneToJid(phone: string): string | null {
   let digits = normalizePhoneNumber(phone);
   if (!digits) return null;
@@ -93,8 +217,11 @@ function phoneToJid(phone: string): string | null {
 async function fetchUpcomingOrders(empresaId: string): Promise<string> {
   try {
     const supabase = getServiceSupabase();
-    const today = new Date().toISOString().split('T')[0];
-    const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // FIX H5: Brazil timezone, not UTC — otherwise between 21h–23h59 BRT we'd
+    // skip today and double-count tomorrow.
+    const now = new Date();
+    const today = toIsoBrazil(now);
+    const in7Days = toIsoBrazil(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
 
     const { data, error } = await supabase
       .from('zelochat_orders')
@@ -108,11 +235,12 @@ async function fetchUpcomingOrders(empresaId: string): Promise<string> {
 
     if (error || !data || data.length === 0) return 'Nenhum pedido agendado nos próximos 7 dias.';
 
+    // FIX H2: sanitize every user-supplied field before interpolating into the prompt.
     return data.map((o) => {
       const items = (o.items as { product: string; quantity: number }[])
-        .map((i) => `${i.quantity}x ${i.product}`)
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
         .join(', ');
-      return `- ${o.pickup_date} ${o.pickup_time} | ${o.customer_name} (${o.customer_phone}) | ${items} | R$${Number(o.total).toFixed(2)} | ${o.status}`;
+      return `- ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${safeForPrompt(o.customer_name, 60)} (${safeForPrompt(o.customer_phone, 20)}) | ${items} | R$${Number(o.total).toFixed(2)} | ${safeForPrompt(o.status, 20)}`;
     }).join('\n');
   } catch {
     return 'Agenda indisponível no momento.';
@@ -141,14 +269,111 @@ async function fetchCustomerHistory(empresaId: string, customerPhone: string): P
 
     if (matches.length === 0) return 'Cliente novo.';
 
+    // FIX H2: sanitize every user-supplied field before interpolating into the prompt.
     return matches.map((o) => {
       const items = (o.items as { product: string; quantity: number }[])
-        .map((i) => `${i.quantity}x ${i.product}`)
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
         .join(', ');
-      return `- ${o.pickup_date} ${o.pickup_time} | ${items} | R$${Number(o.total).toFixed(2)} | ${o.status}`;
+      return `- ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${items} | R$${Number(o.total).toFixed(2)} | ${safeForPrompt(o.status, 20)}`;
     }).join('\n');
   } catch {
     return 'Histórico indisponível.';
+  }
+}
+
+/**
+ * Returns a short summary of any active (non-final) orders for this customer,
+ * suitable for inclusion in the system prompt. Lets the AI answer status questions
+ * without needing a tool call when the data is small.
+ */
+async function fetchActiveOrdersForCustomer(empresaId: string, customerPhone: string): Promise<string> {
+  const digits = normalizePhoneNumber(customerPhone || '');
+  if (!digits) return '(nenhum)';
+  try {
+    const supabase = getServiceSupabase();
+    const { data, error } = await supabase
+      .from('zelochat_orders')
+      .select('id, customer_phone, items, pickup_date, pickup_time, status, total, driver_id')
+      .eq('empresa_id', empresaId)
+      .in('status', ['pending', 'preparing', 'ready', 'dispatched'])
+      .order('pickup_date', { ascending: true })
+      .limit(20);
+    if (error || !data || data.length === 0) return '(nenhum)';
+    const matches = data.filter((o) => {
+      const rowDigits = normalizePhoneNumber(String(o.customer_phone ?? ''));
+      return rowDigits && (rowDigits.endsWith(digits) || digits.endsWith(rowDigits));
+    }).slice(0, 5);
+    if (matches.length === 0) return '(nenhum)';
+    return matches.map((o) => {
+      const items = (o.items as { product: string; quantity: number }[])
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
+        .join(', ');
+      const shortId = String(o.id).slice(0, 8).toUpperCase();
+      return `- #${shortId} | ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${items} | R$${Number(o.total).toFixed(2)} | status: ${safeForPrompt(o.status, 20)}`;
+    }).join('\n');
+  } catch {
+    return '(consulta indisponível)';
+  }
+}
+
+/**
+ * Looks up the customer's most recent order(s) — used by the consultar_pedido tool
+ * so the AI can answer "qual o status do meu pedido?" without making up info.
+ * Includes driver info when the order is dispatched.
+ */
+async function fetchOrderForCustomer(
+  empresaId: string,
+  customerPhone: string,
+  shortId?: string,
+): Promise<string> {
+  try {
+    const supabase = getServiceSupabase();
+    let query = supabase
+      .from('zelochat_orders')
+      .select('id, customer_phone, items, pickup_date, pickup_time, status, total, payment_method, driver_id, created_at')
+      .eq('empresa_id', empresaId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) {
+      return 'Nenhum pedido encontrado para esse cliente.';
+    }
+
+    const digits = normalizePhoneNumber(customerPhone || '');
+    const ofThisCustomer = data.filter((o) => {
+      const rowDigits = normalizePhoneNumber(String(o.customer_phone ?? ''));
+      return rowDigits && digits && (rowDigits.endsWith(digits) || digits.endsWith(rowDigits));
+    });
+
+    let target = ofThisCustomer[0];
+    if (shortId) {
+      const wanted = shortId.toLowerCase().replace(/[^a-f0-9]/g, '').slice(0, 8);
+      const matchByShortId = data.find((o) => String(o.id).toLowerCase().startsWith(wanted));
+      if (matchByShortId) target = matchByShortId;
+    }
+    if (!target) return 'Não encontrei nenhum pedido recente desse cliente.';
+
+    let driverName = '';
+    if (target.driver_id) {
+      const { data: driver } = await supabase
+        .from('zelochat_drivers')
+        .select('name')
+        .eq('id', target.driver_id)
+        .maybeSingle();
+      driverName = (driver as { name?: string } | null)?.name ?? '';
+    }
+
+    const items = (target.items as { product: string; quantity: number }[])
+      .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
+      .join(', ');
+    const shortIdOut = String(target.id).slice(0, 8).toUpperCase();
+    const driverPart = driverName ? ` | Entregador: ${safeForPrompt(driverName, 60)}` : '';
+
+    return `Pedido #${shortIdOut} | Status: ${safeForPrompt(target.status, 20)} | Retirada/Entrega: ${safeForPrompt(target.pickup_date, 10)} às ${safeForPrompt(target.pickup_time, 10)} | Itens: ${items} | Total: R$${Number(target.total).toFixed(2)}${driverPart}`;
+  } catch (err) {
+    console.error('[AI] fetchOrderForCustomer error:', err);
+    return 'Não consegui consultar o pedido agora.';
   }
 }
 
@@ -220,10 +445,11 @@ function buildSystemInstruction(
   customerPhone: string,
   customerHistory: string,
   triggers: TriggerRecord[],
+  activeOrdersBlock: string,
 ): string {
   const cfg = getConfig(empresaId);
 
-  const availableProducts = cfg.products.filter((p) => p.available)
+  const availableProducts = getAvailableProducts(empresaId)
     .map((p) => `${p.name} (R$ ${p.price.toFixed(2)})`).join(', ') || 'Cardápio não configurado';
 
   const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
@@ -236,43 +462,12 @@ function buildSystemInstruction(
     ? `\n\nAVISOS DE HOJE:\n${cfg.dailyContext.map((c) => `- ${c.text}`).join('\n')}`
     : '';
 
-  const todayLabelRaw = new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'America/Sao_Paulo', weekday: 'short',
-  }).format(new Date()).toLowerCase();
-  const todayLabelMap: Record<string, string> = {
-    'dom.': 'Dom', 'seg.': 'Seg', 'ter.': 'Ter', 'qua.': 'Qua',
-    'qui.': 'Qui', 'sex.': 'Sex', 'sáb.': 'Sáb',
-  };
-  const todayLabel = todayLabelMap[todayLabelRaw] ?? todayLabelRaw;
+  const now = new Date();
+  const todayLabel = dayLabelBrazil(now);
   const isClosedToday = cfg.closedDays.includes(todayLabel);
   const closedDayWarning = isClosedToday
     ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
     : '';
-
-  // Build full current date context — use Brazil timezone so Railway (UTC) never skips a day
-  const now = new Date();
-  function toIsoBrazil(d: Date): string {
-    // Format in Brazil timezone (America/Sao_Paulo = UTC-3 / UTC-2 DST)
-    const parts = new Intl.DateTimeFormat('pt-BR', {
-      timeZone: 'America/Sao_Paulo',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(d);
-    const y = parts.find(p => p.type === 'year')?.value ?? '';
-    const mo = parts.find(p => p.type === 'month')?.value ?? '';
-    const dy = parts.find(p => p.type === 'day')?.value ?? '';
-    return `${y}-${mo}-${dy}`;
-  }
-  function dayLabelBrazil(d: Date): string {
-    const dow = new Intl.DateTimeFormat('pt-BR', {
-      timeZone: 'America/Sao_Paulo', weekday: 'short',
-    }).format(d);
-    // Map pt-BR short names to our DAY_LABELS array
-    const map: Record<string, string> = {
-      'dom.': 'Dom', 'seg.': 'Seg', 'ter.': 'Ter', 'qua.': 'Qua',
-      'qui.': 'Qui', 'sex.': 'Sex', 'sáb.': 'Sáb',
-    };
-    return map[dow.toLowerCase()] ?? dow;
-  }
 
   const todayISO = toIsoBrazil(now);
   const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000));
@@ -308,6 +503,10 @@ INFORMAÇÕES DA LANCHONETE:
 HISTÓRICO DESTE CLIENTE (uso interno — NÃO revelar ao cliente):
 ${customerHistory}
 IMPORTANTE: Use o histórico acima APENAS para personalizar o atendimento (ex: sugerir produtos já pedidos). NUNCA informe ao cliente quantos pedidos ele fez, valores anteriores ou qualquer dado do histórico. Essas informações são confidenciais.
+
+PEDIDOS ATIVOS DESTE CLIENTE (em produção/aguardando retirada/em entrega):
+${activeOrdersBlock}
+Se o cliente perguntar sobre o status de UM pedido específico (ex: "cadê meu pedido?", "saiu pra entrega?"), CHAME consultar_pedido para obter o status atualizado e o nome do entregador (se já saiu para entrega). NÃO responda sobre status de pedido sem antes consultar.
 
 GATILHOS ATIVOS (chame dispatch_trigger se a condição ocorrer):
 ${triggersBlock}
@@ -363,6 +562,24 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
   },
 };
 
+const CONSULT_ORDER_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'consultar_pedido',
+    description: 'Consulta o status atual de um pedido deste cliente (pendente, em preparo, pronto, em entrega, entregue, cancelado) e o nome do entregador se já saiu para entrega. Use sempre que o cliente perguntar sobre o andamento ou status de um pedido. Se o cliente não citar o número do pedido, deixe orderShortId vazio para pegar o pedido mais recente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        orderShortId: {
+          type: 'string',
+          description: 'Número curto do pedido (8 caracteres hex, ex: "A1B2C3D4"). Opcional — se vazio, retorna o pedido mais recente do cliente.',
+        },
+      },
+      required: [],
+    },
+  },
+};
+
 const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
   type: 'function',
   function: {
@@ -398,9 +615,23 @@ export async function generateAndSendReply(
   const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
 
-  const [customerHistory, triggers] = await Promise.all([
+  // FIX H4: if there is a pending order and the customer typed text instead of clicking
+  // the confirm/cancel button, treat it as edit intent — clear the pending state and let
+  // the AI handle the new turn. Otherwise the message would be silently dropped.
+  const pendingForEdit = await getPendingOrder(jid, resolvedEmpresaId);
+  if (pendingForEdit) {
+    console.log(`[AI] Pending order detected as text-during-pending for ${jid} — clearing and re-engaging.`);
+    await clearPendingOrder(jid, resolvedEmpresaId);
+    const editAck = 'Beleza, vamos ajustar! Me conta o que mudou. 😊';
+    await sendTextMessage(jid, editAck);
+    await addAssistantMessage(jid, editAck, undefined, resolvedEmpresaId);
+    return editAck;
+  }
+
+  const [customerHistory, triggers, activeOrdersBlock] = await Promise.all([
     fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
     fetchActiveTriggers(resolvedEmpresaId),
+    fetchActiveOrdersForCustomer(resolvedEmpresaId, session.customerPhone),
   ]);
 
   const systemInstruction = buildSystemInstruction(
@@ -408,26 +639,31 @@ export async function generateAndSendReply(
     session.customerPhone,
     customerHistory,
     triggers,
+    activeOrdersBlock,
   );
 
   // Signal "typing" while we wait for the AI — non-blocking, ignore failures
   void sendPresence(jid, 'composing');
 
-  // Guard: if there is a pending order for this JID waiting for button confirmation,
-  // do NOT send messages to the AI — it would create a duplicate order.
-  if (getPendingOrder(jid)) {
-    console.log(`[AI] Skipping AI reply for ${jid} — pending order awaiting button confirmation`);
-    return null;
-  }
-
   try {
     const openai = getAI();
 
-    // Build messages array, correctly handling tool/system/assistant roles
+    // INVARIANT (review fix H3):
+    // We forward only role=user / role=assistant TEXT messages to OpenAI from history.
+    // We deliberately drop:
+    //   - role=tool messages
+    //   - role=assistant messages with tool_calls (we strip the tool_calls field too)
+    // This is safe because every tool sequence we emit (criar_pedido, dispatch_trigger,
+    // consultar_pedido) is completed within a SINGLE OpenAI request — the assistant's
+    // tool_call message and the matching tool result are never persisted-then-replayed.
+    // If you ever add a tool flow that spans multiple requests, you MUST stop filtering
+    // here, otherwise OpenAI will reject the next request with "tool messages must
+    // follow assistant messages with tool_calls".
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemInstruction },
       ...session.messages
-        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .filter((m) => !!m.content) // skip tool-call-only assistant rows (content is null)
         .map((m) => ({
           role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
           content: m.content ? parseStructuredMessage(m.kind === 'text' ? m.content : m.preview).contentForModel : '',
@@ -437,7 +673,7 @@ export async function generateAndSendReply(
     const response = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages,
-      tools: [CREATE_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
+      tools: [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
       tool_choice: 'auto',
     });
 
@@ -461,18 +697,43 @@ export async function generateAndSendReply(
 
           if (!args.customerPhone) args.customerPhone = session.customerPhone;
           const cfg = getConfig(resolvedEmpresaId);
+          const available = getAvailableProducts(resolvedEmpresaId);
 
           // Recalculate total server-side — never trust the model's arithmetic
           const recalcTotal = args.items.reduce((sum, item) => {
-            const product = cfg.products.find(
-              (p) => p.name.toLowerCase() === item.product.toLowerCase() && p.available,
+            const product = available.find(
+              (p) => p.name.toLowerCase() === item.product.toLowerCase(),
             );
             return sum + (product ? product.price * item.quantity : 0);
           }, 0);
           if (recalcTotal > 0) args.total = Math.round(recalcTotal * 100) / 100;
 
-          // Store as pending and send native button confirmation
-          pendingOrders.set(jid, { empresaId: resolvedEmpresaId, jid, ...args });
+          const unmatchedItems = args.items.filter((item) =>
+            !available.find((p) => p.name.toLowerCase() === item.product.toLowerCase()),
+          );
+          if (unmatchedItems.length > 0) {
+            const names = unmatchedItems.map((i) => i.product).join(', ');
+            const notFoundMsg = `Desculpe, não encontrei no cardápio: ${names}. Pode verificar o nome do produto? 😊`;
+            await sendTextMessage(jid, notFoundMsg);
+            await addAssistantMessage(jid, notFoundMsg, undefined, resolvedEmpresaId);
+            return notFoundMsg;
+          }
+
+          // Persist pending order to Supabase (review fix C2 — survives restarts).
+          // UPSERT semantics ensure two simultaneous criar_pedido calls don't create
+          // duplicate rows; the latest payload wins.
+          await setPendingOrder({
+            empresaId: resolvedEmpresaId,
+            jid,
+            customerName: args.customerName,
+            customerPhone: args.customerPhone,
+            items: args.items,
+            pickupDate: args.pickupDate,
+            pickupTime: args.pickupTime,
+            paymentMethod: args.paymentMethod,
+            total: args.total,
+            toolCallId: toolCall.id,
+          });
           const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
           const summary = `📦 ${itemsList}\n📅 ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 R$ ${args.total.toFixed(2)}`;
 
@@ -487,9 +748,8 @@ export async function generateAndSendReply(
                 { id: 'CANCEL_ORDER', displayText: '❌ Cancelar' },
               ],
             );
-            
-            // CRITICAL: Must record both the tool result AND the assistant's tool call in history.
-            // Otherwise, OpenAI will error on the next user message due to inconsistent history.
+
+            // Persist the tool sequence in history for audit (not replayed to OpenAI — see H3 invariant).
             await addToolMessage(jid, `Aguardando confirmação do cliente: ${summary}`, toolCall.id, resolvedEmpresaId);
             await addAssistantMessage(jid, summary, [toolCall], resolvedEmpresaId);
 
@@ -498,7 +758,7 @@ export async function generateAndSendReply(
           } catch (btnErr) {
             // Fallback: buttons not supported — confirm immediately via text
             console.warn('[AI] sendButtonMessage failed, confirming directly:', btnErr);
-            pendingOrders.delete(jid);
+            await clearPendingOrder(jid, resolvedEmpresaId);
             const orderId = await createOrderInDb(resolvedEmpresaId, args);
             const shortId = orderId.slice(0, 8).toUpperCase();
             replyText = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
@@ -511,6 +771,38 @@ export async function generateAndSendReply(
         await sendTextMessage(jid, replyText);
         await addAssistantMessage(jid, replyText, undefined, resolvedEmpresaId);
         return replyText;
+      }
+
+      if (toolCall.type === 'function' && toolCall.function.name === 'consultar_pedido') {
+        let parsed: { orderShortId?: string } = {};
+        try { parsed = JSON.parse(toolCall.function.arguments); } catch { /* ignore */ }
+        const statusInfo = await fetchOrderForCustomer(
+          resolvedEmpresaId,
+          session.customerPhone,
+          parsed.orderShortId,
+        );
+
+        // Complete the tool call within the SAME OpenAI request — H3 invariant.
+        const followUp = await openai.chat.completions.create({
+          model: OPENAI_MODEL,
+          messages: [
+            ...messages,
+            choice.message,
+            { role: 'tool', tool_call_id: toolCall.id, content: statusInfo } as any,
+          ],
+        });
+
+        // Persist the audit trail. Order matters: assistant(tool_calls) → tool → assistant(text).
+        await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+        await addToolMessage(jid, statusInfo, toolCall.id, resolvedEmpresaId);
+
+        const followText = followUp.choices[0]?.message?.content?.trim()
+          || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
+        const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
+        await sendTextMessage(jid, cleanFollow);
+        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
+        console.log(`[AI] consultar_pedido answered for ${jid}`);
+        return cleanFollow;
       }
 
       if (toolCall.type === 'function' && toolCall.function.name === 'dispatch_trigger') {
@@ -542,15 +834,15 @@ export async function generateAndSendReply(
           await setAutoReply(jid, false, resolvedEmpresaId);
           const handoff = 'Entendi! Vou chamar um atendente pra te ajudar com isso. Só um instante 🙏';
           
-          await addToolMessage(jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId);
           await addAssistantMessage(jid, handoff, [toolCall], resolvedEmpresaId);
+          await addToolMessage(jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId);
           
           await sendTextMessage(jid, handoff);
           if (managerJid) {
             try {
               await sendTextMessage(
                 managerJid,
-                `🆘 *Atendimento humano* — ${trig.name}\nCliente: ${session.customerName} (${session.customerPhone})\nMotivo: ${reason}\nAuto-resposta desativada.`,
+                `🆘 *Atendimento humano* — ${safeForPrompt(trig.name, 80)}\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}\nAuto-resposta desativada.`,
               );
             } catch (err) {
               console.warn('[AI] Failed to notify manager (escalate):', err);
@@ -567,7 +859,7 @@ export async function generateAndSendReply(
           try {
             await sendTextMessage(
               managerJid,
-              `🔔 *${trig.name}*\nCliente: ${session.customerName} (${session.customerPhone})\nMotivo: ${reason}`,
+              `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
             );
           } catch (err) {
             console.warn('[AI] Failed to notify manager (alert):', err);
@@ -585,8 +877,8 @@ export async function generateAndSendReply(
           ],
         });
         
-        await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
         await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+        await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Beleza! Já anotei aqui. 👍';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import express from 'express';
 import axios from 'axios';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions.js';
 import { broadcast } from './ws.js';
@@ -47,11 +48,68 @@ const router = Router();
 // that WhatsApp/Whatsmiau sends for the same button click (within 5-second window)
 const recentlyHandled = new Map<string, number>();
 
+setInterval(() => {
+  const cutoff = Date.now() - 10_000;
+  for (const [jid, ts] of recentlyHandled) {
+    if (ts < cutoff) recentlyHandled.delete(jid);
+  }
+}, 30_000);
+
+/**
+ * Resolves the empresa associated with a webhook request via the apikey header
+ * (review fixes C1 + C3). The token is per-empresa, stored in
+ * empresa_perfil.webhook_token (UUID, see migration 009). Returns null when no
+ * valid token is supplied — caller responds 401.
+ *
+ * Local-dev fallback: if the env var WHATSMIAU_WEBHOOK_TOKEN is set and matches,
+ * the request is attributed to the currently-bound empresa singleton. This keeps
+ * single-tenant local development working without per-empresa Whatsmiau config.
+ */
+async function resolveWebhookEmpresa(req: Request): Promise<string | null> {
+  const token = (req.header('apikey') || '').trim();
+  if (!token) return null;
+
+  const devFallback = process.env.WHATSMIAU_WEBHOOK_TOKEN;
+  if (devFallback && token === devFallback) {
+    return getBoundEmpresaId();
+  }
+
+  // UUID-shape check before hitting the DB — avoids a query for obvious garbage.
+  if (!/^[0-9a-f-]{36}$/i.test(token)) return null;
+
+  try {
+    const { data } = await getServiceSupabase()
+      .from('empresa_perfil')
+      .select('id')
+      .eq('webhook_token', token)
+      .maybeSingle();
+    return (data as { id: string } | null)?.id ?? null;
+  } catch (err) {
+    console.error('[Webhook] empresa lookup failed:', err);
+    return null;
+  }
+}
+
+function safeJsonParse<T = any>(value: string): T | null {
+  try { return JSON.parse(value) as T; } catch { return null; }
+}
+
 /**
  * POST /webhook — Receives events from Whatsmiau (Evolution API v2 format).
- * Must respond quickly (200) before processing to avoid webhook timeouts.
+ *
+ * Authentication: requires header `apikey: <empresa.webhook_token>`. The token
+ * both authenticates the call AND identifies which empresa the event belongs to,
+ * replacing the old getBoundEmpresaId() singleton (review fixes C1 + C3).
+ *
+ * Configure Whatsmiau's webhook to send the empresa's webhook_token UUID in the
+ * apikey header — see post-deploy steps in REVIEW_FIXES.md.
  */
-router.post('/webhook', (req: Request, res: Response) => {
+router.post('/webhook', async (req: Request, res: Response) => {
+  const empresaId = await resolveWebhookEmpresa(req);
+  if (!empresaId) {
+    res.status(401).json({ error: 'invalid webhook credentials' });
+    return;
+  }
   res.json({ ok: true });
 
   const event: string = (req.body?.event ?? '').toLowerCase().replace(/_/g, '.');
@@ -72,21 +130,24 @@ router.post('/webhook', (req: Request, res: Response) => {
     const botJid = getOwnJid();
     if (botJid && remoteJid === botJid) return;
 
-    const interactiveId = data.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson
-      ? JSON.parse(data.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson).id
+    const interactiveParams = data.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
+    const interactiveId = interactiveParams
+      ? safeJsonParse<{ id?: string }>(interactiveParams)?.id ?? ''
       : '';
     const buttonId: string =
       data.message?.buttonsResponseMessage?.selectedButtonId ??
       data.message?.templateButtonReplyMessage?.selectedId ??
       interactiveId ?? '';
     if (buttonId) {
-      const pending = getPendingOrder(remoteJid);
+      const pending = await getPendingOrder(remoteJid, empresaId);
       if (pending) {
         recentlyHandled.set(remoteJid, Date.now()); // mark before async to block duplicate events
         if (buttonId === 'CONFIRM_ORDER') {
-          void confirmPendingOrder(remoteJid);
+          confirmPendingOrder(remoteJid, empresaId).catch((err) =>
+            console.error('[Webhook] confirmPendingOrder failed:', err));
         } else if (buttonId === 'CANCEL_ORDER') {
-          void cancelPendingOrder(remoteJid, pending.empresaId);
+          cancelPendingOrder(remoteJid, empresaId).catch((err) =>
+            console.error('[Webhook] cancelPendingOrder failed:', err));
         }
         return;
       }
@@ -97,18 +158,20 @@ router.post('/webhook', (req: Request, res: Response) => {
     const msgText = (
       data.message?.conversation ??
       data.message?.extendedTextMessage?.text ??
-      interactiveText
+      interactiveText ?? ''
     ).trim();
-    const pendingForText = getPendingOrder(remoteJid);
+    const pendingForText = await getPendingOrder(remoteJid, empresaId);
     if (pendingForText && msgText) {
       if (msgText === '✅ Confirmar' || msgText === 'CONFIRM_ORDER') {
         recentlyHandled.set(remoteJid, Date.now());
-        void confirmPendingOrder(remoteJid);
+        confirmPendingOrder(remoteJid, empresaId).catch((err) =>
+          console.error('[Webhook] confirmPendingOrder failed:', err));
         return;
       }
       if (msgText === '❌ Cancelar' || msgText === 'CANCEL_ORDER') {
         recentlyHandled.set(remoteJid, Date.now());
-        void cancelPendingOrder(remoteJid, pendingForText.empresaId);
+        cancelPendingOrder(remoteJid, empresaId).catch((err) =>
+          console.error('[Webhook] cancelPendingOrder failed:', err));
         return;
       }
     }
@@ -120,7 +183,7 @@ router.post('/webhook', (req: Request, res: Response) => {
       recentlyHandled.delete(remoteJid);
     }
 
-    dispatchIncomingMessage(data);
+    dispatchIncomingMessage(data, empresaId);
   } else if (event === 'connection.update') {
     handleConnectionUpdate(data);
   } else if (event === 'messages.update') {
@@ -150,11 +213,11 @@ router.post('/webhook', (req: Request, res: Response) => {
       const pushName: string = c?.pushName ?? '';
       if (remoteJid && pushName) {
         broadcast({ type: 'contact_update', data: { remoteJid, pushName, profilePicUrl: c?.profilePicUrl } });
-        
-        // Save profile picture to database
-        const empresaId = getBoundEmpresaId();
-        if (empresaId && c?.profilePicUrl) {
-          updateSessionProfilePic(empresaId, remoteJid, c.profilePicUrl).catch(err => {
+
+        // Save profile picture to database — empresaId comes from the validated token (C3),
+        // not from the global singleton.
+        if (c?.profilePicUrl) {
+          updateSessionProfilePic(empresaId, remoteJid, c.profilePicUrl).catch((err) => {
             console.error('[Webhook] Failed to save profile picture:', err);
           });
         }
@@ -322,7 +385,7 @@ router.get('/api/sessions/:jid', async (req: Request, res: Response) => {
     const empresaId = await requireEmpresaId(req);
     const session = await getSession(req.params.jid, empresaId);
     if (!session) {
-      res.status(404).json({ error: 'Session not found' });
+      res.status(404).json({ error: 'Conversa não encontrada' });
       return;
     }
     res.json({ session });
@@ -335,7 +398,7 @@ router.get('/api/sessions/:jid', async (req: Request, res: Response) => {
  * POST /api/send — Sends a text message to a WhatsApp contact.
  * Body: { to: string (jid), message?: string, attachment?: ChatAttachment }
  */
-router.post('/api/send', async (req: Request, res: Response) => {
+router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, res: Response) => {
   const { to, message, attachment } = req.body as {
     to?: string;
     message?: string;
@@ -343,7 +406,7 @@ router.post('/api/send', async (req: Request, res: Response) => {
   };
 
   if (!to || (!message?.trim() && !attachment)) {
-    res.status(400).json({ error: 'Missing "to" and message content' });
+    res.status(400).json({ error: 'Campo "to" e conteúdo da mensagem são obrigatórios.' });
     return;
   }
 
@@ -374,7 +437,7 @@ router.post('/api/send', async (req: Request, res: Response) => {
       await sendTextMessage(to, trimmedMessage);
     }
 
-    await addAssistantMessage(to, trimmedMessage, attachment, empresaId);
+    await addAssistantMessage(to, trimmedMessage, undefined, empresaId, attachment);
     res.json({ ok: true });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
@@ -390,18 +453,22 @@ router.post('/api/bind-empresa', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     setBoundEmpresaId(empresaId);
-    // Hydrate the in-memory kill-switch from the DB so restarts preserve the dono's choice
+    // Hydrate the in-memory kill-switch + re-engage flag from the DB so restarts
+    // preserve the dono's choice.
     try {
       const { data } = await getServiceSupabase()
         .from('empresa_perfil')
-        .select('ai_enabled')
+        .select('ai_enabled, ai_can_reengage_pending')
         .eq('id', empresaId)
         .maybeSingle();
-      const enabled = (data as { ai_enabled?: boolean } | null)?.ai_enabled;
-      if (typeof enabled === 'boolean') setConfig(empresaId, { aiEnabled: enabled });
+      const row = (data as { ai_enabled?: boolean; ai_can_reengage_pending?: boolean } | null);
+      const patch: Partial<{ aiEnabled: boolean; aiCanReengagePending: boolean }> = {};
+      if (typeof row?.ai_enabled === 'boolean') patch.aiEnabled = row.ai_enabled;
+      if (typeof row?.ai_can_reengage_pending === 'boolean') patch.aiCanReengagePending = row.ai_can_reengage_pending;
+      if (Object.keys(patch).length > 0) setConfig(empresaId, patch);
     } catch (err) {
-      // Column may not exist yet (migration 008 not applied) — default true
-      console.warn('[Router] ai_enabled column unavailable:', err);
+      // Columns may not exist yet (migrations 008/009 not applied) — defaults apply.
+      console.warn('[Router] ai_enabled/ai_can_reengage_pending column unavailable:', err);
     }
     res.json({ ok: true, empresaId });
   } catch (error) {
@@ -558,7 +625,7 @@ router.post('/api/ai/reply', async (req: Request, res: Response) => {
   const { jid } = req.body;
 
   if (!jid) {
-    res.status(400).json({ error: 'Missing "jid" field' });
+    res.status(400).json({ error: 'Campo "jid" é obrigatório.' });
     return;
   }
 
@@ -568,7 +635,7 @@ router.post('/api/ai/reply', async (req: Request, res: Response) => {
     if (reply) {
       res.json({ ok: true, reply });
     } else {
-      res.status(500).json({ error: 'Failed to generate reply' });
+      res.status(500).json({ error: 'Não foi possível gerar a resposta.' });
     }
   } catch (error) {
     sendAuthError(res, error);
@@ -694,7 +761,7 @@ router.post('/api/ai/complete', async (req: Request, res: Response) => {
   const { messages, temperature = 0.7, responseFormat } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
-    res.status(400).json({ error: 'Missing messages array' });
+    res.status(400).json({ error: 'Campo "messages" é obrigatório e deve ser um array.' });
     return;
   }
 
@@ -782,10 +849,22 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, closedDays, address, pixKey,
-            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone, aiEnabled } = req.body;
+            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
+            aiEnabled, aiCanReengagePending } = req.body;
     setConfig(empresaId, { name, specialty, hours, closedDays, address, pixKey,
                            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
-                           ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}) });
+                           ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}),
+                           ...(typeof aiCanReengagePending === 'boolean' ? { aiCanReengagePending } : {}) });
+    if (typeof aiCanReengagePending === 'boolean') {
+      try {
+        await getServiceSupabase()
+          .from('empresa_perfil')
+          .update({ ai_can_reengage_pending: aiCanReengagePending, updated_at: new Date().toISOString() })
+          .eq('id', empresaId);
+      } catch (err) {
+        console.warn('[Router] ai_can_reengage_pending persist failed (column missing?):', err);
+      }
+    }
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);
@@ -799,6 +878,9 @@ router.post('/api/whatsapp/validate-numbers', async (req: Request, res: Response
   if (!Array.isArray(numbers) || numbers.length === 0) {
     res.status(400).json({ error: 'Campo "numbers" é obrigatório e deve ser um array.' });
     return;
+  }
+  if (numbers.length > 50) {
+    return res.status(400).json({ error: 'Máximo de 50 números por consulta.' });
   }
   try {
     await requireEmpresaId(req);

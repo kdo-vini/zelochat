@@ -30,7 +30,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(express.json({ limit: '6mb' }));
+app.use(express.json({ limit: '100kb' }));
 app.use(router);
 
 const httpServer = createServer(app);
@@ -39,10 +39,15 @@ createWsServer(httpServer);
 // --- Wire up incoming messages → store + auto-reply ---
 const pendingReplies = new Map<string, ReturnType<typeof setTimeout>>();
 
-onIncomingMessage(async (msg) => {
-  // 1. Normalize and store the message
+onIncomingMessage(async (msg, empresaIdFromWebhook) => {
+  // empresaIdFromWebhook is the trusted value derived from the apikey token (review fix C3).
+  // Fall back to the singleton only if the webhook didn't supply one (legacy path).
+  const empresaId = empresaIdFromWebhook ?? getBoundEmpresaId();
+
+  // 1. Normalize and store the message — pass empresaId explicitly so the handler
+  // doesn't fall back to the global singleton.
   try {
-    await handleIncomingMessage(msg);
+    await handleIncomingMessage(msg, empresaId);
   } catch (error) {
     console.error('[Server] Failed to persist incoming message:', error);
   }
@@ -50,10 +55,10 @@ onIncomingMessage(async (msg) => {
   // 2. Auto-reply if enabled for this session
   const jid = msg.key?.remoteJid;
   if (!jid) return;
+  if (!empresaId) return;
 
-  const empresaId = getBoundEmpresaId();
-  const session = await getSession(jid, empresaId ?? undefined);
-  if (session?.autoReply && process.env.OPENAI_API_KEY && empresaId) {
+  const session = await getSession(jid, empresaId);
+  if (session?.autoReply && process.env.OPENAI_API_KEY) {
     // Cancel previous pending reply for this JID to debounce rapid messages
     const existing = pendingReplies.get(jid);
     if (existing) clearTimeout(existing);

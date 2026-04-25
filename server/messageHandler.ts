@@ -1,6 +1,6 @@
 import { broadcast } from './ws.js';
 import { getBoundEmpresaId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
-import type { ChatAttachment, ChatMessage } from '../src/types.js';
+import type { ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
 import {
   buildAttachmentPreview,
   buildContactKey,
@@ -9,6 +9,18 @@ import {
   parseStructuredMessage,
   serializeStructuredMessage,
 } from '../src/domain/chat.js';
+
+const jidQueues = new Map<string, Promise<void>>();
+
+function serializeForJid(jid: string, work: () => Promise<void>): Promise<void> {
+  const existing = jidQueues.get(jid) ?? Promise.resolve();
+  const next = existing.then(work, work);
+  jidQueues.set(jid, next);
+  next.finally(() => {
+    if (jidQueues.get(jid) === next) jidQueues.delete(jid);
+  });
+  return next;
+}
 
 export interface StoredSession {
   id: string;
@@ -437,6 +449,11 @@ export async function markSessionAsRead(jid: string, empresaId = getBoundEmpresa
   if (error) {
     throw new Error(error.message);
   }
+
+  broadcast({
+    type: 'session_read',
+    data: { sessionId: jid, unreadCount: 0 },
+  });
 }
 
 export async function deleteSession(jid: string, empresaId = getBoundEmpresaId()): Promise<void> {
@@ -492,16 +509,25 @@ export async function updateSessionName(
   if (error) throw new Error(error.message);
 }
 
-export async function handleIncomingMessage(msg: any): Promise<void> {
-  const empresaId = getBoundEmpresaId();
-  if (!empresaId) {
+/**
+ * Persists an inbound webhook message and broadcasts to the dashboard.
+ * `empresaId` is passed in by the webhook handler (review fix C3) — it comes from
+ * the apikey-token lookup, NOT from the process-global singleton. The singleton
+ * is consulted only as a legacy fallback (local dev without a configured token).
+ */
+export async function handleIncomingMessage(msg: any, empresaId?: string | null): Promise<void> {
+  const resolvedEmpresaId = empresaId ?? getBoundEmpresaId();
+  if (!resolvedEmpresaId) {
     console.warn('[MessageHandler] Ignoring inbound message because no empresa is bound yet.');
     return;
   }
-
   const jid = msg.key.remoteJid;
   if (!jid) return;
+  return serializeForJid(jid, () => _handleIncomingMessage(msg, resolvedEmpresaId));
+}
 
+async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<void> {
+  const jid = msg.key.remoteJid;
   console.log(`[MessageHandler] Incoming message — JID: ${jid} | pushName: ${msg.pushName}`);
 
   const phone = phoneFromJid(jid);
@@ -575,7 +601,7 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
 
   if (!preview) return;
 
-  const existing = await fetchSessionFamily(empresaId, jid);
+  const existing = await fetchSessionFamily(resolvedEmpresaId, jid);
 
   // Only propose the pushName if the operator hasn't already set a proper name.
   // An existing non-phone name is treated as operator-intent and must be preserved.
@@ -583,7 +609,7 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
   const proposedName = (!existingName || isLikelyPhoneLabel(existingName)) ? pushName : existingName;
 
   const sessionRow = await ensureSession({
-    empresaId,
+    empresaId: resolvedEmpresaId,
     jid,
     customerName: proposedName,
     customerPhone: formatPhone(phone),
@@ -596,14 +622,14 @@ export async function handleIncomingMessage(msg: any): Promise<void> {
   await getServiceSupabase().rpc('zelochat_increment_unread', { p_session_id: sessionRow.id });
 
   const storedMsg = await insertMessage({
-    empresaId,
+    empresaId: resolvedEmpresaId,
     sessionId: sessionRow.id,
     role: 'user',
     content: storedContent,
     sentAt: sentAt.toISOString(),
   });
 
-  const family = await fetchSessionFamily(empresaId, jid);
+  const family = await fetchSessionFamily(resolvedEmpresaId, jid);
   const mappedSession = family
     ? mapSession(family)
     : {
@@ -638,14 +664,19 @@ export async function addAssistantMessage(
   content: string | null,
   toolCalls?: any[],
   empresaId = getBoundEmpresaId(),
+  attachment?: ChatAttachment,
 ): Promise<void> {
   if (!empresaId) {
     console.warn('[MessageHandler] Ignoring outbound persistence because no empresa is bound yet.');
     return;
   }
 
-  const storedContent = content ? serializeStructuredMessage({ text: content }) : null;
-  const preview = content || (toolCalls ? '[Ação interna]' : '');
+  const text = content ?? '';
+  const storedContent =
+    text || attachment ? serializeStructuredMessage({ text, attachment }) : null;
+  const preview = attachment
+    ? buildAttachmentPreview(attachment, text)
+    : text || (toolCalls ? '[Ação interna]' : '');
   const sessionRow = await ensureSession({
     empresaId,
     jid,
