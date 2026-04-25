@@ -61,21 +61,42 @@ setInterval(() => {
  * empresa_perfil.webhook_token (UUID, see migration 009). Returns null when no
  * valid token is supplied — caller responds 401.
  *
- * Local-dev fallback: if the env var WHATSMIAU_WEBHOOK_TOKEN is set and matches,
- * the request is attributed to the currently-bound empresa singleton. This keeps
- * single-tenant local development working without per-empresa Whatsmiau config.
+ * Fallback chain (in order):
+ * 1. WHATSMIAU_WEBHOOK_TOKEN env var — exact match → bound empresa singleton
+ * 2. WHATSMIAU_API_KEY env var — Whatsmiau sends its own API key as `apikey` by
+ *    default when no custom header token is configured → bound empresa singleton
+ * 3. UUID-shaped token → look up empresa_perfil.webhook_token in DB
  */
 async function resolveWebhookEmpresa(req: Request): Promise<string | null> {
   const token = (req.header('apikey') || '').trim();
-  if (!token) return null;
+  if (!token) {
+    console.warn('[Webhook] 401 — no apikey header present');
+    return null;
+  }
 
+  // 1. Explicit webhook token override
   const devFallback = process.env.WHATSMIAU_WEBHOOK_TOKEN;
   if (devFallback && token === devFallback) {
     return getBoundEmpresaId();
   }
 
-  // UUID-shape check before hitting the DB — avoids a query for obvious garbage.
-  if (!/^[0-9a-f-]{36}$/i.test(token)) return null;
+  // 2. Whatsmiau API key fallback — Whatsmiau sends its own API key as the
+  //    apikey header by default. Accept it and attribute to the bound empresa.
+  const apiKeyFallback = process.env.WHATSMIAU_API_KEY;
+  if (apiKeyFallback && token === apiKeyFallback) {
+    const empresaId = getBoundEmpresaId();
+    if (!empresaId) {
+      console.warn('[Webhook] 401 — WHATSMIAU_API_KEY matched but no empresa bound yet');
+      return null;
+    }
+    return empresaId;
+  }
+
+  // 3. UUID-shaped per-empresa token — look up in DB
+  if (!/^[0-9a-f-]{36}$/i.test(token)) {
+    console.warn(`[Webhook] 401 — token not UUID-shaped and does not match env fallbacks (prefix: ${token.slice(0, 8)}...)`);
+    return null;
+  }
 
   try {
     const { data } = await getServiceSupabase()
@@ -83,7 +104,11 @@ async function resolveWebhookEmpresa(req: Request): Promise<string | null> {
       .select('id')
       .eq('webhook_token', token)
       .maybeSingle();
-    return (data as { id: string } | null)?.id ?? null;
+    const resolved = (data as { id: string } | null)?.id ?? null;
+    if (!resolved) {
+      console.warn(`[Webhook] 401 — UUID token not found in empresa_perfil.webhook_token`);
+    }
+    return resolved;
   } catch (err) {
     console.error('[Webhook] empresa lookup failed:', err);
     return null;
