@@ -30,7 +30,13 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(express.json({ limit: '100kb' }));
+// 100kb global cap protects every endpoint EXCEPT /api/send, which mounts its own
+// 6mb parser at the route level for media uploads. Without this skip, the global
+// parser consumes/rejects the body before the per-route override can run.
+app.use((req, res, next) => {
+  if (req.path === '/api/send') return next();
+  return express.json({ limit: '100kb' })(req, res, next);
+});
 app.use(router);
 
 const httpServer = createServer(app);
