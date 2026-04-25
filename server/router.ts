@@ -56,22 +56,27 @@ setInterval(() => {
 }, 30_000);
 
 /**
- * Resolves the empresa associated with a webhook request via the apikey header
- * (review fixes C1 + C3). The token is per-empresa, stored in
- * empresa_perfil.webhook_token (UUID, see migration 009). Returns null when no
- * valid token is supplied — caller responds 401.
+ * Resolves the empresa associated with a webhook request via the apikey header.
  *
  * Fallback chain (in order):
- * 1. WHATSMIAU_WEBHOOK_TOKEN env var — exact match → bound empresa singleton
- * 2. WHATSMIAU_API_KEY env var — Whatsmiau sends its own API key as `apikey` by
- *    default when no custom header token is configured → bound empresa singleton
- * 3. UUID-shaped token → look up empresa_perfil.webhook_token in DB
+ * 1. No token present → bound empresa singleton (Whatsmiau fires webhooks without
+ *    an apikey header by default — single-tenant Railway deployments are fine here).
+ * 2. WHATSMIAU_WEBHOOK_TOKEN env var — exact match → bound empresa singleton
+ * 3. WHATSMIAU_API_KEY env var — explicit API key match → bound empresa singleton
+ * 4. UUID-shaped token → look up empresa_perfil.webhook_token in DB
  */
 async function resolveWebhookEmpresa(req: Request): Promise<string | null> {
   const token = (req.header('apikey') || '').trim();
+
+  // No token — Whatsmiau does not send an apikey header by default.
+  // Fall back to the bound empresa singleton (single-tenant deployment).
   if (!token) {
-    console.warn('[Webhook] 401 — no apikey header present');
-    return null;
+    const empresaId = getBoundEmpresaId();
+    if (!empresaId) {
+      console.warn('[Webhook] 401 — no apikey header and no empresa bound yet');
+      return null;
+    }
+    return empresaId;
   }
 
   // 1. Explicit webhook token override
