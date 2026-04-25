@@ -810,12 +810,23 @@ export async function generateAndSendReply(
             console.log(`[AI] Pending order queued for button confirmation: ${jid}`);
             return summary;
           } catch (btnErr) {
-            // Fallback: buttons not supported — confirm immediately via text
-            console.warn('[AI] sendButtonMessage failed, confirming directly:', btnErr);
-            await clearPendingOrder(jid, resolvedEmpresaId);
-            const orderId = await createOrderInDb(resolvedEmpresaId, args);
-            const shortId = orderId.slice(0, 8).toUpperCase();
-            replyText = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+            // Whatsmiau sometimes returns a non-2xx status for sendButtons even when
+            // the message IS queued and delivered to WhatsApp. The previous fallback
+            // (auto-confirm + clear pending) caused duplicate orders: the customer
+            // would still see the buttons, tap Confirmar, the router would no longer
+            // have a pending row to act on, and the click would leak to the AI which
+            // then created a SECOND order via criar_pedido.
+            //
+            // Safer behavior: keep the pending row, ask for text confirmation. If the
+            // buttons WERE delivered, tapping Confirmar finds the pending row and runs
+            // confirmPendingOrder cleanly — no duplicate. If they weren't, the customer
+            // replies "Sim" and the router's soft-confirm path picks it up.
+            console.warn('[AI] sendButtonMessage failed; keeping pending row and asking for text confirmation:', btnErr);
+            const promptMsg = `Para confirmar, é só responder *Sim* — ou *Não* para cancelar.\n\n${summary}`;
+            await sendTextMessage(jid, promptMsg);
+            await addToolMessage(jid, `Aguardando confirmação por texto: ${summary}`, toolCall.id, resolvedEmpresaId);
+            await addAssistantMessage(jid, promptMsg, undefined, resolvedEmpresaId);
+            return promptMsg;
           }
         } catch (err) {
           replyText = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente em instantes? 🙏';

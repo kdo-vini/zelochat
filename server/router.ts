@@ -168,41 +168,68 @@ router.post('/webhook', async (req: Request, res: Response) => {
       data.message?.buttonsResponseMessage?.selectedButtonId ??
       data.message?.templateButtonReplyMessage?.selectedId ??
       interactiveId ?? '';
-    if (buttonId) {
-      const pending = await getPendingOrder(remoteJid, empresaId);
-      if (pending) {
-        recentlyHandled.set(remoteJid, Date.now()); // mark before async to block duplicate events
-        if (buttonId === 'CONFIRM_ORDER') {
-          confirmPendingOrder(remoteJid, empresaId).catch((err) =>
-            console.error('[Webhook] confirmPendingOrder failed:', err));
-        } else if (buttonId === 'CANCEL_ORDER') {
-          cancelPendingOrder(remoteJid, empresaId).catch((err) =>
-            console.error('[Webhook] cancelPendingOrder failed:', err));
-        }
-        return;
-      }
-    }
 
-    // Also catch button clicks that arrive as plain text (WhatsApp sends the event twice)
     const interactiveText = data.message?.interactiveResponseMessage?.body?.text ?? '';
     const msgText = (
       data.message?.conversation ??
       data.message?.extendedTextMessage?.text ??
       interactiveText ?? ''
     ).trim();
-    const pendingForText = await getPendingOrder(remoteJid, empresaId);
-    if (pendingForText && msgText) {
-      if (msgText === '✅ Confirmar' || msgText === 'CONFIRM_ORDER') {
-        recentlyHandled.set(remoteJid, Date.now());
-        confirmPendingOrder(remoteJid, empresaId).catch((err) =>
-          console.error('[Webhook] confirmPendingOrder failed:', err));
+
+    // "Hard" button click: an explicit button-id from Whatsmiau OR plain text that
+    // exactly matches a button label we sent. These MUST short-circuit the AI even
+    // when no pending order exists — otherwise the AI re-interprets "✅ Confirmar"
+    // as the customer placing a new order and creates a duplicate.
+    const isHardConfirm =
+      buttonId === 'CONFIRM_ORDER' || msgText === '✅ Confirmar' || msgText === 'CONFIRM_ORDER';
+    const isHardCancel =
+      buttonId === 'CANCEL_ORDER' || msgText === '❌ Cancelar' || msgText === 'CANCEL_ORDER';
+
+    if (isHardConfirm || isHardCancel) {
+      recentlyHandled.set(remoteJid, Date.now()); // block duplicate events for 5s
+      const pending = await getPendingOrder(remoteJid, empresaId);
+      if (pending) {
+        if (isHardConfirm) {
+          confirmPendingOrder(remoteJid, empresaId).catch((err) =>
+            console.error('[Webhook] confirmPendingOrder failed:', err));
+        } else {
+          cancelPendingOrder(remoteJid, empresaId).catch((err) =>
+            console.error('[Webhook] cancelPendingOrder failed:', err));
+        }
         return;
       }
-      if (msgText === '❌ Cancelar' || msgText === 'CANCEL_ORDER') {
-        recentlyHandled.set(remoteJid, Date.now());
-        cancelPendingOrder(remoteJid, empresaId).catch((err) =>
-          console.error('[Webhook] cancelPendingOrder failed:', err));
-        return;
+      // No pending — the order was already finalized (or never existed). Reply
+      // idempotently. NEVER fall through to the AI for a button click.
+      if (isHardConfirm) {
+        const ack = 'Seu pedido já foi confirmado! ✅ Qualquer dúvida é só chamar 😊';
+        sendTextMessage(remoteJid, ack)
+          .then(() => addAssistantMessage(remoteJid, ack, undefined, empresaId))
+          .catch((err) => console.error('[Webhook] idempotent confirm reply failed:', err));
+      }
+      // For a cancel with no pending: silent return.
+      return;
+    }
+
+    // Soft confirmation keywords (Sim/Não and short forms) — used when buttons
+    // can't be sent and the AI fell back to a plain-text prompt. Only act on
+    // these when a pending order is actually waiting; otherwise let the AI
+    // process them naturally (e.g. "Sim" answering an unrelated question).
+    if (msgText) {
+      const isSoftConfirm = /^(sim|s)$/i.test(msgText);
+      const isSoftCancel = /^(n[aã]o|n)$/i.test(msgText);
+      if (isSoftConfirm || isSoftCancel) {
+        const pending = await getPendingOrder(remoteJid, empresaId);
+        if (pending) {
+          recentlyHandled.set(remoteJid, Date.now());
+          if (isSoftConfirm) {
+            confirmPendingOrder(remoteJid, empresaId).catch((err) =>
+              console.error('[Webhook] confirmPendingOrder failed:', err));
+          } else {
+            cancelPendingOrder(remoteJid, empresaId).catch((err) =>
+              console.error('[Webhook] cancelPendingOrder failed:', err));
+          }
+          return;
+        }
       }
     }
 
