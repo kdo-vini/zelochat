@@ -232,7 +232,7 @@ export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerN
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
 
   /* System messages handled elsewhere */
-  const isSystem = message.kind === 'text' && message.content.includes('[SISTEMA]');
+  const isSystem = message.kind === 'text' && (message.content ?? '').includes('[SISTEMA]');
   if (isSystem) return null;
 
   const hasTail = isLastInGroup;

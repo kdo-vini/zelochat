@@ -655,8 +655,8 @@ export function ChatView({
 
                 <AnimatePresence initial={false}>
                   {activeSession.messages.map((message, idx, arr) => {
-                    const isSystem = message.kind === 'text' && message.content.includes('[SISTEMA]');
-                    const systemText = message.content.replace('[SISTEMA]', '').trim();
+                    const isSystem = message.kind === 'text' && (message.content ?? '').includes('[SISTEMA]');
+                    const systemText = (message.content ?? '').replace('[SISTEMA]', '').trim();
 
                     if (isSystem) {
                       return (
