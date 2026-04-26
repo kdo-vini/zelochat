@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  ArrowLeft,
   Bot,
   Check,
   FileText,
@@ -394,8 +395,10 @@ export function ChatView({
       <div className="flex flex-1 overflow-hidden">
         {/* Session list */}
         <aside
-          style={{ width: listWidth }}
-          className="relative flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]"
+          style={{ ['--list-width' as string]: `${listWidth}px` }}
+          className={`relative flex-shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)] w-full md:w-[var(--list-width)] ${
+            activeSessionId ? 'hidden md:flex' : 'flex'
+          }`}
         >
           <div className="px-4 py-3.5 border-b border-[var(--color-line)] flex-shrink-0 flex items-center justify-between">
             <h2 className="text-[14px] font-semibold text-[var(--color-ink)]">Lista de Conversas</h2>
@@ -531,14 +534,16 @@ export function ChatView({
               try { window.localStorage.setItem(LIST_WIDTH_KEY, String(LIST_WIDTH_DEFAULT)); } catch { /* ignore */ }
             }}
             title="Arraste para redimensionar (duplo clique para padrão)"
-            className="absolute top-0 right-[-3px] z-10 h-full w-[6px] cursor-col-resize group"
+            className="absolute top-0 right-[-3px] z-10 h-full w-[6px] cursor-col-resize group hidden md:block"
           >
             <div className="h-full w-px mx-auto bg-transparent group-hover:bg-[var(--color-brand)] transition-colors" />
           </div>
         </aside>
 
         {/* Chat panel */}
-        <main className="relative flex flex-1 flex-col overflow-hidden wa-pattern">
+        <main className={`relative flex-col overflow-hidden wa-pattern w-full md:flex-1 ${
+          activeSessionId ? 'flex' : 'hidden md:flex'
+        }`}>
           {activeSession ? (
             <>
               <input
@@ -558,6 +563,14 @@ export function ChatView({
 
               {/* Header */}
               <div className="z-10 flex min-h-14 flex-shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-wa-panel)]/80 px-4 py-2 backdrop-blur-sm">
+                <div className="flex min-w-0 items-center gap-1">
+                <button
+                  onClick={() => setActiveSessionId(null)}
+                  aria-label="Voltar"
+                  className="md:hidden flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)]/70 transition-colors"
+                >
+                  <ArrowLeft className="h-5 w-5" strokeWidth={2} />
+                </button>
                 <button
                   onClick={() => setDetailsOpen((v) => !v)}
                   className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface)]/70"
@@ -585,6 +598,7 @@ export function ChatView({
                     </p>
                   </div>
                 </button>
+                </div>
 
                 <div className="flex items-center gap-2">
                   <div className="flex items-center rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] p-1 shadow-[var(--shadow-card)]">
@@ -611,7 +625,7 @@ export function ChatView({
                   </div>
                   <button
                     onClick={() => setDetailsOpen((v) => !v)}
-                    className="rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
+                    className="hidden md:inline-flex rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
                   >
                     {detailsOpen ? 'Fechar perfil' : 'Abrir perfil'}
                   </button>
@@ -852,7 +866,7 @@ export function ChatView({
 
         {/* Customer details panel */}
         {detailsOpen && activeSession && (
-          <aside className="w-[260px] flex-shrink-0 flex flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] overflow-y-auto custom-scrollbar">
+          <aside className="w-[260px] flex-shrink-0 hidden md:flex flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] overflow-y-auto custom-scrollbar">
             <div className="px-4 py-3.5 border-b border-[var(--color-line)] flex-shrink-0 flex items-center justify-between">
               <h3 className="text-[13.5px] font-semibold text-[var(--color-ink)]">Perfil do cliente</h3>
               <button

@@ -8,10 +8,12 @@ import {
   Kanban,
   LayoutDashboard,
   MessageCircle,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
   ShoppingBag,
+  User as UserIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ChatView } from './components/views/ChatView';
@@ -136,6 +138,7 @@ export default function AppShell() {
     } catch { return true; }
   });
   const [profilePics, setProfilePics] = useState<Record<string, string>>({});
+  const [moreSheetOpen, setMoreSheetOpen] = useState(false);
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const empresaHydratedRef = useRef(false);
@@ -504,9 +507,9 @@ export default function AppShell() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-canvas)]">
-      {/* ── Sidebar ─────────────────────────────────────────────── */}
+      {/* ── Sidebar (desktop only) ──────────────────────────────── */}
       <aside
-        className={`bg-[var(--color-surface)] border-r border-[var(--color-line)] flex flex-col py-3 flex-shrink-0 z-30 transition-[width] duration-200 ease-in-out overflow-hidden ${
+        className={`bg-[var(--color-surface)] border-r border-[var(--color-line)] hidden md:flex flex-col py-3 flex-shrink-0 z-30 transition-[width] duration-200 ease-in-out overflow-hidden ${
           sidebarExpanded ? 'w-[220px]' : 'w-[60px]'
         }`}
       >
@@ -606,7 +609,7 @@ export default function AppShell() {
       </aside>
 
       {/* ── Main content ─────────────────────────────────────────── */}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
+      <div className="relative flex flex-1 flex-col overflow-hidden pb-[64px] md:pb-0">
         {token && (
           <SoundUnlockBanner
             unlocked={sound.unlocked}
@@ -657,6 +660,7 @@ export default function AppShell() {
                   onAddOrder={handleAddOrder}
                   onEditOrder={handleEditOrder}
                   onDeleteOrder={handleDeleteOrder}
+                  onUpdateStatus={updateOrderStatus}
                   isAuthenticated={!!token}
                 />
               </DragDropContext>
@@ -738,6 +742,78 @@ export default function AppShell() {
           </div>
         )}
       </div>
+
+      {/* ── Bottom tab bar (mobile only) ──────────────────────────── */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden h-[64px] items-stretch border-t border-[var(--color-line)] bg-[var(--color-surface)]">
+        {NAV_PRIMARY.map((item) => {
+          const Icon = item.icon;
+          const active = activeView === item.id;
+          const badge = item.id === 'chat' ? (openEscalationCount > 0 ? openEscalationCount : totalUnread) : 0;
+          return (
+            <button
+              key={item.id}
+              onClick={() => { setActiveView(item.id); setMoreSheetOpen(false); }}
+              className={`relative flex flex-1 flex-col items-center justify-center gap-1 transition-colors ${
+                active ? 'text-[var(--color-brand)]' : 'text-[var(--color-ink-muted)]'
+              }`}
+            >
+              <Icon className="h-5 w-5" strokeWidth={active ? 2.2 : 1.8} />
+              <span className="text-[10.5px] font-medium leading-none">{item.label}</span>
+              {badge > 0 && (
+                <span className="absolute top-1.5 left-1/2 ml-1 rounded-full bg-[var(--color-brand)] min-w-[16px] h-[16px] px-1 flex items-center justify-center text-[9.5px] font-bold text-white">
+                  {badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+        <button
+          onClick={() => setMoreSheetOpen(true)}
+          className={`flex flex-1 flex-col items-center justify-center gap-1 transition-colors ${
+            moreSheetOpen ? 'text-[var(--color-brand)]' : 'text-[var(--color-ink-muted)]'
+          }`}
+        >
+          <MoreHorizontal className="h-5 w-5" strokeWidth={moreSheetOpen ? 2.2 : 1.8} />
+          <span className="text-[10.5px] font-medium leading-none">Mais</span>
+        </button>
+      </nav>
+
+      {/* ── "Mais" bottom sheet (mobile only) ─────────────────────── */}
+      {moreSheetOpen && (
+        <div className="md:hidden fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMoreSheetOpen(false)}
+          />
+          <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] pb-6">
+            <div className="mx-auto mt-2 mb-2 h-1 w-10 rounded-full bg-[var(--color-line)]" />
+            <div className="px-2 py-1">
+              {[...NAV_SECONDARY,
+                { id: 'settings' as View, icon: Settings, label: 'Configurações', description: 'Empresa e integrações' },
+                { id: 'profile' as View, icon: UserIcon, label: 'Perfil', description: 'Sua conta' },
+              ].map((item) => {
+                const Icon = item.icon;
+                const active = activeView === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => { setActiveView(item.id); setMoreSheetOpen(false); }}
+                    className={`w-full flex items-center gap-3 rounded-xl px-3 py-3 transition-colors ${
+                      active ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]'
+                    }`}
+                  >
+                    <Icon className="h-5 w-5 flex-shrink-0" strokeWidth={1.8} />
+                    <div className="text-left">
+                      <p className="text-[14px] font-medium leading-tight">{item.label}</p>
+                      <p className="text-[11.5px] text-[var(--color-ink-faint)] leading-tight mt-0.5">{item.description}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

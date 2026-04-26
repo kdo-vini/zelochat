@@ -403,12 +403,14 @@ function OrderDrawer({
   setActiveView,
   onEdit,
   onDelete,
+  onUpdateStatus,
 }: {
   order: Order;
   onClose: () => void;
   setActiveView: (v: View) => void;
   onEdit: () => void;
   onDelete: (id: string) => void;
+  onUpdateStatus: (id: string, status: Order['status']) => void;
 }) {
   return (
     <>
@@ -513,13 +515,43 @@ function OrderDrawer({
             </span>
           </section>
 
-          {order.status === 'ready' && (
+          {order.status === 'pending' && (
             <button
-              onClick={() => { onClose(); setActiveView('drivers'); }}
-              className="w-full bg-[var(--color-ink)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:bg-[var(--color-ink-soft)] transition-colors"
+              onClick={() => onUpdateStatus(order.id, 'preparing')}
+              className="w-full bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
             >
-              Despachar motoboy
+              Iniciar preparo
             </button>
+          )}
+          {order.status === 'preparing' && (
+            <button
+              onClick={() => onUpdateStatus(order.id, 'ready')}
+              className="w-full bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+            >
+              Marcar como pronto
+            </button>
+          )}
+          {order.status === 'ready' && (
+            order.deliveryAddress ? (
+              <button
+                onClick={() => { onClose(); setActiveView('drivers'); }}
+                className="w-full bg-[var(--color-ink)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:bg-[var(--color-ink-soft)] transition-colors"
+              >
+                Despachar motoboy
+              </button>
+            ) : (
+              <button
+                onClick={() => onUpdateStatus(order.id, 'delivered')}
+                className="w-full bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+              >
+                Marcar como entregue
+              </button>
+            )
+          )}
+          {order.status === 'delivered' && (
+            <p className="text-center text-[12.5px] text-[var(--color-ink-faint)] py-1">
+              Pedido finalizado
+            </p>
           )}
         </div>
 
@@ -632,6 +664,7 @@ export const ProductionView = ({
   onAddOrder,
   onEditOrder,
   onDeleteOrder,
+  onUpdateStatus,
   isAuthenticated,
 }: {
   state: ZeloState;
@@ -640,6 +673,7 @@ export const ProductionView = ({
   onAddOrder: (payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   onEditOrder: (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   onDeleteOrder: (id: string) => Promise<void>;
+  onUpdateStatus: (id: string, status: Order['status']) => void;
   isAuthenticated: boolean;
 }) => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -657,6 +691,12 @@ export const ProductionView = ({
   const todayKey = brasiliaDateISO();
   const todayOrders = feedOrders.filter((o) => (o.pickupDate || '') <= todayKey);
   const scheduledOrders = feedOrders.filter((o) => (o.pickupDate || '') > todayKey);
+
+  // Look up the live order so the drawer reflects status changes from onUpdateStatus
+  // (selectedOrder is a snapshot taken at click time and would otherwise go stale).
+  const liveSelectedOrder = selectedOrder
+    ? state.orders.find((o) => o.id === selectedOrder.id) ?? null
+    : null;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -682,7 +722,7 @@ export const ProductionView = ({
       <div className="flex-1 min-h-0 flex overflow-hidden">
 
         {/* ── Left sidebar: order feed ──────────────────────────── */}
-        <aside className="w-[280px] flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
+        <aside className="w-full md:w-[280px] md:flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
           {/* Feed header + filter chips */}
           <div className="px-3 py-3 border-b border-[var(--color-line)] space-y-2 flex-shrink-0">
             <div className="flex items-center gap-1.5">
@@ -785,8 +825,8 @@ export const ProductionView = ({
           </div>
         </aside>
 
-        {/* ── Right: Kanban board ───────────────────────────────── */}
-        <div className="flex-1 min-w-0 overflow-hidden relative">
+        {/* ── Right: Kanban board (desktop only) ─────────────────── */}
+        <div className="hidden md:block flex-1 min-w-0 overflow-hidden relative">
           <div className="h-full flex gap-3 overflow-x-auto p-4 custom-scrollbar">
             {COLUMNS.map((col) => {
               const colOrders = state.orders.filter((o) => o.status === col);
@@ -888,13 +928,14 @@ export const ProductionView = ({
 
       {/* Drawers + modals */}
       <AnimatePresence>
-        {selectedOrder && !editingOrder && (
+        {liveSelectedOrder && !editingOrder && (
           <OrderDrawer
-            order={selectedOrder}
+            order={liveSelectedOrder}
             onClose={() => { setSelectedOrder(null); }}
             setActiveView={setActiveView}
-            onEdit={() => { setEditingOrder(selectedOrder); setSelectedOrder(null); }}
+            onEdit={() => { setEditingOrder(liveSelectedOrder); setSelectedOrder(null); }}
             onDelete={async (id) => { await onDeleteOrder(id); }}
+            onUpdateStatus={onUpdateStatus}
           />
         )}
         {showAddModal && (
