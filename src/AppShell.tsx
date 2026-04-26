@@ -13,6 +13,7 @@ import {
   PanelLeftOpen,
   Settings,
   ShoppingBag,
+  Sparkles,
   User as UserIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -25,6 +26,7 @@ import { SettingsView } from './components/views/SettingsView';
 import { ProfileView } from './components/views/ProfileView';
 import { DriversView } from './components/views/DriversView';
 import { CatalogView } from './components/views/CatalogView';
+import { NovidadesView } from './components/views/NovidadesView';
 import { useDrivers } from './hooks/useDrivers';
 import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
@@ -51,7 +53,8 @@ type View =
   | 'settings'
   | 'profile'
   | 'drivers'
-  | 'catalog';
+  | 'catalog'
+  | 'novidades';
 
 /* ─── Nav definitions ─────────────────────────────────────────── */
 interface NavItem {
@@ -574,8 +577,14 @@ export default function AppShell() {
           </nav>
         </div>
 
-        {/* Bottom: settings + profile */}
+        {/* Bottom: novidades + settings + profile */}
         <div className="mt-auto px-2 flex flex-col gap-0.5 flex-shrink-0 pt-2 border-t border-[var(--color-line)]">
+          <NavButton
+            item={{ id: 'novidades', icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }}
+            active={activeView === 'novidades'}
+            expanded={sidebarExpanded}
+            onClick={() => setActiveView('novidades')}
+          />
           <NavButton
             item={{ id: 'settings', icon: Settings, label: 'Configurações', description: 'Empresa e integrações' }}
             active={activeView === 'settings'}
@@ -738,6 +747,9 @@ export default function AppShell() {
                 updateDriver={updateDriver}
                 deleteDriver={deleteDriver}
               />
+            )}
+            {activeView === 'novidades' && (
+              <NovidadesView />
             )}
           </div>
         )}
