@@ -25,6 +25,10 @@ import { formatLastMessageTime, normalizePhoneNumber } from '../../domain/chat';
 import { getOwnerResponse } from '../../services/openaiService';
 import type { ChatAttachment, ChatSession, QuickResponse } from '../../types';
 import { MessageBubble } from './MessageBubble';
+import { EscaladoBadge } from '../shared/EscaladoBadge';
+import { SlaTimer } from '../shared/SlaTimer';
+import { EscalationLogCard } from '../shared/EscalationLogCard';
+import { useEscalationEvents } from '../../hooks/useEscalationEvents';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -73,6 +77,11 @@ export interface ChatViewProps {
   hydrateSession: (jid: string) => Promise<void>;
   onDeleteSession: (id: string) => Promise<void>;
   onDailyContextUpdate: (items: { id: string; text: string }[]) => void;
+  resolveEscalation: (jid: string) => Promise<void>;
+  escalateManually: (jid: string, reason?: string) => Promise<void>;
+  acknowledgeEscalation: (jid: string) => Promise<void>;
+  /** Bumps when a new escalation event arrives so the sidebar log can refetch. */
+  escalationRefetchKey?: string | number | null;
 }
 
 /* ─── Component ───────────────────────────────────────────────── */
@@ -93,6 +102,10 @@ export function ChatView({
   hydrateSession,
   onDeleteSession,
   onDailyContextUpdate,
+  resolveEscalation,
+  escalateManually,
+  acknowledgeEscalation,
+  escalationRefetchKey,
 }: ChatViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [ownerInput, setOwnerInput] = useState('');
@@ -188,6 +201,43 @@ export function ChatView({
   useEffect(() => {
     setEditingName(false);
   }, [activeSessionId]);
+
+  // Stamp acknowledged_at on the open escalation event the first time the
+  // operator opens the escalated chat — used for SLA "time to acknowledge"
+  // analytics and to mark the chat as "seen by operator" in the backend.
+  useEffect(() => {
+    if (activeSession?.status === 'escalated' && !activeSession.acknowledgedAt) {
+      void acknowledgeEscalation(activeSession.id);
+    }
+  }, [activeSession?.id, activeSession?.status, activeSession?.acknowledgedAt, acknowledgeEscalation]);
+
+  const { events: escalationEvents, loading: escalationsLoading } = useEscalationEvents(
+    token,
+    activeSession?.id ?? null,
+    { refetchKey: escalationRefetchKey ?? activeSession?.escalatedAt ?? activeSession?.acknowledgedAt ?? null },
+  );
+
+  const [resolvingEscalation, setResolvingEscalation] = useState(false);
+  const handleResolveEscalation = async () => {
+    if (!activeSession) return;
+    setResolvingEscalation(true);
+    try {
+      await resolveEscalation(activeSession.id);
+    } catch (err) {
+      setChatActionError(err instanceof Error ? err.message : 'Falha ao marcar como resolvido.');
+    } finally {
+      setResolvingEscalation(false);
+    }
+  };
+
+  const handleManualEscalate = async () => {
+    if (!activeSession) return;
+    try {
+      await escalateManually(activeSession.id);
+    } catch (err) {
+      setChatActionError(err instanceof Error ? err.message : 'Falha ao escalar conversa.');
+    }
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
@@ -394,13 +444,19 @@ export function ChatView({
               <p className="px-4 py-3 text-[12.5px] text-[var(--color-ink-muted)]">Nenhuma conversa encontrada.</p>
             )}
 
-            {filteredSessions.map((s) => (
+            {filteredSessions.map((s) => {
+              const isEscalated = s.status === 'escalated';
+              return (
               <div
                 key={s.id}
                 className={`relative flex items-center gap-3 px-3 py-3 border-b border-[var(--color-line)] transition-colors group ${
+                  isEscalated ? 'border-l-4 border-l-[var(--color-alert)] bg-[var(--color-alert-soft)]' : ''
+                } ${
                   activeSessionId === s.id
-                    ? 'bg-[var(--color-brand-soft)]'
-                    : 'hover:bg-[var(--color-surface-muted)]'
+                    ? isEscalated
+                      ? 'bg-[var(--color-alert-soft)]'
+                      : 'bg-[var(--color-brand-soft)]'
+                    : !isEscalated && 'hover:bg-[var(--color-surface-muted)]'
                 }`}
                 onMouseEnter={() => setHoveredSessionId(s.id)}
                 onMouseLeave={() => setHoveredSessionId(null)}
@@ -417,11 +473,18 @@ export function ChatView({
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <h3 className="text-[13.5px] font-semibold text-[var(--color-ink)] truncate">{s.customerName}</h3>
-                      <span className={`text-[11px] text-[var(--color-ink-faint)] flex-shrink-0 ml-1 transition-opacity ${hoveredSessionId === s.id ? 'opacity-0' : ''}`}>
-                        {formatLastMessageTime(s.lastMessageTime)}
-                      </span>
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <h3 className="text-[13.5px] font-semibold text-[var(--color-ink)] truncate">{s.customerName}</h3>
+                        {isEscalated && <EscaladoBadge />}
+                      </div>
+                      {isEscalated ? (
+                        <SlaTimer escalatedAt={s.escalatedAt} className="flex-shrink-0 ml-1" />
+                      ) : (
+                        <span className={`text-[11px] text-[var(--color-ink-faint)] flex-shrink-0 ml-1 transition-opacity ${hoveredSessionId === s.id ? 'opacity-0' : ''}`}>
+                          {formatLastMessageTime(s.lastMessageTime)}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-[12.5px] text-[var(--color-ink-muted)] truncate flex-1">{s.lastMessage}</p>
@@ -454,7 +517,8 @@ export function ChatView({
                   </button>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Drag handle to resize the conversation list. The thin visible bar sits on the
@@ -799,6 +863,26 @@ export function ChatView({
               </button>
             </div>
 
+            {activeSession.status === 'escalated' && (
+              <div className="border-b border-[var(--color-alert)] bg-[var(--color-alert-soft)] px-4 py-3 flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <EscaladoBadge />
+                  <SlaTimer escalatedAt={activeSession.escalatedAt} />
+                </div>
+                <p className="text-[12px] text-[var(--color-ink)]">
+                  Esta conversa precisa de atendimento humano. A IA está pausada até você marcar como resolvido.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleResolveEscalation}
+                  disabled={resolvingEscalation}
+                  className="rounded-md bg-[var(--color-brand)] px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-[var(--color-brand-deep)] disabled:opacity-50"
+                >
+                  {resolvingEscalation ? 'Marcando…' : 'Marcar como resolvido'}
+                </button>
+              </div>
+            )}
+
             <div className="flex flex-col items-center gap-2 px-4 py-5 border-b border-[var(--color-line)]">
               <div className="w-14 h-14 rounded-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] flex items-center justify-center overflow-hidden">
                 {profilePics[activeSession.id] ? (
@@ -882,6 +966,19 @@ export function ChatView({
                   </div>
                 </div>
               </div>
+
+              {activeSession.status !== 'escalated' && (
+                <button
+                  type="button"
+                  onClick={handleManualEscalate}
+                  className="self-start rounded-md border border-[var(--color-alert)] px-2 py-1 text-[11px] font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
+                  title="Marcar esta conversa como urgente e desativar a IA"
+                >
+                  Escalar para humano
+                </button>
+              )}
+
+              <EscalationLogCard events={escalationEvents} loading={escalationsLoading} />
             </div>
           </aside>
         )}

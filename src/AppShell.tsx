@@ -31,6 +31,10 @@ import { useEmpresaPerfil } from './hooks/useEmpresaPerfil';
 import { useQuickResponses } from './hooks/useQuickResponses';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
 import { useWhatsAppSessions } from './hooks/useWhatsAppSessions';
+import { useOpenEscalationCount } from './hooks/useEscalationEvents';
+import { useNotificationSound } from './hooks/useNotificationSound';
+import { useNotifications } from './hooks/useNotifications';
+import { SoundUnlockBanner } from './components/shared/SoundUnlockBanner';
 import { apiUrl } from './config';
 import { inferCategoria } from './services/zeloApi';
 import { loadInitialState, saveInitialState } from './services/statePersistence';
@@ -150,7 +154,18 @@ export default function AppShell() {
     deleteSession,
     fetchProfilePicture,
     updateSessionName,
+    lastEscalation,
+    dismissEscalation,
+    resolveEscalation,
+    escalateManually,
+    acknowledgeEscalation,
   } = useWhatsAppSessions(token);
+  const { count: openEscalationCount, reload: reloadOpenEscalationCount } = useOpenEscalationCount(
+    token,
+    lastEscalation?.event.id ?? null,
+  );
+  const sound = useNotificationSound();
+  const { permission: notificationPermission, isVisible: tabVisible, requestPermission: requestNotificationPermission, notify } = useNotifications();
   const catalog = useCatalog(session);
   const {
     drivers,
@@ -386,6 +401,54 @@ export default function AppShell() {
 
   const totalUnread = state.sessions.reduce((sum, s) => sum + (s.unreadCount ?? 0), 0);
 
+  // Reload the open-escalation counter after the operator marks one resolved.
+  // (lastEscalation already triggers a reload via the deps in useOpenEscalationCount.)
+
+  // Sound + system notification feedback for escalation events. Throttling is
+  // enforced inside useNotificationSound; tab-visibility check inside useNotifications.
+  useEffect(() => {
+    if (!lastEscalation) return;
+    sound.play('alert');
+    const session = state.sessions.find((s) => s.id === lastEscalation.sessionId);
+    const customerName = session?.customerName || 'Cliente';
+    notify(
+      `🆘 Conversa escalada — ${customerName}`,
+      lastEscalation.event.reasonText || 'Atendimento humano necessário',
+      { tag: `escalation-${lastEscalation.event.id}`, forceShow: true },
+    );
+    // Don't auto-navigate — that would yank focus away from whatever the operator
+    // is doing. The red badge in the nav + the pinned-to-top row + sound is enough.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastEscalation?.event.id]);
+
+  // Light bubble sound on every new INBOUND customer message (not for our own sends
+  // and not for escalations — those play the alert sound separately above).
+  const lastInboundMessageIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    let newest: { id: string; sentAt: number } | null = null;
+    for (const s of state.sessions) {
+      if (s.status === 'escalated') continue;
+      const last = s.messages?.[s.messages.length - 1];
+      if (!last || last.role !== 'user') continue;
+      const t = new Date(last.timestamp || 0).getTime();
+      if (!newest || t > newest.sentAt) newest = { id: last.id, sentAt: t };
+    }
+    if (!newest) return;
+    if (lastInboundMessageIdRef.current === null) {
+      // First mount — establish baseline without playing.
+      lastInboundMessageIdRef.current = newest.id;
+      return;
+    }
+    if (newest.id !== lastInboundMessageIdRef.current) {
+      lastInboundMessageIdRef.current = newest.id;
+      // Don't play if the operator is already looking at this chat.
+      const isLookingAt = activeSessionId && state.sessions.some(
+        (s) => s.id === activeSessionId && s.messages?.some((m) => m.id === newest!.id),
+      );
+      if (!isLookingAt || !tabVisible) sound.play('bubble');
+    }
+  }, [state.sessions, activeSessionId, tabVisible, sound]);
+
   const updateOrderStatus = (orderId: string, newStatus: Order['status']) => {
     setState((prev) => ({
       ...prev,
@@ -482,7 +545,7 @@ export default function AppShell() {
                 item={item}
                 active={activeView === item.id}
                 expanded={sidebarExpanded}
-                badge={item.id === 'chat' ? totalUnread : undefined}
+                badge={item.id === 'chat' ? (openEscalationCount > 0 ? openEscalationCount : totalUnread) : undefined}
                 onClick={() => setActiveView(item.id)}
               />
             ))}
@@ -544,6 +607,14 @@ export default function AppShell() {
 
       {/* ── Main content ─────────────────────────────────────────── */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
+        {token && (
+          <SoundUnlockBanner
+            unlocked={sound.unlocked}
+            onUnlock={sound.unlock}
+            onRequestNotifications={requestNotificationPermission}
+            notificationPermission={notificationPermission}
+          />
+        )}
         {activeView === 'chat' ? (
           <ChatView
             sessions={state.sessions}
@@ -563,6 +634,13 @@ export default function AppShell() {
             onDailyContextUpdate={(items) =>
               setState((prev) => ({ ...prev, dailyContext: [...(prev.dailyContext ?? []), ...items] }))
             }
+            resolveEscalation={async (jid) => {
+              await resolveEscalation(jid);
+              await reloadOpenEscalationCount();
+            }}
+            escalateManually={escalateManually}
+            acknowledgeEscalation={acknowledgeEscalation}
+            escalationRefetchKey={lastEscalation?.event.id ?? null}
           />
         ) : (
           /* ── Other views ────────────────────────────────────────── */
@@ -625,6 +703,7 @@ export default function AppShell() {
                 updateQuickResponse={updateQuickResponse}
                 deleteQuickResponse={deleteQuickResponse}
                 saveAiInstructions={saveAiInstructions}
+                token={token}
               />
             )}
             {activeView === 'settings' && (

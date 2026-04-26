@@ -38,7 +38,23 @@ import {
 import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
 import { getConfig, setConfig } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
-import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from './triggers.js';
+import {
+  createTrigger,
+  deleteTrigger,
+  fetchDisabledBuiltinIds,
+  listTriggers,
+  setBuiltinTriggerDisabled,
+  updateTrigger,
+} from './triggers.js';
+import { BUILTIN_TRIGGERS, isBuiltinTriggerId } from './builtinTriggers.js';
+import {
+  acknowledgeSession,
+  countOpenEscalations,
+  escalateSession,
+  listEscalationEvents,
+  resolveSession,
+} from './escalation.js';
+import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import type { ChatAttachment } from '../src/types.js';
 
@@ -248,20 +264,26 @@ router.post('/webhook', async (req: Request, res: Response) => {
     const updates = Array.isArray(data) ? data : [data];
     for (const u of updates) {
       if (!u?.keyId && !u?.messageId) continue;
-      broadcast({
-        type: 'message_status',
-        data: {
-          messageId: u.keyId ?? u.messageId,
-          remoteJid: u.remoteJid,
-          status: u.status, // 'DELIVERY_ACK' | 'READ'
+      broadcast(
+        {
+          type: 'message_status',
+          data: {
+            messageId: u.keyId ?? u.messageId,
+            remoteJid: u.remoteJid,
+            status: u.status, // 'DELIVERY_ACK' | 'READ'
+          },
         },
-      });
+        empresaId,
+      );
     }
   } else if (event === 'messages.delete') {
     const deletions = Array.isArray(data) ? data : [data];
     for (const d of deletions) {
       if (!d?.id) continue;
-      broadcast({ type: 'message_deleted', data: { messageId: d.id, remoteJid: d.remoteJid } });
+      broadcast(
+        { type: 'message_deleted', data: { messageId: d.id, remoteJid: d.remoteJid } },
+        empresaId,
+      );
     }
   } else if (event === 'contacts.upsert') {
     const contacts = Array.isArray(data) ? data : [data];
@@ -269,7 +291,10 @@ router.post('/webhook', async (req: Request, res: Response) => {
       const remoteJid: string = c?.remoteJid ?? '';
       const pushName: string = c?.pushName ?? '';
       if (remoteJid && pushName) {
-        broadcast({ type: 'contact_update', data: { remoteJid, pushName, profilePicUrl: c?.profilePicUrl } });
+        broadcast(
+          { type: 'contact_update', data: { remoteJid, pushName, profilePicUrl: c?.profilePicUrl } },
+          empresaId,
+        );
 
         // Save profile picture to database — empresaId comes from the validated token (C3),
         // not from the global singleton.
@@ -562,7 +587,7 @@ router.post('/api/ai-enabled', async (req: Request, res: Response) => {
     } catch (err) {
       console.warn('[Router] ai_enabled persist failed (column missing?):', err);
     }
-    broadcast({ type: 'ai_enabled', data: { enabled } });
+    broadcast({ type: 'ai_enabled', data: { enabled } }, empresaId);
     res.json({ ok: true, enabled });
   } catch (error) {
     sendAuthError(res, error);
@@ -667,7 +692,12 @@ router.patch('/api/triggers/:id', async (req: Request, res: Response) => {
 router.delete('/api/triggers/:id', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const deleted = await deleteTrigger(empresaId, req.params.id);
+    const triggerId = req.params.id;
+    if (isBuiltinTriggerId(triggerId)) {
+      res.status(400).json({ error: 'Gatilhos do sistema não podem ser excluídos. Desative-o em vez disso.' });
+      return;
+    }
+    const deleted = await deleteTrigger(empresaId, triggerId);
     if (!deleted) {
       res.status(404).json({ error: 'Gatilho não encontrado.' });
       return;
@@ -675,6 +705,138 @@ router.delete('/api/triggers/:id', async (req: Request, res: Response) => {
     res.json({ ok: true });
   } catch (error) {
     sendTriggerError(res, error);
+  }
+});
+
+/**
+ * GET /api/triggers/builtin — list all baseline (system) triggers and which are disabled.
+ */
+router.get('/api/triggers/builtin', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const disabled = await fetchDisabledBuiltinIds(empresaId);
+    const disabledSet = new Set(disabled);
+    res.json({
+      builtins: BUILTIN_TRIGGERS.map((t) => ({
+        id: t.id,
+        kind: t.kind,
+        name: t.name,
+        conditionDescription: t.conditionDescription,
+        disabled: disabledSet.has(t.id),
+      })),
+    });
+  } catch (error) {
+    sendTriggerError(res, error);
+  }
+});
+
+/**
+ * PATCH /api/triggers/builtin/:id — toggle a baseline trigger on/off for this empresa.
+ * Body: { disabled: boolean }
+ */
+router.patch('/api/triggers/builtin/:id', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const builtinId = req.params.id;
+    if (!isBuiltinTriggerId(builtinId)) {
+      res.status(400).json({ error: 'ID inválido para gatilho do sistema.' });
+      return;
+    }
+    const disabled = Boolean(req.body?.disabled);
+    const next = await setBuiltinTriggerDisabled(empresaId, builtinId, disabled);
+    res.json({ ok: true, disabledIds: next });
+  } catch (error) {
+    sendTriggerError(res, error);
+  }
+});
+
+/**
+ * POST /api/sessions/:jid/escalate — manual operator escalation (no AI involvement).
+ * Body: { reason?: string }
+ */
+router.post('/api/sessions/:jid/escalate', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const reason = String((req.body?.reason ?? '')).trim() || 'Escalação manual pelo atendente';
+    const result = await escalateSession(empresaId, req.params.jid, {
+      triggerId: null,
+      triggerKind: 'escalate_human',
+      triggerName: 'Escalação manual',
+      reasonCategory: 'manual',
+      reasonText: reason,
+      customerMessageExcerpt: null,
+      // Operator already knows what they're doing; skip the customer-facing handoff
+      // text so they can write their own first message manually.
+      skipCustomerMessage: true,
+    });
+    if (!result) {
+      res.status(404).json({ error: 'Conversa não encontrada.' });
+      return;
+    }
+    res.json({ ok: true, event: result.event, reEscalated: result.reEscalated });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * POST /api/sessions/:jid/resolve — operator marks an escalated conversation as resolved.
+ * Auto-reply stays OFF (per design — operator must explicitly re-enable).
+ */
+router.post('/api/sessions/:jid/resolve', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    // Resolve `auth.users.id` (resolved_by) from the bearer token if available.
+    let userId: string | null = null;
+    const token = extractBearerToken(req);
+    if (token) {
+      const { data: authData } = await getServiceSupabase().auth.getUser(token);
+      userId = authData.user?.id ?? null;
+    }
+    const result = await resolveSession(empresaId, req.params.jid, userId);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * POST /api/sessions/:jid/acknowledge — fired when the operator opens an escalated chat.
+ * Stamps acknowledged_at on the open event row (used for SLA metrics).
+ */
+router.post('/api/sessions/:jid/acknowledge', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await acknowledgeSession(empresaId, req.params.jid);
+    res.json({ ok: true });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * GET /api/sessions/:jid/escalation-events — full audit log for the contact sidebar.
+ */
+router.get('/api/sessions/:jid/escalation-events', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const events = await listEscalationEvents(empresaId, req.params.jid);
+    res.json({ events });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * GET /api/escalations/open-count — used by the global nav pill.
+ */
+router.get('/api/escalations/open-count', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const count = await countOpenEscalations(empresaId);
+    res.json({ count });
+  } catch (error) {
+    sendAuthError(res, error);
   }
 });
 

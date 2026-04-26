@@ -22,6 +22,8 @@ function serializeForJid(jid: string, work: () => Promise<void>): Promise<void> 
   return next;
 }
 
+export type SessionStatus = 'active' | 'escalated' | 'resolved' | 'archived';
+
 export interface StoredSession {
   id: string;
   customerName: string;
@@ -30,9 +32,11 @@ export interface StoredSession {
   lastMessageTime: string;
   unreadCount: number;
   messages: ChatMessage[];
-  status: 'active' | 'archived';
+  status: SessionStatus;
   autoReply: boolean;
   profilePicUrl?: string;
+  escalatedAt?: string | null;
+  acknowledgedAt?: string | null;
 }
 
 interface SessionRow {
@@ -43,9 +47,11 @@ interface SessionRow {
   last_message: string | null;
   last_message_time: string | null;
   unread_count: number | null;
-  status: 'active' | 'archived';
+  status: SessionStatus;
   auto_reply: boolean | null;
   profile_pic_url: string | null;
+  escalated_at: string | null;
+  acknowledged_at: string | null;
   updated_at: string;
 }
 
@@ -217,6 +223,29 @@ function mapSession(family: SessionFamily, messages: ChatMessage[] = [], latestC
   const customerPhone = resolveCustomerPhone(family.rows, family.latest.remote_jid);
   const lastMessage = parseStructuredMessage(family.latest.last_message || '').preview;
 
+  // Escalation status takes priority over active/archived collapsing — if any row
+  // in the family is escalated, the whole conversation is escalated. Same for
+  // resolved (over archived).
+  const familyStatus: SessionStatus = family.rows.some((r) => r.status === 'escalated')
+    ? 'escalated'
+    : family.rows.some((r) => r.status === 'resolved')
+      ? 'resolved'
+      : family.rows.some((r) => r.status === 'active')
+        ? 'active'
+        : 'archived';
+
+  // Pick the most recent escalated_at across the family rows.
+  const escalatedAt = family.rows
+    .map((r) => r.escalated_at)
+    .filter((v): v is string => !!v)
+    .sort()
+    .at(-1) ?? null;
+  const acknowledgedAt = family.rows
+    .map((r) => r.acknowledged_at)
+    .filter((v): v is string => !!v)
+    .sort()
+    .at(-1) ?? null;
+
   return {
     id: family.latest.remote_jid,
     customerName,
@@ -227,9 +256,11 @@ function mapSession(family: SessionFamily, messages: ChatMessage[] = [], latestC
     lastMessageTime: latestCustomerSentAt || family.latest.last_message_time || '',
     unreadCount: family.rows.reduce((sum, row) => sum + (row.unread_count ?? 0), 0),
     messages,
-    status: family.rows.some((row) => row.status === 'active') ? 'active' : 'archived',
+    status: familyStatus,
     autoReply: family.primary.auto_reply ?? family.latest.auto_reply ?? true,
     profilePicUrl: family.primary.profile_pic_url || family.latest.profile_pic_url || undefined,
+    escalatedAt,
+    acknowledgedAt,
   };
 }
 
@@ -237,7 +268,7 @@ async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
     .from('zelochat_sessions')
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, updated_at')
     .eq('empresa_id', empresaId)
     .order('updated_at', { ascending: false });
 
@@ -309,7 +340,7 @@ export async function ensureSession(params: {
       .from('zelochat_sessions')
       .update(payload)
       .eq('id', existing.id)
-      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, updated_at')
+      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, updated_at')
       .single();
 
     if (error) {
@@ -322,7 +353,7 @@ export async function ensureSession(params: {
   const { data, error } = await supabase
     .from('zelochat_sessions')
     .insert(payload)
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, updated_at')
     .single();
 
   if (error) {
@@ -483,10 +514,13 @@ export async function markSessionAsRead(jid: string, empresaId = getBoundEmpresa
     throw new Error(error.message);
   }
 
-  broadcast({
-    type: 'session_read',
-    data: { sessionId: jid, unreadCount: 0 },
-  });
+  broadcast(
+    {
+      type: 'session_read',
+      data: { sessionId: jid, unreadCount: 0 },
+    },
+    empresaId,
+  );
 }
 
 export async function deleteSession(jid: string, empresaId = getBoundEmpresaId()): Promise<void> {
@@ -681,19 +715,22 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       autoReply: sessionRow.auto_reply ?? true,
     };
 
-  broadcast({
-    type: 'message',
-    data: {
-      sessionId: mappedSession.id,
-      customerName: mappedSession.customerName,
-      customerPhone: mappedSession.customerPhone,
-      message: storedMsg,
-      autoReply: mappedSession.autoReply,
-      unreadCount: mappedSession.unreadCount,
-      lastMessage: preview,
-      lastMessageTime: lastMessageTimeIso,
+  broadcast(
+    {
+      type: 'message',
+      data: {
+        sessionId: mappedSession.id,
+        customerName: mappedSession.customerName,
+        customerPhone: mappedSession.customerPhone,
+        message: storedMsg,
+        autoReply: mappedSession.autoReply,
+        unreadCount: mappedSession.unreadCount,
+        lastMessage: preview,
+        lastMessageTime: lastMessageTimeIso,
+      },
     },
-  });
+    resolvedEmpresaId,
+  );
 }
 
 export async function addAssistantMessage(
@@ -737,20 +774,23 @@ export async function addAssistantMessage(
   const family = await fetchSessionFamily(empresaId, jid);
   const mappedSession = family ? mapSession(family) : null;
 
-  broadcast({
-    type: 'message_sent',
-    data: {
-      sessionId: mappedSession?.id || jid,
-      customerName: mappedSession?.customerName,
-      customerPhone: mappedSession?.customerPhone,
-      message: storedMsg,
-      autoReply: mappedSession?.autoReply,
-      lastMessage: preview,
-      // Use the family's stored last_message_time (customer's last send) so the list
-      // doesn't briefly flip to the operator's send time and back on refresh.
-      lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
+  broadcast(
+    {
+      type: 'message_sent',
+      data: {
+        sessionId: mappedSession?.id || jid,
+        customerName: mappedSession?.customerName,
+        customerPhone: mappedSession?.customerPhone,
+        message: storedMsg,
+        autoReply: mappedSession?.autoReply,
+        lastMessage: preview,
+        // Use the family's stored last_message_time (customer's last send) so the list
+        // doesn't briefly flip to the operator's send time and back on refresh.
+        lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
+      },
     },
-  });
+    empresaId,
+  );
 }
 
 export async function addToolMessage(
@@ -779,18 +819,21 @@ export async function addToolMessage(
   const family = await fetchSessionFamily(empresaId, jid);
   const mappedSession = family ? mapSession(family) : null;
 
-  broadcast({
-    type: 'message_sent',
-    data: {
-      sessionId: mappedSession?.id || jid,
-      customerName: mappedSession?.customerName,
-      customerPhone: mappedSession?.customerPhone,
-      message: storedMsg,
-      autoReply: mappedSession?.autoReply,
-      lastMessage: '[Tool Result]',
-      lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
+  broadcast(
+    {
+      type: 'message_sent',
+      data: {
+        sessionId: mappedSession?.id || jid,
+        customerName: mappedSession?.customerName,
+        customerPhone: mappedSession?.customerPhone,
+        message: storedMsg,
+        autoReply: mappedSession?.autoReply,
+        lastMessage: '[Tool Result]',
+        lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
+      },
     },
-  });
+    empresaId,
+  );
 }
 
 export async function setAutoReply(

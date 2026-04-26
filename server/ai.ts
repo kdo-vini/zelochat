@@ -3,13 +3,22 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
-import { getSession, addAssistantMessage, addToolMessage, setAutoReply } from './messageHandler.js';
+import { getSession, addAssistantMessage, addToolMessage } from './messageHandler.js';
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig, type CatalogCategoriaGroup } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
+import {
+  escalateSession,
+  recordAiFailure,
+  resetAiFailureCounter,
+  categorizeReason,
+  handoffMessageFor,
+  type ReasonCategory,
+} from './escalation.js';
+import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
 
 const OPENAI_MODEL = 'gpt-4o-mini';
 const PENDING_ORDER_TTL_MIN = 30;
@@ -147,7 +156,10 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
   await sendTextMessage(jid, reply);
   await addAssistantMessage(jid, reply, undefined, pending.empresaId);
-  broadcast({ type: 'order_created', data: { orderId, empresaId: pending.empresaId } });
+  broadcast(
+    { type: 'order_created', data: { orderId, empresaId: pending.empresaId } },
+    pending.empresaId,
+  );
   // Mark this JID so generateAndSendReply blocks any accidental criar_pedido for 5 min.
   justConfirmedMap.set(`${pending.empresaId}:${jid}`, Date.now());
   console.log(`[AI] Confirmed pending order #${shortId} for ${jid}`);
@@ -878,45 +890,54 @@ export async function generateAndSendReply(
           /* fall through */
         }
 
-        const trig = triggers.find((t) => t.id === parsedArgs.trigger_id);
+        const triggerId = parsedArgs.trigger_id || '';
+        const trig = isBuiltinTriggerId(triggerId)
+          ? getBuiltinTrigger(triggerId)
+          : triggers.find((t) => t.id === triggerId) ?? null;
         const reason = (parsedArgs.reason || '').trim() || 'condição atendida';
         const cfg = getConfig(resolvedEmpresaId);
         const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
 
         if (!trig) {
-          console.warn('[AI] Unknown trigger_id from model:', parsedArgs.trigger_id);
+          console.warn('[AI] Unknown trigger_id from model:', triggerId);
           const fallback = choice.message.content?.trim()
             || 'Tudo certo! Se precisar de algo mais, é só chamar. 😊';
-          
-          await addToolMessage(jid, `Erro: gatilho ${parsedArgs.trigger_id} não encontrado`, toolCall.id, resolvedEmpresaId);
+
+          await addToolMessage(jid, `Erro: gatilho ${triggerId} não encontrado`, toolCall.id, resolvedEmpresaId);
           await addAssistantMessage(jid, fallback, [toolCall], resolvedEmpresaId);
-          
+
           await sendTextMessage(jid, fallback);
+          resetAiFailureCounter(resolvedEmpresaId, jid);
           return fallback;
         }
 
         if (trig.kind === 'escalate_human') {
-          await setAutoReply(jid, false, resolvedEmpresaId);
-          const handoff = 'Entendi! Vou chamar um atendente pra te ajudar com isso. Só um instante 🙏';
-          
-          await addAssistantMessage(jid, handoff, [toolCall], resolvedEmpresaId);
+          // Persist the tool-call audit row first so OpenAI history stays consistent
+          // (assistant tool_call must have a matching tool result row); escalateSession
+          // takes over from there: status flip, manager notification, customer handoff.
+          await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
           await addToolMessage(jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId);
-          
-          await sendTextMessage(jid, handoff);
-          if (managerJid) {
-            try {
-              await sendTextMessage(
-                managerJid,
-                `🆘 *Atendimento humano* — ${safeForPrompt(trig.name, 80)}\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}\nAuto-resposta desativada.`,
-              );
-            } catch (err) {
-              console.warn('[AI] Failed to notify manager (escalate):', err);
-            }
-          } else {
-            console.warn('[AI] Escalation triggered but managerPhone not configured.');
-          }
-          console.log(`[AI] Escalated to human (${trig.name}) for ${jid}`);
-          return handoff;
+
+          const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+          const reasonCategory: ReasonCategory = isBuiltinTriggerId(triggerId)
+            ? (triggerId === 'builtin:offensive'
+                ? 'offensive_language'
+                : triggerId === 'builtin:explicit_human'
+                  ? 'explicit_human_request'
+                  : 'complaint')
+            : categorizeReason(`${trig.name} ${trig.conditionDescription}`);
+
+          await escalateSession(resolvedEmpresaId, jid, {
+            triggerId: isBuiltinTriggerId(triggerId) ? null : trig.id,
+            triggerKind: 'escalate_human',
+            triggerName: trig.name,
+            reasonCategory,
+            reasonText: reason,
+            customerMessageExcerpt: lastUserMsg?.content ?? lastUserMsg?.preview ?? null,
+          });
+
+          resetAiFailureCounter(resolvedEmpresaId, jid);
+          return handoffMessageFor(reasonCategory);
         }
 
         // notify_manager — alert and continue the conversation
@@ -950,6 +971,7 @@ export async function generateAndSendReply(
         await sendTextMessage(jid, cleanFollow);
         await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
         console.log(`[AI] Dispatched notify_manager (${trig.name}) for ${jid}`);
+        resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
       }
     }
@@ -961,18 +983,40 @@ export async function generateAndSendReply(
     await addAssistantMessage(jid, cleanReply, undefined, resolvedEmpresaId);
 
     console.log(`[AI] Replied to ${jid}: ${cleanReply.slice(0, 80)}...`);
+    resetAiFailureCounter(resolvedEmpresaId, jid);
     return cleanReply;
   } catch (error: any) {
     console.error('[AI] Error generating reply:', error);
     if (error?.response?.data) {
       console.error('[AI] OpenAI Error data:', JSON.stringify(error.response.data));
     }
-    const errMsg = 'Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 🙏';
+    // Record the failure. If this hits the threshold (2 consecutive failures on
+    // the same conversation), recordAiFailure escalates and returns
+    // {escalated:true} — in that case we DO NOT send the generic apology, since
+    // the customer already received the action-oriented handoff message.
+    let suppressApology = false;
     try {
-      await sendTextMessage(jid, errMsg);
-      await addAssistantMessage(jid, errMsg, undefined, resolvedEmpresaId);
-    } catch {
-      // ignore secondary failure
+      const lastUserMsg = (await getSession(jid, resolvedEmpresaId))
+        ?.messages.slice().reverse().find((m) => m.role === 'user');
+      const result = await recordAiFailure(
+        resolvedEmpresaId,
+        jid,
+        error?.message || 'unknown',
+        lastUserMsg?.content ?? lastUserMsg?.preview ?? null,
+      );
+      suppressApology = result.escalated;
+    } catch (failureErr) {
+      console.warn('[AI] recordAiFailure threw:', failureErr);
+    }
+
+    if (!suppressApology) {
+      const errMsg = 'Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 🙏';
+      try {
+        await sendTextMessage(jid, errMsg);
+        await addAssistantMessage(jid, errMsg, undefined, resolvedEmpresaId);
+      } catch {
+        // ignore secondary failure
+      }
     }
     return null;
   }

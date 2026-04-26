@@ -64,7 +64,12 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   if (!empresaId) return;
 
   const session = await getSession(jid, empresaId);
-  if (session?.autoReply && process.env.OPENAI_API_KEY) {
+  // Defense in depth: AI is gated by BOTH auto_reply AND status. An escalated
+  // conversation must never be answered by the AI even if a stale auto_reply=true
+  // sneaks in (race condition or data drift). The escalation handler always sets
+  // both — this check is the second line of defense.
+  const isEscalated = session?.status === 'escalated';
+  if (session?.autoReply && !isEscalated && process.env.OPENAI_API_KEY) {
     // Cancel previous pending reply for this JID to debounce rapid messages
     const existing = pendingReplies.get(jid);
     if (existing) clearTimeout(existing);

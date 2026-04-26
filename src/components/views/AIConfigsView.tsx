@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check } from 'lucide-react';
+import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield } from 'lucide-react';
 import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
 import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
+import { useBuiltinTriggers } from '../../hooks/useBuiltinTriggers';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 
@@ -36,6 +37,7 @@ interface AIConfigsViewProps {
   updateQuickResponse: (id: string, patch: Partial<Pick<QuickResponse, 'trigger' | 'response'>>) => Promise<void>;
   deleteQuickResponse: (id: string) => Promise<void>;
   saveAiInstructions: (instructions: string) => Promise<boolean>;
+  token: string | null;
 }
 
 export const AIConfigsView = ({
@@ -51,7 +53,9 @@ export const AIConfigsView = ({
   updateQuickResponse,
   deleteQuickResponse,
   saveAiInstructions,
+  token,
 }: AIConfigsViewProps) => {
+  const builtinTriggers = useBuiltinTriggers(token);
   const [managerInput, setManagerInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [managerChatInput, setManagerChatInput] = useState('');
@@ -361,6 +365,55 @@ export const AIConfigsView = ({
                     </button>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+
+          <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col">
+            <SectionHeader
+              icon={Shield}
+              title="Gatilhos automáticos do sistema"
+              subtitle="Sempre ativos por padrão. Se desativar, a IA não vai mais escalar essas situações automaticamente."
+            />
+            <div className="p-3 space-y-2">
+              {builtinTriggers.loading && builtinTriggers.items.length === 0 ? (
+                <p className="text-[12.5px] text-center text-[var(--color-ink-faint)] py-2">Carregando…</p>
+              ) : (
+                builtinTriggers.items.map((b) => (
+                  <div
+                    key={b.id}
+                    className="bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-2.5 space-y-1"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-semibold uppercase tracking-wide flex-shrink-0 bg-[var(--color-warn-soft)] text-[var(--color-warn)]">
+                        <Shield className="w-2.5 h-2.5" />
+                        Sistema
+                      </span>
+                      <span className="flex-1 text-[12.5px] font-semibold text-[var(--color-ink)] truncate">
+                        {b.name}
+                      </span>
+                      <button
+                        onClick={() => void builtinTriggers.setDisabled(b.id, !b.disabled).catch(() => {})}
+                        className={`w-8 h-[18px] rounded-full relative flex-shrink-0 transition-colors ${
+                          !b.disabled ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
+                        }`}
+                        title={b.disabled ? 'Ativar' : 'Desativar'}
+                      >
+                        <span
+                          className={`absolute top-[2px] w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-all ${
+                            !b.disabled ? 'right-[2px]' : 'left-[2px]'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                    <p className="text-[11.5px] text-[var(--color-ink-muted)]">
+                      {b.conditionDescription}
+                    </p>
+                  </div>
+                ))
+              )}
+              {builtinTriggers.error && (
+                <p className="text-[11px] text-[var(--color-alert)]">{builtinTriggers.error}</p>
               )}
             </div>
           </div>

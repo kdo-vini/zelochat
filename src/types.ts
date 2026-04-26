@@ -6,6 +6,8 @@ export interface Product {
   category: 'salgado' | 'doce' | 'bebida';
 }
 
+export type SessionStatus = 'active' | 'escalated' | 'resolved' | 'archived';
+
 export interface ChatSession {
   id: string;
   customerName: string;
@@ -14,10 +16,45 @@ export interface ChatSession {
   lastMessageTime: string;
   unreadCount: number;
   messages: ChatMessage[];
-  status: 'active' | 'archived';
+  status: SessionStatus;
   alerts?: string[];
   autoReply?: boolean;
   profilePicUrl?: string;
+  escalatedAt?: string | null;
+  acknowledgedAt?: string | null;
+}
+
+export type EscalationReasonCategory =
+  | 'frustration'
+  | 'complaint'
+  | 'explicit_human_request'
+  | 'repeated_ai_failure'
+  | 'offensive_language'
+  | 'manual'
+  | 'custom';
+
+export interface EscalationEvent {
+  id: string;
+  empresaId: string;
+  sessionId: string;
+  triggerId: string | null;
+  triggerKind: 'escalate_human' | 'notify_manager';
+  triggerName: string;
+  reasonCategory: EscalationReasonCategory;
+  reasonText: string;
+  customerMessageExcerpt: string | null;
+  triggeredAt: string;
+  acknowledgedAt: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+}
+
+export interface BuiltinTriggerInfo {
+  id: string;
+  kind: TriggerKind;
+  name: string;
+  conditionDescription: string;
+  disabled: boolean;
 }
 
 export interface Order {

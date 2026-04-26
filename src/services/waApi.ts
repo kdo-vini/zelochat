@@ -1,4 +1,11 @@
-import type { ChatAttachment, ChatSession, Trigger, TriggerKind } from '../types';
+import type {
+  BuiltinTriggerInfo,
+  ChatAttachment,
+  ChatSession,
+  EscalationEvent,
+  Trigger,
+  TriggerKind,
+} from '../types';
 import { apiUrl, apiFetch } from '../config';
 
 type SessionsResponse = { sessions: ChatSession[] };
@@ -173,5 +180,83 @@ export async function setAiEnabled(token: string, enabled: boolean): Promise<voi
     headers: authHeaders(token),
     body: JSON.stringify({ enabled }),
   });
+  await parseResponse(response);
+}
+
+// --- Escalation ---
+
+export async function listEscalationEvents(
+  token: string,
+  jid: string,
+): Promise<EscalationEvent[]> {
+  const response = await apiFetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(jid)}/escalation-events`),
+    { headers: authHeaders(token) },
+  );
+  const body = await parseResponse<{ events: EscalationEvent[] }>(response);
+  return body.events;
+}
+
+export async function resolveSession(token: string, jid: string): Promise<void> {
+  const response = await apiFetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(jid)}/resolve`),
+    { method: 'POST', headers: authHeaders(token) },
+  );
+  await parseResponse(response);
+}
+
+export async function escalateSessionManually(
+  token: string,
+  jid: string,
+  reason?: string,
+): Promise<void> {
+  const response = await apiFetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(jid)}/escalate`),
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ reason }),
+    },
+  );
+  await parseResponse(response);
+}
+
+export async function acknowledgeSession(token: string, jid: string): Promise<void> {
+  const response = await apiFetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(jid)}/acknowledge`),
+    { method: 'POST', headers: authHeaders(token) },
+  );
+  await parseResponse(response);
+}
+
+export async function getOpenEscalationCount(token: string): Promise<number> {
+  const response = await apiFetch(apiUrl('/api/escalations/open-count'), {
+    headers: authHeaders(token),
+  });
+  const body = await parseResponse<{ count: number }>(response);
+  return body.count ?? 0;
+}
+
+export async function listBuiltinTriggers(token: string): Promise<BuiltinTriggerInfo[]> {
+  const response = await apiFetch(apiUrl('/api/triggers/builtin'), {
+    headers: authHeaders(token),
+  });
+  const body = await parseResponse<{ builtins: BuiltinTriggerInfo[] }>(response);
+  return body.builtins;
+}
+
+export async function setBuiltinTriggerDisabled(
+  token: string,
+  builtinId: string,
+  disabled: boolean,
+): Promise<void> {
+  const response = await apiFetch(
+    apiUrl(`/api/triggers/builtin/${encodeURIComponent(builtinId)}`),
+    {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ disabled }),
+    },
+  );
   await parseResponse(response);
 }
