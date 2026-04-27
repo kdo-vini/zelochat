@@ -16,26 +16,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
     category: 'hotfix',
-    title: 'Mudança de status no kanban volta a salvar',
-    description: 'Arrastar pedido entre colunas estava revertendo após dar refresh — o servidor não aceitava a atualização. Corrigido: a movimentação persiste e o cliente recebe a notificação configurada.',
-  },
-  {
-    date: '2026-04-27',
-    category: 'hotfix',
-    title: 'Mensagem de pedido confirmado mostra entrega corretamente',
-    description: 'A mensagem de confirmação enviada ao cliente agora diferencia retirada de entrega — mostra endereço, taxa e bairro nos pedidos de delivery, e exibe a data no formato brasileiro (DD/MM/AAAA).',
-  },
-  {
-    date: '2026-04-27',
-    category: 'hotfix',
-    title: 'Avisos de pedido também aparecem na conversa do cliente',
-    description: 'Quando você muda o status do pedido no kanban, a notificação enviada ao cliente agora também aparece na thread de chat dentro do Zelo — antes só chegava no WhatsApp dele e o operador não tinha registro. A mensagem do despacho do motoboy também passou a aparecer na conversa com o entregador.',
-  },
-  {
-    date: '2026-04-27',
-    category: 'hotfix',
-    title: 'IA lida melhor com endereços informais no delivery',
-    description: 'A IA agora entende referências do dia a dia — nome de empresa, rua ou ponto de referência — sem travar o pedido. Em caso de dúvida sobre a área de entrega, transfere para um atendente em vez de negar o serviço.',
+    title: 'Kanban e notificações agora funcionam direito',
+    description: 'Arrastar pedido entre colunas agora salva corretamente. Notificações ao cliente diferem retirada de delivery ("Pode vir buscar" vs "Sairá para entrega"). IA entende endereços informais. Avisos aparecem na thread de chat.',
   },
   {
     date: '2026-04-27',
