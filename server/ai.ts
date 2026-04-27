@@ -42,6 +42,10 @@ interface PendingOrder {
   paymentMethod?: string;
   total: number;
   toolCallId?: string;
+  orderType?: 'pickup' | 'delivery';
+  deliveryAddress?: string;
+  deliveryNeighborhood?: string;
+  deliveryFee?: number;
 }
 
 interface PendingOrderRow {
@@ -55,6 +59,10 @@ interface PendingOrderRow {
   payment_method: string | null;
   total: number | string;
   tool_call_id: string | null;
+  order_type: string | null;
+  delivery_address: string | null;
+  delivery_neighborhood: string | null;
+  delivery_fee: number | string | null;
 }
 
 function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
@@ -69,6 +77,10 @@ function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
     paymentMethod: row.payment_method || undefined,
     total: Number(row.total),
     toolCallId: row.tool_call_id || undefined,
+    orderType: (row.order_type === 'delivery' ? 'delivery' : 'pickup') as 'pickup' | 'delivery',
+    deliveryAddress: row.delivery_address || undefined,
+    deliveryNeighborhood: row.delivery_neighborhood || undefined,
+    deliveryFee: row.delivery_fee != null ? Number(row.delivery_fee) : undefined,
   };
 }
 
@@ -80,7 +92,7 @@ export async function getPendingOrder(jid: string, empresaId: string): Promise<P
   try {
     const { data, error } = await getServiceSupabase()
       .from('zelochat_pending_orders')
-      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id')
+      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id, order_type, delivery_address, delivery_neighborhood, delivery_fee')
       .eq('empresa_id', empresaId)
       .eq('remote_jid', jid)
       .gt('expires_at', new Date().toISOString())
@@ -112,6 +124,10 @@ async function setPendingOrder(order: PendingOrder): Promise<void> {
         payment_method: order.paymentMethod || null,
         total: order.total,
         tool_call_id: order.toolCallId || null,
+        order_type: order.orderType || 'pickup',
+        delivery_address: order.deliveryAddress || null,
+        delivery_neighborhood: order.deliveryNeighborhood || null,
+        delivery_fee: order.deliveryFee ?? null,
         expires_at: expiresAt,
       },
       { onConflict: 'empresa_id,remote_jid' },
@@ -416,6 +432,10 @@ async function createOrderInDb(
     pickupTime: string;
     paymentMethod?: string;
     total: number;
+    orderType?: 'pickup' | 'delivery';
+    deliveryAddress?: string;
+    deliveryNeighborhood?: string;
+    deliveryFee?: number;
   },
 ): Promise<string> {
   console.log('[AI] Creating order in DB for empresa:', empresaId, 'args:', JSON.stringify(args));
@@ -430,7 +450,9 @@ async function createOrderInDb(
       pickup_date: args.pickupDate,
       pickup_time: args.pickupTime,
       payment_method: args.paymentMethod || null,
-      delivery_address: null,
+      delivery_address: args.deliveryAddress || null,
+      delivery_neighborhood: args.deliveryNeighborhood || null,
+      delivery_fee: args.deliveryFee ?? null,
       driver_id: null,
       status: 'pending',
       total: args.total,
@@ -445,6 +467,24 @@ async function createOrderInDb(
   }
   console.log('[AI] Order created successfully ID:', data?.id);
   return (data as { id: string }).id;
+}
+
+function normalizeNeighborhood(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim();
+}
+
+function resolveDeliveryFee(empresaId: string, neighborhood: string): number | null {
+  const cfg = getConfig(empresaId);
+  if (!cfg.deliveryConfig?.enabled || !cfg.deliveryConfig.neighborhoods.length) return null;
+  const normalized = normalizeNeighborhood(neighborhood);
+  const match = cfg.deliveryConfig.neighborhoods.find(
+    (n) => normalizeNeighborhood(n.name) === normalized,
+  );
+  return match ? match.fee : null;
 }
 
 function buildCatalogHierarchyBlock(hierarchy: CatalogCategoriaGroup[] | undefined): string {
@@ -557,9 +597,26 @@ INSTRUÇÕES DE GATILHO:
 DIRETRIZES PERSONALIZADAS:
 ${cfg.aiInstructions || 'Siga o comportamento padrão de atendimento amigável.'}
 
+${cfg.deliveryConfig?.enabled && cfg.deliveryConfig.neighborhoods.length > 0 ? `ENTREGA (DELIVERY):
+- A lanchonete aceita pedidos de entrega nos seguintes bairros:
+${cfg.deliveryConfig.neighborhoods.map((n) => `  • ${n.name}: R$ ${n.fee.toFixed(2)}`).join('\n')}
+- Se o cliente mencionar "delivery", "entrega" ou pedir pra ser entregue, PERGUNTE o modo se ainda não souber: "Vai ser retirada ou entrega?"
+- Para pedidos de ENTREGA, siga esta ordem:
+  1. Peça o endereço completo incluindo o bairro.
+  2. Verifique se o bairro está na lista acima.
+  3. Se o bairro NÃO estiver na lista, chame dispatch_trigger com escalate_human. NÃO invente taxa.
+  4. Se o cliente pedir parte retirada + parte entrega no mesmo pedido, chame dispatch_trigger com escalate_human.
+  5. Inclua a taxa de entrega no total. Ex: subtotal R$30 + taxa R$5 = total R$35.
+  6. Chame criar_pedido com orderType="delivery", deliveryAddress (endereço completo), deliveryNeighborhood (só o bairro) e deliveryFee (valor exato da lista acima).
+- PROIBIDO inventar taxas. Use EXATAMENTE os valores listados acima.
+- Para delivery agendado, coletar data/hora normalmente (igual à retirada).
+` : `ENTREGA (DELIVERY):
+- A lanchonete NÃO aceita entregas no momento. Todos os pedidos são para retirada.
+- Se o cliente pedir entrega, informe educadamente e ofereça retirada no local.
+`}
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
-2. Para encomendas, coletar: produto, quantidade, data de retirada, horário, nome do cliente E forma de pagamento.
+2. Para pedidos, coletar: produto, quantidade, modo (retirada ou entrega), data, horário, nome do cliente E forma de pagamento. Para entrega: também endereço completo com bairro.
 3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde a resposta antes de prosseguir.
 4. ASSIM QUE tiver TODOS os dados COLETADOS, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
 5. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
@@ -590,12 +647,16 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
             required: ['product', 'quantity'],
           },
         },
-        pickupDate: { type: 'string', description: 'Data de retirada no formato YYYY-MM-DD' },
-        pickupTime: { type: 'string', description: 'Horário de retirada no formato HH:MM' },
+        pickupDate: { type: 'string', description: 'Data de retirada/entrega no formato YYYY-MM-DD' },
+        pickupTime: { type: 'string', description: 'Horário de retirada/entrega no formato HH:MM' },
         paymentMethod: { type: 'string', description: 'Forma de pagamento escolhida pelo cliente (ex: Pix, Dinheiro, Cartão)' },
-        total: { type: 'number', description: 'Valor total do pedido em reais' },
+        total: { type: 'number', description: 'Valor total do pedido em reais (inclui taxa de entrega se delivery)' },
+        orderType: { type: 'string', enum: ['pickup', 'delivery'], description: 'Modo do pedido: pickup = retirada, delivery = entrega' },
+        deliveryAddress: { type: 'string', description: 'Endereço completo de entrega (rua, número, bairro). Obrigatório se orderType=delivery.' },
+        deliveryNeighborhood: { type: 'string', description: 'Bairro de entrega (só o bairro, ex: "Centro"). Obrigatório se orderType=delivery.' },
+        deliveryFee: { type: 'number', description: 'Taxa de entrega em reais conforme tabela de bairros. Obrigatório se orderType=delivery.' },
       },
-      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'paymentMethod', 'total'],
+      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'paymentMethod', 'total', 'orderType'],
     },
   },
 };
@@ -759,20 +820,46 @@ export async function generateAndSendReply(
             pickupTime: string;
             paymentMethod: string;
             total: number;
+            orderType?: 'pickup' | 'delivery';
+            deliveryAddress?: string;
+            deliveryNeighborhood?: string;
+            deliveryFee?: number;
           };
 
           if (!args.customerPhone) args.customerPhone = session.customerPhone;
           const cfg = getConfig(resolvedEmpresaId);
           const available = getAvailableProducts(resolvedEmpresaId);
 
-          // Recalculate total server-side — never trust the model's arithmetic
-          const recalcTotal = args.items.reduce((sum, item) => {
+          // Recalculate products subtotal server-side — never trust the model's arithmetic
+          const recalcSubtotal = args.items.reduce((sum, item) => {
             const product = available.find(
               (p) => p.name.toLowerCase() === item.product.toLowerCase(),
             );
             return sum + (product ? product.price * item.quantity : 0);
           }, 0);
-          if (recalcTotal > 0) args.total = Math.round(recalcTotal * 100) / 100;
+
+          // For delivery: resolve fee from config, ignore whatever the AI sent
+          let resolvedDeliveryFee: number | undefined;
+          if (args.orderType === 'delivery' && args.deliveryNeighborhood) {
+            const configFee = resolveDeliveryFee(resolvedEmpresaId, args.deliveryNeighborhood);
+            if (configFee === null) {
+              // Neighborhood not covered — escalate to human
+              console.log(`[AI] Delivery neighborhood not covered: "${args.deliveryNeighborhood}" — escalating`);
+              const escalateMsg = `Desculpa, ainda não entregamos no bairro *${args.deliveryNeighborhood}*. Vou chamar um atendente pra te ajudar! 🙏`;
+              await sendTextMessage(jid, escalateMsg);
+              await addAssistantMessage(jid, escalateMsg, undefined, resolvedEmpresaId);
+              return escalateMsg;
+            }
+            if (args.deliveryFee !== undefined && args.deliveryFee !== configFee) {
+              console.warn(`[AI] deliveryFee mismatch for ${args.deliveryNeighborhood}: AI sent ${args.deliveryFee}, config says ${configFee}. Using config.`);
+            }
+            resolvedDeliveryFee = configFee;
+            args.deliveryFee = configFee;
+          }
+
+          if (recalcSubtotal > 0) {
+            args.total = Math.round((recalcSubtotal + (resolvedDeliveryFee ?? 0)) * 100) / 100;
+          }
 
           const unmatchedItems = args.items.filter((item) =>
             !available.find((p) => p.name.toLowerCase() === item.product.toLowerCase()),
@@ -799,9 +886,18 @@ export async function generateAndSendReply(
             paymentMethod: args.paymentMethod,
             total: args.total,
             toolCallId: toolCall.id,
+            orderType: args.orderType || 'pickup',
+            deliveryAddress: args.deliveryAddress,
+            deliveryNeighborhood: args.deliveryNeighborhood,
+            deliveryFee: args.deliveryFee,
           });
           const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
-          const summary = `📦 ${itemsList}\n📅 ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 R$ ${args.total.toFixed(2)}`;
+          const isDelivery = args.orderType === 'delivery';
+          const scheduleLabel = isDelivery ? '🛵 Entrega' : '📅 Retirada';
+          const deliveryLine = isDelivery && args.deliveryAddress
+            ? `\n📍 ${args.deliveryAddress}\n🏘️ Taxa (${args.deliveryNeighborhood}): R$ ${(args.deliveryFee ?? 0).toFixed(2)}`
+            : '';
+          const summary = `📦 ${itemsList}${deliveryLine}\n${scheduleLabel}: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}`;
 
           try {
             await sendButtonMessage(

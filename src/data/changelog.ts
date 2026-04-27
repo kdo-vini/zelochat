@@ -14,6 +14,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-04-27',
+    category: 'medium',
+    title: 'A IA agora aceita e calcula pedidos de entrega',
+    description: 'Configure os bairros atendidos e as taxas em Configurações → Entrega. A IA passa a perguntar se é retirada ou entrega, coleta o endereço, calcula a taxa automaticamente e inclui no resumo do pedido. Bairros fora da lista vão direto para atendimento humano.',
+  },
+  {
     date: '2026-04-26',
     category: 'big',
     title: 'Transcrição automática de áudios',

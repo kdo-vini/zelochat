@@ -23,6 +23,8 @@ export interface EmpresaPerfil {
   /** Added via migration 006_blocked_dates_manager_history.sql — may be null if migration not yet run */
   blocked_dates: { date: string; reason: string }[] | null;
   manager_history: ChatMessage[] | null;
+  /** Added via migration 011_delivery_config.sql — may be null if migration not yet run */
+  delivery_config: { enabled: boolean; neighborhoods: { name: string; fee: number }[] } | null;
 }
 
 interface UseEmpresaPerfilResult {
@@ -142,6 +144,21 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] blocked_dates/manager_history not available (run migration 006):', m006Err.message);
     }
 
+    let deliveryConfig: { enabled: boolean; neighborhoods: { name: string; fee: number }[] } | null = null;
+    const { data: m011Data, error: m011Err } = await supabase
+      .from('empresa_perfil')
+      .select('delivery_config')
+      .eq('id', data.id)
+      .maybeSingle();
+    if (!m011Err && m011Data) {
+      const d = m011Data as { delivery_config?: unknown };
+      deliveryConfig = d.delivery_config && typeof d.delivery_config === 'object'
+        ? (d.delivery_config as { enabled: boolean; neighborhoods: { name: string; fee: number }[] })
+        : null;
+    } else if (m011Err) {
+      console.warn('[useEmpresaPerfil] delivery_config not available (run migration 011):', m011Err.message);
+    }
+
     setEmpresa({
       ...data,
       chave_pix: chavePix,
@@ -152,6 +169,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       ai_instructions: aiInstructions,
       blocked_dates: blockedDates,
       manager_history: managerHistory,
+      delivery_config: deliveryConfig,
     });
     setLoading(false);
   }, [session?.user?.id]);
@@ -213,6 +231,17 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         ) {
           console.warn('[useEmpresaPerfil] blocked_dates/manager_history columns missing — saving without them. Run migration 006.');
           const { blocked_dates: _bd, manager_history: _mh, ...patchWithout } = patch as Partial<EmpresaPerfil>;
+          const { error: retryError } = await supabase
+            .from('empresa_perfil')
+            .update({ ...patchWithout, updated_at: new Date().toISOString() })
+            .eq('id', empresa.id);
+          if (retryError) {
+            setError(retryError.message);
+            return false;
+          }
+        } else if (dbError.message.includes('delivery_config') && patch.delivery_config !== undefined) {
+          console.warn('[useEmpresaPerfil] delivery_config column missing — saving without it. Run migration 011.');
+          const { delivery_config: _dc, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })

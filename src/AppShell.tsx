@@ -231,6 +231,7 @@ export default function AppShell() {
         ...(empresa.logo_url ? { avatar: empresa.logo_url } : {}),
       },
       aiInstructions: empresa.ai_instructions ?? prev.aiInstructions,
+      deliveryConfig: empresa.delivery_config ?? prev.deliveryConfig,
       blockedDates:   empresa.blocked_dates   ?? prev.blockedDates,
       managerHistory: empresa.manager_history ?? prev.managerHistory,
     }));
@@ -387,6 +388,7 @@ export default function AppShell() {
           blockedDates: s.blockedDates,
           dailyContext: s.dailyContext,
           aiInstructions: s.aiInstructions,
+          deliveryConfig: s.deliveryConfig,
           managerPhone: s.businessInfo.managerPhone,
         }),
       });
@@ -403,7 +405,7 @@ export default function AppShell() {
     syncConfigTimerRef.current = setTimeout(() => { void syncConfigToServer(state); }, 600);
     return () => { if (syncConfigTimerRef.current) clearTimeout(syncConfigTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, catalog.categorias, catalog.subcategorias]);
+  }, [state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, catalog.categorias, catalog.subcategorias]);
 
   const totalUnread = state.sessions.reduce((sum, s) => sum + (s.unreadCount ?? 0), 0);
 

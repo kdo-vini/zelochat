@@ -1069,11 +1069,12 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, closedDays, address, pixKey,
             products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
-            aiEnabled, aiCanReengagePending } = req.body;
+            aiEnabled, aiCanReengagePending, deliveryConfig } = req.body;
     setConfig(empresaId, { name, specialty, hours, closedDays, address, pixKey,
                            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
                            ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}),
-                           ...(typeof aiCanReengagePending === 'boolean' ? { aiCanReengagePending } : {}) });
+                           ...(typeof aiCanReengagePending === 'boolean' ? { aiCanReengagePending } : {}),
+                           ...(deliveryConfig !== undefined ? { deliveryConfig } : {}) });
     if (typeof aiCanReengagePending === 'boolean') {
       try {
         await getServiceSupabase()

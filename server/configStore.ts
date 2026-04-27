@@ -1,3 +1,13 @@
+export interface DeliveryNeighborhood {
+  name: string;
+  fee: number;
+}
+
+export interface DeliveryConfig {
+  enabled: boolean;
+  neighborhoods: DeliveryNeighborhood[];
+}
+
 export interface CatalogCategoriaGroup {
   nome: string;
   subcategorias: { nome: string; produtos: { name: string; price: number; available: boolean }[] }[];
@@ -21,6 +31,7 @@ export interface BusinessConfig {
   aiEnabled: boolean;
   /** Allow the AI to proactively reference unconfirmed pending orders in conversation. */
   aiCanReengagePending: boolean;
+  deliveryConfig: DeliveryConfig | null;
 }
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -38,6 +49,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   managerPhone: '',
   aiEnabled: true,
   aiCanReengagePending: false,
+  deliveryConfig: null,
 };
 
 // Keyed by empresaId — one config entry per authenticated empresa.

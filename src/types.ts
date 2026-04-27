@@ -98,12 +98,23 @@ export interface Trigger {
   createdAt: string;
 }
 
+export interface DeliveryNeighborhood {
+  name: string;
+  fee: number;
+}
+
+export interface DeliveryConfig {
+  enabled: boolean;
+  neighborhoods: DeliveryNeighborhood[];
+}
+
 export interface ZeloState {
   products: Product[];
   blockedDates: { date: string, reason: string }[];
   orders: Order[];
   sessions: ChatSession[];
   aiInstructions: string;
+  deliveryConfig: DeliveryConfig | null;
   quickResponses: QuickResponse[];
   dailyContext: { id: string, text: string }[];
   triggers: Trigger[];

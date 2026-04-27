@@ -6,6 +6,7 @@ export const INITIAL_STATE: ZeloState = {
   orders: [],
   sessions: [],
   aiInstructions: "",
+  deliveryConfig: null,
   quickResponses: [],
   dailyContext: [],
   triggers: [],
