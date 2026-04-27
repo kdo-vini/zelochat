@@ -933,7 +933,10 @@ export async function generateAndSendReply(
             triggerName: trig.name,
             reasonCategory,
             reasonText: reason,
-            customerMessageExcerpt: lastUserMsg?.content ?? lastUserMsg?.preview ?? null,
+            // Use buildContentForModel so audio messages surface as the Whisper
+            // transcript ([Áudio: "..."]) or a clean [Áudio] placeholder — never
+            // the raw __ZELOCHAT_MEDIA__ structured payload.
+            customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
           });
 
           resetAiFailureCounter(resolvedEmpresaId, jid);
