@@ -15,9 +15,9 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
-    category: 'minor',
-    title: 'Produção e Agenda atualizam ao abrir',
-    description: 'Ao trocar de aba para Produção ou Agenda, a lista de pedidos é atualizada automaticamente — antes precisava dar F5 para ver mudanças recentes.',
+    category: 'medium',
+    title: 'Pedidos sincronizam em tempo real',
+    description: 'Produção e Agenda agora atualizam sozinhas — ao trocar de aba ou quando algo muda, a lista reflete na hora sem precisar dar F5. A impressão automática de pedidos do WhatsApp também voltou a disparar corretamente.',
   },
   {
     date: '2026-04-27',
