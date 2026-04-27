@@ -801,6 +801,7 @@ export default function AppShell() {
             <div className="mx-auto mt-2 mb-2 h-1 w-10 rounded-full bg-[var(--color-line)]" />
             <div className="px-2 py-1">
               {[...NAV_SECONDARY,
+                { id: 'novidades' as View, icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' },
                 { id: 'settings' as View, icon: Settings, label: 'Configurações', description: 'Empresa e integrações' },
                 { id: 'profile' as View, icon: UserIcon, label: 'Perfil', description: 'Sua conta' },
               ].map((item) => {
