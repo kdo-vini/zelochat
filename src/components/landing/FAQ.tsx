@@ -39,6 +39,10 @@ const FAQS: QAItem[] = [
     a: 'Sim. Todos os dados são isolados por empresa com políticas de segurança no banco (RLS) — ninguém fora da sua conta enxerga suas conversas ou seus clientes. Usamos criptografia em trânsito e em repouso.',
   },
   {
+    q: 'Preciso instalar algum programa para imprimir os pedidos?',
+    a: 'Não. O ZeloChat usa a tecnologia Web USB do Chrome e Edge para conectar direto com sua impressora térmica via USB — sem instalar nada no computador. Você faz a conexão uma única vez clicando em "Conectar impressora" na barra lateral e pronto: todo pedido confirmado pelo WhatsApp é impresso automaticamente.',
+  },
+  {
     q: 'Tem contrato de fidelidade ou multa?',
     a: 'Não. Você paga mensalmente e cancela quando quiser, direto no painel. Sem fidelidade, sem multa, sem perguntas.',
   },

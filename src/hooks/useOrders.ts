@@ -23,13 +23,15 @@ function rowToOrder(row: Record<string, unknown>): Order {
   };
 }
 
-export function useOrders(session: Session | null) {
+export function useOrders(session: Session | null, onNewOrder?: (order: Order) => void) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Cached per user — cleared when session.user.id changes to prevent stale cross-account inserts.
   const empresaIdRef = useRef<string | null>(null);
   const lastUserIdRef = useRef<string | null>(null);
+  const onNewOrderRef = useRef(onNewOrder);
+  useEffect(() => { onNewOrderRef.current = onNewOrder; }, [onNewOrder]);
 
   const fetchEmpresaId = useCallback(async (userId: string): Promise<string | null> => {
     const { data } = await supabase
@@ -101,7 +103,9 @@ export function useOrders(session: Session | null) {
           },
           (payload) => {
             if (payload.eventType === 'INSERT') {
-              setOrders((prev) => [rowToOrder(payload.new as Record<string, unknown>), ...prev]);
+              const order = rowToOrder(payload.new as Record<string, unknown>);
+              setOrders((prev) => [order, ...prev]);
+              onNewOrderRef.current?.(order);
             } else if (payload.eventType === 'UPDATE') {
               setOrders((prev) =>
                 prev.map((o) =>

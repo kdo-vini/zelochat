@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
+    category: 'big',
+    title: 'Impressão automática de pedidos',
+    description: 'Conecte sua impressora térmica USB diretamente no navegador — sem instalar nada. A cada pedido confirmado pelo WhatsApp, o ticket é impresso automaticamente. Clique em "Conectar impressora" na barra lateral para parear.',
+  },
+  {
+    date: '2026-04-27',
     category: 'medium',
     title: 'A IA agora aceita e calcula pedidos de entrega',
     description: 'Configure os bairros atendidos e as taxas em Configurações → Entrega. A IA passa a perguntar se é retirada ou entrega, coleta o endereço, calcula a taxa automaticamente e inclui no resumo do pedido. Bairros fora da lista vão direto para atendimento humano.',

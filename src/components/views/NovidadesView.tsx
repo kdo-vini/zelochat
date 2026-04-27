@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Fragment } from 'react';
 import { Zap, Wrench, Star, AlertCircle } from 'lucide-react';
 import { CHANGELOG, type ChangeCategory, type ChangelogEntry } from '../../data/changelog';
 
@@ -88,7 +88,9 @@ export function NovidadesView() {
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-3">
           {CHANGELOG.map((entry, i) => (
-            <ChangeCard key={i} entry={entry} />
+            <Fragment key={i}>
+              <ChangeCard entry={entry} />
+            </Fragment>
           ))}
           <p className="text-center text-[12px] text-[var(--color-ink-faint)] pt-2 pb-4">
             Isso é tudo por enquanto — novas atualizações aparecem aqui. ✓

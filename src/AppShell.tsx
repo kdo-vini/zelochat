@@ -30,6 +30,8 @@ import { NovidadesView } from './components/views/NovidadesView';
 import { useDrivers } from './hooks/useDrivers';
 import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
+import { usePrinter } from './hooks/usePrinter';
+import { PrinterButton } from './components/PrinterButton';
 import { useCatalog } from './hooks/useCatalog';
 import { useEmpresaPerfil } from './hooks/useEmpresaPerfil';
 import { useQuickResponses } from './hooks/useQuickResponses';
@@ -165,6 +167,7 @@ export default function AppShell() {
     resolveEscalation,
     escalateManually,
     acknowledgeEscalation,
+    waConnected,
   } = useWhatsAppSessions(token);
   const { count: openEscalationCount, reload: reloadOpenEscalationCount } = useOpenEscalationCount(
     token,
@@ -188,13 +191,17 @@ export default function AppShell() {
     updateTrigger: updateTriggerRequest,
     deleteTrigger: deleteTriggerRequest,
   } = useTriggers(token);
+  const printer = usePrinter();
+
   const {
     orders: supabaseOrders,
     addOrder: addOrderToSupabase,
     updateOrderStatus: updateOrderStatusInSupabase,
     updateOrder: updateOrderInSupabase,
     deleteOrder: deleteOrderInSupabase,
-  } = useOrders(session);
+  } = useOrders(session, (order) => {
+    void printer.print(order, state.businessInfo.name || 'ZeloChat');
+  });
   const {
     items: quickResponses,
     add: addQuickResponse,
@@ -511,7 +518,21 @@ export default function AppShell() {
   const firstNameOnly = state.profile.name.split(' ')[0];
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[var(--color-canvas)]">
+    <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-canvas)]">
+      {/* ── WhatsApp disconnect banner ─────────────────────────── */}
+      {waConnected === false && (
+        <div className="flex items-center justify-between gap-3 bg-red-500 text-white px-4 py-2.5 text-[13px] font-medium flex-shrink-0 z-50">
+          <span>⚠️ WhatsApp desconectado — sua IA não está respondendo clientes.</span>
+          <button
+            onClick={() => setActiveView('settings')}
+            className="underline underline-offset-2 hover:no-underline whitespace-nowrap flex-shrink-0"
+          >
+            Reconectar →
+          </button>
+        </div>
+      )}
+
+      <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* ── Sidebar (desktop only) ──────────────────────────────── */}
       <aside
         className={`bg-[var(--color-surface)] border-r border-[var(--color-line)] hidden md:flex flex-col py-3 flex-shrink-0 z-30 transition-[width] duration-200 ease-in-out overflow-hidden ${
@@ -579,7 +600,7 @@ export default function AppShell() {
           </nav>
         </div>
 
-        {/* Bottom: novidades + settings + profile */}
+        {/* Bottom: novidades + settings + printer + profile */}
         <div className="mt-auto px-2 flex flex-col gap-0.5 flex-shrink-0 pt-2 border-t border-[var(--color-line)]">
           <NavButton
             item={{ id: 'novidades', icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }}
@@ -592,6 +613,11 @@ export default function AppShell() {
             active={activeView === 'settings'}
             expanded={sidebarExpanded}
             onClick={() => setActiveView('settings')}
+          />
+          <PrinterButton
+            printer={printer}
+            expanded={sidebarExpanded}
+            testOrder={state.orders[0]}
           />
 
           <button
@@ -830,6 +856,7 @@ export default function AppShell() {
         </div>
       )}
 
+      </div> {/* end flex-1 inner wrapper */}
     </div>
   );
 }

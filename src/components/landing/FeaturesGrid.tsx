@@ -5,6 +5,7 @@ import {
   MessageCircle,
   FileText,
   BarChart3,
+  Printer,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -56,6 +57,12 @@ const FEATURES: Feature[] = [
     title: 'Relatórios e insights',
     description:
       'Acompanhe métricas de atendimento, tempo de resposta e oportunidades de vendas.',
+  },
+  {
+    icon: Printer,
+    title: 'Impressão automática',
+    description:
+      'Conecte sua impressora térmica USB direto no navegador — sem instalar nada. Cada pedido confirmado pelo WhatsApp é impresso automaticamente na cozinha.',
   },
 ];
 
