@@ -169,7 +169,13 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   const shortId = orderId.slice(0, 8).toUpperCase();
   const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
   const cfg = getConfig(pending.empresaId);
-  const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+  const isDelivery = pending.orderType === 'delivery';
+  const scheduleLabel = isDelivery ? '🛵 Entrega' : '📅 Retirada';
+  const deliveryLine = isDelivery && pending.deliveryAddress
+    ? `\n📍 ${pending.deliveryAddress}\n🏘️ Taxa${pending.deliveryNeighborhood ? ` (${pending.deliveryNeighborhood})` : ''}: R$ ${(pending.deliveryFee ?? 0).toFixed(2)}`
+    : '';
+  const dateBR = isoToDisplayBR(pending.pickupDate) || pending.pickupDate;
+  const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}${deliveryLine}\n${scheduleLabel}: ${dateBR} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
   await sendTextMessage(jid, reply, pending.empresaId);
   await addAssistantMessage(jid, reply, undefined, pending.empresaId);
   broadcast(

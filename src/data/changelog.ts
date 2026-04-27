@@ -16,6 +16,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
     category: 'hotfix',
+    title: 'Mensagem de pedido confirmado mostra entrega corretamente',
+    description: 'A mensagem de confirmação enviada ao cliente agora diferencia retirada de entrega — mostra endereço, taxa e bairro nos pedidos de delivery, e exibe a data no formato brasileiro (DD/MM/AAAA).',
+  },
+  {
+    date: '2026-04-27',
+    category: 'hotfix',
     title: 'Avisos de pedido também aparecem na conversa do cliente',
     description: 'Quando você muda o status do pedido no kanban, a notificação enviada ao cliente agora também aparece na thread de chat dentro do Zelo — antes só chegava no WhatsApp dele e o operador não tinha registro. A mensagem do despacho do motoboy também passou a aparecer na conversa com o entregador.',
   },
