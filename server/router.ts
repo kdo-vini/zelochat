@@ -851,9 +851,12 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
 
           if (flagOn) {
             const customerName = ((existing as { customer_name: string | null }).customer_name ?? '').split(' ')[0] || 'tudo bem';
+            const isDelivery = !!((existing as { delivery_address: string | null }).delivery_address);
             const templates: Record<string, string> = {
               preparing: `Olá ${customerName}! 👨‍🍳 Recebemos seu pedido e já estamos preparando. Em breve avisamos quando estiver pronto!`,
-              ready: `${customerName}, seu pedido está prontinho! 🎉 Já vamos despachar.`,
+              ready: isDelivery
+                ? `${customerName}, seu pedido está prontinho! 🎉 Em breve sairá para entrega.`
+                : `${customerName}, seu pedido está pronto para retirada! 🎉 Pode vir buscar.`,
               out_for_delivery: `${customerName}, saiu pra entrega! 🛵 Seu pedido já está a caminho.`,
             };
             const text = templates[status];
