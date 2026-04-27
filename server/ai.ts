@@ -871,12 +871,24 @@ export async function generateAndSendReply(
           if (args.orderType === 'delivery' && args.deliveryNeighborhood) {
             const configFee = resolveDeliveryFee(resolvedEmpresaId, args.deliveryNeighborhood);
             if (configFee === null) {
-              // Neighborhood not covered — escalate to human
+              // Neighborhood not covered — escalate to human via the standard escalation flow
+              // (flips session to 'escalated', auto_reply=false, notifies manager, sends handoff text).
               console.log(`[AI] Delivery neighborhood not covered: "${args.deliveryNeighborhood}" — escalating`);
-              const escalateMsg = `Deixa eu verificar a disponibilidade de entrega no seu endereço com um atendente! Um momento. 🙏`;
-              await sendTextMessage(jid, escalateMsg, resolvedEmpresaId);
-              await addAssistantMessage(jid, escalateMsg, undefined, resolvedEmpresaId);
-              return escalateMsg;
+              await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+              await addToolMessage(jid, 'Endereço de entrega fora da área coberta — escalado para humano', toolCall.id, resolvedEmpresaId);
+
+              const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+              await escalateSession(resolvedEmpresaId, jid, {
+                triggerId: null,
+                triggerKind: 'escalate_human',
+                triggerName: 'Endereço de entrega fora da área',
+                reasonCategory: 'custom',
+                reasonText: `IA não conseguiu identificar o bairro "${args.deliveryNeighborhood}" na lista de áreas cobertas. Atendente humano deve confirmar a disponibilidade de entrega.`,
+                customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
+              });
+
+              resetAiFailureCounter(resolvedEmpresaId, jid);
+              return handoffMessageFor('custom');
             }
             if (args.deliveryFee !== undefined && args.deliveryFee !== configFee) {
               console.warn(`[AI] deliveryFee mismatch for ${args.deliveryNeighborhood}: AI sent ${args.deliveryFee}, config says ${configFee}. Using config.`);
