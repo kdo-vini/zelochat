@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Bike, Check, Loader2, MapPin, MessageCircle, Pencil, Plus, X } from 'lucide-react';
+import { Bike, Check, Loader2, MapPin, Pencil, Plus, X } from 'lucide-react';
 import type { DeliveryDriver, Order } from '../../types';
+import { dispatchDriver } from '../../services/waApi';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 
@@ -58,6 +59,8 @@ interface DriversViewProps {
     payload: Partial<Pick<DeliveryDriver, 'name' | 'phone' | 'status'>>,
   ) => Promise<DeliveryDriver>;
   deleteDriver: (id: string) => Promise<void>;
+  token: string | null;
+  onDispatchSuccess?: (orderId: string) => void;
 }
 
 export const DriversView = ({
@@ -69,6 +72,8 @@ export const DriversView = ({
   createDriver,
   updateDriver,
   deleteDriver,
+  token,
+  onDispatchSuccess,
 }: DriversViewProps) => {
   const [draft, setDraft] = useState<DriverDraft>(EMPTY_DRAFT);
   const [submitting, setSubmitting] = useState(false);
@@ -158,11 +163,34 @@ export const DriversView = ({
     }
   };
 
-  const notifyDriver = (driver: DeliveryDriver, order?: Order) => {
-    const message = order?.deliveryAddress
-      ? `Olá ${driver.name}! Nova entrega!\n\nCliente: ${order.customerName}\nEndereço: ${order.deliveryAddress}\nTotal: R$ ${order.total.toFixed(2)}`
-      : `Olá ${driver.name}, temos uma nova corrida para você!`;
-    window.open(`https://wa.me/${driver.phone}?text=${encodeURIComponent(message)}`, '_blank');
+  const [dispatchingOrderId, setDispatchingOrderId] = useState<string | null>(null);
+  const [dispatchFeedback, setDispatchFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const notifyDriver = async (driver: DeliveryDriver, order?: Order) => {
+    if (!token) {
+      setActionError('Faça login para despachar entregadores.');
+      return;
+    }
+    if (!order) {
+      setActionError('Selecione um pedido para despachar.');
+      return;
+    }
+
+    setActionError(null);
+    setDispatchingOrderId(order.id);
+    try {
+      await dispatchDriver(token, driver.id, order.id);
+      setDispatchFeedback({ kind: 'ok', text: `Mensagem enviada para ${driver.name}.` });
+      onDispatchSuccess?.(order.id);
+    } catch (err) {
+      setDispatchFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Falha ao despachar entregador.',
+      });
+    } finally {
+      setDispatchingOrderId(null);
+      setTimeout(() => setDispatchFeedback(null), 3500);
+    }
   };
 
   const cycleStatus = async (driver: DeliveryDriver) => {
@@ -293,6 +321,12 @@ export const DriversView = ({
                   <p className="text-[12px] text-[var(--color-alert)] font-medium">{actionError ?? error}</p>
                 </div>
               )}
+
+              {dispatchFeedback && (
+                <div className={`rounded-lg px-3 py-2.5 ${dispatchFeedback.kind === 'ok' ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]' : 'bg-[var(--color-alert-soft)] text-[var(--color-alert)]'}`}>
+                  <p className="text-[12px] font-medium">{dispatchFeedback.text}</p>
+                </div>
+              )}
             </div>
 
             {pendingDeliveries.length > 0 && (
@@ -315,18 +349,18 @@ export const DriversView = ({
                         {order.deliveryAddress || 'Retirada no local'}
                       </p>
                       <select
-                        defaultValue=""
+                        value=""
                         onChange={(event) => {
                           const driver = drivers.find((item) => item.id === event.target.value);
                           if (driver) {
-                            notifyDriver(driver, order);
+                            void notifyDriver(driver, order);
                           }
                         }}
                         className="w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-2.5 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20"
-                        disabled={drivers.length === 0}
+                        disabled={drivers.length === 0 || dispatchingOrderId === order.id}
                       >
                         <option value="" disabled>
-                          Chamar motoboy...
+                          {dispatchingOrderId === order.id ? 'Enviando...' : 'Chamar motoboy...'}
                         </option>
                         {drivers.filter((driver) => driver.status === 'available').map((driver) => (
                           <option key={driver.id} value={driver.id}>
@@ -416,13 +450,9 @@ export const DriversView = ({
                       </button>
                     </div>
 
-                    <button
-                      onClick={() => notifyDriver(driver)}
-                      className="w-full flex items-center justify-center gap-2 bg-[#25d366] hover:bg-[#20bd5a] text-white py-2 rounded-lg text-[13px] font-semibold transition-colors"
-                    >
-                      <MessageCircle className="w-4 h-4" strokeWidth={1.8} />
-                      Avisar no WhatsApp
-                    </button>
+                    <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
+                      Use a lista de pedidos prontos ao lado para despachar este entregador.
+                    </p>
                   </div>
                 ))}
               </div>

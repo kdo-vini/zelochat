@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
 import { WS_URL } from '../config';
+import { updateOrderStatusApi } from '../services/waApi';
 import type { Order } from '../types';
 
 type NewOrder = Omit<Order, 'id' | 'createdAt'>;
@@ -167,14 +168,11 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
   }, [session?.user?.id, fetchEmpresaId]);
 
   const updateOrderStatus = useCallback(async (id: string, status: Order['status']): Promise<void> => {
-    const { error: dbError } = await supabase
-      .from('zelochat_orders')
-      .update({ status })
-      .eq('id', id);
-
-    if (dbError) throw dbError;
+    const token = session?.access_token;
+    if (!token) throw new Error('Faça login para atualizar pedidos.');
+    await updateOrderStatusApi(token, id, status);
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
-  }, []);
+  }, [session?.access_token]);
 
   const deleteOrder = useCallback(async (id: string): Promise<void> => {
     const { error: dbError } = await supabase

@@ -9,13 +9,14 @@ import { ptBR } from 'date-fns/locale';
 
 type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'settings' | 'profile' | 'drivers' | 'catalog';
 
-const COLUMNS: Order['status'][] = ['pending', 'preparing', 'ready', 'delivered'];
+const COLUMNS: Order['status'][] = ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
 
 const COLUMN_STYLE: Record<Order['status'], { header: string; dot: string }> = {
-  pending:   { header: 'text-[var(--color-warn)]',   dot: 'bg-[var(--color-warn)]' },
-  preparing: { header: 'text-[var(--color-brand)]',  dot: 'bg-[var(--color-brand)]' },
-  ready:     { header: 'text-[var(--color-ink-soft)]', dot: 'bg-[var(--color-ink-soft)]' },
-  delivered: { header: 'text-[var(--color-ink-faint)]', dot: 'bg-[var(--color-ink-faint)]' },
+  pending:          { header: 'text-[var(--color-warn)]',     dot: 'bg-[var(--color-warn)]' },
+  preparing:        { header: 'text-[var(--color-brand)]',    dot: 'bg-[var(--color-brand)]' },
+  ready:            { header: 'text-[var(--color-ink-soft)]', dot: 'bg-[var(--color-ink-soft)]' },
+  out_for_delivery: { header: 'text-purple-600',              dot: 'bg-purple-500' },
+  delivered:        { header: 'text-[var(--color-ink-faint)]', dot: 'bg-[var(--color-ink-faint)]' },
 };
 
 const currency = (n: number) =>

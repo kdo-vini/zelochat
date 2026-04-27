@@ -9,6 +9,7 @@ const STATUS_DOT: Record<Order['status'], string> = {
   pending: 'bg-[var(--color-warn)]',
   preparing: 'bg-[var(--color-brand)]',
   ready: 'bg-[var(--color-ink)]',
+  out_for_delivery: 'bg-purple-500',
   delivered: 'bg-[var(--color-ink-faint)]',
 };
 

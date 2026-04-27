@@ -149,6 +149,7 @@ export function useWhatsAppSessions(token: string | null) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastEscalation, setLastEscalation] = useState<EscalationNotice | null>(null);
+  const [waConnected, setWaConnected] = useState<boolean | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -409,6 +410,12 @@ export function useWhatsAppSessions(token: string | null) {
             return;
           }
 
+          if (parsed.type === 'connection') {
+            const status = parsed.data as string;
+            setWaConnected(status === 'connected');
+            return;
+          }
+
           if (parsed.type !== 'message' && parsed.type !== 'message_sent') {
             return;
           }
@@ -500,5 +507,6 @@ export function useWhatsAppSessions(token: string | null) {
     resolveEscalation,
     escalateManually,
     acknowledgeEscalation,
+    waConnected,
   };
 }

@@ -79,7 +79,7 @@ function phoneFromJid(jid: string): string {
   return normalizePhoneNumber(jid.replace(/@.*$/, ''));
 }
 
-function formatPhone(phone: string): string {
+export function formatPhone(phone: string): string {
   const local = phone.startsWith('55') ? phone.slice(2) : phone;
   if (local.length === 11) {
     return `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`;

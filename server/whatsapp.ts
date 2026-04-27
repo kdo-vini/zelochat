@@ -2,10 +2,32 @@ import axios from 'axios';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import { broadcast } from './ws.js';
+import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
+import { sendDisconnectAlert, sendReconnectConfirmation } from './email.js';
 
 const BASE_URL = (process.env.WHATSMIAU_BASE_URL || 'https://api.whatsmiau.dev').replace(/\/$/, '');
 const API_KEY = process.env.WHATSMIAU_API_KEY || '';
+
+// Bootstrap instance name. After P0-02 (multi-instance per empresa), this is
+// only used by the legacy connection lifecycle (status/QR/health-check) which
+// still tracks a single "primary" connection. All SEND functions now accept
+// an optional empresaId and resolve the right instance per-call via
+// getInstanceForEmpresa() — see resolveInstance() below.
 export let INSTANCE_NAME = process.env.WHATSMIAU_INSTANCE || 'zelochat';
+
+/**
+ * Resolves the Whatsmiau instance to use for an outbound API call. When an
+ * empresaId is supplied (which all routes/ai callers do), we look up that
+ * empresa's dedicated instance. Otherwise we fall back to INSTANCE_NAME, which
+ * preserves single-tenant behavior for any caller not yet threading empresaId.
+ */
+async function resolveInstance(empresaId?: string | null): Promise<string> {
+  if (empresaId) {
+    const inst = await getInstanceForEmpresa(empresaId);
+    if (inst) return inst;
+  }
+  return INSTANCE_NAME;
+}
 let instanceInternalId = ''; // MongoDB _id from Whatsmiau API
 let ownJid = ''; // JID of the linked WhatsApp number (e.g. "5511999@s.whatsapp.net")
 
@@ -78,7 +100,22 @@ export function getPublicWebhookUrl(): string {
   return 'http://localhost:3001';
 }
 
+function isWebhookRegisterDisabled(): boolean {
+  const v = (process.env.WHATSMIAU_DISABLE_WEBHOOK_REGISTER || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 export async function registerWebhook(force = false): Promise<boolean> {
+  // Dev-safety guard: when set, skip webhook registration entirely so that a
+  // local server booted against the production .env cannot silently overwrite
+  // the production webhook URL on Whatsmiau (see CLAUDE.md → "Local dev steals
+  // the production webhook"). Outbound sends still work; inbound stays pointed
+  // at prod.
+  if (isWebhookRegisterDisabled()) {
+    console.log('[whatsapp] webhook register skipped (WHATSMIAU_DISABLE_WEBHOOK_REGISTER=1)');
+    return true;
+  }
+
   const publicUrl = getPublicWebhookUrl();
   const webhookUrl = `${publicUrl}/webhook`;
 
@@ -188,8 +225,19 @@ function scheduleReconnect(): void {
   }, delay);
 }
 
-export function handleConnectionUpdate(data: any): void {
+/**
+ * Handles connection.update webhook events from Whatsmiau.
+ *
+ * `empresaId` (when available — resolved from the webhook URL `/webhook/:instance`
+ * or the legacy apikey header) is used to persist the per-empresa connection
+ * state on `empresa_perfil.whatsmiau_connected` and feed P0-04 disconnect alerts.
+ *
+ * The in-memory lifecycle (status / QR / reconnect) is still global — it tracks
+ * the bound empresa's connection. Multi-empresa lifecycle lands with P1-01.
+ */
+export function handleConnectionUpdate(data: any, empresaId: string | null = null): void {
   const state: string = data?.state ?? data?.instance?.state ?? '';
+  const ownerJid: string = data?.ownerJid ?? data?.instance?.ownerJid ?? '';
 
   if (state === 'open') {
     // If the user just manually disconnected, ignore a racing 'open' event.
@@ -202,13 +250,28 @@ export function handleConnectionUpdate(data: any): void {
     currentQR = null;
     reconnectAttempts = 0;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    setOwnJid(data?.ownerJid ?? data?.instance?.ownerJid ?? '');
-    broadcast({ type: 'connection', data: 'connected' });
+    setOwnJid(ownerJid);
+    broadcast({ type: 'connection', data: 'connected' }, empresaId ?? undefined);
+    if (empresaId) {
+      const phone = ownerJid ? ownerJid.split('@')[0] : null;
+      void (async () => {
+        const { wasConnected } = await setConnectionState(empresaId, true, phone);
+        // Only email on real reconnect (was previously offline — avoids noise on startup).
+        if (!wasConnected) void sendReconnectConfirmation(empresaId);
+      })();
+    }
     console.log('[WhatsApp] Connected!');
   } else if (state === 'close') {
     connectionStatus = 'disconnected';
     currentQR = null;
-    broadcast({ type: 'connection', data: 'disconnected' });
+    broadcast({ type: 'connection', data: 'disconnected' }, empresaId ?? undefined);
+    if (empresaId) {
+      void (async () => {
+        const { wasConnected } = await setConnectionState(empresaId, false);
+        // Only email on real disconnect (not on startup / already-offline noise).
+        if (wasConnected && !manuallyDisconnected) void sendDisconnectAlert(empresaId);
+      })();
+    }
     if (manuallyDisconnected) {
       console.log('[WhatsApp] Disconnected by user — auto-reconnect suppressed.');
       return;
@@ -218,13 +281,18 @@ export function handleConnectionUpdate(data: any): void {
   } else if (state === 'connecting') {
     if (manuallyDisconnected) return; // ignore stale connecting events
     connectionStatus = 'connecting';
-    broadcast({ type: 'connection', data: 'connecting' });
+    broadcast({ type: 'connection', data: 'connecting' }, empresaId ?? undefined);
   }
 }
 
-export async function sendTextMessage(jid: string, text: string): Promise<void> {
+export async function sendTextMessage(
+  jid: string,
+  text: string,
+  empresaId?: string | null,
+): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendText/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendText/${instance}`,
     { number: jid, text },
     { headers: apiHeaders() },
   );
@@ -243,9 +311,11 @@ export async function sendButtonMessage(
   description: string,
   footer: string,
   buttons: ButtonDef[],
+  empresaId?: string | null,
 ): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendButtons/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendButtons/${instance}`,
     {
       number: jid,
       title,
@@ -271,26 +341,37 @@ export async function sendMediaMessage(
     caption?: string;
     fileName?: string;
   },
+  empresaId?: string | null,
 ): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendMedia/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendMedia/${instance}`,
     { number: jid, ...params },
     { headers: apiHeaders() },
   );
 }
 
 // PTT audio — uses a dedicated endpoint (sendWhatsAppAudio) per Whatsmiau docs
-export async function sendWhatsAppAudio(jid: string, audioUrl: string): Promise<void> {
+export async function sendWhatsAppAudio(
+  jid: string,
+  audioUrl: string,
+  empresaId?: string | null,
+): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendWhatsAppAudio/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendWhatsAppAudio/${instance}`,
     { number: jid, audio: audioUrl, encoding: true },
     { headers: apiHeaders() },
   );
 }
 
-export async function fetchProfilePicture(jid: string): Promise<string | null> {
+export async function fetchProfilePicture(
+  jid: string,
+  empresaId?: string | null,
+): Promise<string | null> {
   try {
-    const res = await axios.get(`${BASE_URL}/chat/fetchProfilePictureUrl/${INSTANCE_NAME}`, {
+    const instance = await resolveInstance(empresaId);
+    const res = await axios.get(`${BASE_URL}/chat/fetchProfilePictureUrl/${instance}`, {
       headers: apiHeaders(),
       params: { number: jid },
     });
@@ -530,10 +611,16 @@ export async function reconnectWhatsApp(): Promise<void> {
 
 export type PresenceType = 'composing' | 'paused' | 'available' | 'unavailable';
 
-export async function sendPresence(jid: string, presence: PresenceType, delayMs = 0): Promise<void> {
+export async function sendPresence(
+  jid: string,
+  presence: PresenceType,
+  delayMs = 0,
+  empresaId?: string | null,
+): Promise<void> {
   try {
+    const instance = await resolveInstance(empresaId);
     await axios.post(
-      `${BASE_URL}/chat/sendPresence/${INSTANCE_NAME}`,
+      `${BASE_URL}/chat/sendPresence/${instance}`,
       { number: jid, presence, ...(delayMs > 0 ? { delay: delayMs } : {}) },
       { headers: apiHeaders() },
     );
@@ -545,9 +632,14 @@ export async function sendPresence(jid: string, presence: PresenceType, delayMs 
 
 // ─── Mark as Read ─────────────────────────────────────────────────────────────
 
-export async function markWhatsAppMessageAsRead(jid: string, messageId: string): Promise<void> {
+export async function markWhatsAppMessageAsRead(
+  jid: string,
+  messageId: string,
+  empresaId?: string | null,
+): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/chat/markMessageAsRead/${INSTANCE_NAME}`,
+    `${BASE_URL}/chat/markMessageAsRead/${instance}`,
     { readMessages: [{ remoteJid: jid, id: messageId }] },
     { headers: apiHeaders() },
   );
@@ -557,9 +649,11 @@ export async function markWhatsAppMessageAsRead(jid: string, messageId: string):
 
 export async function validateWhatsAppNumbers(
   numbers: string[],
+  empresaId?: string | null,
 ): Promise<{ number: string; exists: boolean; jid?: string }[]> {
+  const instance = await resolveInstance(empresaId);
   const res = await axios.post(
-    `${BASE_URL}/chat/whatsappNumbers/${INSTANCE_NAME}`,
+    `${BASE_URL}/chat/whatsappNumbers/${instance}`,
     { numbers },
     { headers: apiHeaders() },
   );
@@ -581,9 +675,11 @@ export async function sendListMessage(
     sections: ListSection[];
     delay?: number;
   },
+  empresaId?: string | null,
 ): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendList/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendList/${instance}`,
     { number: jid, ...params },
     { headers: apiHeaders() },
   );
@@ -594,9 +690,11 @@ export async function sendListMessage(
 export async function sendLocationMessage(
   jid: string,
   params: { latitude: number; longitude: number; name?: string; address?: string; delay?: number },
+  empresaId?: string | null,
 ): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendLocation/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendLocation/${instance}`,
     { number: jid, ...params },
     { headers: apiHeaders() },
   );
@@ -609,9 +707,11 @@ export async function sendReaction(
   messageId: string,
   reaction: string,
   fromMe = false,
+  empresaId?: string | null,
 ): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendReaction/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendReaction/${instance}`,
     { reaction, key: { remoteJid: jid, id: messageId, fromMe } },
     { headers: apiHeaders() },
   );
@@ -622,9 +722,11 @@ export async function sendReaction(
 export async function sendPollMessage(
   jid: string,
   params: { name: string; values: string[]; selectableCount?: number; delay?: number },
+  empresaId?: string | null,
 ): Promise<void> {
+  const instance = await resolveInstance(empresaId);
   await axios.post(
-    `${BASE_URL}/message/sendPoll/${INSTANCE_NAME}`,
+    `${BASE_URL}/message/sendPoll/${instance}`,
     { number: jid, ...params },
     { headers: apiHeaders() },
   );
@@ -632,8 +734,14 @@ export async function sendPollMessage(
 
 // ─── Revoke Message ───────────────────────────────────────────────────────────
 
-export async function revokeMessage(jid: string, messageId: string, fromMe = true): Promise<void> {
-  await axios.delete(`${BASE_URL}/chat/deleteMessageForEveryone/${INSTANCE_NAME}`, {
+export async function revokeMessage(
+  jid: string,
+  messageId: string,
+  fromMe = true,
+  empresaId?: string | null,
+): Promise<void> {
+  const instance = await resolveInstance(empresaId);
+  await axios.delete(`${BASE_URL}/chat/deleteMessageForEveryone/${instance}`, {
     headers: apiHeaders(),
     data: { id: messageId, remoteJid: jid, fromMe },
   });

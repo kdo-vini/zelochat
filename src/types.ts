@@ -67,7 +67,7 @@ export interface Order {
   deliveryAddress?: string; // Optional delivery address (presence implies delivery, not pickup)
   driverId?: string; // Assigned motoboy
   paymentMethod?: string; // e.g. "Pix", "Dinheiro", "Cartão"
-  status: 'pending' | 'preparing' | 'ready' | 'delivered';
+  status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered';
   total: number;
   createdAt: string;
 }

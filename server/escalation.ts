@@ -241,7 +241,7 @@ export async function escalateSession(
   if (!wasAlreadyEscalated && !params.skipCustomerMessage) {
     const handoff = handoffMessageFor(params.reasonCategory);
     try {
-      await sendTextMessage(jid, handoff);
+      await sendTextMessage(jid, handoff, empresaId);
       await addAssistantMessage(jid, handoff, undefined, empresaId);
     } catch (err) {
       console.error('[Escalation] Failed to send handoff to customer:', err);
@@ -264,7 +264,7 @@ export async function escalateSession(
         : '') +
       `\n\nAuto-resposta da IA desativada.`;
     try {
-      await sendTextMessage(managerJid, body);
+      await sendTextMessage(managerJid, body, empresaId);
     } catch (err) {
       console.warn('[Escalation] Failed to notify manager:', err);
     }

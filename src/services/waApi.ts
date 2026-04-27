@@ -183,6 +183,28 @@ export async function setAiEnabled(token: string, enabled: boolean): Promise<voi
   await parseResponse(response);
 }
 
+export async function dispatchDriver(token: string, driverId: string, orderId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/drivers/${encodeURIComponent(driverId)}/dispatch`), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ orderId }),
+  });
+  await parseResponse(response);
+}
+
+export async function updateOrderStatusApi(
+  token: string,
+  orderId: string,
+  status: string,
+): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/orders/${encodeURIComponent(orderId)}/status`), {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify({ status }),
+  });
+  await parseResponse(response);
+}
+
 // --- Escalation ---
 
 export async function listEscalationEvents(

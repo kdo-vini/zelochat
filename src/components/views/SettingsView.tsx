@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2 } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2 } from 'lucide-react';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
@@ -355,10 +355,110 @@ const DAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 interface SettingsViewProps {
   state: ZeloState;
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
+  empresa: EmpresaPerfil | null;
   saveEmpresa: (patch: Partial<Omit<EmpresaPerfil, 'id'>>) => Promise<boolean>;
   isAuthenticated: boolean;
   token: string | null;
 }
+
+type CustomerNotifyKey = 'notify_customer_preparing' | 'notify_customer_ready' | 'notify_customer_out_for_delivery';
+
+interface NotifyRow {
+  key: CustomerNotifyKey;
+  icon: typeof Clock;
+  title: string;
+  description: string;
+}
+
+const NOTIFY_ROWS: NotifyRow[] = [
+  {
+    key: 'notify_customer_preparing',
+    icon: ChefHat,
+    title: 'Em preparo',
+    description: 'Avisamos no WhatsApp do cliente assim que o pedido entra em preparo.',
+  },
+  {
+    key: 'notify_customer_ready',
+    icon: CheckCircle2,
+    title: 'Pronto',
+    description: 'Avisamos quando o pedido fica pronto, antes do despacho.',
+  },
+  {
+    key: 'notify_customer_out_for_delivery',
+    icon: Bike,
+    title: 'Saiu pra entrega',
+    description: 'Avisamos quando o motoboy sai com o pedido a caminho do cliente.',
+  },
+];
+
+const CustomerNotificationsCard = ({
+  empresa,
+  saveEmpresa,
+  isAuthenticated,
+}: {
+  empresa: EmpresaPerfil | null;
+  saveEmpresa: (patch: Partial<Omit<EmpresaPerfil, 'id'>>) => Promise<boolean>;
+  isAuthenticated: boolean;
+}) => {
+  const [savingKey, setSavingKey] = useState<CustomerNotifyKey | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = async (key: CustomerNotifyKey) => {
+    if (!empresa || savingKey) return;
+    const next = !empresa[key];
+    setSavingKey(key);
+    setError(null);
+    const ok = await saveEmpresa({ [key]: next } as Partial<Omit<EmpresaPerfil, 'id'>>);
+    if (!ok) setError('Não foi possível salvar. Tente novamente.');
+    setSavingKey(null);
+  };
+
+  return (
+    <SectionCard icon={Bell} title="Notificações ao cliente">
+      <div className="space-y-1">
+        <p className="text-[12.5px] text-[var(--color-ink-muted)] mb-3">
+          Envie atualizações automáticas no WhatsApp do cliente a cada mudança de status do pedido.
+        </p>
+        <div className="divide-y divide-[var(--color-line)]">
+          {NOTIFY_ROWS.map((row) => {
+            const isOn = empresa ? empresa[row.key] : false;
+            const RowIcon = row.icon;
+            const isSaving = savingKey === row.key;
+            return (
+              <div key={row.key} className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                <div className="flex items-start gap-3 flex-1">
+                  <div className="w-7 h-7 rounded-md bg-[var(--color-surface-muted)] border border-[var(--color-line)] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <RowIcon className="w-3.5 h-3.5 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[13.5px] font-semibold">{row.title}</p>
+                    <p className="text-[12px] text-[var(--color-ink-muted)] mt-0.5">{row.description}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isOn}
+                  onClick={() => void toggle(row.key)}
+                  disabled={!isAuthenticated || !empresa || isSaving}
+                  className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 mt-1 ${
+                    isOn ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line)]'
+                  }`}
+                >
+                  <span className={`inline-block w-5 h-5 bg-white rounded-full shadow transform transition-transform ${isOn ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {!isAuthenticated && (
+          <p className="text-[12px] text-[var(--color-warn)] mt-3">Faça login para ativar as notificações.</p>
+        )}
+        {error && <p className="text-[12px] text-[var(--color-alert)] mt-3">{error}</p>}
+      </div>
+    </SectionCard>
+  );
+};
 
 const DeliveryConfigCard = ({
   state,
@@ -535,7 +635,7 @@ function TimeInput({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
-export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated, token }: SettingsViewProps) => {
+export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenticated, token }: SettingsViewProps) => {
   // Local draft for identity fields — synced from state but independently editable
   const [draft, setDraft] = useState({
     name:    state.businessInfo.name,
@@ -792,6 +892,8 @@ export const SettingsView = ({ state, setState, saveEmpresa, isAuthenticated, to
             <WhatsAppIntegrationCard token={token} />
 
             <AiGlobalToggleCard token={token} />
+
+            <CustomerNotificationsCard empresa={empresa} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
 
             <DeliveryConfigCard state={state} setState={setState} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
 

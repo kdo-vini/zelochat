@@ -25,6 +25,10 @@ export interface EmpresaPerfil {
   manager_history: ChatMessage[] | null;
   /** Added via migration 011_delivery_config.sql — may be null if migration not yet run */
   delivery_config: { enabled: boolean; neighborhoods: { name: string; fee: number }[] } | null;
+  /** Customer status notification toggles — added via add_out_for_delivery_status_and_customer_notify_toggles */
+  notify_customer_preparing: boolean;
+  notify_customer_ready: boolean;
+  notify_customer_out_for_delivery: boolean;
 }
 
 interface UseEmpresaPerfilResult {
@@ -159,6 +163,27 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] delivery_config not available (run migration 011):', m011Err.message);
     }
 
+    let notifyPreparing = true;
+    let notifyReady = true;
+    let notifyOutForDelivery = true;
+    const { data: notifyData, error: notifyErr } = await supabase
+      .from('empresa_perfil')
+      .select('notify_customer_preparing, notify_customer_ready, notify_customer_out_for_delivery')
+      .eq('id', data.id)
+      .maybeSingle();
+    if (!notifyErr && notifyData) {
+      const n = notifyData as {
+        notify_customer_preparing?: boolean | null;
+        notify_customer_ready?: boolean | null;
+        notify_customer_out_for_delivery?: boolean | null;
+      };
+      notifyPreparing = n.notify_customer_preparing ?? true;
+      notifyReady = n.notify_customer_ready ?? true;
+      notifyOutForDelivery = n.notify_customer_out_for_delivery ?? true;
+    } else if (notifyErr) {
+      console.warn('[useEmpresaPerfil] notify_customer_* not available:', notifyErr.message);
+    }
+
     setEmpresa({
       ...data,
       chave_pix: chavePix,
@@ -170,6 +195,9 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       blocked_dates: blockedDates,
       manager_history: managerHistory,
       delivery_config: deliveryConfig,
+      notify_customer_preparing: notifyPreparing,
+      notify_customer_ready: notifyReady,
+      notify_customer_out_for_delivery: notifyOutForDelivery,
     });
     setLoading(false);
   }, [session?.user?.id]);

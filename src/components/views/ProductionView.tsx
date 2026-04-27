@@ -13,13 +13,14 @@ import { ptBR } from 'date-fns/locale';
 
 type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'settings' | 'profile' | 'drivers' | 'catalog';
 
-const COLUMNS: Order['status'][] = ['pending', 'preparing', 'ready', 'delivered'];
+const COLUMNS: Order['status'][] = ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
 
 const COLUMN_STYLE: Record<Order['status'], { header: string; dot: string; border: string }> = {
-  pending:   { header: 'text-[var(--color-warn)]',       dot: 'bg-[var(--color-warn)]',       border: 'border-[var(--color-warn)]/20' },
-  preparing: { header: 'text-[var(--color-brand)]',      dot: 'bg-[var(--color-brand)]',      border: 'border-[var(--color-brand)]/20' },
-  ready:     { header: 'text-emerald-600',               dot: 'bg-emerald-500',               border: 'border-emerald-200' },
-  delivered: { header: 'text-[var(--color-ink-faint)]',  dot: 'bg-[var(--color-ink-faint)]',  border: 'border-[var(--color-line)]' },
+  pending:          { header: 'text-[var(--color-warn)]',       dot: 'bg-[var(--color-warn)]',       border: 'border-[var(--color-warn)]/20' },
+  preparing:        { header: 'text-[var(--color-brand)]',      dot: 'bg-[var(--color-brand)]',      border: 'border-[var(--color-brand)]/20' },
+  ready:            { header: 'text-emerald-600',               dot: 'bg-emerald-500',               border: 'border-emerald-200' },
+  out_for_delivery: { header: 'text-purple-600',                dot: 'bg-purple-500',                border: 'border-purple-200' },
+  delivered:        { header: 'text-[var(--color-ink-faint)]',  dot: 'bg-[var(--color-ink-faint)]',  border: 'border-[var(--color-line)]' },
 };
 
 const currency = (n: number) =>
@@ -547,6 +548,14 @@ function OrderDrawer({
                 Marcar como entregue
               </button>
             )
+          )}
+          {order.status === 'out_for_delivery' && (
+            <button
+              onClick={() => onUpdateStatus(order.id, 'delivered')}
+              className="w-full bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+            >
+              Marcar como entregue
+            </button>
           )}
           {order.status === 'delivered' && (
             <p className="text-center text-[12.5px] text-[var(--color-ink-faint)] py-1">

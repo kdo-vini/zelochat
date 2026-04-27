@@ -751,6 +751,7 @@ export default function AppShell() {
               <SettingsView
                 state={state}
                 setState={setState}
+                empresa={empresa}
                 saveEmpresa={saveEmpresa}
                 isAuthenticated={!!token}
                 token={token}
@@ -774,6 +775,8 @@ export default function AppShell() {
                 createDriver={createDriver}
                 updateDriver={updateDriver}
                 deleteDriver={deleteDriver}
+                token={token}
+                onDispatchSuccess={(orderId) => updateOrderStatus(orderId, 'out_for_delivery')}
               />
             )}
             {activeView === 'novidades' && (

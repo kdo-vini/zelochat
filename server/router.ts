@@ -34,6 +34,7 @@ import {
   markSessionAsRead,
   deleteSession,
   updateSessionName,
+  formatPhone,
 } from './messageHandler.js';
 import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
 import { getConfig, setConfig } from './configStore.js';
@@ -56,6 +57,7 @@ import {
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { getEmpresaForInstance } from './instanceManager.js';
 import type { ChatAttachment } from '../src/types.js';
 
 const router = Router();
@@ -141,25 +143,14 @@ function safeJsonParse<T = any>(value: string): T | null {
 }
 
 /**
- * POST /webhook — Receives events from Whatsmiau (Evolution API v2 format).
- *
- * Authentication: requires header `apikey: <empresa.webhook_token>`. The token
- * both authenticates the call AND identifies which empresa the event belongs to,
- * replacing the old getBoundEmpresaId() singleton (review fixes C1 + C3).
- *
- * Configure Whatsmiau's webhook to send the empresa's webhook_token UUID in the
- * apikey header — see post-deploy steps in REVIEW_FIXES.md.
+ * Core webhook event processor — same logic for every entry point. Exported via
+ * the two routes below: legacy `/webhook` (apikey-header auth) and the new
+ * per-instance `/webhook/:instance` (URL-path auth via empresa lookup on the
+ * instance name). Both resolve to the same empresaId before getting here.
  */
-router.post('/webhook', async (req: Request, res: Response) => {
-  const empresaId = await resolveWebhookEmpresa(req);
-  if (!empresaId) {
-    res.status(401).json({ error: 'invalid webhook credentials' });
-    return;
-  }
-  res.json({ ok: true });
-
-  const event: string = (req.body?.event ?? '').toLowerCase().replace(/_/g, '.');
-  const data = req.body?.data;
+async function processWebhookEvent(empresaId: string, body: any): Promise<void> {
+  const event: string = (body?.event ?? '').toLowerCase().replace(/_/g, '.');
+  const data = body?.data;
 
   if (!data) return;
 
@@ -218,7 +209,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
       // idempotently. NEVER fall through to the AI for a button click.
       if (isHardConfirm) {
         const ack = 'Seu pedido já foi confirmado! ✅ Qualquer dúvida é só chamar 😊';
-        sendTextMessage(remoteJid, ack)
+        sendTextMessage(remoteJid, ack, empresaId)
           .then(() => addAssistantMessage(remoteJid, ack, undefined, empresaId))
           .catch((err) => console.error('[Webhook] idempotent confirm reply failed:', err));
       }
@@ -258,7 +249,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
     dispatchIncomingMessage(data, empresaId);
   } else if (event === 'connection.update') {
-    handleConnectionUpdate(data);
+    handleConnectionUpdate(data, empresaId);
   } else if (event === 'messages.update') {
     // Delivery / read receipts — broadcast to frontend so it can update message ticks
     const updates = Array.isArray(data) ? data : [data];
@@ -306,6 +297,53 @@ router.post('/webhook', async (req: Request, res: Response) => {
       }
     }
   }
+}
+
+/**
+ * POST /webhook — Legacy single-tenant entry point.
+ *
+ * Authentication: header `apikey: <empresa.webhook_token>`. The token both
+ * authenticates the call AND identifies which empresa the event belongs to
+ * (review fixes C1 + C3). Whatsmiau by default sends its own API key as
+ * `apikey`, which is matched against `WHATSMIAU_API_KEY` env and attributed
+ * to the bound empresa singleton (single-tenant fallback).
+ *
+ * Prefer `/webhook/:instance` for new empresas — it scales to multi-tenant
+ * without per-empresa apikey configuration on Whatsmiau.
+ */
+router.post('/webhook', async (req: Request, res: Response) => {
+  const empresaId = await resolveWebhookEmpresa(req);
+  if (!empresaId) {
+    res.status(401).json({ error: 'invalid webhook credentials' });
+    return;
+  }
+  res.json({ ok: true });
+  await processWebhookEvent(empresaId, req.body);
+});
+
+/**
+ * POST /webhook/:instance — Per-instance entry point used by the multi-tenant
+ * setup (P0-02). Whatsmiau's webhook URL for each empresa's instance is set to
+ * `${PUBLIC_URL}/webhook/${instance}`. We resolve the empresa via DB lookup on
+ * `empresa_perfil.whatsmiau_instance = :instance` — no apikey header required
+ * because the URL path is itself the per-tenant secret (instance names are not
+ * guessable; combined with Whatsmiau's source IP this is enough authentication
+ * for the beta).
+ */
+router.post('/webhook/:instance', async (req: Request, res: Response) => {
+  const instance = req.params.instance?.trim();
+  if (!instance) {
+    res.status(400).json({ error: 'missing instance' });
+    return;
+  }
+  const empresaId = await getEmpresaForInstance(instance);
+  if (!empresaId) {
+    console.warn(`[Webhook] 404 — instance "${instance}" has no empresa assigned`);
+    res.status(404).json({ error: 'unknown instance' });
+    return;
+  }
+  res.json({ ok: true });
+  await processWebhookEvent(empresaId, req.body);
 });
 
 
@@ -505,7 +543,7 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
       );
       if (attachment.type === 'audio') {
         // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)
-        await sendWhatsAppAudio(to, mediaUrl);
+        await sendWhatsAppAudio(to, mediaUrl, empresaId);
       } else {
         await sendMediaMessage(to, {
           mediatype: attachment.type === 'image' ? 'image' : 'document',
@@ -513,10 +551,10 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
           media: mediaUrl,
           caption: trimmedMessage || undefined,
           fileName: attachment.fileName,
-        });
+        }, empresaId);
       }
     } else {
-      await sendTextMessage(to, trimmedMessage);
+      await sendTextMessage(to, trimmedMessage, empresaId);
     }
 
     await addAssistantMessage(to, trimmedMessage, undefined, empresaId, attachment);
@@ -645,6 +683,188 @@ router.delete('/api/drivers/:id', async (req: Request, res: Response) => {
     }
 
     res.json({ ok: true });
+  } catch (error) {
+    sendDriverError(res, error);
+  }
+});
+
+/**
+ * POST /api/drivers/:id/dispatch
+ * Body: { orderId: string }
+ * Sends a WhatsApp message to the driver with full order details, via the empresa's
+ * own Whatsmiau instance — replaces the legacy wa.me deeplink flow.
+ */
+router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const driverId = req.params.id;
+    const { orderId } = (req.body ?? {}) as { orderId?: string };
+
+    if (!orderId) {
+      res.status(400).json({ error: 'orderId é obrigatório.' });
+      return;
+    }
+
+    const supabase = getServiceSupabase();
+
+    const [driverRes, orderRes, empresaRes] = await Promise.all([
+      supabase
+        .from('zelochat_drivers')
+        .select('id, name, phone, status')
+        .eq('id', driverId)
+        .eq('empresa_id', empresaId)
+        .maybeSingle(),
+      supabase
+        .from('zelochat_orders')
+        .select('*')
+        .eq('id', orderId)
+        .eq('empresa_id', empresaId)
+        .maybeSingle(),
+      supabase
+        .from('empresa_perfil')
+        .select('nome_exibicao')
+        .eq('id', empresaId)
+        .maybeSingle(),
+    ]);
+
+    if (driverRes.error) throw new Error(driverRes.error.message);
+    if (orderRes.error) throw new Error(orderRes.error.message);
+
+    const driver = driverRes.data as { id: string; name: string; phone: string } | null;
+    const order = orderRes.data as Record<string, unknown> | null;
+
+    if (!driver) {
+      res.status(404).json({ error: 'Entregador não encontrado.' });
+      return;
+    }
+    if (!order) {
+      res.status(404).json({ error: 'Pedido não encontrado.' });
+      return;
+    }
+
+    const empresaNome = (empresaRes.data as { nome_exibicao?: string } | null)?.nome_exibicao ?? '';
+    const items = (order.items as { product: string; quantity: number }[]) ?? [];
+    const itemsText = items.length
+      ? items.map((it) => `• ${it.quantity}× ${it.product}`).join('\n')
+      : '• (sem itens)';
+    const total = Number(order.total ?? 0);
+    const customerPhone = (order.customer_phone as string | null) ?? '';
+    const formattedCustomerPhone = customerPhone ? formatPhone(customerPhone.replace(/\D/g, '')) : '—';
+    const address = (order.delivery_address as string | null) ?? '—';
+    const payment = (order.payment_method as string | null) ?? '—';
+    const customerName = (order.customer_name as string | null) ?? '—';
+
+    const text = [
+      `🛵 *Nova entrega*${empresaNome ? ` — ${empresaNome}` : ''}`,
+      '',
+      `👤 *Cliente:* ${customerName}`,
+      `📞 *Telefone:* ${formattedCustomerPhone}`,
+      `📍 *Endereço:* ${address}`,
+      `💳 *Pagamento:* ${payment}`,
+      '',
+      '*Itens:*',
+      itemsText,
+      '',
+      `💰 *Total:* R$ ${total.toFixed(2).replace('.', ',')}`,
+    ].join('\n');
+
+    const driverPhone = driver.phone.replace(/\D/g, '');
+    const jid = `${driverPhone}@s.whatsapp.net`;
+
+    await sendTextMessage(jid, text, empresaId);
+
+    res.json({ ok: true });
+  } catch (error) {
+    sendDriverError(res, error);
+  }
+});
+
+/**
+ * PATCH /api/orders/:id/status
+ * Body: { status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' }
+ * Updates the order status and, for transitions into preparing/ready/out_for_delivery,
+ * fires a WhatsApp notification to the customer if the empresa has the toggle on.
+ */
+router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
+  const ALLOWED: ReadonlyArray<string> = ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const orderId = req.params.id;
+    const { status } = (req.body ?? {}) as { status?: string };
+
+    if (!status || !ALLOWED.includes(status)) {
+      res.status(400).json({ error: 'Status inválido.' });
+      return;
+    }
+
+    const supabase = getServiceSupabase();
+
+    const { data: existing, error: loadErr } = await supabase
+      .from('zelochat_orders')
+      .select('*')
+      .eq('id', orderId)
+      .eq('empresa_id', empresaId)
+      .maybeSingle();
+
+    if (loadErr) throw new Error(loadErr.message);
+    if (!existing) {
+      res.status(404).json({ error: 'Pedido não encontrado.' });
+      return;
+    }
+
+    const oldStatus = (existing as { status: string }).status;
+
+    const { error: updErr } = await supabase
+      .from('zelochat_orders')
+      .update({ status })
+      .eq('id', orderId)
+      .eq('empresa_id', empresaId);
+
+    if (updErr) throw new Error(updErr.message);
+
+    res.json({ ok: true });
+
+    if (oldStatus === status) return;
+    if (status !== 'preparing' && status !== 'ready' && status !== 'out_for_delivery') return;
+
+    const customerPhoneRaw = ((existing as { customer_phone: string | null }).customer_phone ?? '').replace(/\D/g, '');
+    if (!customerPhoneRaw) return;
+
+    const { data: empresa } = await supabase
+      .from('empresa_perfil')
+      .select('notify_customer_preparing, notify_customer_ready, notify_customer_out_for_delivery')
+      .eq('id', empresaId)
+      .maybeSingle();
+
+    const flags = empresa as {
+      notify_customer_preparing?: boolean;
+      notify_customer_ready?: boolean;
+      notify_customer_out_for_delivery?: boolean;
+    } | null;
+
+    const flagOn =
+      (status === 'preparing' && flags?.notify_customer_preparing) ||
+      (status === 'ready' && flags?.notify_customer_ready) ||
+      (status === 'out_for_delivery' && flags?.notify_customer_out_for_delivery);
+
+    if (!flagOn) return;
+
+    const customerName = ((existing as { customer_name: string | null }).customer_name ?? '').split(' ')[0] || 'tudo bem';
+    const templates: Record<string, string> = {
+      preparing: `Olá ${customerName}! 👨‍🍳 Recebemos seu pedido e já estamos preparando. Em breve avisamos quando estiver pronto!`,
+      ready: `${customerName}, seu pedido está prontinho! 🎉 Já vamos despachar.`,
+      out_for_delivery: `${customerName}, saiu pra entrega! 🛵 Seu pedido já está a caminho.`,
+    };
+    const text = templates[status];
+
+    const phoneWithDdi = customerPhoneRaw.startsWith('55') ? customerPhoneRaw : `55${customerPhoneRaw}`;
+    const jid = `${phoneWithDdi}@s.whatsapp.net`;
+
+    try {
+      await sendTextMessage(jid, text, empresaId);
+    } catch (err) {
+      console.error('[order status notify] send failed:', err);
+    }
   } catch (error) {
     sendDriverError(res, error);
   }
@@ -894,8 +1114,8 @@ router.post('/api/sessions/:jid/mark-read', async (req: Request, res: Response) 
     return;
   }
   try {
-    await requireEmpresaId(req);
-    await markWhatsAppMessageAsRead(req.params.jid, messageId);
+    const empresaId = await requireEmpresaId(req);
+    await markWhatsAppMessageAsRead(req.params.jid, messageId, empresaId);
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);
@@ -1009,8 +1229,8 @@ router.post('/api/ai/complete', async (req: Request, res: Response) => {
 
 router.get('/api/sessions/:jid/profile-picture', async (req: Request, res: Response) => {
   try {
-    await requireEmpresaId(req);
-    const url = await fetchProfilePicture(req.params.jid);
+    const empresaId = await requireEmpresaId(req);
+    const url = await fetchProfilePicture(req.params.jid, empresaId);
     res.json({ url });
   } catch (error) {
     sendAuthError(res, error);
@@ -1103,8 +1323,8 @@ router.post('/api/whatsapp/validate-numbers', async (req: Request, res: Response
     return res.status(400).json({ error: 'Máximo de 50 números por consulta.' });
   }
   try {
-    await requireEmpresaId(req);
-    const result = await validateWhatsAppNumbers(numbers);
+    const empresaId = await requireEmpresaId(req);
+    const result = await validateWhatsAppNumbers(numbers, empresaId);
     res.json({ result });
   } catch (error) {
     sendAuthError(res, error);
@@ -1120,8 +1340,8 @@ router.post('/api/send/list', async (req: Request, res: Response) => {
     return;
   }
   try {
-    await requireEmpresaId(req);
-    await sendListMessage(to, { title, description, buttonText, footerText, sections });
+    const empresaId = await requireEmpresaId(req);
+    await sendListMessage(to, { title, description, buttonText, footerText, sections }, empresaId);
     res.json({ ok: true });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
@@ -1141,8 +1361,8 @@ router.post('/api/send/location', async (req: Request, res: Response) => {
     return;
   }
   try {
-    await requireEmpresaId(req);
-    await sendLocationMessage(to, { latitude, longitude, name, address });
+    const empresaId = await requireEmpresaId(req);
+    await sendLocationMessage(to, { latitude, longitude, name, address }, empresaId);
     res.json({ ok: true });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
@@ -1162,8 +1382,8 @@ router.post('/api/send/reaction', async (req: Request, res: Response) => {
     return;
   }
   try {
-    await requireEmpresaId(req);
-    await sendReaction(to, messageId, reaction, fromMe ?? false);
+    const empresaId = await requireEmpresaId(req);
+    await sendReaction(to, messageId, reaction, fromMe ?? false, empresaId);
     res.json({ ok: true });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
@@ -1183,8 +1403,8 @@ router.post('/api/send/poll', async (req: Request, res: Response) => {
     return;
   }
   try {
-    await requireEmpresaId(req);
-    await sendPollMessage(to, { name, values, selectableCount });
+    const empresaId = await requireEmpresaId(req);
+    await sendPollMessage(to, { name, values, selectableCount }, empresaId);
     res.json({ ok: true });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
@@ -1204,8 +1424,8 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
     return;
   }
   try {
-    await requireEmpresaId(req);
-    await revokeMessage(remoteJid, req.params.id, fromMe ?? true);
+    const empresaId = await requireEmpresaId(req);
+    await revokeMessage(remoteJid, req.params.id, fromMe ?? true, empresaId);
     res.json({ ok: true });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
