@@ -16,6 +16,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
     category: 'hotfix',
+    title: 'Mudança de status no kanban volta a salvar',
+    description: 'Arrastar pedido entre colunas estava revertendo após dar refresh — o servidor não aceitava a atualização. Corrigido: a movimentação persiste e o cliente recebe a notificação configurada.',
+  },
+  {
+    date: '2026-04-27',
+    category: 'hotfix',
     title: 'Mensagem de pedido confirmado mostra entrega corretamente',
     description: 'A mensagem de confirmação enviada ao cliente agora diferencia retirada de entrega — mostra endereço, taxa e bairro nos pedidos de delivery, e exibe a data no formato brasileiro (DD/MM/AAAA).',
   },

@@ -27,7 +27,7 @@ app.use(cors({
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     cb(new Error(`Origin not allowed by CORS: ${origin}`));
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 // 100kb global cap protects every endpoint EXCEPT /api/send, which mounts its own
