@@ -144,6 +144,8 @@ export interface ChatAttachment {
   sizeBytes?: number;
 }
 
+export type AudioTranscriptStatus = 'pending' | 'done' | 'failed';
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -155,4 +157,6 @@ export interface ChatMessage {
   status?: MessageStatus;
   tool_calls?: any[];
   tool_call_id?: string;
+  audio_transcript?: string | null;
+  audio_transcript_status?: AudioTranscriptStatus | null;
 }

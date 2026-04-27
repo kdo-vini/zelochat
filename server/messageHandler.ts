@@ -1,6 +1,7 @@
 import { broadcast } from './ws.js';
 import { getBoundEmpresaId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
-import type { ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
+import { transcribeAudio } from './transcription.js';
+import type { AudioTranscriptStatus, ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
 import {
   buildAttachmentPreview,
   buildContactKey,
@@ -62,7 +63,11 @@ interface MessageRow {
   tool_calls: any[] | null;
   tool_call_id: string | null;
   sent_at: string;
+  audio_transcript: string | null;
+  audio_transcript_status: AudioTranscriptStatus | null;
 }
+
+const MESSAGE_COLUMNS = 'id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status';
 
 interface SessionFamily {
   primary: SessionRow;
@@ -212,6 +217,8 @@ function mapMessage(row: MessageRow): ChatMessage {
     attachment: parsed.attachment,
     tool_calls: row.tool_calls || undefined,
     tool_call_id: row.tool_call_id || undefined,
+    audio_transcript: row.audio_transcript,
+    audio_transcript_status: row.audio_transcript_status,
   };
 }
 
@@ -396,7 +403,7 @@ async function insertMessage(params: {
       tool_call_id: params.tool_call_id || null,
       sent_at: params.sentAt,
     })
-    .select('id, role, content, tool_calls, tool_call_id, sent_at')
+    .select(MESSAGE_COLUMNS)
     .single();
 
   if (error) {
@@ -420,7 +427,7 @@ export async function getSession(jid: string, empresaId = getBoundEmpresaId()): 
 
   const { data: messages, error } = await supabase
     .from('zelochat_messages')
-    .select('id, role, content, tool_calls, tool_call_id, sent_at')
+    .select(MESSAGE_COLUMNS)
     .eq('empresa_id', empresaId)
     .in('session_id', family.rows.map((row) => row.id))
     .order('sent_at', { ascending: true });
@@ -731,6 +738,23 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     },
     resolvedEmpresaId,
   );
+
+  // Fire-and-forget audio transcription. Kicked off AFTER the message broadcast
+  // so the frontend has the message in state before our 'pending' message_update
+  // patch arrives — otherwise the patch lands on a missing message and the
+  // "Transcrevendo áudio…" placeholder is silently dropped. Errors stay inside
+  // transcribeAudio (status='failed'), never bubbling back to the webhook.
+  if (attachment?.type === 'audio') {
+    void transcribeAudio({
+      empresaId: resolvedEmpresaId,
+      jid,
+      messageId: storedMsg.id,
+      audioUrl: attachment.dataUrl,
+      mimeType: attachment.mimeType,
+      fileName: attachment.fileName,
+      sizeBytes: attachment.sizeBytes,
+    });
+  }
 }
 
 export async function addAssistantMessage(

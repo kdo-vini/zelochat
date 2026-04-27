@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-26',
+    category: 'big',
+    title: 'Transcrição automática de áudios',
+    description: 'Cada áudio recebido agora aparece transcrito embaixo do player em poucos segundos — você lê na hora sem precisar dar play. A IA também passa a entender o conteúdo dos áudios e responder com base no que o cliente disse.',
+  },
+  {
+    date: '2026-04-26',
     category: 'medium',
     title: 'Player de áudio no estilo WhatsApp',
     description: 'Mensagens de voz recebidas agora exibem um player com forma de onda e barra de progresso — igual ao WhatsApp. Não é mais necessário baixar o arquivo para ouvir.',

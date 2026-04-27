@@ -7,7 +7,7 @@ import { getSession, addAssistantMessage, addToolMessage } from './messageHandle
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig, type CatalogCategoriaGroup } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
-import { parseStructuredMessage, normalizePhoneNumber } from '../src/domain/chat.js';
+import { buildContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
 import {
@@ -720,7 +720,7 @@ export async function generateAndSendReply(
         .filter((m) => !!m.content) // skip tool-call-only assistant rows (content is null)
         .map((m) => ({
           role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-          content: m.content ? parseStructuredMessage(m.kind === 'text' ? m.content : m.preview).contentForModel : '',
+          content: buildContentForModel(m),
         })),
     ];
 

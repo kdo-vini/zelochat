@@ -168,6 +168,52 @@ function AudioPlayer({ src, messageId, isOutgoing }: { src: string; messageId: s
   );
 }
 
+/* ─── Audio transcript (Whisper, optional) ──────────────────────── */
+
+function AudioTranscript({
+  status,
+  transcript,
+}: {
+  status?: ChatMessage['audio_transcript_status'];
+  transcript?: string | null;
+}) {
+  if (!status) return null;
+
+  const baseStyle: React.CSSProperties = {
+    marginTop: 6,
+    paddingTop: 6,
+    borderTop: '1px solid rgba(11,20,26,0.06)',
+    fontSize: 12.5,
+    lineHeight: 1.35,
+    color: '#54656f',
+    fontStyle: 'italic',
+  };
+
+  if (status === 'pending') {
+    return (
+      <div style={baseStyle}>
+        <span aria-live="polite">Transcrevendo áudio…</span>
+      </div>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <div style={{ ...baseStyle, color: '#8696a0' }}>
+        Não foi possível transcrever
+      </div>
+    );
+  }
+
+  if (!transcript) return null;
+
+  return (
+    <div style={baseStyle}>
+      <span aria-label="Transcrição do áudio">{transcript}</span>
+    </div>
+  );
+}
+
 /* ─── Lightbox (image/video full-screen viewer) ──────────────────── */
 
 function Lightbox({ type, src, alt, onClose }: { type: 'image' | 'video'; src: string; alt?: string; onClose: () => void }) {
@@ -356,6 +402,10 @@ export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerN
                   </span>
                 </div>
               )}
+              <AudioTranscript
+                status={message.audio_transcript_status}
+                transcript={message.audio_transcript}
+              />
             </div>
           )}
 
