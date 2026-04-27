@@ -16,6 +16,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
     category: 'hotfix',
+    title: 'Avisos de pedido também aparecem na conversa do cliente',
+    description: 'Quando você muda o status do pedido no kanban, a notificação enviada ao cliente agora também aparece na thread de chat dentro do Zelo — antes só chegava no WhatsApp dele e o operador não tinha registro. A mensagem do despacho do motoboy também passou a aparecer na conversa com o entregador.',
+  },
+  {
+    date: '2026-04-27',
+    category: 'hotfix',
     title: 'IA lida melhor com endereços informais no delivery',
     description: 'A IA agora entende referências do dia a dia — nome de empresa, rua ou ponto de referência — sem travar o pedido. Em caso de dúvida sobre a área de entrega, transfere para um atendente em vez de negar o serviço.',
   },

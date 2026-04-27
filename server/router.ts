@@ -772,6 +772,7 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
     const jid = `${driverPhone}@s.whatsapp.net`;
 
     await sendTextMessage(jid, text, empresaId);
+    await addAssistantMessage(jid, text, undefined, empresaId);
 
     res.json({ ok: true });
   } catch (error) {
@@ -822,49 +823,54 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
 
     if (updErr) throw new Error(updErr.message);
 
-    res.json({ ok: true });
+    const shouldNotify =
+      oldStatus !== status &&
+      (status === 'preparing' || status === 'ready' || status === 'out_for_delivery');
 
-    if (oldStatus === status) return;
-    if (status !== 'preparing' && status !== 'ready' && status !== 'out_for_delivery') return;
+    if (shouldNotify) {
+      try {
+        const customerPhoneRaw = ((existing as { customer_phone: string | null }).customer_phone ?? '').replace(/\D/g, '');
 
-    const customerPhoneRaw = ((existing as { customer_phone: string | null }).customer_phone ?? '').replace(/\D/g, '');
-    if (!customerPhoneRaw) return;
+        if (customerPhoneRaw) {
+          const { data: empresa } = await supabase
+            .from('empresa_perfil')
+            .select('notify_customer_preparing, notify_customer_ready, notify_customer_out_for_delivery')
+            .eq('id', empresaId)
+            .maybeSingle();
 
-    const { data: empresa } = await supabase
-      .from('empresa_perfil')
-      .select('notify_customer_preparing, notify_customer_ready, notify_customer_out_for_delivery')
-      .eq('id', empresaId)
-      .maybeSingle();
+          const flags = empresa as {
+            notify_customer_preparing?: boolean;
+            notify_customer_ready?: boolean;
+            notify_customer_out_for_delivery?: boolean;
+          } | null;
 
-    const flags = empresa as {
-      notify_customer_preparing?: boolean;
-      notify_customer_ready?: boolean;
-      notify_customer_out_for_delivery?: boolean;
-    } | null;
+          const flagOn =
+            (status === 'preparing' && flags?.notify_customer_preparing) ||
+            (status === 'ready' && flags?.notify_customer_ready) ||
+            (status === 'out_for_delivery' && flags?.notify_customer_out_for_delivery);
 
-    const flagOn =
-      (status === 'preparing' && flags?.notify_customer_preparing) ||
-      (status === 'ready' && flags?.notify_customer_ready) ||
-      (status === 'out_for_delivery' && flags?.notify_customer_out_for_delivery);
+          if (flagOn) {
+            const customerName = ((existing as { customer_name: string | null }).customer_name ?? '').split(' ')[0] || 'tudo bem';
+            const templates: Record<string, string> = {
+              preparing: `Olá ${customerName}! 👨‍🍳 Recebemos seu pedido e já estamos preparando. Em breve avisamos quando estiver pronto!`,
+              ready: `${customerName}, seu pedido está prontinho! 🎉 Já vamos despachar.`,
+              out_for_delivery: `${customerName}, saiu pra entrega! 🛵 Seu pedido já está a caminho.`,
+            };
+            const text = templates[status];
 
-    if (!flagOn) return;
+            const phoneWithDdi = customerPhoneRaw.startsWith('55') ? customerPhoneRaw : `55${customerPhoneRaw}`;
+            const jid = `${phoneWithDdi}@s.whatsapp.net`;
 
-    const customerName = ((existing as { customer_name: string | null }).customer_name ?? '').split(' ')[0] || 'tudo bem';
-    const templates: Record<string, string> = {
-      preparing: `Olá ${customerName}! 👨‍🍳 Recebemos seu pedido e já estamos preparando. Em breve avisamos quando estiver pronto!`,
-      ready: `${customerName}, seu pedido está prontinho! 🎉 Já vamos despachar.`,
-      out_for_delivery: `${customerName}, saiu pra entrega! 🛵 Seu pedido já está a caminho.`,
-    };
-    const text = templates[status];
-
-    const phoneWithDdi = customerPhoneRaw.startsWith('55') ? customerPhoneRaw : `55${customerPhoneRaw}`;
-    const jid = `${phoneWithDdi}@s.whatsapp.net`;
-
-    try {
-      await sendTextMessage(jid, text, empresaId);
-    } catch (err) {
-      console.error('[order status notify] send failed:', err);
+            await sendTextMessage(jid, text, empresaId);
+            await addAssistantMessage(jid, text, undefined, empresaId);
+          }
+        }
+      } catch (err) {
+        console.error('[order status notify] failed:', err);
+      }
     }
+
+    res.json({ ok: true });
   } catch (error) {
     sendDriverError(res, error);
   }
