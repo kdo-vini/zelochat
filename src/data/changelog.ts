@@ -15,6 +15,18 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
+    category: 'hotfix',
+    title: 'IA nunca mais nega entrega por não reconhecer o endereço',
+    description: 'Quando o cliente dizia o nome de uma empresa, rua ou referência informal, a IA podia responder que não entrega naquele bairro — mesmo o bairro estando configurado. Agora a IA tenta identificar o bairro pela referência do cliente (ex: "no Marfrig" = "Marfrig, JW (Parque industrial)") e, em caso de dúvida, transfere para um atendente sem negar o serviço.',
+  },
+  {
+    date: '2026-04-27',
+    category: 'big',
+    title: 'Despache motoboy e avise o cliente sem sair do Zelo',
+    description: 'O botão "Despachar motoboy" agora envia uma mensagem completa pelo próprio WhatsApp da sua empresa — com cliente, endereço, pagamento, itens e total. E a cada mudança de status no kanban (Preparando, Pronto, Saiu pra entrega), o cliente recebe um aviso automático. Ative cada notificação em Configurações → Notificações ao cliente. O kanban também ganhou a coluna "Saiu pra entrega" entre Pronto e Entregue.',
+  },
+  {
+    date: '2026-04-27',
     category: 'big',
     title: 'Impressão automática de pedidos',
     description: 'Conecte sua impressora térmica USB diretamente no navegador — sem instalar nada. A cada pedido confirmado pelo WhatsApp, o ticket é impresso automaticamente. Clique em "Conectar impressora" na barra lateral para parear.',

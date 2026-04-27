@@ -159,7 +159,7 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   } catch (err) {
     console.error('[AI] Failed to insert order, keeping pending row:', err);
     const errMsg = 'Desculpe, tive um problema momentâneo. Toque em "✅ Confirmar" de novo, por favor. 🙏';
-    await sendTextMessage(jid, errMsg);
+    await sendTextMessage(jid, errMsg, pending.empresaId);
     await addAssistantMessage(jid, errMsg, undefined, pending.empresaId);
     return;
   }
@@ -170,7 +170,7 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
   const cfg = getConfig(pending.empresaId);
   const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}\n📅 Retirada: ${pending.pickupDate} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
-  await sendTextMessage(jid, reply);
+  await sendTextMessage(jid, reply, pending.empresaId);
   await addAssistantMessage(jid, reply, undefined, pending.empresaId);
   broadcast(
     { type: 'order_created', data: { orderId, empresaId: pending.empresaId } },
@@ -184,7 +184,7 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
 export async function cancelPendingOrder(jid: string, empresaId: string): Promise<void> {
   await clearPendingOrder(jid, empresaId);
   const reply = 'Tudo bem! Pedido cancelado. Se quiser fazer outro, é só me chamar 😊';
-  await sendTextMessage(jid, reply);
+  await sendTextMessage(jid, reply, empresaId);
   await addAssistantMessage(jid, reply, undefined, empresaId);
 }
 
@@ -481,9 +481,37 @@ function resolveDeliveryFee(empresaId: string, neighborhood: string): number | n
   const cfg = getConfig(empresaId);
   if (!cfg.deliveryConfig?.enabled || !cfg.deliveryConfig.neighborhoods.length) return null;
   const normalized = normalizeNeighborhood(neighborhood);
-  const match = cfg.deliveryConfig.neighborhoods.find(
+
+  // 1) Exact match
+  let match = cfg.deliveryConfig.neighborhoods.find(
     (n) => normalizeNeighborhood(n.name) === normalized,
   );
+
+  // 2) Config name starts with what the AI sent (ex: "marfrig" → "marfrig, jw (parque industrial)")
+  if (!match) {
+    match = cfg.deliveryConfig.neighborhoods.find((n) => {
+      const c = normalizeNeighborhood(n.name);
+      return c.startsWith(normalized + ',') || c.startsWith(normalized + ' ');
+    });
+  }
+
+  // 3) What the AI sent starts with config name (ex: "marfrig 1" → "marfrig")
+  if (!match) {
+    match = cfg.deliveryConfig.neighborhoods.find((n) => {
+      const c = normalizeNeighborhood(n.name);
+      return normalized.startsWith(c + ' ') || normalized.startsWith(c + ',');
+    });
+  }
+
+  // 4) Token match — any significant token (>3 chars) shared between config name and AI input
+  if (!match) {
+    match = cfg.deliveryConfig.neighborhoods.find((n) => {
+      const configTokens = normalizeNeighborhood(n.name).split(/[\s,()]+/).filter(Boolean);
+      const inputTokens = normalized.split(/[\s,()]+/).filter(Boolean);
+      return configTokens.some((t) => t.length > 3 && inputTokens.includes(t));
+    });
+  }
+
   return match ? match.fee : null;
 }
 
@@ -602,12 +630,12 @@ ${cfg.deliveryConfig?.enabled && cfg.deliveryConfig.neighborhoods.length > 0 ? `
 ${cfg.deliveryConfig.neighborhoods.map((n) => `  • ${n.name}: R$ ${n.fee.toFixed(2)}`).join('\n')}
 - Se o cliente mencionar "delivery", "entrega" ou pedir pra ser entregue, PERGUNTE o modo se ainda não souber: "Vai ser retirada ou entrega?"
 - Para pedidos de ENTREGA, siga esta ordem:
-  1. Peça o endereço completo incluindo o bairro.
-  2. Verifique se o bairro está na lista acima.
-  3. Se o bairro NÃO estiver na lista, chame dispatch_trigger com escalate_human. NÃO invente taxa.
+  1. Peça o endereço completo. O cliente pode informar rua, número, referência ou nome de empresa — tudo é válido.
+  2. Tente identificar qual bairro da lista corresponde ao endereço informado, mesmo que o cliente use nome informal, apelido, nome de empresa ou referência de rua. Escolha o bairro mais provável.
+  3. Se não conseguir identificar nenhum bairro correspondente na lista, chame dispatch_trigger com escalate_human para que um atendente confirme a área. NUNCA diga ao cliente que não entregamos no endereço dele — apenas transfira.
   4. Se o cliente pedir parte retirada + parte entrega no mesmo pedido, chame dispatch_trigger com escalate_human.
   5. Inclua a taxa de entrega no total. Ex: subtotal R$30 + taxa R$5 = total R$35.
-  6. Chame criar_pedido com orderType="delivery", deliveryAddress (endereço completo), deliveryNeighborhood (só o bairro) e deliveryFee (valor exato da lista acima).
+  6. Chame criar_pedido com orderType="delivery", deliveryAddress (endereço completo informado pelo cliente), deliveryNeighborhood (nome do bairro da lista que melhor corresponde) e deliveryFee (valor exato da lista acima).
 - PROIBIDO inventar taxas. Use EXATAMENTE os valores listados acima.
 - Para delivery agendado, coletar data/hora normalmente (igual à retirada).
 ` : `ENTREGA (DELIVERY):
@@ -738,7 +766,7 @@ export async function generateAndSendReply(
     console.log(`[AI] Pending order detected as edit-intent for ${jid} — clearing and re-engaging.`);
     await clearPendingOrder(jid, resolvedEmpresaId);
     const editAck = 'Beleza, vamos ajustar! Me conta o que mudou. 😊';
-    await sendTextMessage(jid, editAck);
+    await sendTextMessage(jid, editAck, resolvedEmpresaId);
     await addAssistantMessage(jid, editAck, undefined, resolvedEmpresaId);
     return editAck;
   }
@@ -758,7 +786,7 @@ export async function generateAndSendReply(
   );
 
   // Signal "typing" while we wait for the AI — non-blocking, ignore failures
-  void sendPresence(jid, 'composing');
+  void sendPresence(jid, 'composing', 0, resolvedEmpresaId);
 
   try {
     const openai = getAI();
@@ -804,7 +832,7 @@ export async function generateAndSendReply(
         if (confirmedAt && Date.now() - confirmedAt < JUST_CONFIRMED_TTL_MS) {
           console.log(`[AI] Blocking duplicate criar_pedido for ${jid} — order was confirmed ${Math.round((Date.now() - confirmedAt) / 1000)}s ago`);
           const dupMsg = 'Seu pedido já foi confirmado! 😊 Qualquer dúvida é só chamar.';
-          await sendTextMessage(jid, dupMsg);
+          await sendTextMessage(jid, dupMsg, resolvedEmpresaId);
           await addAssistantMessage(jid, dupMsg, undefined, resolvedEmpresaId);
           return dupMsg;
         }
@@ -845,8 +873,8 @@ export async function generateAndSendReply(
             if (configFee === null) {
               // Neighborhood not covered — escalate to human
               console.log(`[AI] Delivery neighborhood not covered: "${args.deliveryNeighborhood}" — escalating`);
-              const escalateMsg = `Desculpa, ainda não entregamos no bairro *${args.deliveryNeighborhood}*. Vou chamar um atendente pra te ajudar! 🙏`;
-              await sendTextMessage(jid, escalateMsg);
+              const escalateMsg = `Deixa eu verificar a disponibilidade de entrega no seu endereço com um atendente! Um momento. 🙏`;
+              await sendTextMessage(jid, escalateMsg, resolvedEmpresaId);
               await addAssistantMessage(jid, escalateMsg, undefined, resolvedEmpresaId);
               return escalateMsg;
             }
@@ -867,7 +895,7 @@ export async function generateAndSendReply(
           if (unmatchedItems.length > 0) {
             const names = unmatchedItems.map((i) => i.product).join(', ');
             const notFoundMsg = `Desculpe, não encontrei no cardápio: ${names}. Pode verificar o nome do produto? 😊`;
-            await sendTextMessage(jid, notFoundMsg);
+            await sendTextMessage(jid, notFoundMsg, resolvedEmpresaId);
             await addAssistantMessage(jid, notFoundMsg, undefined, resolvedEmpresaId);
             return notFoundMsg;
           }
@@ -909,6 +937,7 @@ export async function generateAndSendReply(
                 { id: 'CONFIRM_ORDER', displayText: '✅ Confirmar' },
                 { id: 'CANCEL_ORDER', displayText: '❌ Cancelar' },
               ],
+              resolvedEmpresaId,
             );
 
             // Persist the tool sequence in history for audit (not replayed to OpenAI — see H3 invariant).
@@ -931,7 +960,7 @@ export async function generateAndSendReply(
             // replies "Sim" and the router's soft-confirm path picks it up.
             console.warn('[AI] sendButtonMessage failed; keeping pending row and asking for text confirmation:', btnErr);
             const promptMsg = `Para confirmar, é só responder *Sim* — ou *Não* para cancelar.\n\n${summary}`;
-            await sendTextMessage(jid, promptMsg);
+            await sendTextMessage(jid, promptMsg, resolvedEmpresaId);
             await addToolMessage(jid, `Aguardando confirmação por texto: ${summary}`, toolCall.id, resolvedEmpresaId);
             await addAssistantMessage(jid, promptMsg, undefined, resolvedEmpresaId);
             return promptMsg;
@@ -941,7 +970,7 @@ export async function generateAndSendReply(
           console.error('[AI] Failed to create order:', err);
         }
 
-        await sendTextMessage(jid, replyText);
+        await sendTextMessage(jid, replyText, resolvedEmpresaId);
         await addAssistantMessage(jid, replyText, undefined, resolvedEmpresaId);
         return replyText;
       }
@@ -972,7 +1001,7 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        await sendTextMessage(jid, cleanFollow);
+        await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
         await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
         console.log(`[AI] consultar_pedido answered for ${jid}`);
         return cleanFollow;
@@ -1002,7 +1031,7 @@ export async function generateAndSendReply(
           await addToolMessage(jid, `Erro: gatilho ${triggerId} não encontrado`, toolCall.id, resolvedEmpresaId);
           await addAssistantMessage(jid, fallback, [toolCall], resolvedEmpresaId);
 
-          await sendTextMessage(jid, fallback);
+          await sendTextMessage(jid, fallback, resolvedEmpresaId);
           resetAiFailureCounter(resolvedEmpresaId, jid);
           return fallback;
         }
@@ -1045,6 +1074,7 @@ export async function generateAndSendReply(
             await sendTextMessage(
               managerJid,
               `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
+              resolvedEmpresaId,
             );
           } catch (err) {
             console.warn('[AI] Failed to notify manager (alert):', err);
@@ -1067,7 +1097,7 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Beleza! Já anotei aqui. 👍';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        await sendTextMessage(jid, cleanFollow);
+        await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
         await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
         console.log(`[AI] Dispatched notify_manager (${trig.name}) for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
@@ -1078,7 +1108,7 @@ export async function generateAndSendReply(
     const replyText = choice.message.content || 'Desculpe, deu um erro aqui. Pode repetir?';
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 
-    await sendTextMessage(jid, cleanReply);
+    await sendTextMessage(jid, cleanReply, resolvedEmpresaId);
     await addAssistantMessage(jid, cleanReply, undefined, resolvedEmpresaId);
 
     console.log(`[AI] Replied to ${jid}: ${cleanReply.slice(0, 80)}...`);
@@ -1111,7 +1141,7 @@ export async function generateAndSendReply(
     if (!suppressApology) {
       const errMsg = 'Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 🙏';
       try {
-        await sendTextMessage(jid, errMsg);
+        await sendTextMessage(jid, errMsg, resolvedEmpresaId);
         await addAssistantMessage(jid, errMsg, undefined, resolvedEmpresaId);
       } catch {
         // ignore secondary failure
