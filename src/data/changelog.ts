@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
+    category: 'minor',
+    title: 'Produção e Agenda atualizam ao abrir',
+    description: 'Ao trocar de aba para Produção ou Agenda, a lista de pedidos é atualizada automaticamente — antes precisava dar F5 para ver mudanças recentes.',
+  },
+  {
+    date: '2026-04-27',
     category: 'hotfix',
     title: 'Kanban e notificações agora funcionam direito',
     description: 'Arrastar pedido entre colunas agora salva corretamente. Notificações ao cliente diferem retirada de delivery ("Pode vir buscar" vs "Sairá para entrega"). IA entende endereços informais. Avisos aparecem na thread de chat.',

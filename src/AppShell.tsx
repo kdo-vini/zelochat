@@ -195,6 +195,7 @@ export default function AppShell() {
 
   const {
     orders: supabaseOrders,
+    refresh: refreshOrders,
     addOrder: addOrderToSupabase,
     updateOrderStatus: updateOrderStatusInSupabase,
     updateOrder: updateOrderInSupabase,
@@ -323,6 +324,14 @@ export default function AppShell() {
       return same ? prev : { ...prev, orders: supabaseOrders };
     });
   }, [supabaseOrders]);
+
+  // Realtime publication on zelochat_orders is empty — refetch when entering
+  // an order-consuming view so manager doesn't need F5 to see fresh data.
+  useEffect(() => {
+    if (activeView === 'kanban' || activeView === 'calendar') {
+      void refreshOrders();
+    }
+  }, [activeView, refreshOrders]);
 
   useEffect(() => {
     if (state.sessions.length === 0) { setActiveSessionId(null); return; }
