@@ -16,8 +16,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-27',
     category: 'hotfix',
-    title: 'IA nunca mais nega entrega por não reconhecer o endereço',
-    description: 'Quando o cliente dizia o nome de uma empresa, rua ou referência informal, a IA podia responder que não entrega naquele bairro — mesmo o bairro estando configurado. Agora a IA tenta identificar o bairro pela referência do cliente (ex: "no Marfrig" = "Marfrig, JW (Parque industrial)") e, em caso de dúvida, transfere para um atendente sem negar o serviço.',
+    title: 'IA lida melhor com endereços informais no delivery',
+    description: 'A IA agora entende referências do dia a dia — nome de empresa, rua ou ponto de referência — sem travar o pedido. Em caso de dúvida sobre a área de entrega, transfere para um atendente em vez de negar o serviço.',
   },
   {
     date: '2026-04-27',
