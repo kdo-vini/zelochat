@@ -1,4 +1,4 @@
-import type { ChatAttachment } from '../types';
+import type { ChatAttachment, ChatMessage } from '../types';
 
 const STRUCTURED_MESSAGE_PREFIX = '__ZELOCHAT_MEDIA__:';
 
@@ -141,6 +141,28 @@ export function formatLastMessageTime(value: string | null | undefined): string 
     month: '2-digit',
   });
   return `${dayMonth} às ${time}`;
+}
+
+/**
+ * Resolves what the AI should "see" for a given message. For audio with a
+ * completed Whisper transcript, returns `[Áudio: "<transcript>"]` so the model
+ * can reply meaningfully. For pending/failed/missing transcripts, falls back
+ * to the structured preview (`[Áudio]`) — the AI is never blocked on Whisper.
+ */
+export function buildContentForModel(message: ChatMessage): string {
+  const baseContent = message.content
+    ? parseStructuredMessage(message.kind === 'text' ? message.content : message.preview).contentForModel
+    : '';
+
+  if (
+    message.kind === 'audio' &&
+    message.audio_transcript_status === 'done' &&
+    message.audio_transcript
+  ) {
+    return `[Áudio: "${message.audio_transcript}"]`;
+  }
+
+  return baseContent;
 }
 
 export function parseStructuredMessage(content: string): ParsedChatContent {

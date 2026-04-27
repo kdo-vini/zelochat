@@ -7,6 +7,7 @@ export type WsEventType =
   | 'connection'
   | 'message'
   | 'message_sent'
+  | 'message_update'
   | 'order_created'
   | 'message_status'
   | 'message_deleted'

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChatAttachment, ChatMessage, ChatSession, EscalationEvent, SessionStatus } from '../types';
+import type {
+  AudioTranscriptStatus,
+  ChatAttachment,
+  ChatMessage,
+  ChatSession,
+  EscalationEvent,
+  SessionStatus,
+} from '../types';
 import { WS_URL } from '../config';
 import {
   acknowledgeSession as acknowledgeSessionApi,
@@ -49,9 +56,19 @@ type SessionStatusChangedPayload = {
   escalatedAt?: string | null;
 };
 
+type MessageUpdatePayload = {
+  sessionId: string;
+  messageId: string;
+  patch: {
+    audio_transcript?: string | null;
+    audio_transcript_status?: AudioTranscriptStatus | null;
+  };
+};
+
 type WsEvent =
   | { type: 'message'; data: SessionEventPayload }
   | { type: 'message_sent'; data: SessionEventPayload }
+  | { type: 'message_update'; data: MessageUpdatePayload }
   | { type: 'contact_update'; data: { remoteJid: string, pushName: string, profilePicUrl?: string } }
   | { type: 'escalation_triggered'; data: EscalationTriggeredPayload }
   | { type: 'escalation_resolved'; data: EscalationResolvedPayload }
@@ -359,6 +376,23 @@ export function useWhatsAppSessions(token: string | null) {
                       ...session,
                       status: data.status,
                       escalatedAt: data.escalatedAt ?? session.escalatedAt,
+                    }
+                  : session,
+              ),
+            );
+            return;
+          }
+
+          if (parsed.type === 'message_update') {
+            const { sessionId, messageId, patch } = parsed.data;
+            setSessions((previous) =>
+              previous.map((session) =>
+                session.id === sessionId
+                  ? {
+                      ...session,
+                      messages: session.messages.map((m) =>
+                        m.id === messageId ? { ...m, ...patch } : m,
+                      ),
                     }
                   : session,
               ),
