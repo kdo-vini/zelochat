@@ -313,8 +313,9 @@ export const AIConfigsView = ({
         </div>
 
         {/* Macros + Triggers */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <div className="lg:col-span-2 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col h-[280px]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Macros */}
+          <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col min-h-[280px]">
             <SectionHeader
               icon={Send}
               title="Respostas rápidas (macros)"
@@ -333,176 +334,177 @@ export const AIConfigsView = ({
                 <p className="text-[13px] text-center text-[var(--color-ink-faint)] mt-6">Nenhum macro configurado.</p>
               ) : (
                 quickResponses.map(qr => (
-                  <div key={qr.id} className="flex gap-2 items-center bg-[var(--color-surface-muted)] border border-[var(--color-line)] px-3 py-2 rounded-lg group">
-                    <span className="text-[12px] font-mono font-bold text-[var(--color-ink-muted)]">/</span>
-                    <input
-                      type="text"
-                      defaultValue={qr.trigger}
-                      onChange={e => {
-                        const next = e.target.value.toUpperCase();
-                        e.target.value = next;
-                        scheduleQrSave(qr.id, { trigger: next });
-                      }}
-                      className="w-24 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1 text-[12.5px] font-semibold font-mono uppercase outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20"
-                      placeholder="GATILHO"
-                    />
-                    <input
-                      type="text"
-                      defaultValue={qr.response}
-                      onChange={e => scheduleQrSave(qr.id, { response: e.target.value })}
-                      className="flex-1 bg-transparent outline-none text-[13px] min-w-0"
-                      placeholder="Texto da resposta..."
-                    />
-                    <span className="flex-shrink-0 w-4 flex items-center justify-center">
-                      {qrSaveState[qr.id] === 'saving' && <Loader2 className="w-3.5 h-3.5 text-[var(--color-ink-faint)] animate-spin" />}
-                      {qrSaveState[qr.id] === 'saved' && <Check className="w-3.5 h-3.5 text-[var(--color-brand)]" />}
-                    </span>
-                    <button
-                      onClick={() => { void deleteQuickResponse(qr.id).catch((err) => console.error('[AIConfigs] delete QR failed:', err)); }}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)] rounded-md transition-all flex-shrink-0"
-                    >
-                      <Plus className="w-3.5 h-3.5 rotate-45" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col">
-            <SectionHeader
-              icon={Shield}
-              title="Gatilhos automáticos do sistema"
-              subtitle="Sempre ativos por padrão. Se desativar, a IA não vai mais escalar essas situações automaticamente."
-            />
-            <div className="p-3 space-y-2">
-              {builtinTriggers.loading && builtinTriggers.items.length === 0 ? (
-                <p className="text-[12.5px] text-center text-[var(--color-ink-faint)] py-2">Carregando…</p>
-              ) : (
-                builtinTriggers.items.map((b) => (
-                  <div
-                    key={b.id}
-                    className="bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-2.5 space-y-1"
-                  >
-                    <div className="flex items-start gap-2">
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-semibold uppercase tracking-wide flex-shrink-0 bg-[var(--color-warn-soft)] text-[var(--color-warn)]">
-                        <Shield className="w-2.5 h-2.5" />
-                        Sistema
-                      </span>
-                      <span className="flex-1 text-[12.5px] font-semibold text-[var(--color-ink)] truncate">
-                        {b.name}
-                      </span>
-                      <button
-                        onClick={() => void builtinTriggers.setDisabled(b.id, !b.disabled).catch(() => {})}
-                        className={`w-8 h-[18px] rounded-full relative flex-shrink-0 transition-colors ${
-                          !b.disabled ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
-                        }`}
-                        title={b.disabled ? 'Ativar' : 'Desativar'}
-                      >
-                        <span
-                          className={`absolute top-[2px] w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-all ${
-                            !b.disabled ? 'right-[2px]' : 'left-[2px]'
-                          }`}
-                        />
-                      </button>
-                    </div>
-                    <p className="text-[11.5px] text-[var(--color-ink-muted)]">
-                      {b.conditionDescription}
-                    </p>
-                  </div>
-                ))
-              )}
-              {builtinTriggers.error && (
-                <p className="text-[11px] text-[var(--color-alert)]">{builtinTriggers.error}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col h-[280px]">
-            <SectionHeader
-              icon={Bell}
-              title="Triggers personalizados"
-              subtitle="Descreva o comportamento em português"
-            />
-            <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-              {triggers.length === 0 ? (
-                <p className="text-[12.5px] text-center text-[var(--color-ink-faint)] mt-6 px-4">
-                  Nenhum trigger ainda. Descreva um cenário abaixo — a IA extrai o que precisa.
-                </p>
-              ) : (
-                triggers.map(t => (
-                  <div key={t.id} className="group bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-2.5 space-y-1.5">
-                    <div className="flex items-start gap-2">
-                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-semibold uppercase tracking-wide flex-shrink-0 ${
-                        t.kind === 'escalate_human'
-                          ? 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
-                          : 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
-                      }`}>
-                        {t.kind === 'escalate_human' ? <UserCog className="w-2.5 h-2.5" /> : <Zap className="w-2.5 h-2.5" />}
-                        {t.kind === 'escalate_human' ? 'Escalar' : 'Notificar'}
-                      </span>
+                  <div key={qr.id} className="group bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <span className="text-[12px] font-mono font-bold text-[var(--color-ink-muted)] flex-shrink-0">/</span>
                       <input
-                        value={t.name}
+                        type="text"
+                        defaultValue={qr.trigger}
                         onChange={e => {
-                          const next = e.target.value;
-                          void updateTrigger(t.id, { name: next }).catch(() => {});
+                          const next = e.target.value.toUpperCase();
+                          e.target.value = next;
+                          scheduleQrSave(qr.id, { trigger: next });
                         }}
-                        className="flex-1 bg-transparent outline-none text-[12.5px] font-semibold min-w-0"
+                        className="w-28 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1 text-[12.5px] font-semibold font-mono uppercase outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 flex-shrink-0"
+                        placeholder="GATILHO"
                       />
+                      <span className="flex-shrink-0 w-4 flex items-center justify-center ml-auto">
+                        {qrSaveState[qr.id] === 'saving' && <Loader2 className="w-3.5 h-3.5 text-[var(--color-ink-faint)] animate-spin" />}
+                        {qrSaveState[qr.id] === 'saved' && <Check className="w-3.5 h-3.5 text-[var(--color-brand)]" />}
+                      </span>
                       <button
-                        onClick={() => void updateTrigger(t.id, { active: !t.active }).catch(() => {})}
-                        className={`w-8 h-[18px] rounded-full relative flex-shrink-0 transition-colors ${
-                          t.active ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
-                        }`}
-                        title={t.active ? 'Desativar' : 'Ativar'}
+                        onClick={() => { void deleteQuickResponse(qr.id).catch((err) => console.error('[AIConfigs] delete QR failed:', err)); }}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)] rounded-md transition-all flex-shrink-0"
                       >
-                        <span className={`absolute top-[2px] w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-all ${
-                          t.active ? 'right-[2px]' : 'left-[2px]'
-                        }`} />
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (confirm(`Remover o trigger "${t.name}"?`)) {
-                            void deleteTrigger(t.id).catch(() => {});
-                          }
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] rounded transition-all"
-                        title="Remover"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                        <Plus className="w-3.5 h-3.5 rotate-45" />
                       </button>
                     </div>
-                    <input
-                      value={t.conditionDescription}
-                      onChange={e => {
-                        const next = e.target.value;
-                        void updateTrigger(t.id, { conditionDescription: next }).catch(() => {});
-                      }}
-                      className="w-full bg-transparent outline-none text-[11.5px] text-[var(--color-ink-muted)]"
-                    />
+                    <div className="px-3 pb-2">
+                      <input
+                        type="text"
+                        defaultValue={qr.response}
+                        onChange={e => scheduleQrSave(qr.id, { response: e.target.value })}
+                        className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2.5 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-colors"
+                        placeholder="Texto da resposta..."
+                      />
+                    </div>
                   </div>
                 ))
               )}
             </div>
-            <div className="p-3 border-t border-[var(--color-line)] bg-[var(--color-surface)] space-y-1.5">
-              {(triggerLocalError || triggersError) && (
-                <p className="text-[11px] text-[var(--color-alert)]">{triggerLocalError ?? triggersError}</p>
-              )}
-              <div className="flex gap-2">
-                <input
-                  value={triggerInput}
-                  onChange={e => setTriggerInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleCreateTrigger()}
-                  placeholder='Ex: "avise o gerente se pedirem mais de R$200"'
-                  className={`${FIELD} flex-1`}
-                />
-                <button
-                  onClick={handleCreateTrigger}
-                  disabled={triggerBusy || !triggerInput.trim()}
-                  className="h-10 w-10 rounded-lg bg-[var(--color-ink)] text-white flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-ink-soft)] transition-colors"
-                >
-                  {triggerBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                </button>
+          </div>
+
+          {/* Right column: system triggers + custom triggers */}
+          <div className="flex flex-col gap-5">
+            <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
+              <SectionHeader
+                icon={Shield}
+                title="Gatilhos automáticos do sistema"
+                subtitle="Sempre ativos por padrão. Se desativar, a IA não vai mais escalar essas situações automaticamente."
+              />
+              <div className="p-3 space-y-2">
+                {builtinTriggers.loading && builtinTriggers.items.length === 0 ? (
+                  <p className="text-[12.5px] text-center text-[var(--color-ink-faint)] py-2">Carregando…</p>
+                ) : (
+                  builtinTriggers.items.map((b) => (
+                    <div
+                      key={b.id}
+                      className="bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-2.5 space-y-1"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-semibold uppercase tracking-wide flex-shrink-0 bg-[var(--color-warn-soft)] text-[var(--color-warn)]">
+                          <Shield className="w-2.5 h-2.5" />
+                          Sistema
+                        </span>
+                        <span className="flex-1 text-[12.5px] font-semibold text-[var(--color-ink)] min-w-0">
+                          {b.name}
+                        </span>
+                        <button
+                          onClick={() => void builtinTriggers.setDisabled(b.id, !b.disabled).catch(() => {})}
+                          className={`w-8 h-[18px] rounded-full relative flex-shrink-0 transition-colors ${
+                            !b.disabled ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
+                          }`}
+                          title={b.disabled ? 'Ativar' : 'Desativar'}
+                        >
+                          <span
+                            className={`absolute top-[2px] w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-all ${
+                              !b.disabled ? 'right-[2px]' : 'left-[2px]'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <p className="text-[11.5px] text-[var(--color-ink-muted)] leading-relaxed">
+                        {b.conditionDescription}
+                      </p>
+                    </div>
+                  ))
+                )}
+                {builtinTriggers.error && (
+                  <p className="text-[11px] text-[var(--color-alert)]">{builtinTriggers.error}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col min-h-[240px]">
+              <SectionHeader
+                icon={Bell}
+                title="Triggers personalizados"
+                subtitle="Descreva o comportamento em português"
+              />
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
+                {triggers.length === 0 ? (
+                  <p className="text-[12.5px] text-center text-[var(--color-ink-faint)] mt-6 px-4">
+                    Nenhum trigger ainda. Descreva um cenário abaixo — a IA extrai o que precisa.
+                  </p>
+                ) : (
+                  triggers.map(t => (
+                    <div key={t.id} className="group bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-semibold uppercase tracking-wide flex-shrink-0 ${
+                          t.kind === 'escalate_human'
+                            ? 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
+                            : 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+                        }`}>
+                          {t.kind === 'escalate_human' ? <UserCog className="w-2.5 h-2.5" /> : <Zap className="w-2.5 h-2.5" />}
+                          {t.kind === 'escalate_human' ? 'Escalar' : 'Notificar'}
+                        </span>
+                        <input
+                          value={t.name}
+                          onChange={e => void updateTrigger(t.id, { name: e.target.value }).catch(() => {})}
+                          className="flex-1 bg-transparent outline-none text-[12.5px] font-semibold min-w-0"
+                        />
+                        <button
+                          onClick={() => void updateTrigger(t.id, { active: !t.active }).catch(() => {})}
+                          className={`w-8 h-[18px] rounded-full relative flex-shrink-0 transition-colors ${
+                            t.active ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
+                          }`}
+                          title={t.active ? 'Desativar' : 'Ativar'}
+                        >
+                          <span className={`absolute top-[2px] w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-all ${
+                            t.active ? 'right-[2px]' : 'left-[2px]'
+                          }`} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Remover o trigger "${t.name}"?`)) {
+                              void deleteTrigger(t.id).catch(() => {});
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] rounded transition-all"
+                          title="Remover"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                        </button>
+                      </div>
+                      <input
+                        value={t.conditionDescription}
+                        onChange={e => void updateTrigger(t.id, { conditionDescription: e.target.value }).catch(() => {})}
+                        className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2.5 py-1.5 text-[11.5px] text-[var(--color-ink-muted)] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 transition-colors"
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="p-3 border-t border-[var(--color-line)] bg-[var(--color-surface)] space-y-1.5">
+                {(triggerLocalError || triggersError) && (
+                  <p className="text-[11px] text-[var(--color-alert)]">{triggerLocalError ?? triggersError}</p>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    value={triggerInput}
+                    onChange={e => setTriggerInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleCreateTrigger()}
+                    placeholder='Ex: "avise o gerente se pedirem mais de R$200"'
+                    className={`${FIELD} flex-1`}
+                  />
+                  <button
+                    onClick={handleCreateTrigger}
+                    disabled={triggerBusy || !triggerInput.trim()}
+                    className="h-10 w-10 rounded-lg bg-[var(--color-ink)] text-white flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-ink-soft)] transition-colors"
+                  >
+                    {triggerBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
