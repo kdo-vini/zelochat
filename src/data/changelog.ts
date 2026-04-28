@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
+    category: 'medium',
+    title: 'Quem já tem ZeloPDV faz upgrade direto pro Pacote',
+    description: 'Se você já é cliente do ZeloPDV, agora a tela do WhatsApp oferece o upgrade pro Pacote Gestão + Atendimento (R$ 147/mês) em vez de uma assinatura separada de R$ 97. Você economiza R$ 9/mês e mantém só uma cobrança.',
+  },
+  {
+    date: '2026-04-28',
     category: 'hotfix',
     title: 'Cada conta agora tem seu próprio WhatsApp',
     description: 'Corrigido um problema em que contas novas viam o WhatsApp de outra conta como se fosse delas. Agora cada negócio recebe sua instância dedicada na hora que clica em "Gerar QR Code", e o status, QR e desconexão são isolados por conta.',

@@ -114,6 +114,15 @@ function sendBillingError(res: Response, err: unknown): void {
     });
     return;
   }
+  if (message === 'PDV_UPGRADE_AVAILABLE') {
+    const zelopdvUrl = process.env.ZELOPDV_URL || 'https://www.zelopdv.com.br';
+    res.status(409).json({
+      error: 'Você já tem ZeloPDV. Faça upgrade pro Pacote Gestão + Atendimento por R$ 147/mês (economiza R$ 9 vs Chat avulso).',
+      code: 'PDV_UPGRADE_AVAILABLE',
+      upgradeUrl: `${zelopdvUrl}/assinatura?upgrade=bundle`,
+    });
+    return;
+  }
   console.error('[billing] error:', err);
   res.status(500).json({ error: message });
 }
@@ -155,6 +164,18 @@ export async function createCheckoutSession(req: Request, res: Response): Promis
       new Date(row.current_period_end).getTime() > Date.now(),
     );
     if (activeChat) throw new Error('ALREADY_ACTIVE');
+
+    // Safety net: usuário com plano PDV ativo NÃO deve criar nova subscription Chat
+    // (resultaria em 2 subscriptions Stripe pro mesmo user, R$ 156 vs R$ 147 do bundle).
+    // Bloqueia aqui mesmo se chamarem direto a API; o frontend já redireciona via UX.
+    // Plan tier swap pdv→bundle vai pelo endpoint /api/billing/change-plan no zeloPDV-Prod.
+    const activePdv = existing.find((row) =>
+      row.plan_tier === 'pdv' &&
+      row.status === 'active' &&
+      row.current_period_end &&
+      new Date(row.current_period_end).getTime() > Date.now(),
+    );
+    if (activePdv) throw new Error('PDV_UPGRADE_AVAILABLE');
 
     // Reuse a Stripe customer if any prior row has one (prevents orphan customers).
     let stripeCustomerId: string | null = null;

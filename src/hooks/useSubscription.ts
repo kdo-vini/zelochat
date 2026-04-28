@@ -12,18 +12,24 @@ export interface ZeloChatSubscription {
 }
 
 interface UseSubscriptionResult {
+  /** Latest subscription row (any plan_tier) — null se user nunca assinou. */
   subscription: ZeloChatSubscription | null;
+  /** True se plan_tier IN ('chat','bundle') E ativo — gateia uso do ZeloChat. */
   isActive: boolean;
+  /** True se user tem plan_tier='pdv' ativo (precisa fazer upgrade pra acessar Chat). */
+  hasPdvOnly: boolean;
   loading: boolean;
   refresh: () => Promise<void>;
 }
 
 /**
  * Reads the user's subscription from the shared `subscriptions` table.
- * ZeloChat is unlocked when plan_tier is 'chat' or 'bundle', status is 'active',
- * and the period (or manual extension) hasn't expired.
  *
- * No free trial: 'trialing' is intentionally excluded.
+ * Pega a row mais recente independente do plan_tier — assim conseguimos:
+ *  - liberar ZeloChat se já tem chat/bundle (isActive)
+ *  - detectar usuários PDV-only e oferecer upgrade pro pacote (hasPdvOnly)
+ *
+ * No free trial: 'trialing' é intencionalmente excluído de isActive.
  */
 export function useSubscription(session: Session | null): UseSubscriptionResult {
   const [subscription, setSubscription] = useState<ZeloChatSubscription | null>(null);
@@ -39,8 +45,7 @@ export function useSubscription(session: Session | null): UseSubscriptionResult 
       .from('subscriptions')
       .select('id, status, plan_tier, current_period_end, manually_extended_until, cancel_at_period_end')
       .eq('user_id', session.user.id)
-      .in('plan_tier', ['chat', 'bundle'])
-      .order('current_period_end', { ascending: false, nullsFirst: false })
+      .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (error) {
@@ -58,14 +63,23 @@ export function useSubscription(session: Session | null): UseSubscriptionResult 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id]);
 
+  const isActive = isSubscriptionActive(subscription) &&
+    !!subscription &&
+    (subscription.plan_tier === 'chat' || subscription.plan_tier === 'bundle');
+  const hasPdvOnly = isSubscriptionActive(subscription) &&
+    !!subscription &&
+    subscription.plan_tier === 'pdv';
+
   return {
     subscription,
-    isActive: isSubscriptionActive(subscription),
+    isActive,
+    hasPdvOnly,
     loading,
     refresh: load,
   };
 }
 
+/** True se a row tem status='active' e período não expirou (manual ou normal). */
 export function isSubscriptionActive(sub: ZeloChatSubscription | null): boolean {
   if (!sub) return false;
   if (sub.status !== 'active') return false;
