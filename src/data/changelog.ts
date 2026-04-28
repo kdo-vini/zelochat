@@ -15,27 +15,9 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
-    category: 'medium',
-    title: 'Quem já tem ZeloPDV faz upgrade direto pro Pacote',
-    description: 'Se você já é cliente do ZeloPDV, agora a tela do WhatsApp oferece o upgrade pro Pacote Gestão + Atendimento (R$ 147/mês) em vez de uma assinatura separada de R$ 97. Você economiza R$ 9/mês e mantém só uma cobrança.',
-  },
-  {
-    date: '2026-04-28',
-    category: 'hotfix',
-    title: 'Cada conta agora tem seu próprio WhatsApp',
-    description: 'Corrigido um problema em que contas novas viam o WhatsApp de outra conta como se fosse delas. Agora cada negócio recebe sua instância dedicada na hora que clica em "Gerar QR Code", e o status, QR e desconexão são isolados por conta.',
-  },
-  {
-    date: '2026-04-28',
     category: 'big',
-    title: 'Pagamento e cancelamento direto no ZeloChat',
-    description: 'Você ativa o plano sem sair do app: clica em "Ativar ZeloChat Pro", paga no Stripe e volta com o WhatsApp liberado. Já é assinante? Tem botão para gerenciar cartão, baixar nota e cancelar quando quiser, tudo no portal seguro do Stripe.',
-  },
-  {
-    date: '2026-04-28',
-    category: 'big',
-    title: 'Plano ZeloChat Pro liberou a conexão com o WhatsApp',
-    description: 'Agora a conexão do WhatsApp depende de plano ativo. Você continua se cadastrando, fazendo o onboarding e configurando tudo livremente — só o pareamento do número exige assinatura. Sem teste grátis: ative o plano para começar a atender pela IA.',
+    title: 'ZeloChat Pro chegou: WhatsApp com IA por R$ 97/mês',
+    description: 'Ative o plano direto no app — a IA atende seus clientes pelo WhatsApp 24/7. Pagamento, troca de cartão e cancelamento ficam no portal seguro do Stripe, acessível pelo botão "Gerenciar assinatura". Quem já é cliente do ZeloPDV pega o Pacote Gestão + Atendimento por R$ 147/mês — uma cobrança só, R$ 9 mais barato.',
   },
   {
     date: '2026-04-27',

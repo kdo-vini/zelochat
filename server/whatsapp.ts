@@ -426,7 +426,7 @@ export async function fetchInstanceQR(instanceName: string): Promise<{ status: C
   for (const delay of delays) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
-      const res = await axios.get(`${BASE_URL}/evolution/instance/connect/${instanceName}`, {
+      const res = await axios.get(`${BASE_URL}/v2/instance/connect/${instanceName}`, {
         headers: apiHeaders(),
         timeout: 15_000,
       });
@@ -551,11 +551,13 @@ export async function fetchQR(): Promise<void> {
     // continue to QR generation
   }
 
-  // 2. Try to get QR code — MongoDB _id first (name-based endpoint returns 500)
+  // 2. Try to get QR code via v2 endpoint. Whatsmiau migrou silenciosamente:
+  // /evolution/instance/connect/* agora retorna 500 "invalid instance id".
+  // /v2/instance/connect/{name} aceita tanto instanceName quanto id composto.
   const ids = [instanceInternalId, INSTANCE_NAME].filter(Boolean);
   for (const id of ids) {
     try {
-      const res = await axios.get(`${BASE_URL}/evolution/instance/connect/${id}`, {
+      const res = await axios.get(`${BASE_URL}/v2/instance/connect/${id}`, {
         headers: apiHeaders(),
       });
       console.log('[WhatsApp] Connect response keys:', Object.keys(res.data ?? {}));
