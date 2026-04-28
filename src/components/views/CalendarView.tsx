@@ -28,6 +28,7 @@ import {
 import { ptBR } from 'date-fns/locale';
 import type { Order, ZeloState } from '../../types';
 import { STATUS_COLORS, STATUS_LABELS } from '../../constants';
+import { usePrinter } from '../../hooks/usePrinter';
 
 type CalendarMode = 'day' | 'week' | 'month';
 
@@ -85,6 +86,7 @@ export const CalendarView = ({
   const [newBlockReason, setNewBlockReason] = useState('');
   const [blockError, setBlockError] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const printer = usePrinter();
 
   const ordersMap = useMemo(() => ordersByDate(state.orders), [state.orders]);
   const blockedMap = useMemo(() => {
@@ -133,7 +135,7 @@ export const CalendarView = ({
     const m = parseInt(newBlockMonth, 10);
     const y = parseInt(newBlockYear, 10);
     if (!newBlockDay || !newBlockMonth || !newBlockYear || isNaN(d) || isNaN(m) || isNaN(y)
-        || d < 1 || d > 31 || m < 1 || m > 12 || y < 2020) {
+      || d < 1 || d > 31 || m < 1 || m > 12 || y < 2020) {
       setBlockError('Data inválida.'); return;
     }
     const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -159,7 +161,7 @@ export const CalendarView = ({
     }));
   };
 
-  const handlePrintDay = () => {
+  const handlePrintDay = async () => {
     const key = dateKey(anchor);
     const orders = ordersMap.get(key) ?? [];
     if (orders.length === 0) {
@@ -167,86 +169,23 @@ export const CalendarView = ({
       return;
     }
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    const formattedDate = format(anchor, "dd/MM/yyyy", { locale: ptBR });
-    const sortedOrders = [...orders].sort((a, b) => a.pickupTime.localeCompare(b.pickupTime));
-
-    let html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Pedidos do Dia - ${formattedDate}</title>
-          <style>
-            @page { margin: 0; }
-            body { 
-              font-family: monospace; 
-              font-size: 14px; 
-              margin: 0; 
-              padding: 10px;
-              color: #000;
-              width: 80mm; /* Printer width */
-              line-height: 1.2;
-            }
-            .header { text-align: center; margin-bottom: 15px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
-            .header h2 { margin: 0 0 5px 0; font-size: 18px; }
-            .header p { margin: 0; }
-            .order { border-bottom: 1px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
-            .time { font-weight: bold; font-size: 16px; margin-bottom: 5px; }
-            .customer { font-size: 14px; margin-bottom: 5px; }
-            .status { font-size: 12px; font-weight: bold; margin-bottom: 5px; }
-            .items-title { font-weight: bold; margin-bottom: 3px; }
-            .item { font-size: 14px; margin-left: 10px; }
-            .delivery { font-size: 12px; margin-top: 5px; }
-            .total { font-weight: bold; margin-top: 5px; text-align: right; font-size: 15px; }
-            * { box-sizing: border-box; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h2>PEDIDOS DO DIA</h2>
-            <p>${formattedDate}</p>
-            <p>Total de pedidos: ${sortedOrders.length}</p>
-          </div>
-    `;
-
-    sortedOrders.forEach(o => {
-      html += `
-        <div class="order">
-          <div class="time">⏰ ${o.pickupTime}</div>
-          <div class="customer">👤 ${o.customerName} ${o.customerPhone ? '<br>📞 ' + o.customerPhone : ''}</div>
-          <div class="status">Status: ${STATUS_LABELS[o.status] || o.status}</div>
-          <div class="items-title">Itens:</div>
-      `;
-      o.items.forEach(i => {
-        html += `<div class="item">${i.quantity}x ${i.product}</div>`;
-      });
-      if (o.deliveryAddress) {
-        html += `<div class="delivery">📍 Entrega: ${o.deliveryAddress}</div>`;
+    if (!printer.connected) {
+      const confirmConnect = window.confirm('Impressora não conectada. Deseja conectar agora?');
+      if (confirmConnect) {
+        await printer.connect();
       }
-      html += `
-          <div class="total">Total: ${currency(o.total)}</div>
-        </div>
-      `;
-    });
+      return;
+    }
 
-    html += `
-          <div style="text-align: center; margin-top: 20px;">
-            <p>Fim do relatório</p>
-          </div>
-          <script>
-            window.onload = () => {
-              window.print();
-              setTimeout(() => window.close(), 500);
-            };
-          </script>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.write(html);
-    printWindow.document.close();
+    const dateLabel = format(anchor, "dd/MM/yyyy", { locale: ptBR });
+    const businessName = state.businessInfo?.name || 'ZeloChat';
+    
+    try {
+      await printer.printDay(dateLabel, orders, businessName);
+    } catch (err) {
+      console.error('Print error:', err);
+      alert('Erro ao imprimir na impressora USB. Verifique a conexão.');
+    }
   };
 
   return (
@@ -265,11 +204,10 @@ export const CalendarView = ({
               <button
                 key={m}
                 onClick={() => switchMode(m)}
-                className={`px-3 h-8 rounded-md text-[12.5px] font-semibold transition-colors ${
-                  mode === m
+                className={`px-3 h-8 rounded-md text-[12.5px] font-semibold transition-colors ${mode === m
                     ? 'bg-[var(--color-ink)] text-white'
                     : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
-                }`}
+                  }`}
               >
                 {MODE_LABELS[m]}
               </button>
@@ -278,11 +216,10 @@ export const CalendarView = ({
 
           <button
             onClick={() => setShowBlockPanel(p => !p)}
-            className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[13px] font-medium transition-colors ${
-              showBlockPanel
+            className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[13px] font-medium transition-colors ${showBlockPanel
                 ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
                 : 'border-[var(--color-line)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-muted)]'
-            }`}
+              }`}
           >
             <CalendarIcon className="h-4 w-4" />
             Datas bloqueadas
@@ -321,15 +258,19 @@ export const CalendarView = ({
           <span className="ml-2 text-[14px] font-semibold text-[var(--color-ink)]">{rangeLabel}</span>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {mode === 'day' && (
             <button
               onClick={handlePrintDay}
-              className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[12.5px] font-semibold text-[var(--color-ink)] transition-colors hover:bg-[var(--color-surface-muted)]"
-              aria-label="Imprimir dia"
+              disabled={printer.printing}
+              className={`flex h-8 items-center gap-1.5 rounded-md border px-3 text-[12.5px] font-semibold transition-colors ${
+                printer.connected
+                  ? 'border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]'
+                  : 'border-[var(--color-alert)]/30 bg-[var(--color-alert)]/5 text-[var(--color-alert)] hover:bg-[var(--color-alert)]/10'
+              } ${printer.printing ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Printer className="h-3.5 w-3.5" />
-              Imprimir Dia
+              {printer.printing ? 'Imprimindo...' : printer.connected ? 'Imprimir Dia' : 'Conectar e Imprimir'}
             </button>
           )}
           <span className="text-[12px] text-[var(--color-ink-faint)]">
@@ -667,17 +608,15 @@ const WeekView: React.FC<WeekViewProps> = ({ anchor, todayStr, ordersMap, blocke
           >
             <button
               onClick={() => onSelectDay(d)}
-              className={`flex items-center justify-between px-3 py-2 border-b border-[var(--color-line)] text-left hover:bg-[var(--color-surface-muted)] transition-colors ${
-                todayFlag ? 'bg-[var(--color-brand-soft)]' : ''
-              }`}
+              className={`flex items-center justify-between px-3 py-2 border-b border-[var(--color-line)] text-left hover:bg-[var(--color-surface-muted)] transition-colors ${todayFlag ? 'bg-[var(--color-brand-soft)]' : ''
+                }`}
             >
               <div>
                 <p className="text-[10.5px] uppercase tracking-wider text-[var(--color-ink-faint)] font-semibold">
                   {dayLabel}
                 </p>
-                <p className={`text-[15px] font-bold tabular-nums ${
-                  todayFlag ? 'text-[var(--color-brand-deep)]' : 'text-[var(--color-ink)]'
-                }`}>
+                <p className={`text-[15px] font-bold tabular-nums ${todayFlag ? 'text-[var(--color-brand-deep)]' : 'text-[var(--color-ink)]'
+                  }`}>
                   {format(d, 'dd')}
                 </p>
               </div>
@@ -760,16 +699,14 @@ const MonthView: React.FC<MonthViewProps> = ({ anchor, todayStr, ordersMap, bloc
             <button
               key={key}
               onClick={() => onSelectDay(d)}
-              className={`min-h-[110px] border-b border-r border-[var(--color-line)] p-2 text-left transition-colors ${
-                inMonth ? 'bg-[var(--color-surface)]' : 'bg-[var(--color-surface-muted)]/40'
-              } hover:bg-[var(--color-surface-muted)]`}
+              className={`min-h-[110px] border-b border-r border-[var(--color-line)] p-2 text-left transition-colors ${inMonth ? 'bg-[var(--color-surface)]' : 'bg-[var(--color-surface-muted)]/40'
+                } hover:bg-[var(--color-surface-muted)]`}
             >
               <div className="flex items-center justify-between mb-1">
-                <span className={`inline-flex items-center justify-center rounded-full w-6 h-6 text-[11.5px] font-semibold tabular-nums ${
-                  todayFlag
+                <span className={`inline-flex items-center justify-center rounded-full w-6 h-6 text-[11.5px] font-semibold tabular-nums ${todayFlag
                     ? 'bg-[var(--color-brand)] text-white'
                     : inMonth ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink-faint)]'
-                }`}>
+                  }`}>
                   {format(d, 'd')}
                 </span>
                 {orders.length > 0 && (

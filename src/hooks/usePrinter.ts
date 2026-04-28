@@ -4,6 +4,7 @@ import {
   getStoredPrinter,
   isPrinterSupported,
   printOrder,
+  printDayReport,
 } from '../services/printerService';
 import type { Order } from '../types';
 
@@ -17,6 +18,7 @@ export interface UsePrinterReturn {
   connect: () => Promise<void>;
   disconnect: () => void;
   print: (order: Order, businessName?: string) => Promise<void>;
+  printDay: (dateLabel: string, orders: Order[], businessName?: string) => Promise<void>;
 }
 
 export function usePrinter(): UsePrinterReturn {
@@ -77,6 +79,21 @@ export function usePrinter(): UsePrinterReturn {
     }
   }, []);
 
+  const printDay = useCallback(async (dateLabel: string, orders: Order[], businessName?: string) => {
+    const d = deviceRef.current;
+    if (!d) { setError('Impressora não conectada.'); return; }
+    setPrinting(true);
+    setError(null);
+    try {
+      await printDayReport(d, dateLabel, orders, businessName);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao imprimir relatório.';
+      setError(msg);
+    } finally {
+      setPrinting(false);
+    }
+  }, []);
+
   const deviceName = device
     ? (device.productName || device.manufacturerName || 'Impressora')
     : null;
@@ -91,5 +108,6 @@ export function usePrinter(): UsePrinterReturn {
     connect,
     disconnect,
     print,
+    printDay,
   };
 }

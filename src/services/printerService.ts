@@ -111,3 +111,55 @@ export async function printOrder(
     await device.close();
   }
 }
+
+export async function printDayReport(
+  device: USBDevice,
+  dateLabel: string,
+  orders: Order[],
+  businessName = 'ZeloChat',
+): Promise<void> {
+  const { ep, iface } = await claimDevice(device);
+
+  try {
+    const b = new EscPosBuilder()
+      .init()
+      .center().bold(true).double(true)
+      .line(businessName.slice(0, 16).toUpperCase())
+      .double(false).bold(false)
+      .sep('=')
+      .line('PEDIDOS DO DIA')
+      .line(dateLabel)
+      .line(`Total de pedidos: ${orders.length}`)
+      .sep()
+      .left();
+
+    let totalGeral = 0;
+
+    for (const order of orders) {
+      const shortId = order.id.slice(-8).toUpperCase();
+      b.bold(true).line(`[${order.pickupTime}] ${order.customerName.slice(0, 20)}`).bold(false)
+       .line(`Ped #${shortId} | ${order.status}`);
+      
+      for (const item of order.items) {
+        b.line(`  ${item.quantity}x ${item.product.slice(0, 26)}`);
+      }
+      
+      if (order.deliveryAddress) {
+        b.line(`  📍 Entrega`);
+      }
+      
+      b.row('  Total:', fmtMoney(order.total))
+       .sep('-');
+       
+      totalGeral += order.total;
+    }
+
+    b.bold(true).row('TOTAL GERAL:', fmtMoney(totalGeral)).bold(false)
+     .feed(4).cut();
+
+    await device.transferOut(ep, b.build());
+  } finally {
+    await device.releaseInterface(iface);
+    await device.close();
+  }
+}
