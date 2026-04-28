@@ -24,6 +24,10 @@ import {
   sendPollMessage,
   revokeMessage,
   syncStatusFromUpstream,
+  fetchInstanceConnectionState,
+  fetchInstanceQR,
+  logoutInstance,
+  setWebhookForInstance,
 } from './whatsapp.js';
 import {
   getAllSessions,
@@ -57,7 +61,7 @@ import {
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireActiveZelochatSubscription, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
-import { getEmpresaForInstance } from './instanceManager.js';
+import { getEmpresaForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe } from './billing.js';
 import type { ChatAttachment } from '../src/types.js';
 
@@ -434,83 +438,122 @@ router.post('/api/billing/portal', createPortalSession);
 router.post('/api/billing/sync', syncFromStripe);
 
 /**
- * GET /api/status — Returns the current WhatsApp connection status.
- * Pass `?verify=1` to re-query Whatsmiau for ground truth before responding;
- * the frontend uses this after disconnect/connect actions so the UI never
- * sits on a stale in-memory cache.
+ * GET /api/status — Returns this empresa's WhatsApp connection status.
+ *
+ * Multi-tenant: requires auth and queries Whatsmiau for THIS empresa's
+ * instance only. Never returns another tenant's state — the empresa with
+ * NULL whatsmiau_instance simply gets 'disconnected' (we don't auto-create
+ * the instance here; that happens lazily on /api/qr).
+ *
+ * `?verify=1` is preserved for backwards compatibility but is now a no-op
+ * since every read is already a fresh upstream query.
  */
 router.get('/api/status', async (req: Request, res: Response) => {
-  if (req.query.verify === '1') {
-    const status = await syncStatusFromUpstream();
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const supabase = getServiceSupabase();
+    const { data } = await supabase
+      .from('empresa_perfil')
+      .select('whatsmiau_instance')
+      .eq('id', empresaId)
+      .maybeSingle();
+    const instance = (data as { whatsmiau_instance?: string | null } | null)?.whatsmiau_instance;
+    if (!instance) {
+      res.json({ status: 'disconnected' });
+      return;
+    }
+    const status = await fetchInstanceConnectionState(instance);
     res.json({ status });
-    return;
+  } catch (err) {
+    if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, err);
+      return;
+    }
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
-  res.json({ status: getStatus() });
 });
 
 /**
- * GET /api/qr — Returns the QR code as a base64 data URI.
- * Requires an active ZeloChat subscription — only paying users can pair a device.
+ * GET /api/qr — Returns this empresa's QR code as a base64 data URI.
+ *
+ * Multi-tenant: requires active subscription. Resolves THIS empresa's
+ * Whatsmiau instance (creating it on first use if NULL), then queries that
+ * instance for its current QR. Never reads or returns another tenant's QR.
  */
 router.get('/api/qr', async (req: Request, res: Response) => {
   try {
     await requireActiveZelochatSubscription(req);
+    const empresaId = await requireEmpresaId(req);
+    const instance = await getOrCreateOwnInstanceForEmpresa(empresaId);
+    // First-time creation: register the per-instance webhook so Whatsmiau
+    // delivers events to /webhook/${instance}. Idempotent — safe to call again.
+    await setWebhookForInstance(instance);
+    const result = await fetchInstanceQR(instance);
+    res.json({ qr: result.qr, status: result.status });
   } catch (err) {
-    sendAuthError(res, err);
-    return;
-  }
-  const qr = getQR();
-  if (qr) {
-    res.json({ qr });
-  } else {
-    const status = getStatus();
-    res.json({ qr: null, status });
+    if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE' || err.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, err);
+      return;
+    }
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
 });
 
 /**
- * POST /api/whatsapp/disconnect — Logs out from WhatsApp. Requires auth.
+ * POST /api/whatsapp/disconnect — Logs THIS empresa's WhatsApp out only.
  *
- * Awaits the upstream Whatsmiau logout so the device is actually revoked
- * before we respond. Safe to call multiple times (idempotent).
+ * Multi-tenant: scoped to the caller's empresa instance. Calling this never
+ * touches another tenant's session.
  */
 router.post('/api/whatsapp/disconnect', async (req: Request, res: Response) => {
   try {
-    await requireEmpresaId(req);
-    await disconnectWhatsApp();
-    res.json({ ok: true, status: getStatus() });
+    const empresaId = await requireEmpresaId(req);
+    const supabase = getServiceSupabase();
+    const { data } = await supabase
+      .from('empresa_perfil')
+      .select('whatsmiau_instance')
+      .eq('id', empresaId)
+      .maybeSingle();
+    const instance = (data as { whatsmiau_instance?: string | null } | null)?.whatsmiau_instance;
+    if (!instance) {
+      // No instance assigned — already "disconnected" from this empresa's POV.
+      res.json({ ok: true, status: 'disconnected' });
+      return;
+    }
+    await logoutInstance(instance);
+    await setConnectionState(empresaId, false);
+    res.json({ ok: true, status: 'disconnected' });
   } catch (err) {
     if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, err);
       return;
     }
     const msg = err instanceof Error ? err.message : 'Erro ao desconectar.';
-    res.status(500).json({ error: msg, status: getStatus() });
+    res.status(500).json({ error: msg });
   }
 });
 
 /**
- * POST /api/qr/refresh — Requests a fresh QR code from Whatsmiau.
+ * POST /api/qr/refresh — Forces a fresh QR pull for THIS empresa's instance.
  *
- * Also re-arms the connection logic: if the user previously clicked
- * "Desconectar" we need to clear the manually-disconnected flag before
- * fetchQR() will actually do anything.
+ * Multi-tenant: same scoping as /api/qr. The legacy global manuallyDisconnected
+ * flag is irrelevant here because each empresa has its own instance with its
+ * own connection lifecycle on Whatsmiau's side.
  */
 router.post('/api/qr/refresh', async (req: Request, res: Response) => {
   try {
     await requireActiveZelochatSubscription(req);
-    await reconnectWhatsApp();
-    await fetchQR();
-    const qr = getQR();
-    const status = getStatus();
-    res.json({ qr, status });
+    const empresaId = await requireEmpresaId(req);
+    const instance = await getOrCreateOwnInstanceForEmpresa(empresaId);
+    await setWebhookForInstance(instance);
+    const result = await fetchInstanceQR(instance);
+    res.json({ qr: result.qr, status: result.status });
   } catch (err) {
-    if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE')) {
+    if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE' || err.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, err);
       return;
     }
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    res.status(500).json({ error: msg, status: getStatus() });
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
 });
 

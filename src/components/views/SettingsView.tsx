@@ -283,13 +283,18 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
       wsRef.current = ws;
       ws.onopen = () => {
         setError(null);
-        apiFetch(`${API_BASE}/api/status`).then(r => r.json()).then(d => {
+        const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+        apiFetch(`${API_BASE}/api/status`, { headers: authHeaders }).then(r => r.json()).then(d => {
           setWaStatus(d.status);
           if (d.status === 'qr') startPolling();
         }).catch(() => setError('Servidor WhatsApp offline'));
-        apiFetch(`${API_BASE}/api/qr`, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        }).then(r => r.json()).then(d => { if (d.qr) setQrCode(d.qr); }).catch(() => {});
+        apiFetch(`${API_BASE}/api/qr`, { headers: authHeaders })
+          .then(r => r.json())
+          .then(d => {
+            if (d.qr) setQrCode(d.qr);
+            if (d.status) setWaStatus(d.status);
+          })
+          .catch(() => {});
       };
       ws.onmessage = (ev) => {
         try {
@@ -302,7 +307,9 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
               setError(null);
               stopPolling();
               // Confirm with Whatsmiau so we don't trust a racy in-memory flag.
-              apiFetch(`${API_BASE}/api/status?verify=1`)
+              apiFetch(`${API_BASE}/api/status`, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+              })
                 .then(r => r.json())
                 .then(d => { if (d.status) setWaStatus(d.status); })
                 .catch(() => {});
@@ -376,7 +383,9 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
         setWaStatus('disconnected');
         setQrCode(null);
         try {
-          const verify = await apiFetch(`${API_BASE}/api/status?verify=1`);
+          const verify = await apiFetch(`${API_BASE}/api/status`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          });
           const v = await verify.json();
           if (v.status && v.status !== 'disconnected') {
             setWaStatus(v.status);

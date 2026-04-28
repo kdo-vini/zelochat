@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import { broadcast } from './ws.js';
 import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
+import { getBoundEmpresaId } from './supabase.js';
 import { sendDisconnectAlert, sendReconnectConfirmation } from './email.js';
 
 const BASE_URL = (process.env.WHATSMIAU_BASE_URL || 'https://api.whatsmiau.dev').replace(/\/$/, '');
@@ -381,6 +382,128 @@ export async function fetchProfilePicture(
   }
 }
 
+/**
+ * Per-instance status fetch — bypasses ALL module globals. Queries Whatsmiau
+ * directly so each empresa's status is true to its own instance, not the
+ * legacy bound singleton's. Used by `/api/status` and `/api/qr` after P1-01.
+ */
+export async function fetchInstanceConnectionState(instanceName: string): Promise<ConnectionStatus> {
+  if (!instanceName) return 'disconnected';
+  try {
+    const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, {
+      headers: apiHeaders(),
+      timeout: 10_000,
+    });
+    const list: any[] = Array.isArray(instances) ? instances : (instances?.data ?? []);
+    const match = list.find((i) => (i.whatsmiau_instance_id ?? i.name ?? '') === instanceName);
+    const status: string = match?.status ?? '';
+    if (status === 'CONNECTED' || status === 'open') return 'connected';
+    if (status === 'connecting') return 'connecting';
+    return 'disconnected';
+  } catch (err) {
+    console.warn(`[WhatsApp] fetchInstanceConnectionState(${instanceName}) failed:`, err instanceof Error ? err.message : err);
+    return 'disconnected';
+  }
+}
+
+/**
+ * Per-instance QR fetch. Returns either { status: 'connected' } when the
+ * instance is already paired, or { status: 'qr', qr } with a fresh data URI.
+ *
+ * Multi-tenant safe — never reads or mutates the module-level currentQR /
+ * connectionStatus globals (which only track the bound singleton).
+ */
+export async function fetchInstanceQR(instanceName: string): Promise<{ status: ConnectionStatus; qr: string | null }> {
+  if (!instanceName) return { status: 'disconnected', qr: null };
+
+  const upstream = await fetchInstanceConnectionState(instanceName);
+  if (upstream === 'connected') return { status: 'connected', qr: null };
+
+  // Whatsmiau supports the connect endpoint by both internal id and instance
+  // name. We only have the name here — that's the canonical lookup key now.
+  try {
+    const res = await axios.get(`${BASE_URL}/evolution/instance/connect/${instanceName}`, {
+      headers: apiHeaders(),
+      timeout: 15_000,
+    });
+    if (res.data?.connected === true) {
+      return { status: 'connected', qr: null };
+    }
+    const raw: string = res.data?.base64 ?? res.data?.qrcode?.base64 ?? res.data?.code ?? '';
+    if (raw) {
+      const qr = raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`;
+      return { status: 'qr', qr };
+    }
+  } catch (err) {
+    console.error(`[WhatsApp] fetchInstanceQR(${instanceName}) error:`, err instanceof Error ? err.message : err);
+  }
+
+  return { status: 'disconnected', qr: null };
+}
+
+/**
+ * Per-instance logout. Calls Whatsmiau's logout endpoint scoped to a single
+ * instance — does NOT touch any module-level state. Safe to call repeatedly.
+ */
+export async function logoutInstance(instanceName: string): Promise<void> {
+  if (!instanceName) throw new Error('logoutInstance: instance name required');
+  const url = `${BASE_URL}/v2/instance/logout/${instanceName}`;
+  try {
+    await axios.delete(url, { headers: apiHeaders(), timeout: 15_000 });
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404 || status === 400) return; // already logged out
+    throw err;
+  }
+}
+
+/**
+ * Per-instance webhook registration. Used when a brand-new empresa instance
+ * is created so Whatsmiau knows where to deliver inbound events for that
+ * specific tenant.
+ */
+export async function setWebhookForInstance(instanceName: string): Promise<void> {
+  if (isWebhookRegisterDisabled()) return;
+  if (!instanceName) return;
+  const publicUrl = getPublicWebhookUrl();
+  const webhookUrl = `${publicUrl}/webhook/${instanceName}`;
+  try {
+    await axios.post(
+      `${BASE_URL}/webhook/set/${instanceName}`,
+      {
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          webhookByEvents: false,
+          base64: true,
+          events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
+        },
+      },
+      { headers: apiHeaders() },
+    );
+    try {
+      await axios.put(
+        `${BASE_URL}/v2/instance/update/${instanceName}`,
+        {
+          webhook: {
+            enabled: true,
+            url: webhookUrl,
+            base64: true,
+            events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
+          },
+        },
+        { headers: { ...apiHeaders(), 'Content-Type': 'application/json' } },
+      );
+    } catch {
+      // Non-fatal — the /webhook/set call above already enables it. The /v2/instance/update
+      // is a redundancy belt that's only needed for media base64 propagation.
+    }
+    console.log(`[WhatsApp] webhook registered for instance "${instanceName}" → ${webhookUrl}`);
+  } catch (err) {
+    console.error(`[WhatsApp] setWebhookForInstance(${instanceName}) failed:`, err instanceof Error ? err.message : err);
+  }
+}
+
 export async function fetchQR(): Promise<void> {
   // If user manually disconnected, do not silently re-pair. Caller must first
   // call reconnectWhatsApp() (wired to an explicit "Gerar QR Code" click).
@@ -407,7 +530,10 @@ export async function fetchQR(): Promise<void> {
     if (status === 'CONNECTED' || status === 'open') {
       connectionStatus = 'connected';
       currentQR = null;
-      broadcast({ type: 'connection', data: 'connected' });
+      // Scope the broadcast to the bound (legacy) empresa — without this, every
+      // connected WS client (including tenants with their own instances) would
+      // see Donutopia's connection events.
+      broadcast({ type: 'connection', data: 'connected' }, getBoundEmpresaId() ?? undefined);
       console.log('[WhatsApp] fetchQR: already connected — no QR needed.');
       return;
     }
@@ -429,7 +555,7 @@ export async function fetchQR(): Promise<void> {
       if (res.data?.connected === true) {
         connectionStatus = 'connected';
         currentQR = null;
-        broadcast({ type: 'connection', data: 'connected' });
+        broadcast({ type: 'connection', data: 'connected' }, getBoundEmpresaId() ?? undefined);
         console.log('[WhatsApp] fetchQR: already connected (connect endpoint confirmed).');
         return;
       }
@@ -438,7 +564,7 @@ export async function fetchQR(): Promise<void> {
       if (raw) {
         currentQR = raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`;
         connectionStatus = 'qr';
-        broadcast({ type: 'qr', data: currentQR });
+        broadcast({ type: 'qr', data: currentQR }, getBoundEmpresaId() ?? undefined);
         console.log('[WhatsApp] QR code ready — scan with your phone');
         return;
       }
@@ -481,7 +607,7 @@ export async function startWhatsApp(): Promise<void> {
       const instanceStatus: string = resolvedInstance.status ?? '';
       if (instanceStatus === 'CONNECTED' || instanceStatus === 'open') {
         connectionStatus = 'connected';
-        broadcast({ type: 'connection', data: 'connected' });
+        broadcast({ type: 'connection', data: 'connected' }, getBoundEmpresaId() ?? undefined);
         console.log('[WhatsApp] Already connected!');
       }
     } else {
@@ -556,7 +682,7 @@ export async function disconnectWhatsApp(): Promise<void> {
   currentQR = null;
   ownJid = '';
 
-  broadcast({ type: 'connection', data: 'disconnected' });
+  broadcast({ type: 'connection', data: 'disconnected' }, getBoundEmpresaId() ?? undefined);
   console.log('[WhatsApp] Disconnected by user.');
 }
 
@@ -585,7 +711,7 @@ export async function syncStatusFromUpstream(): Promise<ConnectionStatus> {
     if (resolved !== connectionStatus) {
       connectionStatus = resolved;
       if (resolved === 'disconnected') currentQR = null;
-      broadcast({ type: 'connection', data: resolved });
+      broadcast({ type: 'connection', data: resolved }, getBoundEmpresaId() ?? undefined);
       console.log(`[WhatsApp] Status synced from upstream → ${resolved}`);
     }
   } catch (err) {

@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
+    category: 'hotfix',
+    title: 'Cada conta agora tem seu próprio WhatsApp',
+    description: 'Corrigido um problema em que contas novas viam o WhatsApp de outra conta como se fosse delas. Agora cada negócio recebe sua instância dedicada na hora que clica em "Gerar QR Code", e o status, QR e desconexão são isolados por conta.',
+  },
+  {
+    date: '2026-04-28',
     category: 'big',
     title: 'Pagamento e cancelamento direto no ZeloChat',
     description: 'Você ativa o plano sem sair do app: clica em "Ativar ZeloChat Pro", paga no Stripe e volta com o WhatsApp liberado. Já é assinante? Tem botão para gerenciar cartão, baixar nota e cancelar quando quiser, tudo no portal seguro do Stripe.',

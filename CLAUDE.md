@@ -73,15 +73,17 @@ server/
 - **AI**: OpenAI (gpt-4o-mini) via server-side proxy
 - **Auth**: Supabase JWT — token passed as `Authorization: Bearer` to all `/api/*` calls
 
-## Multi-instância Whatsmiau (P0-02)
+## Multi-instância Whatsmiau (P0-02 + P1-01)
 
 Cada empresa tem sua própria instância Whatsmiau. Mapeamento em `empresa_perfil.whatsmiau_instance` (TEXT, UNIQUE quando não-NULL).
 
 - **Resolução de instância no SEND**: todas as funções de envio em `server/whatsapp.ts` (`sendTextMessage`, `sendButtonMessage`, `sendMediaMessage`, etc.) aceitam um `empresaId?: string | null` opcional. Internamente chamam `resolveInstance(empresaId)` que delega ao `instanceManager.getInstanceForEmpresa()`. Se `empresaId` não vier (ou empresa ainda não tem instância), cai no `WHATSMIAU_INSTANCE` do env (legacy single-tenant — mantém o beta atual rodando).
 - **Webhook por instância**: `POST /webhook/:instance` resolve `empresaId` via `instanceManager.getEmpresaForInstance(instance)`. Whatsmiau registra a URL `${PUBLIC_URL}/webhook/${instance}` para cada empresa nova. A rota legacy `POST /webhook` (apikey-header auth) continua funcionando pra empresas antigas.
-- **`instanceManager.ts`** expõe: `getInstanceForEmpresa`, `getEmpresaForInstance`, `createInstance`, `deleteInstance`, `setConnectionState`. Cache em memória com TTL 60s.
-- **Connection lifecycle (status / QR / reconnect)** ainda é global em `whatsapp.ts` — track só da empresa "primary" (`getBoundEmpresaId()`). Multi-empresa lifecycle vem com P1-01 (signup self-service).
-- **Backfill**: a empresa Donutopia (única ativa no beta) recebeu `whatsmiau_instance = 'Comercial_d3c6ca80'` na migration. Outras empresas ficam NULL até conectarem.
+- **`instanceManager.ts`** expõe: `getInstanceForEmpresa`, `getOrCreateOwnInstanceForEmpresa`, `getEmpresaForInstance`, `createInstance`, `deleteInstance`, `setConnectionState`. Cache em memória com TTL 60s.
+- **Connection lifecycle (status/QR/disconnect) é per-empresa** desde P1-01. As rotas `/api/status`, `/api/qr`, `/api/qr/refresh` e `/api/whatsapp/disconnect` exigem JWT e usam `getOrCreateOwnInstanceForEmpresa()` — nunca caem no FALLBACK_INSTANCE de outra empresa. Helpers em `whatsapp.ts`: `fetchInstanceConnectionState`, `fetchInstanceQR`, `logoutInstance`, `setWebhookForInstance`.
+- **Auto-create on first QR**: se a empresa ainda não tem instância (`whatsmiau_instance = NULL`), o primeiro `/api/qr` cria uma chamada `zelo-{empresaId-first-8}`, persiste em `empresa_perfil` e registra o webhook `/webhook/{instance}` no Whatsmiau.
+- **Legacy global lifecycle** (`fetchQR`, `disconnectWhatsApp`, `syncStatusFromUpstream` em `whatsapp.ts`) ainda existe pra rodar o auto-reconnect e health check da empresa "primary" (Donutopia). Os broadcasts WS dessas funções são escopados via `getBoundEmpresaId()` pra não vazar pra outros tenants.
+- **Backfill**: a empresa Donutopia (única ativa no beta) recebeu `whatsmiau_instance = 'Comercial_d3c6ca80'` na migration. Outras empresas ficam NULL até clicarem em "Gerar QR Code" pela primeira vez.
 
 ## Database (Supabase)
 

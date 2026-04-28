@@ -124,11 +124,20 @@ export async function getEmpresaForInstance(instance: string): Promise<string | 
  */
 export async function createInstance(empresaId: string): Promise<string> {
   const instanceName = `zelo-${empresaId.slice(0, 8)}`;
-  await axios.post(
-    `${BASE_URL}/evolution/instance/create`,
-    { instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS' },
-    { headers: apiHeaders() },
-  );
+  try {
+    await axios.post(
+      `${BASE_URL}/evolution/instance/create`,
+      { instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS' },
+      { headers: apiHeaders() },
+    );
+  } catch (err: any) {
+    // 409 / "already exists" → instance was previously created (e.g. retry path);
+    // proceed to persist the name on empresa_perfil so subsequent calls reuse it.
+    const status = err?.response?.status;
+    const msg = (err?.response?.data?.message ?? err?.message ?? '') as string;
+    const alreadyExists = status === 409 || /already.*exists|exists.*already|conflict/i.test(msg);
+    if (!alreadyExists) throw err;
+  }
   const { error } = await getServiceSupabase()
     .from('empresa_perfil')
     .update({ whatsmiau_instance: instanceName, updated_at: new Date().toISOString() })
@@ -136,6 +145,42 @@ export async function createInstance(empresaId: string): Promise<string> {
   if (error) throw new Error(`Failed to persist whatsmiau_instance: ${error.message}`);
   invalidateCache();
   return instanceName;
+}
+
+/**
+ * Resolves the empresa's dedicated Whatsmiau instance, creating one on demand
+ * if it doesn't have one yet. Multi-tenant safe — NEVER falls back to another
+ * empresa's instance (in contrast with `getInstanceForEmpresa` which still
+ * returns FALLBACK_INSTANCE for legacy outbound paths). Use this from the
+ * public connect-WhatsApp endpoints (/api/qr, /api/qr/refresh, /api/status).
+ */
+export async function getOrCreateOwnInstanceForEmpresa(empresaId: string): Promise<string> {
+  if (!empresaId) throw new Error('empresaId required');
+  await ensureCache();
+  const cached = empresaToInstance.get(empresaId);
+  if (cached) return cached;
+
+  // Cache miss — try direct lookup before paying the create round-trip.
+  try {
+    const { data } = await getServiceSupabase()
+      .from('empresa_perfil')
+      .select('whatsmiau_instance')
+      .eq('id', empresaId)
+      .maybeSingle();
+    const inst = (data as { whatsmiau_instance?: string | null } | null)?.whatsmiau_instance;
+    if (inst) {
+      empresaToInstance.set(empresaId, inst);
+      instanceToEmpresa.set(inst, empresaId);
+      return inst;
+    }
+  } catch (err) {
+    console.error('[instanceManager] direct lookup failed:', err instanceof Error ? err.message : err);
+  }
+
+  // No instance assigned yet — create one. Webhook registration is a follow-up
+  // call from the route handler (kept out of this module to avoid a circular
+  // import with whatsapp.ts).
+  return createInstance(empresaId);
 }
 
 export async function deleteInstance(empresaId: string): Promise<void> {
