@@ -9,6 +9,7 @@ import {
   MapPin,
   Phone,
   Plus,
+  Printer,
   X,
 } from 'lucide-react';
 import {
@@ -158,6 +159,96 @@ export const CalendarView = ({
     }));
   };
 
+  const handlePrintDay = () => {
+    const key = dateKey(anchor);
+    const orders = ordersMap.get(key) ?? [];
+    if (orders.length === 0) {
+      alert('Nenhum pedido para este dia.');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const formattedDate = format(anchor, "dd/MM/yyyy", { locale: ptBR });
+    const sortedOrders = [...orders].sort((a, b) => a.pickupTime.localeCompare(b.pickupTime));
+
+    let html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Pedidos do Dia - ${formattedDate}</title>
+          <style>
+            @page { margin: 0; }
+            body { 
+              font-family: monospace; 
+              font-size: 14px; 
+              margin: 0; 
+              padding: 10px;
+              color: #000;
+              width: 80mm; /* Printer width */
+              line-height: 1.2;
+            }
+            .header { text-align: center; margin-bottom: 15px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
+            .header h2 { margin: 0 0 5px 0; font-size: 18px; }
+            .header p { margin: 0; }
+            .order { border-bottom: 1px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
+            .time { font-weight: bold; font-size: 16px; margin-bottom: 5px; }
+            .customer { font-size: 14px; margin-bottom: 5px; }
+            .status { font-size: 12px; font-weight: bold; margin-bottom: 5px; }
+            .items-title { font-weight: bold; margin-bottom: 3px; }
+            .item { font-size: 14px; margin-left: 10px; }
+            .delivery { font-size: 12px; margin-top: 5px; }
+            .total { font-weight: bold; margin-top: 5px; text-align: right; font-size: 15px; }
+            * { box-sizing: border-box; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2>PEDIDOS DO DIA</h2>
+            <p>${formattedDate}</p>
+            <p>Total de pedidos: ${sortedOrders.length}</p>
+          </div>
+    `;
+
+    sortedOrders.forEach(o => {
+      html += `
+        <div class="order">
+          <div class="time">⏰ ${o.pickupTime}</div>
+          <div class="customer">👤 ${o.customerName} ${o.customerPhone ? '<br>📞 ' + o.customerPhone : ''}</div>
+          <div class="status">Status: ${STATUS_LABELS[o.status] || o.status}</div>
+          <div class="items-title">Itens:</div>
+      `;
+      o.items.forEach(i => {
+        html += `<div class="item">${i.quantity}x ${i.product}</div>`;
+      });
+      if (o.deliveryAddress) {
+        html += `<div class="delivery">📍 Entrega: ${o.deliveryAddress}</div>`;
+      }
+      html += `
+          <div class="total">Total: ${currency(o.total)}</div>
+        </div>
+      `;
+    });
+
+    html += `
+          <div style="text-align: center; margin-top: 20px;">
+            <p>Fim do relatório</p>
+          </div>
+          <script>
+            window.onload = () => {
+              window.print();
+              setTimeout(() => window.close(), 500);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
@@ -230,9 +321,21 @@ export const CalendarView = ({
           <span className="ml-2 text-[14px] font-semibold text-[var(--color-ink)]">{rangeLabel}</span>
         </div>
 
-        <span className="text-[12px] text-[var(--color-ink-faint)]">
-          {state.orders.length} pedidos • {state.blockedDates.length} datas bloqueadas
-        </span>
+        <div className="flex items-center gap-4">
+          {mode === 'day' && (
+            <button
+              onClick={handlePrintDay}
+              className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[12.5px] font-semibold text-[var(--color-ink)] transition-colors hover:bg-[var(--color-surface-muted)]"
+              aria-label="Imprimir dia"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              Imprimir Dia
+            </button>
+          )}
+          <span className="text-[12px] text-[var(--color-ink-faint)]">
+            {state.orders.length} pedidos • {state.blockedDates.length} datas bloqueadas
+          </span>
+        </div>
       </div>
 
       {/* Body */}
