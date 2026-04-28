@@ -612,6 +612,11 @@ INFORMAÇÕES DA LANCHONETE:
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
 - Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}${closedDayWarning}
 
+REGRAS DE CÁLCULO PARA "CENTOS" (MUITO IMPORTANTE):
+- Produtos como "mini salgados" ou que tenham "Cento" no nome frequentemente têm o preço cadastrado por UNIDADE (ex: R$ 0.80 ou R$ 0.90).
+- Se o cliente pedir um "Cento" (100 unidades), "Meio Cento" (50 unidades) ou múltiplos, você DEVE calcular o total multiplicando a quantidade REAL de salgados pelo valor da unidade no cardápio. (Ex: 1 cento = 100 x R$ 0.90 = R$ 90,00).
+- Na tool criar_pedido, envie a quantidade TOTAL de unidades em "quantity" (ex: 100) e o valor total calculado corretamente em "total" (ex: 90.00). NUNCA cobre apenas R$ 0.90 por um cento inteiro.
+
 HISTÓRICO DESTE CLIENTE (uso interno — NÃO revelar ao cliente):
 ${customerHistory}
 IMPORTANTE: Use o histórico acima APENAS para personalizar o atendimento (ex: sugerir produtos já pedidos). NUNCA informe ao cliente quantos pedidos ele fez, valores anteriores ou qualquer dado do histórico. Essas informações são confidenciais.
