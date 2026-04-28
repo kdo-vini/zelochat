@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
+    category: 'hotfix',
+    title: 'Impressão automática de pedidos volta a funcionar',
+    description: 'Pedidos novos do WhatsApp voltam a sair na impressora térmica automaticamente, e o botão "Imprimir teste" agora mostra direitinho qualquer erro que aconteça (em vez de ficar mudo). Também convive sem briga com o Zelo PDV — se os dois apps tentarem imprimir ao mesmo tempo, um espera o outro liberar a impressora.',
+  },
+  {
+    date: '2026-04-28',
     category: 'big',
     title: 'ZeloChat Pro chegou: WhatsApp com IA por R$ 97/mês',
     description: 'Ative o plano direto no app — a IA atende seus clientes pelo WhatsApp 24/7. Pagamento, troca de cartão e cancelamento ficam no portal seguro do Stripe, acessível pelo botão "Gerenciar assinatura". Quem já é cliente do ZeloPDV pega o Pacote Gestão + Atendimento por R$ 147/mês — uma cobrança só, R$ 9 mais barato.',

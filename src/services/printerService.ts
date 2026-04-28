@@ -34,22 +34,58 @@ function fmtMoney(n: number): string {
   return `R$${n.toFixed(2).replace('.', ',')}`;
 }
 
-async function claimDevice(device: USBDevice): Promise<{ ep: number; iface: number }> {
-  await device.open();
-  if (device.configuration === null) await device.selectConfiguration(1);
+const BUSY_RX = /access denied|already.*claimed|busy|in use/i;
 
-  for (const iface of device.configuration!.interfaces) {
-    for (const alt of iface.alternates) {
-      const ep = alt.endpoints.find((e) => e.direction === 'out' && e.type === 'bulk');
-      if (ep) {
-        await device.claimInterface(iface.interfaceNumber);
-        return { ep: ep.endpointNumber, iface: iface.interfaceNumber };
+function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
+
+async function safeClose(device: USBDevice): Promise<void> {
+  try { if (device.opened) await device.close(); } catch { /* ignore */ }
+}
+
+/**
+ * Abre o device, seleciona configuração, detecta endpoint OUT bulk e claima.
+ * Tenta até 4× (1 inicial + 3 retries com 200/500/1000ms) se outro app estiver
+ * usando o device — convive com o Zelo PDV, que também faz "lease per job".
+ */
+async function claimDevice(device: USBDevice): Promise<{ ep: number; iface: number }> {
+  const delays = [200, 500, 1000];
+  let lastErr: unknown = null;
+
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      if (!device.opened) await device.open();
+      if (device.configuration === null) await device.selectConfiguration(1);
+
+      for (const iface of device.configuration!.interfaces) {
+        for (const alt of iface.alternates) {
+          const ep = alt.endpoints.find((e) => e.direction === 'out' && e.type === 'bulk');
+          if (ep) {
+            await device.claimInterface(iface.interfaceNumber);
+            return { ep: ep.endpointNumber, iface: iface.interfaceNumber };
+          }
+        }
       }
+
+      await safeClose(device);
+      throw new Error('Impressora não suportada — nenhum endpoint de saída encontrado.');
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isBusy = BUSY_RX.test(msg);
+      await safeClose(device);
+      if (!isBusy || attempt === delays.length) break;
+      await sleep(delays[attempt]);
     }
   }
 
-  await device.close();
-  throw new Error('Impressora não suportada — nenhum endpoint de saída encontrado.');
+  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  if (BUSY_RX.test(msg)) {
+    throw new Error(
+      'A impressora está sendo usada por outro app (provavelmente o Zelo PDV). ' +
+      'Aguarde alguns segundos — o sistema libera automaticamente após cada impressão.',
+    );
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(msg);
 }
 
 export function isPrinterSupported(): boolean {

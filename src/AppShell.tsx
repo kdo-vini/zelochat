@@ -203,7 +203,9 @@ export default function AppShell() {
     updateOrder: updateOrderInSupabase,
     deleteOrder: deleteOrderInSupabase,
   } = useOrders(session, (order) => {
-    void printer.print(order, state.businessInfo.name || 'ZeloChat');
+    printer.print(order, state.businessInfo.name || 'ZeloChat').catch((err) => {
+      console.error('[printer] auto-print falhou para pedido', order.id, err);
+    });
   });
   const {
     items: quickResponses,

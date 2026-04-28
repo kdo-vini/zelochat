@@ -66,14 +66,20 @@ export function usePrinter(): UsePrinterReturn {
 
   const print = useCallback(async (order: Order, businessName?: string) => {
     const d = deviceRef.current;
-    if (!d) { setError('Impressora não conectada.'); return; }
+    if (!d) {
+      const msg = 'Impressora não conectada.';
+      setError(msg);
+      throw new Error(msg);
+    }
     setPrinting(true);
     setError(null);
     try {
       await printOrder(d, order, businessName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro ao imprimir.';
+      console.error('[printer] print falhou:', err);
       setError(msg);
+      throw err;
     } finally {
       setPrinting(false);
     }
@@ -81,14 +87,20 @@ export function usePrinter(): UsePrinterReturn {
 
   const printDay = useCallback(async (dateLabel: string, orders: Order[], businessName?: string) => {
     const d = deviceRef.current;
-    if (!d) { setError('Impressora não conectada.'); return; }
+    if (!d) {
+      const msg = 'Impressora não conectada.';
+      setError(msg);
+      throw new Error(msg);
+    }
     setPrinting(true);
     setError(null);
     try {
       await printDayReport(d, dateLabel, orders, businessName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro ao imprimir relatório.';
+      console.error('[printer] printDay falhou:', err);
       setError(msg);
+      throw err;
     } finally {
       setPrinting(false);
     }

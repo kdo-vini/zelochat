@@ -67,9 +67,12 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
           <p className="text-[13.5px] font-medium leading-tight text-[var(--color-ink)] truncate">
             {printing ? 'Imprimindo…' : (deviceName ?? 'Impressora')}
           </p>
+          {error && !printing && (
+            <p className="text-[11px] text-red-400 mt-[-1px] line-clamp-2" title={error}>{error}</p>
+          )}
           {testOrder && !printing && (
             <button
-              onClick={() => printer.print(testOrder)}
+              onClick={() => { void printer.print(testOrder).catch(() => { /* erro já está em printer.error */ }); }}
               className="text-[11px] text-[var(--color-brand)] hover:underline mt-[-1px]"
             >
               Imprimir teste
