@@ -35,6 +35,7 @@ import { PrinterButton } from './components/PrinterButton';
 import { useCatalog } from './hooks/useCatalog';
 import { useEmpresaPerfil } from './hooks/useEmpresaPerfil';
 import { useQuickResponses } from './hooks/useQuickResponses';
+import { useSubscription } from './hooks/useSubscription';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
 import { useWhatsAppSessions } from './hooks/useWhatsAppSessions';
 import { useOpenEscalationCount } from './hooks/useEscalationEvents';
@@ -150,6 +151,7 @@ export default function AppShell() {
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { session, token, loading: authLoading } = useSupabaseSession();
+  const { isActive: subscriptionActive, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
   const { empresa, save: saveEmpresa } = useEmpresaPerfil(session);
   const {
     sessions,
@@ -215,6 +217,43 @@ export default function AppShell() {
   useEffect(() => {
     try { localStorage.setItem('zelochat_sidebar_expanded', String(sidebarExpanded)); } catch {}
   }, [sidebarExpanded]);
+
+  // Stripe Checkout return: when the browser comes back with ?billing=success
+  // we force a sync from Stripe (in case the webhook is still racing) and
+  // refresh the subscription state. ?billing=canceled just lands the user on
+  // the settings page so they can retry. We strip the query param so reloads
+  // don't re-trigger the side effect.
+  useEffect(() => {
+    if (!token) return;
+    const params = new URLSearchParams(window.location.search);
+    const billing = params.get('billing');
+    if (!billing) return;
+
+    if (billing === 'success' || billing === 'portal-return') {
+      void (async () => {
+        try {
+          await fetch(apiUrl('/api/billing/sync'), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: '{}',
+          });
+        } catch {
+          // Webhook will eventually catch up — sync is best-effort.
+        }
+        await refreshSubscription();
+      })();
+    }
+
+    setActiveView('settings');
+    params.delete('billing');
+    params.delete('session_id');
+    const next = params.toString();
+    const url = window.location.pathname + (next ? `?${next}` : '');
+    window.history.replaceState({}, '', url);
+  }, [token, refreshSubscription]);
 
   // Hydrate businessInfo + profile from the real empresa_perfil when user is authenticated
   useEffect(() => {
@@ -528,8 +567,18 @@ export default function AppShell() {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-canvas)]">
-      {/* ── WhatsApp disconnect banner ─────────────────────────── */}
-      {waConnected === false && (
+      {/* ── Subscription / WhatsApp banner ─────────────────────────── */}
+      {token && !subscriptionLoading && !subscriptionActive ? (
+        <div className="flex items-center justify-between gap-3 bg-[var(--color-brand-deep)] text-white px-4 py-2.5 text-[13px] font-medium flex-shrink-0 z-50">
+          <span>🔒 Ative seu plano para conectar o WhatsApp e começar a atender pela IA.</span>
+          <button
+            onClick={() => setActiveView('settings')}
+            className="underline underline-offset-2 hover:no-underline whitespace-nowrap flex-shrink-0"
+          >
+            Ver planos →
+          </button>
+        </div>
+      ) : waConnected === false && subscriptionActive && (
         <div className="flex items-center justify-between gap-3 bg-red-500 text-white px-4 py-2.5 text-[13px] font-medium flex-shrink-0 z-50">
           <span>⚠️ WhatsApp desconectado — sua IA não está respondendo clientes.</span>
           <button

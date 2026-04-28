@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2 } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Lock, Sparkles } from 'lucide-react';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
 import { maskBrazilianPhone } from '../../domain/chat';
 import { getAiEnabled, setAiEnabled as setAiEnabledApi } from '../../services/waApi';
+import { useSupabaseSession } from '../../hooks/useSupabaseSession';
+import { useSubscription, type ZeloChatSubscription } from '../../hooks/useSubscription';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -23,7 +25,220 @@ const SectionCard = ({ icon: Icon, title, children }: {
   </div>
 );
 
-export const WhatsAppIntegrationCard = ({ token }: { token: string | null }) => {
+async function startBillingFlow(
+  endpoint: 'checkout' | 'portal',
+  token: string | null,
+  body?: Record<string, unknown>,
+): Promise<{ url?: string; error?: string }> {
+  if (!token) return { error: 'Sessão expirada. Faça login novamente.' };
+  try {
+    const res = await apiFetch(`${API_BASE}/api/billing/${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(body ?? {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { error: data?.error ?? 'Não foi possível abrir o pagamento. Tente novamente.' };
+    }
+    if (!data?.url) return { error: 'Resposta do servidor sem URL de pagamento.' };
+    return { url: data.url };
+  } catch (err) {
+    if (err instanceof WaServerOfflineError) return { error: err.message };
+    return { error: 'Falha ao conectar no servidor. Tente novamente.' };
+  }
+}
+
+const SubscriptionPaywall = ({
+  subscription,
+  token,
+}: {
+  subscription: ZeloChatSubscription | null;
+  token: string | null;
+}) => {
+  const status = subscription?.status;
+  const [busy, setBusy] = useState<'checkout' | 'portal' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const needsPortal = status === 'past_due' || status === 'unpaid';
+
+  const headline = (() => {
+    if (!subscription) return 'Ative o ZeloChat para conectar o WhatsApp';
+    if (status === 'past_due' || status === 'unpaid') return 'Sua assinatura está com pagamento pendente';
+    if (status === 'canceled' || status === 'incomplete_expired') return 'Sua assinatura foi encerrada';
+    if (status === 'paused') return 'Sua assinatura está pausada';
+    if (status === 'incomplete') return 'Finalize a ativação da sua assinatura';
+    return 'Ative o ZeloChat para conectar o WhatsApp';
+  })();
+
+  const subline = (() => {
+    if (status === 'past_due' || status === 'unpaid') {
+      return 'Regularize o pagamento para reconectar o WhatsApp e voltar a atender clientes pela IA.';
+    }
+    if (status === 'canceled' || status === 'incomplete_expired' || status === 'paused') {
+      return 'Reative seu plano para conectar o WhatsApp e continuar usando a IA do ZeloChat.';
+    }
+    return 'Você pode configurar tudo agora — produtos, horários e a personalidade da IA. Para conectar o WhatsApp e começar a atender, ative o plano ZeloChat Pro.';
+  })();
+
+  const handleClick = async () => {
+    setError(null);
+    const target = needsPortal ? 'portal' : 'checkout';
+    setBusy(target);
+    const result = await startBillingFlow(
+      target,
+      token,
+      target === 'checkout' ? { planTier: 'chat' } : undefined,
+    );
+    setBusy(null);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    if (result.url) window.location.href = result.url;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-full bg-[var(--color-brand-soft)] flex items-center justify-center flex-shrink-0">
+          <Lock className="w-5 h-5 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
+        </div>
+        <div className="flex-1">
+          <p className="text-[14px] font-semibold leading-snug">{headline}</p>
+          <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-1 leading-relaxed">
+            {subline}
+          </p>
+        </div>
+      </div>
+
+      <ul className="space-y-2 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-3">
+        {[
+          'Atendimento ilimitado pelo WhatsApp com IA',
+          'Kanban de produção e gestão de motoboys',
+          'Cardápio sincronizado com o Zelo PDV',
+          'Sem fidelidade — cancele quando quiser',
+        ].map((item) => (
+          <li key={item} className="flex items-start gap-2 text-[12.5px] text-[var(--color-ink-soft)]">
+            <Check className="w-3.5 h-3.5 text-[var(--color-brand)] mt-0.5 flex-shrink-0" strokeWidth={2.5} />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+
+      {error && (
+        <div className="bg-[var(--color-alert-soft)] border border-[var(--color-alert)]/20 rounded-lg p-3">
+          <p className="text-[12.5px] text-[var(--color-alert)] font-medium">{error}</p>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy !== null}
+        className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-60 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+      >
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" strokeWidth={2} />}
+        {busy
+          ? 'Abrindo pagamento…'
+          : needsPortal
+            ? 'Regularizar pagamento'
+            : 'Ativar ZeloChat Pro'}
+      </button>
+
+      <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
+        R$ 97/mês · Sem fidelidade · Cancele a qualquer momento
+      </p>
+    </div>
+  );
+};
+
+const BillingManagementCard = ({
+  subscription,
+  token,
+}: {
+  subscription: ZeloChatSubscription | null;
+  token: string | null;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!subscription) return null;
+
+  const planLabel = subscription.plan_tier === 'bundle' ? 'ZeloChat + ZeloPDV' : 'ZeloChat Pro';
+  const periodEnd = subscription.manually_extended_until ?? subscription.current_period_end;
+  const periodEndFmt = periodEnd
+    ? new Date(periodEnd).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
+    : null;
+  const willCancel = !!subscription.cancel_at_period_end;
+
+  const handleOpenPortal = async () => {
+    setError(null);
+    setBusy(true);
+    const result = await startBillingFlow('portal', token);
+    setBusy(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    if (result.url) window.location.href = result.url;
+  };
+
+  return (
+    <SectionCard icon={Sparkles} title="Assinatura">
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[14px] font-semibold leading-snug">{planLabel}</p>
+            <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-0.5">
+              {willCancel
+                ? `Cancela em ${periodEndFmt ?? 'breve'} — você ainda pode reativar.`
+                : periodEndFmt
+                  ? `Próxima cobrança em ${periodEndFmt}.`
+                  : 'Plano ativo.'}
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2 py-1 rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" />
+            Ativo
+          </span>
+        </div>
+
+        {error && (
+          <div className="bg-[var(--color-alert-soft)] border border-[var(--color-alert)]/20 rounded-lg p-3">
+            <p className="text-[12.5px] text-[var(--color-alert)] font-medium">{error}</p>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleOpenPortal}
+          disabled={busy}
+          className="w-full flex items-center justify-center gap-2 bg-[var(--color-surface-muted)] hover:bg-[var(--color-line)] disabled:opacity-60 text-[var(--color-ink)] py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors border border-[var(--color-line)]"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCog className="w-4 h-4" strokeWidth={1.8} />}
+          {busy ? 'Abrindo portal…' : 'Gerenciar assinatura, cartão e cancelamento'}
+        </button>
+
+        <p className="text-[11px] text-[var(--color-ink-faint)] text-center">
+          Você é redirecionado para o portal seguro do Stripe.
+        </p>
+      </div>
+    </SectionCard>
+  );
+};
+
+interface WhatsAppIntegrationCardProps {
+  token: string | null;
+  subscriptionActive: boolean;
+  subscriptionLoading: boolean;
+  subscription: ZeloChatSubscription | null;
+}
+
+export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptionLoading, subscription }: WhatsAppIntegrationCardProps) => {
   const [waStatus, setWaStatus] = useState<'disconnected' | 'qr' | 'connecting' | 'connected'>('disconnected');
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,7 +254,10 @@ export const WhatsAppIntegrationCard = ({ token }: { token: string | null }) => 
     if (pollRef.current) return; // already polling
     pollRef.current = setInterval(async () => {
       try {
-        const res = await apiFetch(`${API_BASE}/api/qr/refresh`, { method: 'POST' });
+        const res = await apiFetch(`${API_BASE}/api/qr/refresh`, {
+          method: 'POST',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
         const data = await res.json();
         if (data.status === 'connected' || data.qr === null && !data.error) {
           setWaStatus('connected');
@@ -59,6 +277,7 @@ export const WhatsAppIntegrationCard = ({ token }: { token: string | null }) => 
   };
 
   useEffect(() => {
+    if (!subscriptionActive) return;
     function connect() {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
@@ -68,7 +287,9 @@ export const WhatsAppIntegrationCard = ({ token }: { token: string | null }) => 
           setWaStatus(d.status);
           if (d.status === 'qr') startPolling();
         }).catch(() => setError('Servidor WhatsApp offline'));
-        apiFetch(`${API_BASE}/api/qr`).then(r => r.json()).then(d => { if (d.qr) setQrCode(d.qr); }).catch(() => {});
+        apiFetch(`${API_BASE}/api/qr`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        }).then(r => r.json()).then(d => { if (d.qr) setQrCode(d.qr); }).catch(() => {});
       };
       ws.onmessage = (ev) => {
         try {
@@ -98,15 +319,20 @@ export const WhatsAppIntegrationCard = ({ token }: { token: string | null }) => 
       stopPolling();
       wsRef.current?.close();
     };
-  }, []);
+  }, [subscriptionActive]);
 
   const refreshQR = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`${API_BASE}/api/qr/refresh`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/qr/refresh`, {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      });
       const data = await res.json();
-      if (data.qr) {
+      if (res.status === 402 || data.code === 'SUBSCRIPTION_INACTIVE') {
+        setError(data.error ?? 'Ative seu plano ZeloChat para conectar o WhatsApp.');
+      } else if (data.qr) {
         setQrCode(data.qr);
         setWaStatus('qr');
         startPolling();
@@ -180,6 +406,14 @@ export const WhatsAppIntegrationCard = ({ token }: { token: string | null }) => 
   };
 
   const cfg = STATUS_CONFIG[waStatus];
+
+  if (!subscriptionLoading && !subscriptionActive) {
+    return (
+      <SectionCard icon={Smartphone} title="Integração WhatsApp">
+        <SubscriptionPaywall subscription={subscription} token={token} />
+      </SectionCard>
+    );
+  }
 
   return (
     <SectionCard icon={Smartphone} title="Integração WhatsApp">
@@ -636,6 +870,9 @@ function TimeInput({ label, value, onChange }: { label: string; value: string; o
 }
 
 export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenticated, token }: SettingsViewProps) => {
+  const { session } = useSupabaseSession();
+  const { subscription, isActive: subscriptionActive, loading: subscriptionLoading } = useSubscription(session);
+
   // Local draft for identity fields — synced from state but independently editable
   const [draft, setDraft] = useState({
     name:    state.businessInfo.name,
@@ -889,7 +1126,15 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
           </div>
 
           <div className="space-y-5">
-            <WhatsAppIntegrationCard token={token} />
+            {subscriptionActive && (
+              <BillingManagementCard subscription={subscription} token={token} />
+            )}
+            <WhatsAppIntegrationCard
+              token={token}
+              subscriptionActive={subscriptionActive}
+              subscriptionLoading={subscriptionLoading}
+              subscription={subscription}
+            />
 
             <AiGlobalToggleCard token={token} />
 

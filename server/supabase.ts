@@ -77,6 +77,48 @@ export async function requireEmpresaId(req: Request): Promise<string> {
   return resolveEmpresaIdFromToken(token);
 }
 
+/**
+ * Throws SUBSCRIPTION_INACTIVE if the authenticated user does not have an
+ * active ZeloChat subscription (plan_tier in 'chat'/'bundle', status 'active',
+ * not past the period end / manual extension).
+ *
+ * No free trial — 'trialing' is intentionally rejected.
+ */
+export async function requireActiveZelochatSubscription(req: Request): Promise<void> {
+  const token = extractBearerToken(req);
+  if (!token) {
+    throw new Error('UNAUTHORIZED');
+  }
+
+  const supabase = getServiceSupabase();
+  const { data: authData, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !authData.user) {
+    throw new Error('UNAUTHORIZED');
+  }
+
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('status, plan_tier, current_period_end, manually_extended_until')
+    .eq('user_id', authData.user.id)
+    .in('plan_tier', ['chat', 'bundle'])
+    .order('current_period_end', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data || data.status !== 'active') {
+    throw new Error('SUBSCRIPTION_INACTIVE');
+  }
+
+  const expiry = data.manually_extended_until ?? data.current_period_end;
+  if (!expiry || new Date(expiry).getTime() <= Date.now()) {
+    throw new Error('SUBSCRIPTION_INACTIVE');
+  }
+}
+
 const MEDIA_BUCKET = 'zelochat-media';
 const MEDIA_TTL_MS = 10 * 60 * 1000; // 10 minutes — enough for Whatsmiau to download
 

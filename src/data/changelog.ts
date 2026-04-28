@@ -14,6 +14,18 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-04-28',
+    category: 'big',
+    title: 'Pagamento e cancelamento direto no ZeloChat',
+    description: 'Você ativa o plano sem sair do app: clica em "Ativar ZeloChat Pro", paga no Stripe e volta com o WhatsApp liberado. Já é assinante? Tem botão para gerenciar cartão, baixar nota e cancelar quando quiser, tudo no portal seguro do Stripe.',
+  },
+  {
+    date: '2026-04-28',
+    category: 'big',
+    title: 'Plano ZeloChat Pro liberou a conexão com o WhatsApp',
+    description: 'Agora a conexão do WhatsApp depende de plano ativo. Você continua se cadastrando, fazendo o onboarding e configurando tudo livremente — só o pareamento do número exige assinatura. Sem teste grátis: ative o plano para começar a atender pela IA.',
+  },
+  {
     date: '2026-04-27',
     category: 'medium',
     title: 'Pedidos sincronizam em tempo real',

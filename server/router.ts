@@ -56,8 +56,9 @@ import {
   resolveSession,
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
-import { requireEmpresaId, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireEmpresaId, requireActiveZelochatSubscription, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { getEmpresaForInstance } from './instanceManager.js';
+import { createCheckoutSession, createPortalSession, syncFromStripe } from './billing.js';
 import type { ChatAttachment } from '../src/types.js';
 
 const router = Router();
@@ -360,6 +361,14 @@ function sendAuthError(res: Response, error: unknown): void {
     return;
   }
 
+  if (message === 'SUBSCRIPTION_INACTIVE') {
+    res.status(402).json({
+      error: 'Ative seu plano ZeloChat para conectar o WhatsApp.',
+      code: 'SUBSCRIPTION_INACTIVE',
+    });
+    return;
+  }
+
   res.status(500).json({ error: message });
 }
 
@@ -416,6 +425,15 @@ function sendTriggerError(res: Response, error: unknown): void {
 }
 
 /**
+ * Billing — Stripe checkout, customer portal, and post-checkout sync.
+ * Webhook processing is centralised in zeloPDV-Prod (`/api/billing/webhook`),
+ * which writes to the shared `subscriptions` table that ZeloChat reads from.
+ */
+router.post('/api/billing/checkout', createCheckoutSession);
+router.post('/api/billing/portal', createPortalSession);
+router.post('/api/billing/sync', syncFromStripe);
+
+/**
  * GET /api/status — Returns the current WhatsApp connection status.
  * Pass `?verify=1` to re-query Whatsmiau for ground truth before responding;
  * the frontend uses this after disconnect/connect actions so the UI never
@@ -432,8 +450,15 @@ router.get('/api/status', async (req: Request, res: Response) => {
 
 /**
  * GET /api/qr — Returns the QR code as a base64 data URI.
+ * Requires an active ZeloChat subscription — only paying users can pair a device.
  */
-router.get('/api/qr', (_req: Request, res: Response) => {
+router.get('/api/qr', async (req: Request, res: Response) => {
+  try {
+    await requireActiveZelochatSubscription(req);
+  } catch (err) {
+    sendAuthError(res, err);
+    return;
+  }
   const qr = getQR();
   if (qr) {
     res.json({ qr });
@@ -471,14 +496,19 @@ router.post('/api/whatsapp/disconnect', async (req: Request, res: Response) => {
  * "Desconectar" we need to clear the manually-disconnected flag before
  * fetchQR() will actually do anything.
  */
-router.post('/api/qr/refresh', async (_req: Request, res: Response) => {
+router.post('/api/qr/refresh', async (req: Request, res: Response) => {
   try {
+    await requireActiveZelochatSubscription(req);
     await reconnectWhatsApp();
     await fetchQR();
     const qr = getQR();
     const status = getStatus();
     res.json({ qr, status });
   } catch (err) {
+    if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE')) {
+      sendAuthError(res, err);
+      return;
+    }
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ error: msg, status: getStatus() });
   }
