@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
+    category: 'medium',
+    title: 'Escolha o tipo do trigger com 1 clique',
+    description: 'Ao criar um trigger personalizado, agora você decide na hora se é Notificar (gerente recebe um aviso e a IA continua) ou Escalar (a IA pausa e você assume) — basta clicar na pílula colorida ao lado do input. Antes a IA classificava sozinha pelo texto e às vezes errava o tipo.',
+  },
+  {
+    date: '2026-04-28',
     category: 'hotfix',
     title: 'Impressão automática de pedidos volta a funcionar',
     description: 'Pedidos novos do WhatsApp voltam a sair na impressora térmica automaticamente, e o botão "Imprimir teste" agora mostra direitinho qualquer erro que aconteça (em vez de ficar mudo). Também convive sem briga com o Zelo PDV — se os dois apps tentarem imprimir ao mesmo tempo, um espera o outro liberar a impressora.',

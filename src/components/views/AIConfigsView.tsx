@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield } from 'lucide-react';
+import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown } from 'lucide-react';
 import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
 import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
 import { useBuiltinTriggers } from '../../hooks/useBuiltinTriggers';
@@ -29,7 +29,7 @@ interface AIConfigsViewProps {
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
   triggers: Trigger[];
   triggersError: string | null;
-  createTrigger: (naturalInput: string) => Promise<Trigger>;
+  createTrigger: (naturalInput: string, kind: TriggerKind) => Promise<Trigger>;
   updateTrigger: (id: string, patch: { name?: string; conditionDescription?: string; active?: boolean; kind?: TriggerKind }) => Promise<Trigger>;
   deleteTrigger: (id: string) => Promise<void>;
   quickResponses: QuickResponse[];
@@ -60,6 +60,9 @@ export const AIConfigsView = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [managerChatInput, setManagerChatInput] = useState('');
   const [triggerInput, setTriggerInput] = useState('');
+  const [triggerKind, setTriggerKind] = useState<TriggerKind>('notify_manager');
+  const [kindMenuOpen, setKindMenuOpen] = useState(false);
+  const kindMenuRef = useRef<HTMLDivElement>(null);
   const [triggerBusy, setTriggerBusy] = useState(false);
   const [triggerLocalError, setTriggerLocalError] = useState<string | null>(null);
   const [promptDraft, setPromptDraft] = useState(state.aiInstructions || '');
@@ -77,13 +80,25 @@ export const AIConfigsView = ({
     if (!promptDirty) setPromptDraft(state.aiInstructions || '');
   }, [state.aiInstructions, promptDirty]);
 
+  useEffect(() => {
+    if (!kindMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (kindMenuRef.current && !kindMenuRef.current.contains(e.target as Node)) {
+        setKindMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [kindMenuOpen]);
+
   const handleCreateTrigger = async () => {
     if (!triggerInput.trim()) return;
     setTriggerBusy(true);
     setTriggerLocalError(null);
     try {
-      await createTrigger(triggerInput.trim());
+      await createTrigger(triggerInput.trim(), triggerKind);
       setTriggerInput('');
+      setTriggerKind('notify_manager');
     } catch (err) {
       setTriggerLocalError(err instanceof Error ? err.message : 'Erro ao criar gatilho.');
     } finally {
@@ -490,6 +505,39 @@ export const AIConfigsView = ({
                   <p className="text-[11px] text-[var(--color-alert)]">{triggerLocalError ?? triggersError}</p>
                 )}
                 <div className="flex gap-2">
+                  <div className="relative" ref={kindMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setKindMenuOpen(o => !o)}
+                      className={`h-10 px-2.5 rounded-lg flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide transition-colors ${
+                        triggerKind === 'escalate_human'
+                          ? 'bg-[var(--color-warn-soft)] text-[var(--color-warn)] hover:brightness-95'
+                          : 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)] hover:brightness-95'
+                      }`}
+                    >
+                      {triggerKind === 'escalate_human' ? <UserCog className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                      {triggerKind === 'escalate_human' ? 'Escalar' : 'Notificar'}
+                      <ChevronDown className="w-3 h-3 opacity-70" />
+                    </button>
+                    {kindMenuOpen && (
+                      <div className="absolute bottom-full left-0 mb-1 z-10 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-lg shadow-lg overflow-hidden min-w-[140px]">
+                        {(['notify_manager', 'escalate_human'] as TriggerKind[]).map(k => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => { setTriggerKind(k); setKindMenuOpen(false); }}
+                            className={`w-full flex items-center gap-2 px-2.5 py-2 text-[12px] font-semibold uppercase tracking-wide hover:bg-[var(--color-surface-muted)] transition-colors ${
+                              k === 'escalate_human' ? 'text-[var(--color-warn)]' : 'text-[var(--color-brand-deep)]'
+                            }`}
+                          >
+                            {k === 'escalate_human' ? <UserCog className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                            <span className="flex-1 text-left">{k === 'escalate_human' ? 'Escalar' : 'Notificar'}</span>
+                            {triggerKind === k && <Check className="w-3 h-3" />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <input
                     value={triggerInput}
                     onChange={e => setTriggerInput(e.target.value)}

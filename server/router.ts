@@ -50,6 +50,7 @@ import {
   listTriggers,
   setBuiltinTriggerDisabled,
   updateTrigger,
+  type TriggerKind,
 } from './triggers.js';
 import { BUILTIN_TRIGGERS, isBuiltinTriggerId } from './builtinTriggers.js';
 import {
@@ -975,14 +976,18 @@ router.get('/api/triggers', async (req: Request, res: Response) => {
 });
 
 router.post('/api/triggers', async (req: Request, res: Response) => {
-  const { naturalInput } = (req.body ?? {}) as { naturalInput?: string };
+  const { naturalInput, kind } = (req.body ?? {}) as { naturalInput?: string; kind?: string };
   if (!naturalInput?.trim()) {
     res.status(400).json({ error: 'Descreva o gatilho em português.' });
     return;
   }
+  if (kind !== undefined && kind !== 'notify_manager' && kind !== 'escalate_human') {
+    res.status(400).json({ error: 'Tipo de gatilho inválido.' });
+    return;
+  }
   try {
     const empresaId = await requireEmpresaId(req);
-    const trigger = await createTrigger(empresaId, naturalInput);
+    const trigger = await createTrigger(empresaId, naturalInput, kind as TriggerKind | undefined);
     res.status(201).json({ trigger });
   } catch (error) {
     sendTriggerError(res, error);

@@ -38,11 +38,11 @@ export function useTriggers(token: string | null) {
     void refresh();
   }, [refresh]);
 
-  const createTrigger = useCallback(async (naturalInput: string) => {
+  const createTrigger = useCallback(async (naturalInput: string, kind: TriggerKind) => {
     if (!token) throw new Error('Faça login para criar gatilhos.');
     setError(null);
     try {
-      const trig = await createTriggerRequest(token, naturalInput);
+      const trig = await createTriggerRequest(token, naturalInput, kind);
       setTriggers((prev) => sortTriggers([...prev, trig]));
       return trig;
     } catch (err) {

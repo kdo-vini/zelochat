@@ -62,7 +62,10 @@ function assertValidKind(kind: string): asserts kind is TriggerKind {
   }
 }
 
-export async function parseTriggerProse(prose: string): Promise<{
+export async function parseTriggerProse(
+  prose: string,
+  kindOverride?: TriggerKind,
+): Promise<{
   kind: TriggerKind;
   name: string;
   condition_description: string;
@@ -114,28 +117,32 @@ condition_description: frase imperativa em 1 linha que a IA de atendimento vai u
     throw new Error('INVALID_TRIGGER_PARSE');
   }
 
-  if (!parsed.kind || !parsed.name || !parsed.condition_description) {
+  if (!parsed.name || !parsed.condition_description) {
     throw new Error('INVALID_TRIGGER_PARSE');
   }
-
-  assertValidKind(parsed.kind);
 
   const name = String(parsed.name).trim().slice(0, 60);
   const condition = String(parsed.condition_description).trim();
   if (!name || !condition) throw new Error('INVALID_TRIGGER_PARSE');
 
-  // Defense in depth: even if the parser came back with notify_manager, a
-  // condition that mentions a customer state (frustration / complaint /
-  // explicit-human-request / offensive language) MUST escalate. Without this
-  // override, an owner phrasing like "avise o gerente quando reclamarem" gets
-  // filed as notify_manager and the AI keeps replying after the customer
-  // complained — which is exactly the donut-bug failure mode.
-  let kind: TriggerKind = parsed.kind;
-  if (kind === 'notify_manager' && shouldForceEscalateHuman(condition)) {
-    console.warn(
-      `[Triggers] Overriding notify_manager → escalate_human (condition: "${condition.slice(0, 80)}")`,
-    );
-    kind = 'escalate_human';
+  let kind: TriggerKind;
+  if (kindOverride) {
+    kind = kindOverride;
+  } else {
+    if (!parsed.kind) throw new Error('INVALID_TRIGGER_PARSE');
+    assertValidKind(parsed.kind);
+    kind = parsed.kind;
+    // Defense in depth: when the operator did NOT explicitly choose a kind, a
+    // condition that mentions a customer state (frustration / complaint /
+    // explicit-human-request / offensive language) MUST escalate. The original
+    // donut-bug was "avise o gerente quando reclamarem" being filed as
+    // notify_manager so the AI kept replying after a complaint.
+    if (kind === 'notify_manager' && shouldForceEscalateHuman(condition)) {
+      console.warn(
+        `[Triggers] Overriding notify_manager → escalate_human (condition: "${condition.slice(0, 80)}")`,
+      );
+      kind = 'escalate_human';
+    }
   }
 
   return { kind, name, condition_description: condition };
@@ -201,11 +208,15 @@ export async function fetchActiveTriggers(empresaId: string): Promise<TriggerRec
   return mergeWithBuiltins(custom, empresaId, disabledIds);
 }
 
-export async function createTrigger(empresaId: string, prose: string): Promise<TriggerRecord> {
+export async function createTrigger(
+  empresaId: string,
+  prose: string,
+  kindOverride?: TriggerKind,
+): Promise<TriggerRecord> {
   const naturalInput = prose.trim();
   if (!naturalInput) throw new Error('INVALID_TRIGGER_PAYLOAD');
 
-  const parsed = await parseTriggerProse(naturalInput);
+  const parsed = await parseTriggerProse(naturalInput, kindOverride);
 
   const supabase = getServiceSupabase();
   const { data, error } = await supabase

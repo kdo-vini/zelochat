@@ -125,11 +125,15 @@ export async function listTriggers(token: string): Promise<Trigger[]> {
   return body.triggers;
 }
 
-export async function createTrigger(token: string, naturalInput: string): Promise<Trigger> {
+export async function createTrigger(
+  token: string,
+  naturalInput: string,
+  kind: TriggerKind,
+): Promise<Trigger> {
   const response = await apiFetch(apiUrl('/api/triggers'), {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({ naturalInput }),
+    body: JSON.stringify({ naturalInput, kind }),
   });
   const body = await parseResponse<{ trigger: Trigger }>(response);
   return body.trigger;
