@@ -18,6 +18,7 @@ function rowToOrder(row: Record<string, unknown>): Order {
     deliveryAddress: (row.delivery_address as string | null) ?? undefined,
     driverId:        (row.driver_id as string | null) ?? undefined,
     paymentMethod:   (row.payment_method as string | null) ?? undefined,
+    observations:    (row.observations as string | null) ?? undefined,
     status:          row.status as Order['status'],
     total:           Number(row.total),
     createdAt:       row.created_at as string,
@@ -156,6 +157,7 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
         delivery_address: payload.deliveryAddress ?? null,
         driver_id:        payload.driverId ?? null,
         payment_method:   payload.paymentMethod ?? null,
+        observations:     payload.observations ?? null,
         status:           payload.status,
         total:            payload.total,
         source:           'manual',
@@ -196,6 +198,7 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
     if (patch.total           !== undefined) update.total             = patch.total;
     if (patch.driverId        !== undefined) update.driver_id         = patch.driverId ?? null;
     if (patch.paymentMethod   !== undefined) update.payment_method    = patch.paymentMethod ?? null;
+    if (patch.observations    !== undefined) update.observations      = patch.observations ?? null;
 
     const { error: dbError } = await supabase
       .from('zelochat_orders')

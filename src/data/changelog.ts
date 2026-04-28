@@ -16,6 +16,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
     category: 'medium',
+    title: 'Pedidos agora têm campo de observação',
+    description: 'Antes de mandar o botão de confirmar, a IA pergunta ao cliente se ele quer alterar algo ou tem alguma observação ("sem cebola", "ponto da carne", "deixar na portaria"…). Assim o cliente pensa duas vezes antes de bater o martelo, e a cozinha recebe o recado direitinho — sem precisar acionar atendente pra cada ajuste depois do pedido confirmado. No painel, pedidos com observação ficam destacados em amarelo no kanban e nos detalhes. Quem cria pedido manual em Produção também ganhou um campo de observação no formulário.',
+  },
+  {
+    date: '2026-04-28',
+    category: 'medium',
     title: 'Escolha o tipo do trigger com 1 clique',
     description: 'Ao criar um trigger personalizado, agora você decide na hora se é Notificar (gerente recebe um aviso e a IA continua) ou Escalar (a IA pausa e você assume) — basta clicar na pílula colorida ao lado do input. Antes a IA classificava sozinha pelo texto e às vezes errava o tipo.',
   },

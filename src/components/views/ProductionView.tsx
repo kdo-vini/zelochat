@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import {
   X, Phone, MapPin, Clock, Plus, Package, ChevronRight,
-  User, ShoppingBag, Pencil, Trash2, CreditCard, Truck, Store, Calendar,
+  User, ShoppingBag, Pencil, Trash2, CreditCard, Truck, Store, Calendar, StickyNote,
 } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
@@ -40,6 +40,7 @@ interface OrderFormData {
   pickupTime: string;
   deliveryAddress: string;
   paymentMethod: string;
+  observations: string;
   items: { product: string; quantity: number }[];
   total: string;
 }
@@ -71,6 +72,7 @@ const makeEmptyForm = (): OrderFormData => ({
   pickupTime: brasiliaTimeHHMM(),
   deliveryAddress: '',
   paymentMethod: '',
+  observations: '',
   items: [{ product: '', quantity: 1 }],
   total: '',
 });
@@ -94,6 +96,7 @@ function OrderModal({
         pickupTime: editOrder.pickupTime,
         deliveryAddress: editOrder.deliveryAddress ?? '',
         paymentMethod: editOrder.paymentMethod ?? '',
+        observations: editOrder.observations ?? '',
         items: editOrder.items.length > 0 ? editOrder.items : [{ product: '', quantity: 1 }],
         total: editOrder.total > 0 ? String(editOrder.total).replace('.', ',') : '',
       }
@@ -137,6 +140,7 @@ function OrderModal({
         pickupTime:      form.pickupTime,
         deliveryAddress: form.deliveryAddress.trim() || undefined,
         paymentMethod:   form.paymentMethod.trim() || undefined,
+        observations:    form.observations.trim() || undefined,
         status:          'pending',
         total:           parseFloat(form.total.replace(',', '.')) || 0,
       });
@@ -355,6 +359,24 @@ function OrderModal({
               </div>
             </div>
 
+            {/* Observations */}
+            <div>
+              <label className="block text-[12px] font-semibold text-[var(--color-ink-muted)] mb-1.5">
+                Observações (opcional)
+              </label>
+              <div className="relative">
+                <StickyNote className="absolute left-3 top-3 w-3.5 h-3.5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+                <textarea
+                  value={form.observations}
+                  onChange={(e) => setField('observations', e.target.value.slice(0, 500))}
+                  placeholder="Ex: sem cebola, ponto da carne, deixar na portaria…"
+                  rows={3}
+                  maxLength={500}
+                  className="w-full pl-8 pr-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)] focus:ring-1 focus:ring-[var(--color-brand)]/20 resize-none"
+                />
+              </div>
+            </div>
+
             {/* Total */}
             <div>
               <label className="block text-[12px] font-semibold text-[var(--color-ink-muted)] mb-1.5">
@@ -509,6 +531,18 @@ function OrderDrawer({
             </ul>
           </section>
 
+          {order.observations && (
+            <section className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <div className="flex items-start gap-2">
+                <StickyNote className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-amber-600" strokeWidth={1.8} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11.5px] font-semibold uppercase tracking-wider text-amber-700 mb-1">Observação do cliente</p>
+                  <p className="text-[13px] text-amber-900 leading-snug whitespace-pre-wrap break-words">{order.observations}</p>
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="bg-[var(--color-brand-soft)] rounded-xl px-4 py-3 flex justify-between items-center">
             <span className="text-[13px] font-medium text-[var(--color-brand-deep)]">Total</span>
             <span className="text-[16px] font-bold text-[var(--color-brand-deep)] tabular-nums">
@@ -646,6 +680,12 @@ function FeedCard({
       <p className="text-[12px] text-[var(--color-ink-muted)] truncate mb-2">
         {order.items.map((it) => `${it.quantity}× ${it.product}`).join(', ')}
       </p>
+      {order.observations && (
+        <div className="flex items-center gap-1 mb-2 text-[11px] text-amber-700" title={order.observations}>
+          <StickyNote className="w-3 h-3 flex-shrink-0" strokeWidth={1.8} />
+          <span className="line-clamp-1">{order.observations}</span>
+        </div>
+      )}
       {scheduled && (
         <div className="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-[var(--color-brand-deep)] bg-[var(--color-brand-soft)] rounded-md px-2 py-1">
           <Calendar className="w-3 h-3" strokeWidth={2} />
@@ -891,6 +931,12 @@ export const ProductionView = ({
                                     {order.items.length > 2 && (
                                       <p className="text-[11px] text-[var(--color-ink-faint)] pl-2.5">
                                         +{order.items.length - 2} itens
+                                      </p>
+                                    )}
+                                    {order.observations && (
+                                      <p className="text-[11px] text-amber-700 flex items-center gap-1 mt-1" title={order.observations}>
+                                        <StickyNote className="w-3 h-3 flex-shrink-0" strokeWidth={1.8} />
+                                        <span className="line-clamp-1">{order.observations}</span>
                                       </p>
                                     )}
                                   </div>

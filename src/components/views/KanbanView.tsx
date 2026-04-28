@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
-import { X, Phone, MapPin, Clock } from 'lucide-react';
+import { X, Phone, MapPin, Clock, StickyNote } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { STATUS_LABELS } from '../../constants';
 import { format, parseISO, isToday } from 'date-fns';
@@ -89,6 +89,12 @@ export const KanbanView = ({
                                       {item.quantity}× {item.product}
                                     </p>
                                   ))}
+                                  {order.observations && (
+                                    <p className="text-[11.5px] text-amber-700 flex items-center gap-1 mt-1.5" title={order.observations}>
+                                      <StickyNote className="w-3 h-3 flex-shrink-0" strokeWidth={1.8} />
+                                      <span className="line-clamp-1">{order.observations}</span>
+                                    </p>
+                                  )}
                                 </div>
                                 <div className="flex items-center justify-between pt-2.5 border-t border-[var(--color-line)]">
                                   <div className="flex items-center gap-1 text-[12px] text-[var(--color-ink-muted)]">
@@ -203,6 +209,18 @@ export const KanbanView = ({
                     <div className="flex items-start gap-2 text-[13px] text-[var(--color-ink-muted)]">
                       <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" strokeWidth={1.8} />
                       {selectedOrder.deliveryAddress}
+                    </div>
+                  </section>
+                )}
+
+                {selectedOrder.observations && (
+                  <section className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                    <div className="flex items-start gap-2">
+                      <StickyNote className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-amber-600" strokeWidth={1.8} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11.5px] font-semibold uppercase tracking-wider text-amber-700 mb-1">Observação do cliente</p>
+                        <p className="text-[13px] text-amber-900 leading-snug whitespace-pre-wrap break-words">{selectedOrder.observations}</p>
+                      </div>
                     </div>
                   </section>
                 )}

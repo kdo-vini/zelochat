@@ -46,6 +46,7 @@ interface PendingOrder {
   deliveryAddress?: string;
   deliveryNeighborhood?: string;
   deliveryFee?: number;
+  observations?: string;
 }
 
 interface PendingOrderRow {
@@ -63,6 +64,7 @@ interface PendingOrderRow {
   delivery_address: string | null;
   delivery_neighborhood: string | null;
   delivery_fee: number | string | null;
+  observations: string | null;
 }
 
 function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
@@ -81,6 +83,7 @@ function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
     deliveryAddress: row.delivery_address || undefined,
     deliveryNeighborhood: row.delivery_neighborhood || undefined,
     deliveryFee: row.delivery_fee != null ? Number(row.delivery_fee) : undefined,
+    observations: row.observations || undefined,
   };
 }
 
@@ -92,7 +95,7 @@ export async function getPendingOrder(jid: string, empresaId: string): Promise<P
   try {
     const { data, error } = await getServiceSupabase()
       .from('zelochat_pending_orders')
-      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id, order_type, delivery_address, delivery_neighborhood, delivery_fee')
+      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id, order_type, delivery_address, delivery_neighborhood, delivery_fee, observations')
       .eq('empresa_id', empresaId)
       .eq('remote_jid', jid)
       .gt('expires_at', new Date().toISOString())
@@ -128,6 +131,7 @@ async function setPendingOrder(order: PendingOrder): Promise<void> {
         delivery_address: order.deliveryAddress || null,
         delivery_neighborhood: order.deliveryNeighborhood || null,
         delivery_fee: order.deliveryFee ?? null,
+        observations: order.observations || null,
         expires_at: expiresAt,
       },
       { onConflict: 'empresa_id,remote_jid' },
@@ -175,7 +179,8 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     ? `\n📍 ${pending.deliveryAddress}\n🏘️ Taxa${pending.deliveryNeighborhood ? ` (${pending.deliveryNeighborhood})` : ''}: R$ ${(pending.deliveryFee ?? 0).toFixed(2)}`
     : '';
   const dateBR = isoToDisplayBR(pending.pickupDate) || pending.pickupDate;
-  const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}${deliveryLine}\n${scheduleLabel}: ${dateBR} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+  const obsLine = pending.observations ? `\n📝 Obs: ${pending.observations}` : '';
+  const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${dateBR} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
   await sendTextMessage(jid, reply, pending.empresaId);
   await addAssistantMessage(jid, reply, undefined, pending.empresaId);
   broadcast(
@@ -442,6 +447,7 @@ async function createOrderInDb(
     deliveryAddress?: string;
     deliveryNeighborhood?: string;
     deliveryFee?: number;
+    observations?: string;
   },
 ): Promise<string> {
   console.log('[AI] Creating order in DB for empresa:', empresaId, 'args:', JSON.stringify(args));
@@ -459,6 +465,7 @@ async function createOrderInDb(
       delivery_address: args.deliveryAddress || null,
       delivery_neighborhood: args.deliveryNeighborhood || null,
       delivery_fee: args.deliveryFee ?? null,
+      observations: args.observations || null,
       driver_id: null,
       status: 'pending',
       total: args.total,
@@ -657,9 +664,10 @@ OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
 2. Para pedidos, coletar: produto, quantidade, modo (retirada ou entrega), data, horário, nome do cliente E forma de pagamento. Para entrega: também endereço completo com bairro.
 3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde a resposta antes de prosseguir.
-4. ASSIM QUE tiver TODOS os dados COLETADOS, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
-5. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
-6. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.
+4. ANTES de chamar criar_pedido, faça SEMPRE esta pergunta UMA vez: "Gostaria de alterar algo, ou tem alguma observação a fazer? 😊". Isso evita mudanças depois que o pedido for confirmado, já que edição pós-confirmação precisa ser tratada por um humano. Se o cliente disser "não"/"nada"/"tá ok", envie observations: "" na tool. Se mencionar algo (ex: "sem cebola", "ponto da carne", "deixar na portaria", "trocar coca por guaraná"), envie em observations. NUNCA chame criar_pedido sem antes ter feito essa pergunta E recebido a resposta do cliente.
+5. ASSIM QUE tiver TODOS os dados COLETADOS e a observação confirmada, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
+6. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
+7. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.
 
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
@@ -694,8 +702,12 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
         deliveryAddress: { type: 'string', description: 'Endereço completo de entrega (rua, número, bairro). Obrigatório se orderType=delivery.' },
         deliveryNeighborhood: { type: 'string', description: 'Bairro de entrega (só o bairro, ex: "Centro"). Obrigatório se orderType=delivery.' },
         deliveryFee: { type: 'number', description: 'Taxa de entrega em reais conforme tabela de bairros. Obrigatório se orderType=delivery.' },
+        observations: {
+          type: 'string',
+          description: 'Observação livre do cliente sobre o pedido (ex: "sem cebola", "ponto da carne", "deixar na portaria"). String VAZIA "" significa que você JÁ perguntou e o cliente não tem observação. NUNCA chame esta tool sem antes ter perguntado: "Gostaria de alterar algo, ou tem alguma observação a fazer?"',
+        },
       },
-      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'paymentMethod', 'total', 'orderType'],
+      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'paymentMethod', 'total', 'orderType', 'observations'],
     },
   },
 };
@@ -863,6 +875,7 @@ export async function generateAndSendReply(
             deliveryAddress?: string;
             deliveryNeighborhood?: string;
             deliveryFee?: number;
+            observations?: string;
           };
 
           if (!args.customerPhone) args.customerPhone = session.customerPhone;
@@ -923,6 +936,12 @@ export async function generateAndSendReply(
             return notFoundMsg;
           }
 
+          // Sanitize the customer-supplied observation BEFORE interpolating it into the
+          // button summary (which is a model-visible string + sent to the customer).
+          // safeForPrompt strips \r\n and ` < > so a multi-line paste can't break the
+          // summary layout or smuggle prompt-injection markers.
+          const sanitizedObs = args.observations ? safeForPrompt(args.observations, 300) : '';
+
           // Persist pending order to Supabase (review fix C2 — survives restarts).
           // UPSERT semantics ensure two simultaneous criar_pedido calls don't create
           // duplicate rows; the latest payload wins.
@@ -941,6 +960,7 @@ export async function generateAndSendReply(
             deliveryAddress: args.deliveryAddress,
             deliveryNeighborhood: args.deliveryNeighborhood,
             deliveryFee: args.deliveryFee,
+            observations: sanitizedObs || undefined,
           });
           const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
           const isDelivery = args.orderType === 'delivery';
@@ -948,7 +968,8 @@ export async function generateAndSendReply(
           const deliveryLine = isDelivery && args.deliveryAddress
             ? `\n📍 ${args.deliveryAddress}\n🏘️ Taxa (${args.deliveryNeighborhood}): R$ ${(args.deliveryFee ?? 0).toFixed(2)}`
             : '';
-          const summary = `📦 ${itemsList}${deliveryLine}\n${scheduleLabel}: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}`;
+          const obsLine = sanitizedObs ? `\n📝 Obs: ${sanitizedObs}` : '';
+          const summary = `📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}`;
 
           try {
             await sendButtonMessage(
