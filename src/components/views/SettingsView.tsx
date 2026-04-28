@@ -428,8 +428,13 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
         setQrCode(null);
       } else if (data.error) {
         setError(`Erro ao gerar QR Code: ${data.error}`);
+      } else if (data.status === 'disconnected' || data.status === 'pending') {
+        // Whatsmiau ainda não retornou QR (instância recém-criada ou serviço lento).
+        // Mostra contexto se backend deu detalhes, senão pede pra esperar e clicar de novo.
+        const detail = data.upstreamError ? ` (${data.upstreamError})` : '';
+        setError(`Aguardando resposta do WhatsApp${detail}. Espere uns 10 segundos e clique em "Gerar QR Code" novamente.`);
       } else {
-        setError('WhatsApp não respondeu. Verifique a conexão com o servidor e tente novamente.');
+        setError('Resposta inesperada do servidor. Tente novamente em instantes.');
       }
     } catch (err) {
       setError(

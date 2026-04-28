@@ -499,7 +499,7 @@ router.get('/api/qr', async (req: Request, res: Response) => {
     // delivers events to /webhook/${instance}. Idempotent — safe to call again.
     await setWebhookForInstance(instance);
     const result = await fetchInstanceQR(instance);
-    res.json({ qr: result.qr, status: result.status });
+    res.json({ qr: result.qr, status: result.status, upstreamError: result.upstreamError });
   } catch (err) {
     if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE' || err.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, err);
@@ -557,7 +557,9 @@ router.post('/api/qr/refresh', async (req: Request, res: Response) => {
     const instance = await getOrCreateOwnInstanceForEmpresa(empresaId);
     await setWebhookForInstance(instance);
     const result = await fetchInstanceQR(instance);
-    res.json({ qr: result.qr, status: result.status });
+    // Surface upstreamError pro frontend mostrar mensagem específica.
+    // Não é 500 — Whatsmiau pode estar lento, user pode tentar de novo.
+    res.json({ qr: result.qr, status: result.status, upstreamError: result.upstreamError });
   } catch (err) {
     if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE' || err.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, err);
