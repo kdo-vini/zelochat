@@ -25,11 +25,18 @@ const SectionCard = ({ icon: Icon, title, children }: {
   </div>
 );
 
+interface BillingFlowResult {
+  url?: string;
+  error?: string;
+  code?: string;
+  upgradeUrl?: string;
+}
+
 async function startBillingFlow(
   endpoint: 'checkout' | 'portal',
   token: string | null,
   body?: Record<string, unknown>,
-): Promise<{ url?: string; error?: string }> {
+): Promise<BillingFlowResult> {
   if (!token) return { error: 'Sessão expirada. Faça login novamente.' };
   try {
     const res = await apiFetch(`${API_BASE}/api/billing/${endpoint}`, {
@@ -42,7 +49,11 @@ async function startBillingFlow(
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { error: data?.error ?? 'Não foi possível abrir o pagamento. Tente novamente.' };
+      return {
+        error: data?.error ?? 'Não foi possível abrir o pagamento. Tente novamente.',
+        code: data?.code,
+        upgradeUrl: data?.upgradeUrl,
+      };
     }
     if (!data?.url) return { error: 'Resposta do servidor sem URL de pagamento.' };
     return { url: data.url };
@@ -52,19 +63,81 @@ async function startBillingFlow(
   }
 }
 
+// URL do app principal pra redirecionar upgrades. Configurável via env pra staging.
+const ZELOPDV_URL = (import.meta as ImportMeta & { env?: { VITE_ZELOPDV_URL?: string } }).env?.VITE_ZELOPDV_URL
+  ?? 'https://www.zelopdv.com.br';
+
 const SubscriptionPaywall = ({
   subscription,
+  hasPdvOnly,
   token,
 }: {
   subscription: ZeloChatSubscription | null;
+  hasPdvOnly: boolean;
   token: string | null;
 }) => {
   const status = subscription?.status;
-  const [busy, setBusy] = useState<'checkout' | 'portal' | null>(null);
+  const [busy, setBusy] = useState<'checkout' | 'portal' | 'upgrade' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const needsPortal = status === 'past_due' || status === 'unpaid';
 
+  // Variante 1: user tem PDV ativo → upsell pro Pacote Gestão + Atendimento (147 = +88 vs 156 separado).
+  // O upgrade roteia pro /assinatura?upgrade=bundle no app principal, que usa change-plan
+  // (modifica subscription Stripe existente) — evita criar 2 subscriptions pro mesmo user.
+  if (hasPdvOnly) {
+    const goToBundleUpgrade = () => {
+      setBusy('upgrade');
+      window.location.href = `${ZELOPDV_URL}/assinatura?upgrade=bundle`;
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-[var(--color-brand-soft)] flex items-center justify-center flex-shrink-0">
+            <Sparkles className="w-5 h-5 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
+          </div>
+          <div className="flex-1">
+            <p className="text-[14px] font-semibold leading-snug">Você já tem o ZeloPDV. Adicione o Atendimento.</p>
+            <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-1 leading-relaxed">
+              Faça upgrade para o <strong>Pacote Gestão + Atendimento</strong> e tenha PDV completo + IA no WhatsApp por
+              <strong> R$ 147/mês</strong> — você economiza <strong>R$ 9/mês</strong> em vez de assinar separado.
+            </p>
+          </div>
+        </div>
+
+        <ul className="space-y-2 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-3">
+          {[
+            'Mantém tudo que você já tem do ZeloPDV',
+            'Adiciona atendimento ilimitado pelo WhatsApp com IA',
+            'Cardápio sincronizado automaticamente',
+            'Cancela quando quiser, sem fidelidade',
+          ].map((item) => (
+            <li key={item} className="flex items-start gap-2 text-[12.5px] text-[var(--color-ink-soft)]">
+              <Check className="w-3.5 h-3.5 text-[var(--color-brand)] mt-0.5 flex-shrink-0" strokeWidth={2.5} />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+
+        <button
+          type="button"
+          onClick={goToBundleUpgrade}
+          disabled={busy !== null}
+          className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-60 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+        >
+          {busy === 'upgrade' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" strokeWidth={2} />}
+          {busy === 'upgrade' ? 'Abrindo upgrade…' : 'Upgrade para Pacote Gestão + Atendimento'}
+        </button>
+
+        <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
+          R$ 147/mês total · proporção do mês atual cobrada · cancele quando quiser
+        </p>
+      </div>
+    );
+  }
+
+  // Variante 2: user sem subscription ativa OU em status problemático → fluxo padrão Stripe Checkout.
   const headline = (() => {
     if (!subscription) return 'Ative o ZeloChat para conectar o WhatsApp';
     if (status === 'past_due' || status === 'unpaid') return 'Sua assinatura está com pagamento pendente';
@@ -95,6 +168,12 @@ const SubscriptionPaywall = ({
     );
     setBusy(null);
     if (result.error) {
+      // Backend pode retornar PDV_UPGRADE_AVAILABLE caso detecte sub PDV ativa
+      // entre a hora do hook e a hora do click — redireciona pro upgrade.
+      if (result.code === 'PDV_UPGRADE_AVAILABLE' && result.upgradeUrl) {
+        window.location.href = result.upgradeUrl;
+        return;
+      }
       setError(result.error);
       return;
     }
@@ -168,7 +247,7 @@ const BillingManagementCard = ({
 
   if (!subscription) return null;
 
-  const planLabel = subscription.plan_tier === 'bundle' ? 'ZeloChat + ZeloPDV' : 'ZeloChat Pro';
+  const planLabel = subscription.plan_tier === 'bundle' ? 'Pacote Gestão + Atendimento' : 'ZeloChat Pro';
   const periodEnd = subscription.manually_extended_until ?? subscription.current_period_end;
   const periodEndFmt = periodEnd
     ? new Date(periodEnd).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
@@ -236,9 +315,10 @@ interface WhatsAppIntegrationCardProps {
   subscriptionActive: boolean;
   subscriptionLoading: boolean;
   subscription: ZeloChatSubscription | null;
+  hasPdvOnly: boolean;
 }
 
-export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptionLoading, subscription }: WhatsAppIntegrationCardProps) => {
+export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptionLoading, subscription, hasPdvOnly }: WhatsAppIntegrationCardProps) => {
   const [waStatus, setWaStatus] = useState<'disconnected' | 'qr' | 'connecting' | 'connected'>('disconnected');
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -419,7 +499,7 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
   if (!subscriptionLoading && !subscriptionActive) {
     return (
       <SectionCard icon={Smartphone} title="Integração WhatsApp">
-        <SubscriptionPaywall subscription={subscription} token={token} />
+        <SubscriptionPaywall subscription={subscription} hasPdvOnly={hasPdvOnly} token={token} />
       </SectionCard>
     );
   }
@@ -880,7 +960,7 @@ function TimeInput({ label, value, onChange }: { label: string; value: string; o
 
 export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenticated, token }: SettingsViewProps) => {
   const { session } = useSupabaseSession();
-  const { subscription, isActive: subscriptionActive, loading: subscriptionLoading } = useSubscription(session);
+  const { subscription, isActive: subscriptionActive, hasPdvOnly, loading: subscriptionLoading } = useSubscription(session);
 
   // Local draft for identity fields — synced from state but independently editable
   const [draft, setDraft] = useState({
@@ -1143,6 +1223,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               subscriptionActive={subscriptionActive}
               subscriptionLoading={subscriptionLoading}
               subscription={subscription}
+              hasPdvOnly={hasPdvOnly}
             />
 
             <AiGlobalToggleCard token={token} />

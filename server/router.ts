@@ -438,6 +438,16 @@ router.post('/api/billing/portal', createPortalSession);
 router.post('/api/billing/sync', syncFromStripe);
 
 /**
+ * GET /api/healthz — Always-200 liveness probe. Used by Railway's health
+ * checker (railway.json `healthcheckPath`) — must NOT require auth or do
+ * any DB / upstream calls so the container can be marked healthy as soon
+ * as it can answer HTTP.
+ */
+router.get('/api/healthz', (_req: Request, res: Response) => {
+  res.json({ ok: true });
+});
+
+/**
  * GET /api/status — Returns this empresa's WhatsApp connection status.
  *
  * Multi-tenant: requires auth and queries Whatsmiau for THIS empresa's
