@@ -19,7 +19,7 @@ const FAQS: QAItem[] = [
   },
   {
     q: 'Como o ZeloChat conecta no meu WhatsApp?',
-    a: 'Você escaneia um QR code do seu WhatsApp Business dentro do ZeloChat e pronto — as conversas começam a chegar na plataforma em tempo real. Não precisa instalar nada no seu computador nem no celular.',
+    a: 'Em poucos cliques você conecta seu WhatsApp ao ZeloChat e as conversas começam a chegar na plataforma em tempo real. Não precisa instalar nada no computador nem no celular.',
   },
   {
     q: 'Posso controlar quando a IA responde?',
@@ -36,11 +36,11 @@ const FAQS: QAItem[] = [
   },
   {
     q: 'Meus dados e os dos meus clientes estão seguros?',
-    a: 'Sim. Todos os dados são isolados por empresa com políticas de segurança no banco (RLS) — ninguém fora da sua conta enxerga suas conversas ou seus clientes. Usamos criptografia em trânsito e em repouso.',
+    a: 'Sim. Os dados da sua loja ficam isolados — ninguém de fora da sua conta enxerga suas conversas ou seus clientes. Todas as informações trafegam e são armazenadas de forma segura.',
   },
   {
     q: 'Preciso instalar algum programa para imprimir os pedidos?',
-    a: 'Não. O ZeloChat usa a tecnologia Web USB do Chrome e Edge para conectar direto com sua impressora térmica via USB — sem instalar nada no computador. Você faz a conexão uma única vez clicando em "Conectar impressora" na barra lateral e pronto: todo pedido confirmado pelo WhatsApp é impresso automaticamente.',
+    a: 'Não. Você liga sua impressora térmica direto ao computador e conecta uma única vez clicando em "Conectar impressora" na barra lateral. Pronto: todo pedido confirmado pelo WhatsApp é impresso automaticamente na cozinha — sem instalar nada.',
   },
   {
     q: 'Tem contrato de fidelidade ou multa?',

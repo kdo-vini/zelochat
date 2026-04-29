@@ -4,7 +4,6 @@ import {
   Link2,
   MessageCircle,
   FileText,
-  BarChart3,
   Printer,
   type LucideIcon,
 } from 'lucide-react';
@@ -28,7 +27,7 @@ const FEATURES: Feature[] = [
     icon: Sparkles,
     title: 'Sugestões inteligentes',
     description:
-      'A IA sugere produtos, promoções e respostas para aumentar suas chances de venda.',
+      'A IA sugere respostas e produtos do seu catálogo com base na conversa, ajudando a fechar mais pedidos.',
   },
   {
     icon: Link2,
@@ -51,12 +50,6 @@ const FEATURES: Feature[] = [
     title: 'Resumos e históricos',
     description:
       'Tenha resumo automático das conversas e histórico completo de cada cliente.',
-  },
-  {
-    icon: BarChart3,
-    title: 'Relatórios e insights',
-    description:
-      'Acompanhe métricas de atendimento, tempo de resposta e oportunidades de vendas.',
   },
   {
     icon: Printer,

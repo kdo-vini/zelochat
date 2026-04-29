@@ -4,7 +4,11 @@ WhatsApp-native customer service platform for Brazilian lanchonetes. All user-fa
 
 ## Novidades changelog convention
 
-After every meaningful commit, add one entry at the **top** of `src/data/changelog.ts`.
+**Não é todo commit/PR que vira entrada no changelog.** O Novidades é lido pelo dono da lanchonete — só entra o que **realmente muda a experiência dele** (novo recurso visível, correção de bug que ele sentiu, ajuste de comportamento da IA). Refactor interno, ajuste de copy de landing, mudança de infra, tweak de dev tooling, rename de variável, lint fix — **não vão pro changelog**. Na dúvida, não adiciona.
+
+Linguagem: **sempre em português, sem jargão técnico.** Nada de "endpoint", "webhook", "RLS", "deploy", "migration", "schema", "API". Fale como se estivesse explicando pro dono da pizzaria no WhatsApp.
+
+Quando for entrada válida, adicione no **topo** de `src/data/changelog.ts`.
 
 ```ts
 {
