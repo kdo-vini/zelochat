@@ -78,11 +78,91 @@ export async function requireEmpresaId(req: Request): Promise<string> {
 }
 
 /**
+ * Subscription state cache. Two purposes:
+ *
+ * 1. Fast-path: avoid hitting Supabase on every authenticated request. Positive
+ *    results are reused for FRESH_TTL_MS without re-querying.
+ * 2. Fail-closed-with-cache: if Supabase is down, we only honor a recent POSITIVE
+ *    cache up to STALE_TTL_MS old. We never extend a negative-cached state, and
+ *    we never default to "active" without a prior positive read.
+ *
+ * Pre-existing behavior was to fail OPEN on DB error — a Supabase outage
+ * silently re-enabled cancelled customers across the entire fleet. See P0.17
+ * in CODE_REVIEW.md.
+ */
+type SubscriptionCacheEntry = { active: boolean; checkedAt: number };
+const subscriptionCache = new Map<string, SubscriptionCacheEntry>();
+const SUBSCRIPTION_CACHE_FRESH_MS = 60 * 1000;       // serve from cache w/o DB call
+const SUBSCRIPTION_CACHE_STALE_FALLBACK_MS = 5 * 60 * 1000; // honor positive cache on DB error
+
+interface SubscriptionRow {
+  status: string | null;
+  plan_tier: string | null;
+  current_period_end: string | null;
+  manually_extended_until: string | null;
+}
+
+function isRowActive(row: SubscriptionRow | null | undefined): boolean {
+  if (!row || row.status !== 'active') return false;
+  const expiry = row.manually_extended_until ?? row.current_period_end;
+  if (!expiry) return false;
+  return new Date(expiry).getTime() > Date.now();
+}
+
+/**
+ * Resolve subscription state for a user_id with caching + fail-closed semantics.
+ * Returns true only if we can prove the user is active (fresh DB read or recent
+ * positive cache + transient DB error). Otherwise false.
+ */
+async function resolveActiveSubscription(userId: string): Promise<boolean> {
+  const cached = subscriptionCache.get(userId);
+  const now = Date.now();
+
+  // Fast path — recent positive or negative cache, skip DB.
+  if (cached && now - cached.checkedAt < SUBSCRIPTION_CACHE_FRESH_MS) {
+    return cached.active;
+  }
+
+  try {
+    const { data, error } = await getServiceSupabase()
+      .from('subscriptions')
+      .select('status, plan_tier, current_period_end, manually_extended_until')
+      .eq('user_id', userId)
+      .in('plan_tier', ['chat', 'bundle'])
+      .order('current_period_end', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    const active = isRowActive(data as SubscriptionRow | null);
+    subscriptionCache.set(userId, { active, checkedAt: now });
+    return active;
+  } catch (err) {
+    // DB error. Fall back to cache only if it was POSITIVE and recent — never
+    // promote an unknown state to active. Log so fail-open / fail-stale events
+    // are observable.
+    if (cached && cached.active && now - cached.checkedAt < SUBSCRIPTION_CACHE_STALE_FALLBACK_MS) {
+      console.warn(
+        `[subscription] DB error, using stale positive cache for user=${userId} (age=${now - cached.checkedAt}ms):`,
+        err,
+      );
+      return true;
+    }
+    console.error(`[subscription] DB error and no usable cache for user=${userId} — failing closed:`, err);
+    return false;
+  }
+}
+
+/**
  * Throws SUBSCRIPTION_INACTIVE if the authenticated user does not have an
  * active ZeloChat subscription (plan_tier in 'chat'/'bundle', status 'active',
  * not past the period end / manual extension).
  *
  * No free trial — 'trialing' is intentionally rejected.
+ *
+ * Uses the same cache layer as isEmpresaSubscriptionActive. On DB error, only
+ * a recent positive cache is honored — never fail-open to unknown.
  */
 export async function requireActiveZelochatSubscription(req: Request): Promise<void> {
   const token = extractBearerToken(req);
@@ -96,25 +176,8 @@ export async function requireActiveZelochatSubscription(req: Request): Promise<v
     throw new Error('UNAUTHORIZED');
   }
 
-  const { data, error } = await supabase
-    .from('subscriptions')
-    .select('status, plan_tier, current_period_end, manually_extended_until')
-    .eq('user_id', authData.user.id)
-    .in('plan_tier', ['chat', 'bundle'])
-    .order('current_period_end', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  if (!data || data.status !== 'active') {
-    throw new Error('SUBSCRIPTION_INACTIVE');
-  }
-
-  const expiry = data.manually_extended_until ?? data.current_period_end;
-  if (!expiry || new Date(expiry).getTime() <= Date.now()) {
+  const active = await resolveActiveSubscription(authData.user.id);
+  if (!active) {
     throw new Error('SUBSCRIPTION_INACTIVE');
   }
 }
@@ -151,34 +214,25 @@ export async function uploadMediaForSend(
 /**
  * Checks if an empresa has an active ZeloChat subscription without requiring
  * a JWT token. Used by the webhook handler (no auth header available).
- * On DB error, returns true (fail-open) to avoid blocking legitimate traffic.
+ *
+ * Fail-closed semantics with cache fallback — see resolveActiveSubscription.
+ * On DB error: only return true if the empresa had a recent positive cache.
+ * Never default-allow unknown empresas. Resolving the empresa→user_id mapping
+ * itself failing is treated as fail-closed too.
  */
 export async function isEmpresaSubscriptionActive(empresaId: string): Promise<boolean> {
   try {
-    const supabase = getServiceSupabase();
-    const { data: empresa } = await supabase
+    const { data: empresa } = await getServiceSupabase()
       .from('empresa_perfil')
       .select('user_id')
       .eq('id', empresaId)
       .maybeSingle();
     const userId = (empresa as { user_id?: string } | null)?.user_id;
     if (!userId) return false;
-
-    const { data } = await supabase
-      .from('subscriptions')
-      .select('status, plan_tier, current_period_end, manually_extended_until')
-      .eq('user_id', userId)
-      .in('plan_tier', ['chat', 'bundle'])
-      .order('current_period_end', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!data || data.status !== 'active') return false;
-    const expiry = data.manually_extended_until ?? data.current_period_end;
-    if (!expiry || new Date(expiry).getTime() <= Date.now()) return false;
-    return true;
-  } catch {
-    return true;
+    return resolveActiveSubscription(userId);
+  } catch (err) {
+    console.error(`[subscription] empresa→user_id lookup failed for empresa=${empresaId} — failing closed:`, err);
+    return false;
   }
 }
 

@@ -24,12 +24,75 @@ const OPENAI_MODEL = 'gpt-4o-mini';
 const PENDING_ORDER_TTL_MIN = 30;
 
 /**
- * JIDs (key: `${empresaId}:${jid}`) where an order was confirmed recently.
- * Guards against the AI calling criar_pedido again on the next customer message
- * (e.g. "Obrigado!") right after a successful confirmation.
+ * Fast-path cache (key: `${empresaId}:${jid}`) for "this JID had an order confirmed
+ * recently". Read+write hot-path optimization; the source of truth is
+ * `zelochat_orders.created_at` queried by `wasOrderRecentlyConfirmedInDb` so the
+ * guardrail survives server restarts and replica swaps. Without the DB fallback,
+ * the post-confirm "Obrigado!" → re-runs criar_pedido bug returns whenever the
+ * pod that handled the confirm differs from the pod handling the next message.
+ * See P0.11 in CODE_REVIEW.md.
  */
 const justConfirmedMap = new Map<string, number>();
 const JUST_CONFIRMED_TTL_MS = 5 * 60 * 1000; // 5 min cooldown after confirmation
+
+async function wasOrderRecentlyConfirmedInDb(
+  empresaId: string,
+  customerPhone: string,
+): Promise<boolean> {
+  if (!customerPhone) return false;
+  const cutoff = new Date(Date.now() - JUST_CONFIRMED_TTL_MS).toISOString();
+  try {
+    const { data, error } = await getServiceSupabase()
+      .from('zelochat_orders')
+      .select('id')
+      .eq('empresa_id', empresaId)
+      .eq('customer_phone', customerPhone)
+      .gte('created_at', cutoff)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.error('[AI] wasOrderRecentlyConfirmedInDb query error:', error);
+      return false;
+    }
+    return !!data;
+  } catch (err) {
+    console.error('[AI] wasOrderRecentlyConfirmedInDb threw:', err);
+    return false;
+  }
+}
+
+/**
+ * Pending-order intent whitelist. Used by the soft-confirm/soft-cancel guardrail
+ * when a pending order is open and the customer replies with text instead of tapping
+ * a button. We accent-strip + lowercase + drop trailing punctuation/emoji, then
+ * exact-match against these sets. Anything not in the set falls through to the
+ * "ambiguous → edit" path. Keep these conservative — false positives auto-confirm
+ * or auto-cancel real orders. False negatives just route to the AI, which is fine.
+ */
+const AFFIRMATIVE_INTENTS = new Set<string>([
+  'sim', 's', 'ss', 'simm',
+  'ok', 'okay', 'okk', 'oki',
+  'confirmar', 'confirma', 'confirmo', 'confirmado',
+  'beleza', 'blz', 'bele',
+  'fechado', 'fechou',
+  'isso', 'isso ai', 'isso ae',
+  'perfeito', 'otimo', 'exato', 'exatamente',
+  'certo', 'tudo certo', 'ta certo',
+  'pode', 'pode ser', 'pode mandar', 'pode confirmar',
+  'manda', 'manda ai', 'manda ae', 'manda ver',
+  'vai sim',
+  'claro',
+  'show', 'dale',
+]);
+
+const NEGATIVE_INTENTS = new Set<string>([
+  'nao', 'n', 'nn',
+  'no', 'nop', 'nope',
+  'cancelar', 'cancela', 'cancelo', 'cancelado',
+  'desistir', 'desisto', 'desiste',
+  'esquece', 'esquecer',
+  'para', 'pare', 'parar',
+]);
 
 interface PendingOrder {
   empresaId: string;
@@ -147,6 +210,42 @@ export async function clearPendingOrder(jid: string, empresaId: string): Promise
     .eq('remote_jid', jid);
 }
 
+/**
+ * 🚨 CRITICAL — order confirmation finalization
+ *
+ * Persists a pending order to `zelochat_orders`, clears the pending row, sends
+ * a confirmation message to the customer, and broadcasts to the operator UI.
+ *
+ * BUTTERFLY EFFECT — what cascades if you change this function:
+ *
+ *   1. Operation order is LOAD-BEARING (FIX H1 below): if you swap the
+ *      insert/clear order, a DB transient could leave the customer in a
+ *      "your order was confirmed but is missing" state.
+ *
+ *   2. The catch-on-insert path MUST keep the pending row in place. If
+ *      you `clearPendingOrder` here on failure, the customer cannot retry
+ *      with one tap — they have to repeat the entire AI conversation.
+ *
+ *   3. `justConfirmedMap.set` at the end + `wasOrderRecentlyConfirmedInDb`
+ *      lookup before any future `criar_pedido` is the duplicate-order
+ *      guardrail (P0.11). DO NOT drop the map write — and DO NOT add a
+ *      `createOrderInDb` call anywhere outside this function and the
+ *      AI tool-call path in generateAndSendReply (criar_pedido catch-fallback
+ *      explicitly does NOT call this — that's Layer 2 of CLAUDE.md's
+ *      3-layer trap).
+ *
+ *   4. The `addAssistantMessage` call on the success path persists the
+ *      reply for chat history. If you remove it, the operator's UI shows
+ *      a confirmed order but no record of the confirmation message.
+ *
+ * Customer-impact failure modes if broken:
+ *   • Duplicate orders billed twice (the documented bug that cost 2 days)
+ *   • Customer thinks order was confirmed but it wasn't persisted
+ *   • Customer sees "✅ Pedido confirmado!" but pending row never cleared
+ *   • Operator UI never shows the new order (broadcast lost)
+ *
+ * Always test the full webhook → AI → confirm chain after touching this.
+ */
 export async function confirmPendingOrder(jid: string, empresaId: string): Promise<void> {
   console.log('[AI] confirmPendingOrder called for JID:', jid);
   const pending = await getPendingOrder(jid, empresaId);
@@ -412,10 +511,15 @@ async function fetchOrderForCustomer(
 
     let driverName = '';
     if (target.driver_id) {
+      // P0.22 — service-role client bypasses RLS, so the empresa_id filter is
+      // MANDATORY here. Without it, a driver_id pointing at a different
+      // empresa's row (data corruption, restored backup, future bug) would
+      // leak that empresa's driver name into this customer's reply.
       const { data: driver } = await supabase
         .from('zelochat_drivers')
         .select('name')
         .eq('id', target.driver_id)
+        .eq('empresa_id', empresaId)
         .maybeSingle();
       driverName = (driver as { name?: string } | null)?.name ?? '';
     }
@@ -746,6 +850,56 @@ const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
   },
 };
 
+/**
+ * 🚨 CRITICAL — AI dispatch entry point
+ *
+ * The single ingress for all auto-replies. Every customer message that the
+ * webhook decides to answer flows through here. Five layered guardrails are
+ * woven into this function and breaking ANY of them re-introduces
+ * customer-visible bugs we've already paid for in incident time:
+ *
+ *   1. Subscription gate (caller `index.ts` and `aiEnabled` here).
+ *      Disabled empresas / paused replicas don't burn OpenAI quota.
+ *
+ *   2. Pending-order intent guardrail (P0.9 / P0.10): when a pending order
+ *      exists and customer types ambiguous text, we route to
+ *      confirm/cancel/edit instead of letting the AI re-call criar_pedido.
+ *      The whitelist match here is INTENTIONALLY conservative — false
+ *      negatives (fall through to "edit") are safe; false positives
+ *      (auto-confirm/cancel) charged the customer twice.
+ *
+ *   3. Just-confirmed cooldown (P0.11): after a successful confirm, the
+ *      next "Obrigado!" / "vlw" must NOT fire criar_pedido again. Both
+ *      the in-memory `justConfirmedMap` and the
+ *      `wasOrderRecentlyConfirmedInDb(...)` DB lookup must agree before
+ *      we let the tool through. The DB fallback is what makes this
+ *      survive restart / replica swap.
+ *
+ *   4. Catch-fallback for criar_pedido must NEVER call createOrderInDb or
+ *      clearPendingOrder (Layer 2 of CLAUDE.md's 3-layer trap). The catch
+ *      keeps the pending row in place and asks the customer to retry —
+ *      the order is finalized only by `confirmPendingOrder`.
+ *
+ *   5. Conversation history is filtered to TEXT-ONLY user/assistant rows.
+ *      Tool messages and tool_calls are dropped because every tool flow
+ *      here completes within ONE OpenAI request — never persist-and-replay.
+ *      If you ever add a multi-turn tool flow, you MUST stop filtering
+ *      here, otherwise OpenAI rejects the next request.
+ *
+ * BUTTERFLY EFFECT — what cascades if you break this:
+ *   • Duplicate orders (the original 2-day bug — hit prod twice already)
+ *   • Wrong-confirm: customer typed "perfeito, mas troca a coca" → order
+ *     auto-confirmed with original items
+ *   • Wrong-cancel: "não, prefiro de manhã" → order silently cancelled
+ *   • Cost runaway: cooldown bypass → AI re-runs criar_pedido on every
+ *     "Obrigado", "valeu", emoji-reply
+ *   • Cross-tenant leak: if the empresa filter slips through, customer
+ *     A's profile data leaks into customer B's reply
+ *
+ * Always test the duplicate-order scenario from CLAUDE.md and the
+ * affirmative/negative regex test cases (CODE_REVIEW.md §P0.9/P0.10) after
+ * touching this function.
+ */
 export async function generateAndSendReply(
   jid: string,
   empresaId?: string,
@@ -776,8 +930,17 @@ export async function generateAndSendReply(
   if (pendingForEdit) {
     const lastMsg = session.messages.at(-1);
     const lastText = (lastMsg?.content ?? '').toLowerCase().trim();
-    const isAffirmative = /^(sim|s\b|ok\b|confirmar|confirma\b|pode\b|quero\b|tá\b|ta\b|certo|yes\b|ótimo|otimo|otim|finaliz|isso|exato|perfeito|bora|tudo certo|tá certo|pode ser|vai|vai sim|claro)/.test(lastText);
-    const isNegative = /^(não|nao|n\b|cancelar|cancela\b|desistir|desisto|para\b|pare\b|esquece|no\b|nop|cancela)/.test(lastText);
+    // Whitelist exact-match intent detection. The previous regex `^(certo|isso|...)`
+    // matched partial prefixes — "certo, mas troca a coca" auto-confirmed; "não, prefiro
+    // de manhã" auto-cancelled. We now normalize (strip accents + trailing punctuation
+    // /emoji/whitespace) and check against a set of unambiguous tokens. Anything else
+    // falls through to "ambiguous → edit", which is the correct behavior.
+    const normalized = lastText
+      .normalize('NFD')
+      .replace(/\p{Mn}/gu, '')
+      .replace(/[\s\p{P}\p{S}]+$/u, '');
+    const isAffirmative = AFFIRMATIVE_INTENTS.has(normalized);
+    const isNegative = NEGATIVE_INTENTS.has(normalized);
 
     if (isAffirmative) {
       console.log(`[AI] Pending order: affirmative text detected ("${lastText}") — auto-confirming`);
@@ -853,11 +1016,20 @@ export async function generateAndSendReply(
       const toolCall = choice.message.tool_calls[0];
 
       if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
-        // GUARDRAIL: block duplicate criar_pedido if this JID had an order confirmed recently.
+        // GUARDRAIL: block duplicate criar_pedido if this customer had an order confirmed
+        // recently. Fast path: in-memory map (same pod). Slow path: DB lookup against
+        // zelochat_orders.created_at — survives restart and cross-pod routing.
         const confirmKey = `${resolvedEmpresaId}:${jid}`;
         const confirmedAt = justConfirmedMap.get(confirmKey);
-        if (confirmedAt && Date.now() - confirmedAt < JUST_CONFIRMED_TTL_MS) {
-          console.log(`[AI] Blocking duplicate criar_pedido for ${jid} — order was confirmed ${Math.round((Date.now() - confirmedAt) / 1000)}s ago`);
+        const inMemoryRecent = !!confirmedAt && Date.now() - confirmedAt < JUST_CONFIRMED_TTL_MS;
+        const dbRecent = inMemoryRecent
+          ? false
+          : await wasOrderRecentlyConfirmedInDb(resolvedEmpresaId, session.customerPhone);
+        if (inMemoryRecent || dbRecent) {
+          const ageLog = inMemoryRecent
+            ? `${Math.round((Date.now() - (confirmedAt as number)) / 1000)}s ago (memory)`
+            : '< 5min (db)';
+          console.log(`[AI] Blocking duplicate criar_pedido for ${jid} — order was confirmed ${ageLog}`);
           const dupMsg = 'Seu pedido já foi confirmado! 😊 Qualquer dúvida é só chamar.';
           await sendTextMessage(jid, dupMsg, resolvedEmpresaId);
           await addAssistantMessage(jid, dupMsg, undefined, resolvedEmpresaId);

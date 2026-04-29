@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getFriendlyErrorMessage } from '../services/errorMessages';
+import { signOut } from '../services/authService';
 import { supabase } from '../services/supabaseClient';
 import { ZeloChatLogo } from '../components/auth/AuthCard';
 import OnboardingStep from '../components/onboarding/OnboardingStep';
@@ -52,7 +53,7 @@ export default function OnboardingPage() {
   }, []);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await signOut();
     navigate('/auth');
   };
 

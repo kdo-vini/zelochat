@@ -113,6 +113,39 @@ export async function getInstanceForEmpresa(
  * instance was reassigned. The hot path is one DB round-trip per inbound
  * webhook event, which is fine (Whatsmiau already round-trips for delivery).
  */
+/**
+ * P0.1 — fetch both empresa_id and the per-tenant webhook_token in one query.
+ * Used by /webhook/:instance to validate the optional `apikey` header sent by
+ * Whatsmiau (or whichever upstream we configure to sign webhook calls).
+ *
+ * Returns null on any failure (no row, DB error, missing token). Webhook handler
+ * MUST treat null as "unknown instance, reject 404" — never fall through to
+ * "trust the path".
+ */
+export async function getEmpresaAndTokenForInstance(
+  instance: string,
+): Promise<{ empresaId: string; webhookToken: string } | null> {
+  if (!instance) return null;
+  try {
+    const { data } = await getServiceSupabase()
+      .from('empresa_perfil')
+      .select('id, webhook_token')
+      .eq('whatsmiau_instance', instance)
+      .maybeSingle();
+    const row = data as { id?: string; webhook_token?: string } | null;
+    if (!row?.id || !row?.webhook_token) return null;
+    // Reuse the standard cache-refresh side-effect from getEmpresaForInstance.
+    const stale = instanceToEmpresa.get(instance);
+    if (stale && stale !== row.id) empresaToInstance.delete(stale);
+    empresaToInstance.set(row.id, instance);
+    instanceToEmpresa.set(instance, row.id);
+    return { empresaId: row.id, webhookToken: row.webhook_token };
+  } catch (err) {
+    console.error('[instanceManager] empresa+token lookup failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export async function getEmpresaForInstance(instance: string): Promise<string | null> {
   if (!instance) return null;
 

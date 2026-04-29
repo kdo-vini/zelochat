@@ -235,17 +235,23 @@ export async function createCheckoutSession(req: Request, res: Response): Promis
     );
     if (activePdv) throw new Error('PDV_UPGRADE_AVAILABLE');
 
-    // Reuse a Stripe customer if any prior row has one (prevents orphan customers).
+    // Reuse a Stripe customer if any prior row has one (prevents orphan
+    // customers). The lookup is by user_id which is JWT-validated, so a PDV
+    // row's provider_customer_id is a SAFE reuse — same user, shared Stripe
+    // account by design (see CLAUDE.md §"Billing").
+    //
+    // P0.19 — we used to fall back to `stripe.customers.list({ email })` if
+    // the DB had no row. That's gone now. Email-based match is unreliable
+    // (case sensitivity, plus-addressing, deduplication quirks) and could
+    // adopt a customer record from another product or organization that
+    // happened to share an email. A user with no DB row gets a fresh
+    // customer tagged with their user_id — the canonical state.
     let stripeCustomerId: string | null = null;
     for (const row of existing) {
       if (row.payment_provider === 'stripe' && row.provider_customer_id) {
         stripeCustomerId = row.provider_customer_id;
         break;
       }
-    }
-    if (!stripeCustomerId && user.email) {
-      const list = await stripe.customers.list({ email: user.email, limit: 1 });
-      stripeCustomerId = list.data[0]?.id ?? null;
     }
     if (!stripeCustomerId) {
       const created = await stripe.customers.create({
@@ -256,6 +262,12 @@ export async function createCheckoutSession(req: Request, res: Response): Promis
     }
 
     const origin = getReturnOrigin(req);
+    // P0.18 — idempotencyKey buckets at 5-minute intervals so a double-click
+    // (or a network retry of the same submit) returns the SAME Checkout
+    // session URL instead of creating two parallel sessions that could both
+    // be paid. The bucket gives genuine retries (e.g. user came back 30 min
+    // later after card decline) a fresh session because the bucket has rolled.
+    const idempotencyBucket = Math.floor(Date.now() / (5 * 60 * 1000));
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: stripeCustomerId,
@@ -279,6 +291,8 @@ export async function createCheckoutSession(req: Request, res: Response): Promis
       },
       success_url: `${origin}/?billing=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/?billing=canceled`,
+    }, {
+      idempotencyKey: `checkout-${user.id}-${plan.tier}-${idempotencyBucket}`,
     });
 
     // Pre-record an incomplete row so the webhook has something to find when
@@ -340,11 +354,12 @@ export async function createPortalSession(req: Request, res: Response): Promise<
       .limit(1)
       .maybeSingle();
 
-    let customerId = row?.provider_customer_id ?? null;
-    if (!customerId && user.email) {
-      const list = await stripe.customers.list({ email: user.email, limit: 1 });
-      customerId = list.data[0]?.id ?? null;
-    }
+    // P0.19 — drop email lookup. If we have no DB row tying THIS user to a
+    // Stripe customer, opening the Customer Portal would let them manage a
+    // billing record they may not own (cross-product PDV subscription, an
+    // unrelated account that happens to share email). Force the user through
+    // Checkout first; the portal only opens once we have provenance.
+    const customerId = row?.provider_customer_id ?? null;
     if (!customerId) throw new Error('NO_CUSTOMER');
 
     const origin = getReturnOrigin(req);
@@ -387,11 +402,9 @@ export async function syncFromStripe(req: Request, res: Response): Promise<void>
       .order('updated_at', { ascending: false });
 
     const candidate = existingRows?.[0];
-    let customerId = candidate?.provider_customer_id ?? null;
-    if (!customerId && user.email) {
-      const list = await stripe.customers.list({ email: user.email, limit: 1 });
-      customerId = list.data[0]?.id ?? null;
-    }
+    // P0.19 — drop email-based lookup. Same rationale as createPortalSession.
+    // Without a DB-rooted customer_id, we have nothing to sync; report and bail.
+    const customerId = candidate?.provider_customer_id ?? null;
     if (!customerId) {
       res.json({ synced: false, reason: 'no_stripe_customer' });
       return;

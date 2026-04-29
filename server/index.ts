@@ -7,7 +7,7 @@ import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl 
 import { handleIncomingMessage, getSession } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
-import { setBoundEmpresaId, getServiceSupabase } from './supabase.js';
+import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscription } from './supabase.js';
 import { ensureAiSettingsHydrated, getConfig } from './configStore.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
@@ -38,6 +38,57 @@ app.use((req, res, next) => {
   if (req.path === '/api/send') return next();
   return express.json({ limit: '100kb' })(req, res, next);
 });
+
+/**
+ * Global paywall: every /api/* route requires an active ZeloChat subscription
+ * unless explicitly exempt below. Pre-existing behavior was to gate only
+ * /api/qr and /api/qr/refresh — every other operational endpoint (send, AI,
+ * drivers, triggers, sessions, …) ran free for cancelled customers, leaking
+ * OpenAI + Whatsmiau quota. See P0.15 in CODE_REVIEW.md.
+ *
+ * Exemptions are kept minimal:
+ *  - /api/healthz: liveness probe
+ *  - /api/billing/*: the user must be able to pay (or change plan / open
+ *    portal) precisely WHEN their subscription is inactive
+ *  - /api/bind-empresa: pre-paywall — establishes empresa context
+ *  - /api/status: the Settings page polls this so the operator sees their
+ *    WhatsApp connection state on the same screen where the paywall lives
+ *
+ * Webhook routes (/webhook, /webhook/:instance) are not under /api/, so they
+ * naturally skip this middleware. The webhook itself short-circuits inactive
+ * empresas inside processWebhookEvent via isEmpresaSubscriptionActive.
+ */
+const PAYWALL_EXEMPT_EXACT = new Set<string>([
+  '/api/healthz',
+  '/api/bind-empresa',
+  '/api/status',
+]);
+const PAYWALL_EXEMPT_PREFIXES = ['/api/billing/'];
+
+app.use(async (req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  if (PAYWALL_EXEMPT_EXACT.has(req.path)) return next();
+  if (PAYWALL_EXEMPT_PREFIXES.some((p) => req.path.startsWith(p))) return next();
+
+  try {
+    await requireActiveZelochatSubscription(req);
+    return next();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'UNKNOWN';
+    if (message === 'UNAUTHORIZED') {
+      return res.status(401).json({ error: 'UNAUTHORIZED' });
+    }
+    if (message === 'EMPRESA_NOT_FOUND') {
+      return res.status(404).json({ error: 'EMPRESA_NOT_FOUND' });
+    }
+    if (message === 'SUBSCRIPTION_INACTIVE') {
+      return res.status(402).json({ error: 'SUBSCRIPTION_INACTIVE' });
+    }
+    console.error('[paywall] gate error:', err);
+    return res.status(503).json({ error: 'PAYWALL_GATE_UNAVAILABLE' });
+  }
+});
+
 app.use(router);
 
 const httpServer = createServer(app);

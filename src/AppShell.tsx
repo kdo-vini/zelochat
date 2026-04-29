@@ -715,7 +715,31 @@ export default function AppShell() {
             notificationPermission={notificationPermission}
           />
         )}
-        {activeView === 'chat' ? (
+        {token && !subscriptionLoading && !subscriptionActive
+          && activeView !== 'settings' && activeView !== 'profile' && activeView !== 'novidades' ? (
+          // Paywall gate: when subscription is inactive, every view except
+          // Settings / Profile / Novidades shows this placeholder. Backend
+          // /api/* endpoints already 402 on the same condition, so trying
+          // to render the underlying views just produces a parade of error
+          // toasts. See P0.16 in CODE_REVIEW.md.
+          <div className="flex flex-1 items-center justify-center bg-[var(--color-canvas)] px-6">
+            <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-2xl shadow-sm p-8 text-center">
+              <div className="text-3xl mb-3">🔒</div>
+              <h2 className="text-[20px] font-semibold text-[var(--color-ink)] mb-2">
+                Ative seu plano para usar o ZeloChat
+              </h2>
+              <p className="text-[14px] text-[var(--color-ink-muted)] leading-relaxed mb-6">
+                A IA, o WhatsApp, o kanban e o catálogo ficam disponíveis assim que sua assinatura estiver ativa. R$97/mês, cancela quando quiser.
+              </p>
+              <button
+                onClick={() => setActiveView('settings')}
+                className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-[var(--color-brand)] text-white text-[14px] font-medium hover:bg-[var(--color-brand-deep)] transition-colors"
+              >
+                Ver planos
+              </button>
+            </div>
+          </div>
+        ) : activeView === 'chat' ? (
           <ChatView
             sessions={state.sessions}
             activeSessionId={activeSessionId}

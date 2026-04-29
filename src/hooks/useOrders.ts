@@ -44,8 +44,16 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
     return (data as { id: string } | null)?.id ?? null;
   }, []);
 
+  // P0.21 — every Supabase query in this hook explicitly scopes by empresa_id.
+  // The frontend uses the ANON key so RLS already enforces the boundary, but
+  // defense-in-depth matters here: if the `zelochat_orders` RLS policy is ever
+  // weakened (or replaced with a permissive `authenticated` rule by mistake),
+  // an explicit `.eq('empresa_id', empresaId)` ensures we still don't leak
+  // other tenants' orders to this operator. Cost: one extra `empresa_perfil`
+  // round-trip on first load if empresaIdRef isn't seeded yet.
   const refresh = useCallback(async () => {
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       setOrders([]);
       return;
     }
@@ -54,9 +62,20 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
     setError(null);
 
     try {
+      let empresaId = empresaIdRef.current;
+      if (!empresaId) {
+        empresaId = await fetchEmpresaId(userId);
+        if (!empresaId) {
+          setOrders([]);
+          return;
+        }
+        empresaIdRef.current = empresaId;
+      }
+
       const { data, error: dbError } = await supabase
         .from('zelochat_orders')
         .select('*')
+        .eq('empresa_id', empresaId)
         .order('created_at', { ascending: false });
 
       if (dbError) throw dbError;
@@ -66,7 +85,7 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
     } finally {
       setLoading(false);
     }
-  }, [session?.user?.id]);
+  }, [session?.user?.id, fetchEmpresaId]);
 
   // Initial fetch + real-time subscription scoped to this empresa
   useEffect(() => {
@@ -177,14 +196,26 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
   }, [session?.access_token]);
 
   const deleteOrder = useCallback(async (id: string): Promise<void> => {
+    // P0.21 — explicit empresa scope on DELETE. RLS would catch a wrong-tenant
+    // delete via 0-rows-affected, but the frontend wouldn't notice (no error
+    // is thrown). Adding the filter makes a misroute fail loud.
+    const userId = session?.user?.id;
+    if (!userId) throw new Error('Faça login para excluir pedidos.');
+    let empresaId = empresaIdRef.current;
+    if (!empresaId) {
+      empresaId = await fetchEmpresaId(userId);
+      if (!empresaId) throw new Error('Perfil da empresa não encontrado.');
+      empresaIdRef.current = empresaId;
+    }
     const { error: dbError } = await supabase
       .from('zelochat_orders')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('empresa_id', empresaId);
 
     if (dbError) throw dbError;
     setOrders((prev) => prev.filter((o) => o.id !== id));
-  }, []);
+  }, [session?.user?.id, fetchEmpresaId]);
 
   const updateOrder = useCallback(async (id: string, patch: Partial<Omit<Order, 'id' | 'createdAt'>>): Promise<void> => {
     const update: Record<string, unknown> = {};
@@ -200,14 +231,24 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
     if (patch.paymentMethod   !== undefined) update.payment_method    = patch.paymentMethod ?? null;
     if (patch.observations    !== undefined) update.observations      = patch.observations ?? null;
 
+    // P0.21 — explicit empresa scope on UPDATE (same rationale as deleteOrder).
+    const userId = session?.user?.id;
+    if (!userId) throw new Error('Faça login para atualizar pedidos.');
+    let empresaId = empresaIdRef.current;
+    if (!empresaId) {
+      empresaId = await fetchEmpresaId(userId);
+      if (!empresaId) throw new Error('Perfil da empresa não encontrado.');
+      empresaIdRef.current = empresaId;
+    }
     const { error: dbError } = await supabase
       .from('zelochat_orders')
       .update(update)
-      .eq('id', id);
+      .eq('id', id)
+      .eq('empresa_id', empresaId);
 
     if (dbError) throw dbError;
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
-  }, []);
+  }, [session?.user?.id, fetchEmpresaId]);
 
   // Refresh orders whenever the server confirms a new WhatsApp order
   useEffect(() => {

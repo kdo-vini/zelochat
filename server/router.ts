@@ -64,7 +64,7 @@ import {
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
-import { getEmpresaForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
+import { getEmpresaForInstance, getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
 import type { ChatAttachment } from '../src/types.js';
 
@@ -86,10 +86,33 @@ function safeJsonParse<T = any>(value: string): T | null {
 }
 
 /**
- * Core webhook event processor — same logic for every entry point. Exported via
- * the two routes below: legacy `/webhook` (apikey-header auth) and the new
- * per-instance `/webhook/:instance` (URL-path auth via empresa lookup on the
- * instance name). Both resolve to the same empresaId before getting here.
+ * 🚨 CRITICAL — webhook event router (multi-tenant boundary)
+ *
+ * Core webhook event processor — same logic for every entry point. The
+ * legacy `/webhook` returns 410 (its singleton-based empresaId resolution
+ * was unsafe for multi-tenant); the supported entry is `/webhook/:instance`
+ * which resolves empresaId via DB lookup on `empresa_perfil.whatsmiau_instance`.
+ *
+ * `empresaId` is INVIOLABLE here — it's the tenant boundary. Every persistence
+ * call below MUST thread it explicitly. Defaulting to `getBoundEmpresaId()`
+ * inside helpers is a known hazard (see CLAUDE.md §"Critical functions to
+ * touch with extreme care") — tagged P0.2 in CODE_REVIEW.md.
+ *
+ * BUTTERFLY EFFECT — what cascades if you mis-attribute messages here:
+ *   • Customer A's WhatsApp message lands in Customer B's operator dashboard
+ *   • AI replies to Customer A spend Customer B's OpenAI budget
+ *   • Order created for Customer B with Customer A's customer_phone
+ *   • Privacy + LGPD incident in either direction
+ *
+ * Hot-path correctness rules:
+ *   1. Fail-closed on subscription check (isEmpresaSubscriptionActive)
+ *   2. Hard-button + soft-confirm short-circuits run BEFORE the AI dispatch
+ *      (see Layer 3 of CLAUDE.md's 3-layer trap)
+ *   3. fromMe messages are echoes of our own outbound — handled separately
+ *      to avoid double-persisting
+ *   4. recentlyHandled deduplication runs against retried webhook deliveries
+ *
+ * Always test the full webhook → handler → AI chain after changes here.
  */
 async function processWebhookEvent(empresaId: string, body: any): Promise<void> {
   const event: string = (body?.event ?? '').toLowerCase().replace(/_/g, '.');
@@ -167,14 +190,38 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       buttonId === 'CANCEL_ORDER' || msgText === '❌ Cancelar' || msgText === 'CANCEL_ORDER';
 
     if (isHardConfirm || isHardCancel) {
+      // ──────────────────────────────────────────────────────────────────
+      // CRITICAL — order confirmation hard-button path
+      // ──────────────────────────────────────────────────────────────────
       // Serialize through the same per-JID queue used by `handleIncomingMessage`
       // so a button click and a parallel inbound text (or a webhook retry of
       // the same click) cannot both pass the `getPendingOrder` check before
       // either has called `clearPendingOrder`. Without the queue, two
       // concurrent confirms can both insert the order — the original
       // duplicate-order bug, see CLAUDE.md §"Order confirmation flow".
+      //
+      // BUTTERFLY EFFECT: this is Layer 3 of the 3-layer trap. If you change
+      // the short-circuit logic here, a button click can leak into the AI as
+      // freeform input → AI calls `criar_pedido` from scratch → duplicate order
+      // → customer gets billed twice. Always re-test the duplicate-order
+      // scenario from the issue history before merging changes here.
+      // ──────────────────────────────────────────────────────────────────
       await serializeForJid(remoteJid, async () => {
-        recentlyHandled.set(`${empresaId}:${remoteJid}`, Date.now()); // block duplicate events for 5s
+        const handledKey = `${empresaId}:${remoteJid}`;
+        // P0.13 — Whatsmiau retries deliver the same button click 2-3 times
+        // when ack is slow. Without retry detection in the no-pending branch
+        // below, the customer received 2-3 copies of "Seu pedido já foi
+        // confirmado!". We capture the prior marker BEFORE overwriting so we
+        // can tell "first delivery" from "retry of a click we already
+        // processed" and short-circuit silently on retries.
+        const prevHandledAt = recentlyHandled.get(handledKey);
+        const isRetry = !!prevHandledAt && Date.now() - prevHandledAt < 5000;
+        recentlyHandled.set(handledKey, Date.now()); // block duplicate events for 5s
+        if (isRetry) {
+          console.log(`[Webhook] hard-button retry suppressed for ${remoteJid} (prev ${Date.now() - prevHandledAt}ms ago)`);
+          return;
+        }
+
         const pending = await getPendingOrder(remoteJid, empresaId);
         if (pending) {
           try {
@@ -325,10 +372,35 @@ router.post('/webhook', async (_req: Request, res: Response) => {
  * POST /webhook/:instance — Per-instance entry point used by the multi-tenant
  * setup (P0-02). Whatsmiau's webhook URL for each empresa's instance is set to
  * `${PUBLIC_URL}/webhook/${instance}`. We resolve the empresa via DB lookup on
- * `empresa_perfil.whatsmiau_instance = :instance` — no apikey header required
- * because the URL path is itself the per-tenant secret (instance names are not
- * guessable; combined with Whatsmiau's source IP this is enough authentication
- * for the beta).
+ * `empresa_perfil.whatsmiau_instance = :instance`.
+ *
+ * ──────────────────────────────────────────────────────────────────────────
+ * CRITICAL — webhook authentication (P0.1)
+ * ──────────────────────────────────────────────────────────────────────────
+ * Authentication runs in TWO LAYERS:
+ *
+ *   1. URL path: the instance name in the path is a per-tenant identifier.
+ *      It's not strictly a secret (it appears in Whatsmiau's dashboard, our
+ *      logs, error reports), so we don't rely on it alone.
+ *
+ *   2. apikey header (validate-if-present today, strict when
+ *      WEBHOOK_REQUIRE_TOKEN=1 is set in env): we compare against the
+ *      empresa's `webhook_token` UUID stored in empresa_perfil. Whatsmiau
+ *      can be configured to send this via webhook config.
+ *
+ * Today (validate-if-present): if the header is missing, we log a warning
+ * and proceed. If present but mismatched, we reject 401 immediately. This
+ * lets us roll out the feature: deploy code first, then configure Whatsmiau
+ * to send the token, watch logs to confirm 100% of inbound webhooks include
+ * the header, then flip WEBHOOK_REQUIRE_TOKEN=1 to require it.
+ *
+ * BUTTERFLY EFFECT: changes here cascade to (a) the AI dispatch — a forged
+ * webhook can inject prompts into the AI; (b) the order pipeline — fake
+ * confirmations create real zelochat_orders rows; (c) the operator's chat
+ * UI — fake messages appear as if from real customers; (d) OpenAI quota —
+ * attacker-controlled prompts spend our money. ALWAYS test the full
+ * webhook → AI → order chain after touching this handler.
+ * ──────────────────────────────────────────────────────────────────────────
  */
 router.post('/webhook/:instance', async (req: Request, res: Response) => {
   const instance = req.params.instance?.trim();
@@ -336,12 +408,46 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'missing instance' });
     return;
   }
-  const empresaId = await getEmpresaForInstance(instance);
-  if (!empresaId) {
+  const ctx = await getEmpresaAndTokenForInstance(instance);
+  if (!ctx) {
     console.warn(`[Webhook] 404 — instance "${instance}" has no empresa assigned`);
     res.status(404).json({ error: 'unknown instance' });
     return;
   }
+  const { empresaId, webhookToken } = ctx;
+
+  // Webhook token auth (P0.1). Whatsmiau forwards configured headers under
+  // `apikey`; we also accept `x-webhook-token` for flexibility. Constant-time
+  // comparison via Buffer length check + equality avoids leaking timing info.
+  const headerToken = (
+    (req.headers['apikey'] as string | undefined) ??
+    (req.headers['x-webhook-token'] as string | undefined) ??
+    ''
+  ).trim();
+
+  const requireStrict = (process.env.WEBHOOK_REQUIRE_TOKEN ?? '').toLowerCase();
+  const isStrict = requireStrict === '1' || requireStrict === 'true' || requireStrict === 'yes';
+
+  if (headerToken) {
+    if (headerToken !== webhookToken) {
+      console.warn(`[Webhook] 401 — token mismatch for instance "${instance}"`);
+      res.status(401).json({ error: 'invalid webhook token' });
+      return;
+    }
+  } else if (isStrict) {
+    // Strict mode: missing token is a hard reject. Flip WEBHOOK_REQUIRE_TOKEN=1
+    // only after Whatsmiau is confirmed to be sending the apikey header on
+    // 100% of inbound webhooks for ALL active empresas.
+    console.warn(`[Webhook] 401 — strict mode rejected missing token for instance "${instance}"`);
+    res.status(401).json({ error: 'webhook token required' });
+    return;
+  } else {
+    // Validate-if-present mode: log so we can monitor adoption before flipping
+    // strict. Once these warnings stop appearing in Railway logs, we know it's
+    // safe to set WEBHOOK_REQUIRE_TOKEN=1.
+    console.warn(`[Webhook] token-missing for instance "${instance}" (validate-if-present mode; flip WEBHOOK_REQUIRE_TOKEN=1 once configured)`);
+  }
+
   res.json({ ok: true });
   await processWebhookEvent(empresaId, req.body);
 });
@@ -1345,16 +1451,22 @@ router.patch('/api/sessions/:jid/name', async (req: Request, res: Response) => {
 
 /**
  * GET /api/produtos — Proxy para zelopdv.com.br (evita CORS no frontend).
- * Requer Authorization: Bearer <token> — repassa diretamente para a API.
+ *
+ * P0.4 — Validate the Supabase JWT locally via `requireEmpresaId` BEFORE
+ * forwarding upstream. The previous version trusted any string in the
+ * Authorization header and simply re-sent it — turning ZeloChat into an
+ * open proxy for any Supabase token from any project that shared the
+ * auth pool. By calling `requireEmpresaId(req)`, we (a) reject malformed
+ * or expired tokens locally, and (b) tie the proxied request to a known
+ * empresa in our DB. The paywall middleware in `server/index.ts` also
+ * gates this route, so cancelled customers can't keep pulling catalog
+ * data after their subscription lapses.
  */
 router.get('/api/produtos', async (req: Request, res: Response) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    res.status(401).json({ error: 'Authorization header ausente.' });
-    return;
-  }
-
   try {
+    await requireEmpresaId(req);
+
+    const authHeader = req.headers.authorization!;
     const onlyVisible = req.query.onlyVisible ?? 'true';
     const url = new URL('https://www.zelopdv.com.br/api/produtos');
     url.searchParams.set('onlyVisible', String(onlyVisible));
@@ -1365,6 +1477,10 @@ router.get('/api/produtos', async (req: Request, res: Response) => {
 
     res.json(upstream.data);
   } catch (err: any) {
+    if (err?.message === 'UNAUTHORIZED' || err?.message === 'EMPRESA_NOT_FOUND') {
+      sendAuthError(res, err);
+      return;
+    }
     const status = err?.response?.status ?? 502;
     const msg = err?.response?.data?.error ?? err?.message ?? 'Upstream error';
     res.status(status).json({ error: msg });

@@ -290,16 +290,23 @@ export async function resolveSession(
 
   const now = new Date().toISOString();
 
+  // P0.22 / P1.1 — service-role bypasses RLS, so empresa_id filter is mandatory
+  // on every UPDATE. Without it, a session_id collision (or future bug that
+  // passes the wrong session_id) would mutate another tenant's row. The
+  // session.id comes from findSessionByJid which is already empresa-scoped,
+  // but defense-in-depth matters here because this is an audit-log mutation.
   const { error: updateErr } = await supabase
     .from('zelochat_sessions')
     .update({ status: 'resolved', escalated_at: null, updated_at: now })
-    .eq('id', session.id);
+    .eq('id', session.id)
+    .eq('empresa_id', empresaId);
   if (updateErr) throw new Error(updateErr.message);
 
   const { data: resolved, error: resolveErr } = await supabase
     .from('zelochat_escalation_events')
     .update({ resolved_at: now, resolved_by: userId })
     .eq('session_id', session.id)
+    .eq('empresa_id', empresaId)
     .is('resolved_at', null)
     .select('id');
   if (resolveErr) throw new Error(resolveErr.message);
@@ -328,16 +335,19 @@ export async function acknowledgeSession(empresaId: string, jid: string): Promis
   if (!session || session.status !== 'escalated') return;
 
   const now = new Date().toISOString();
+  // P0.22 / P1.1 — same defense-in-depth pattern as resolveSession above.
   await supabase
     .from('zelochat_sessions')
     .update({ acknowledged_at: now })
     .eq('id', session.id)
+    .eq('empresa_id', empresaId)
     .is('acknowledged_at', null);
 
   await supabase
     .from('zelochat_escalation_events')
     .update({ acknowledged_at: now })
     .eq('session_id', session.id)
+    .eq('empresa_id', empresaId)
     .is('acknowledged_at', null)
     .is('resolved_at', null);
 }
