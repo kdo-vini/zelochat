@@ -461,35 +461,45 @@ async function upsertInboundUserMessage(params: {
   waMessageId: string;
 }): Promise<ChatMessage | null> {
   const supabase = getServiceSupabase();
+
+  // 🚨 HOTFIX 2026-04-29 — não usar `.upsert(..., { ignoreDuplicates: true })`.
+  // O supabase-js manda `Prefer: resolution=ignore-duplicates` que faz o
+  // Postgres não retornar a row inserida no RETURNING — TANTO em conflito
+  // QUANTO em insert fresco. Resultado: minha checagem `data.length === 0`
+  // estava interpretando TODO insert fresco como duplicate → 531 mensagens
+  // user esperadas, 0 persistidas com wa_message_id desde o deploy do P0.14.
+  // Casa dos Salgados perdeu silenciosamente toda mensagem nova no chat
+  // panel (last_message do session row continuava OK porque ensureSession
+  // roda antes, mascarando o problema).
+  //
+  // Solução: INSERT puro com catch do unique-constraint violation (Postgres
+  // 23505). Genuíno duplicate → retorna null. Insert fresco → retorna a row.
+  // Essa abordagem não depende do comportamento exato do supabase-js para o
+  // header Prefer.
   const { data, error } = await supabase
     .from('zelochat_messages')
-    .upsert(
-      {
-        empresa_id: params.empresaId,
-        session_id: params.sessionId,
-        role: 'user' as MessageRole,
-        content: params.content,
-        sent_at: params.sentAt,
-        wa_message_id: params.waMessageId,
-      },
-      {
-        onConflict: 'empresa_id,wa_message_id',
-        ignoreDuplicates: true,
-      },
-    )
-    .select(MESSAGE_COLUMNS);
+    .insert({
+      empresa_id: params.empresaId,
+      session_id: params.sessionId,
+      role: 'user' as MessageRole,
+      content: params.content,
+      sent_at: params.sentAt,
+      wa_message_id: params.waMessageId,
+    })
+    .select(MESSAGE_COLUMNS)
+    .single();
 
   if (error) {
+    // 23505 = Postgres unique_violation. Aqui significa que `wa_message_id`
+    // já foi inserido pra esta empresa — Whatsmiau retransmitiu o webhook.
+    // Caller MUST short-circuit (sem unread bump, sem broadcast, sem AI).
+    if ((error as { code?: string }).code === '23505') {
+      return null;
+    }
     throw new Error(error.message);
   }
 
-  // ignoreDuplicates: true → conflict returns an empty array. Treat that as
-  // "duplicate webhook delivery, already persisted earlier" and signal the
-  // caller to skip downstream side-effects.
-  if (!data || data.length === 0) {
-    return null;
-  }
-  return mapMessage(data[0] as MessageRow);
+  return mapMessage(data as MessageRow);
 }
 
 export async function getSession(jid: string, empresaId: string): Promise<StoredSession | null> {
