@@ -148,6 +148,40 @@ export async function uploadMediaForSend(
   return data.publicUrl;
 }
 
+/**
+ * Checks if an empresa has an active ZeloChat subscription without requiring
+ * a JWT token. Used by the webhook handler (no auth header available).
+ * On DB error, returns true (fail-open) to avoid blocking legitimate traffic.
+ */
+export async function isEmpresaSubscriptionActive(empresaId: string): Promise<boolean> {
+  try {
+    const supabase = getServiceSupabase();
+    const { data: empresa } = await supabase
+      .from('empresa_perfil')
+      .select('user_id')
+      .eq('id', empresaId)
+      .maybeSingle();
+    const userId = (empresa as { user_id?: string } | null)?.user_id;
+    if (!userId) return false;
+
+    const { data } = await supabase
+      .from('subscriptions')
+      .select('status, plan_tier, current_period_end, manually_extended_until')
+      .eq('user_id', userId)
+      .in('plan_tier', ['chat', 'bundle'])
+      .order('current_period_end', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!data || data.status !== 'active') return false;
+    const expiry = data.manually_extended_until ?? data.current_period_end;
+    if (!expiry || new Date(expiry).getTime() <= Date.now()) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 export function setBoundEmpresaId(empresaId: string): void {
   boundEmpresaId = empresaId;
 }
