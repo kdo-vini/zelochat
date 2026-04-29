@@ -1067,6 +1067,18 @@ export async function generateAndSendReply(
     const choice = response.choices[0];
 
     if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
+      // P1.19 — apenas processamos o primeiro tool_call. Modelo raramente
+      // emite múltiplos (tool_choice: 'auto' não força paralelo) mas se
+      // emitir, o segundo é dropado silenciosamente — customer pode ficar
+      // sem resposta que dependia do segundo. Por enquanto log de warning
+      // pra monitorar; refactor pra processar todos em sequência fica pra
+      // próximo sprint (envolve cuidado com order de side-effects:
+      // criar_pedido → button vs dispatch_trigger → escalation são fluxos
+      // mutuamente exclusivos no design atual).
+      if (choice.message.tool_calls.length > 1) {
+        const names = choice.message.tool_calls.map((tc) => tc.type === 'function' ? tc.function.name : 'unknown').join(', ');
+        console.warn(`[AI] Model emitted ${choice.message.tool_calls.length} tool_calls; processing only the first. Names: ${names}`);
+      }
       const toolCall = choice.message.tool_calls[0];
 
       if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
@@ -1254,6 +1266,16 @@ export async function generateAndSendReply(
         } catch (err) {
           replyText = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente em instantes? 🙏';
           console.error('[AI] Failed to create order:', err);
+          // P1.22 — best-effort cleanup de pending row órfã. Se setPendingOrder
+          // SUCESSO mas alguma coisa downstream (sendButtonMessage / addToolMessage
+          // / addAssistantMessage) falhou, ficaria pending row em DB sem o
+          // customer ter visto os botões — o próximo "sim" dele cairia no soft-
+          // confirm sobre uma order pending fantasma. Apaga o pending pra forçar
+          // o customer a refazer o fluxo. Se setPendingOrder NUNCA rodou, o
+          // delete é no-op (idempotent).
+          await clearPendingOrder(jid, resolvedEmpresaId).catch((cleanupErr) =>
+            console.warn('[AI] orphan pending cleanup failed:', cleanupErr),
+          );
         }
 
         await sendTextMessage(jid, replyText, resolvedEmpresaId);

@@ -35,10 +35,22 @@ const BASE_URL = (process.env.WHATSMIAU_BASE_URL || 'https://api.whatsmiau.dev')
 const API_KEY = process.env.WHATSMIAU_API_KEY || '';
 
 // Whatsmiau message IDs sent by this server process — used to skip the fromMe
-// webhook echo that Whatsmiau fires for every outbound API send. TTL: 30 s.
+// webhook echo that Whatsmiau fires for every outbound API send.
+//
+// P1.7 — TTL ampliado de 30s → 10min. Redeploys da Railway demoram ~2-3min
+// e Whatsmiau às vezes atrasa o echo (queue lag). Com 30s, qualquer atraso
+// >30s fazia o echo ser tratado como mensagem orgânica do operador →
+// duplicate row em zelochat_messages.
+//
+// LIMITAÇÃO: este Map não sobrevive a restart do processo. Após redeploy,
+// outbounds enviados ANTES do restart cujo echo chega DEPOIS são persistidos
+// duplicado. Solução completa seria persistir wa_message_id em
+// zelochat_messages (UNIQUE index já existe da migration 015) e dedupar
+// no DB layer — fica pra próximo sprint.
+const SENT_DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const recentSentIds = new Map<string, number>();
 setInterval(() => {
-  const cutoff = Date.now() - 30_000;
+  const cutoff = Date.now() - SENT_DEDUP_TTL_MS;
   for (const [id, ts] of recentSentIds) {
     if (ts < cutoff) recentSentIds.delete(id);
   }
@@ -438,15 +450,38 @@ export async function fetchProfilePicture(
  * Per-instance status fetch — bypasses ALL module globals. Queries Whatsmiau
  * directly so each empresa's status is true to its own instance, not the
  * legacy bound singleton's. Used by `/api/status` and `/api/qr` after P1-01.
+ *
+ * P1.12 — cache de 5s da resposta da lista do Whatsmiau. O endpoint
+ * `/evolution/instances` retorna TODAS as instâncias da conta Whatsmiau
+ * em cada call. Sem cache, /api/status (chamado a cada 3s pelo
+ * WhatsAppIntegrationCard) gera N×3s req/s contra Whatsmiau, vazando o
+ * inventário completo de instâncias em todo log de erro. Cache de 5s
+ * mantém latência baixa, reduz pressão na API upstream e diminui
+ * superfície de exposição. Per-instance endpoint do Evolution
+ * (`/instance/connectionState/{instance}`) seria ideal mas não confirmei
+ * que Whatsmiau expõe — TODO.
  */
+let instancesListCache: { data: any[]; fetchedAt: number } | null = null;
+const INSTANCES_LIST_CACHE_TTL_MS = 5_000;
+
+async function fetchInstancesList(): Promise<any[]> {
+  const now = Date.now();
+  if (instancesListCache && now - instancesListCache.fetchedAt < INSTANCES_LIST_CACHE_TTL_MS) {
+    return instancesListCache.data;
+  }
+  const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, {
+    headers: apiHeaders(),
+    timeout: 10_000,
+  });
+  const list: any[] = Array.isArray(instances) ? instances : (instances?.data ?? []);
+  instancesListCache = { data: list, fetchedAt: now };
+  return list;
+}
+
 export async function fetchInstanceConnectionState(instanceName: string): Promise<ConnectionStatus> {
   if (!instanceName) return 'disconnected';
   try {
-    const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, {
-      headers: apiHeaders(),
-      timeout: 10_000,
-    });
-    const list: any[] = Array.isArray(instances) ? instances : (instances?.data ?? []);
+    const list = await fetchInstancesList();
     const match = list.find((i) => (i.whatsmiau_instance_id ?? i.name ?? '') === instanceName);
     const status: string = match?.status ?? '';
     if (status === 'CONNECTED' || status === 'open') return 'connected';
