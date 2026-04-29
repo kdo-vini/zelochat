@@ -9,6 +9,7 @@ import { generateAndSendReply } from './ai.js';
 import router from './router.js';
 import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscription } from './supabase.js';
 import { ensureAiSettingsHydrated, getConfig } from './configStore.js';
+import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -218,4 +219,10 @@ httpServer.listen(PORT, () => {
       console.warn('[Server] Auto-bind failed:', err);
     }
   })();
+
+  // P1.13 — periodic sweep of churned customers' Whatsmiau instances. Runs
+  // 5 min after startup (lets paywall cache warm), then every 6h. Idempotent:
+  // re-running after a successful sweep is a no-op. Customers within the
+  // 30-day grace window are NOT touched.
+  startSubscriptionSweepLoop();
 });
