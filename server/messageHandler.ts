@@ -13,12 +13,25 @@ import {
 
 const jidQueues = new Map<string, Promise<void>>();
 
-function serializeForJid(jid: string, work: () => Promise<void>): Promise<void> {
+/**
+ * Serialize all work for a given JID through a single in-memory queue. Any
+ * code path that mutates pending-order state OR persists messages for a JID
+ * MUST go through this — otherwise concurrent webhook events (button click +
+ * retry, button + text, two rapid customer messages) can race past
+ * check-then-act windows and produce duplicate orders or duplicate inserts.
+ *
+ * Exported so router.ts can wrap its button-click handlers in the same queue
+ * that `handleIncomingMessage` uses for inbound text. Both must share the
+ * queue to actually serialize, which is the whole point.
+ */
+export function serializeForJid<T = void>(jid: string, work: () => Promise<T>): Promise<T> {
   const existing = jidQueues.get(jid) ?? Promise.resolve();
-  const next = existing.then(work, work);
-  jidQueues.set(jid, next);
-  next.finally(() => {
-    if (jidQueues.get(jid) === next) jidQueues.delete(jid);
+  // Run work whether the previous task resolved or rejected. The cast is
+  // intentional: the queue stores Promise<void> but each task can return T.
+  const next = existing.then(work, work) as Promise<T>;
+  jidQueues.set(jid, next as unknown as Promise<void>);
+  (next as Promise<unknown>).finally(() => {
+    if (jidQueues.get(jid) === (next as unknown as Promise<void>)) jidQueues.delete(jid);
   });
   return next;
 }
