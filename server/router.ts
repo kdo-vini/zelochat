@@ -43,6 +43,7 @@ import {
   serializeForJid,
 } from './messageHandler.js';
 import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
+import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
@@ -477,8 +478,28 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     console.warn(`[Webhook] token-missing for instance "${instance}" (validate-if-present mode; flip WEBHOOK_REQUIRE_TOKEN=1 once configured)`);
   }
 
+  // Ack the webhook FIRST — Whatsmiau's retry timer starts the moment we
+  // accept the body, and the work below (raw log + AI dispatch) can take
+  // hundreds of ms. Holding the response open here is what triggered prior
+  // double-deliveries.
   res.json({ ok: true });
-  await processWebhookEvent(empresaId, req.body);
+
+  // Defense layer: persist the raw payload BEFORE processing. If
+  // processWebhookEvent (or any helper it calls) regresses again like the
+  // 2026-04-29 P0.14 incident, we can replay from this log instead of losing
+  // the data forever — Whatsmiau exposes no history endpoint. Failures are
+  // swallowed inside the helper; processing must continue even if the log
+  // insert fails. See server/webhookLog.ts and migration 016.
+  const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body);
+
+  let processingError: unknown = null;
+  try {
+    await processWebhookEvent(empresaId, req.body);
+  } catch (err) {
+    processingError = err;
+    console.error(`[Webhook] processWebhookEvent threw for instance "${instance}":`, err);
+  }
+  await markWebhookEventProcessed(rawEventId, processingError);
 });
 
 
