@@ -14,7 +14,7 @@ const INCLUDED: ReactNode[] = [
   </>,
   'Respostas automáticas e sugestões',
   'Kanban de pedidos e gestão de entregadores',
-  'Resumos, histórico e relatórios',
+  'Resumos e histórico de conversas',
   'Suporte em português',
 ];
 
@@ -61,7 +61,7 @@ export function Pricing() {
 
               <div className="mt-8 flex items-baseline gap-2">
                 <span className="text-[15px] text-white/60">R$</span>
-                <span className="text-[56px] font-bold tracking-tight leading-none">100</span>
+                <span className="text-[56px] font-bold tracking-tight leading-none">97</span>
                 <span className="text-[15px] text-white/60">/mês</span>
               </div>
               <p className="mt-1 text-[12.5px] text-white/50">

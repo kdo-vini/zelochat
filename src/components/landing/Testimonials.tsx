@@ -11,26 +11,26 @@ interface Testimonial {
 const TESTIMONIALS: Testimonial[] = [
   {
     quote:
-      'O ZeloChat nos ajudou a reduzir pela metade o tempo de resposta e aumentou muito nossas vendas!',
-    name: 'Mariana Costa',
-    business: 'Loja da Gente',
-    initials: 'MC',
+      'Antes a gente perdia pedido no domingo à noite por demora. Agora a IA atende na hora e a impressão sai direto na cozinha.',
+    name: 'Marina Souza',
+    business: 'Pizzaria Bella Massa',
+    initials: 'MS',
     color: '#F472B6',
   },
   {
     quote:
-      'A IA entende muito bem nossos produtos e os clientes ficam impressionados com a agilidade.',
-    name: 'Rafael Martins',
-    business: 'EletroLar',
-    initials: 'RM',
+      'A IA conhece o cardápio inteiro e responde preço, sabor e tempo de entrega sem a gente precisar digitar.',
+    name: 'Rodrigo Almeida',
+    business: 'Hamburgueria do Rodrigo',
+    initials: 'RA',
     color: '#60A5FA',
   },
   {
     quote:
-      'Integração perfeita com o ZeloPDV e suporte incrível. Recomendo demais!',
-    name: 'Juliana Andrade',
-    business: 'Moda & Estilo',
-    initials: 'JA',
+      'Integração com o ZeloPDV salvou minha vida — pedido do WhatsApp já entra direto no caixa, sem retrabalho.',
+    name: 'Juliana Pereira',
+    business: 'Lanchonete Sabor Caseiro',
+    initials: 'JP',
     color: '#A78BFA',
   },
 ];
