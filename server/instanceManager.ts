@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import axios from 'axios';
 import { getServiceSupabase } from './supabase.js';
 
@@ -154,11 +155,19 @@ export async function getEmpresaForInstance(instance: string): Promise<string | 
  * empresa_perfil. Called during signup (P1-01) and from the connect-WhatsApp
  * UI for empresas migrating from the legacy single-tenant setup.
  *
- * Instance name pattern: `zelo-{empresaId-first-8}` — deterministic and easy
- * to recognise in the Whatsmiau dashboard.
+ * Instance name pattern: `zelo-{empresaId-first-8}-{16-hex-random}`
+ * The random suffix (64 bits) makes the URL-path webhook unfeasible to enumerate.
+ * Existing empresas keep their original name (set in migrations / DB directly)
+ * and are NOT renamed automatically — see TODO below.
+ *
+ * TODO(ops): after sufficient soak time, rotate instance names for empresas
+ * that still use the legacy `zelo-{first-8}` pattern (no random suffix).
+ * Steps: call deleteInstance → createInstance → re-register webhook via
+ * setWebhookForInstance. Schedule during low-traffic window; coordinate with
+ * Whatsmiau support if needed.
  */
 export async function createInstance(empresaId: string): Promise<string> {
-  const instanceName = `zelo-${empresaId.slice(0, 8)}`;
+  const instanceName = `zelo-${empresaId.slice(0, 8)}-${randomBytes(8).toString('hex')}`;
   try {
     await axios.post(
       `${BASE_URL}/evolution/instance/create`,

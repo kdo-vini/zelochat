@@ -16,7 +16,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-29',
     category: 'minor',
-
+    title: 'Conexões WhatsApp mais seguras para novas empresas',
+    description: 'Cada nova empresa recebe um endereço de webhook exclusivo com alta aleatoriedade, tornando impossível adivinhar ou enumerar os endereços de outras contas.',
   },
   {
     date: '2026-04-28',
