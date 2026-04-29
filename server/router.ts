@@ -181,13 +181,39 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     ).trim();
 
     // "Hard" button click: an explicit button-id from Whatsmiau OR plain text that
-    // exactly matches a button label we sent. These MUST short-circuit the AI even
+    // matches a button label we sent. These MUST short-circuit the AI even
     // when no pending order exists — otherwise the AI re-interprets "✅ Confirmar"
     // as the customer placing a new order and creates a duplicate.
-    const isHardConfirm =
-      buttonId === 'CONFIRM_ORDER' || msgText === '✅ Confirmar' || msgText === 'CONFIRM_ORDER';
-    const isHardCancel =
-      buttonId === 'CANCEL_ORDER' || msgText === '❌ Cancelar' || msgText === 'CANCEL_ORDER';
+    //
+    // P1.15 — antes era exact-match em "✅ Confirmar" / "❌ Cancelar". Whatsmiau
+    // (e clientes WhatsApp diferentes) variam:
+    //   • "✅Confirmar" (sem espaço)
+    //   • "Confirmar ✅" (emoji no fim)
+    //   • "CONFIRMAR" (alguns templates uppercase)
+    //   • VS16 variations (U+2705 vs U+2705+U+FE0F)
+    //   • smart-quote period: "Confirmar."
+    // Cada miss fazia o texto cair no AI como freeform input → AI achava que
+    // era um pedido novo → duplicate-order bug. Agora normalizamos accent +
+    // case + emoji + punct e checamos se o token "confirmar"/"cancelar" está
+    // presente.
+    const buttonTextNormalized = msgText
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{Mn}/gu, '')          // strip combining accents
+      .replace(/[\p{S}\p{P}\s]+/gu, ' ') // collapse symbols/emoji/punct/whitespace
+      .trim();
+    // Match if it's just the token (with optional surrounding whitespace).
+    // "confirmar" alone or "confirmar pedido" still match; "quer confirmar
+    // depois?" doesn't (extra leading words).
+    const isConfirmText = buttonTextNormalized === 'confirmar'
+      || buttonTextNormalized === 'confirm order'
+      || buttonTextNormalized.startsWith('confirmar ');
+    const isCancelText = buttonTextNormalized === 'cancelar'
+      || buttonTextNormalized === 'cancel order'
+      || buttonTextNormalized.startsWith('cancelar ');
+
+    const isHardConfirm = buttonId === 'CONFIRM_ORDER' || isConfirmText;
+    const isHardCancel = buttonId === 'CANCEL_ORDER' || isCancelText;
 
     if (isHardConfirm || isHardCancel) {
       // ──────────────────────────────────────────────────────────────────
@@ -258,14 +284,17 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     // these when a pending order is actually waiting; otherwise let the AI
     // process them naturally (e.g. "Sim" answering an unrelated question).
     if (msgText) {
-      // Normalize before regex: trim, lowercase, strip surrounding punctuation
-      // so "Sim.", " NÃO ", "sim!" all match. Anchored regex on raw text
-      // missed accents/casing/whitespace and leaked into the AI as freeform.
+      // P1.21 — antes a normalização fazia `.replace(/[^a-z]/g, '')` que
+      // colapsa "10s" → "s" e "uns 10min" → "smin" (depois "s" se truncasse).
+      // Customer escrevendo "5min" virava confirmação de pedido. Agora
+      // strip apenas acentos + trailing whitespace/punct e checa exact-match
+      // contra um whitelist mínimo, igual ao approach do P0.9/P0.10 em ai.ts.
       const normalized = msgText
         .toLowerCase()
         .normalize('NFD')
-        .replace(/\p{M}/gu, '') // strip combining accent marks
-        .replace(/[^a-z]/g, '');
+        .replace(/\p{Mn}/gu, '')
+        .replace(/[\s\p{P}\p{S}]+$/u, '')
+        .trim();
       const isSoftConfirm = normalized === 'sim' || normalized === 's';
       const isSoftCancel = normalized === 'nao' || normalized === 'n';
       if (isSoftConfirm || isSoftCancel) {

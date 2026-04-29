@@ -195,18 +195,37 @@ function extractText(msg: any): string | null {
  * cross-tenant enumeration combinatorially infeasible. See `buildScopedMediaKey`
  * in server/supabase.ts for the rationale.
  */
+// P1.9 — cap em tamanho de mídia entrante. Whatsmiau base64 chega no
+// payload do webhook; sem cap, um vídeo de 50MB vira ~75MB de Buffer no
+// event loop do Node, e múltiplos paralelos = OOM (Railway crash).
+// 25MB é generoso pra fotos e áudios normais; vídeos grandes recebem
+// placeholder e o operador é informado via [MÍDIA GRANDE — pedir reenvio].
+const MAX_INBOUND_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
+
 async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string, empresaId: string): Promise<string | undefined> {
-  // 1. Public mediaUrl — Whatsmiau provides this after uploading to its own Google Cloud storage
+  // 1. Public mediaUrl — Whatsmiau provides this after uploading to its own Google Cloud storage.
+  // Esses URLs públicos não consomem nossa memória (cliente baixa direto), então
+  // não precisam de cap. Tamanho declarado vem do msg.message.{type}Message.fileLength
+  // quando relevante — checagem feita no caller via skip-attachment.
   const mediaUrl: string = msg.message?.mediaUrl ?? '';
   if (mediaUrl && !mediaUrl.includes('mmg.whatsapp.net') && !mediaUrl.endsWith('.enc')) {
     return mediaUrl;
   }
 
-  // 2. Base64 path — fallback if Whatsmiau provides raw base64 instead of a URL
+  // 2. Base64 path — Whatsmiau enviou bytes inline. AQUI precisamos de cap
+  // porque o decode acontece no nosso process. base64 → ~75% bytes reais.
+  // Calculamos o tamanho aproximado ANTES de decodar pra evitar alocar buffer
+  // gigante por nada.
   const raw: string = msg.message?.base64 ?? '';
   if (raw) {
     const pure = raw.startsWith('data:') ? raw.split(',')[1] ?? '' : raw;
     if (pure) {
+      // base64 length × 0.75 ≈ decoded bytes. Conservador: aceita o limite com folga.
+      const approxBytes = Math.floor(pure.length * 0.75);
+      if (approxBytes > MAX_INBOUND_MEDIA_BYTES) {
+        console.warn(`[Media] inbound payload too large: ~${(approxBytes / 1024 / 1024).toFixed(1)}MB exceeds ${MAX_INBOUND_MEDIA_BYTES / 1024 / 1024}MB cap. Dropping.`);
+        return undefined;
+      }
       // Upload to Supabase for a persistent public URL
       try {
         const buffer = Buffer.from(pure, 'base64');

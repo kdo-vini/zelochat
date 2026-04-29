@@ -203,6 +203,24 @@ export async function createInstance(empresaId: string): Promise<string> {
 }
 
 /**
+ * P1.6 — Per-empresa in-flight mutex pra createInstance.
+ *
+ * Sem isso, duas abas do operador abrindo /api/qr simultaneamente faziam:
+ *   • Ambas miss cache → ambas miss DB lookup
+ *   • Ambas geravam um instanceName diferente (random 16-hex suffix)
+ *   • Ambas POSTavam pra Whatsmiau → 2 instâncias criadas
+ *   • Ambas UPDATE empresa_perfil — last-write-wins
+ *   • A instância "perdedora" fica órfã no Whatsmiau (custo recorrente
+ *     sem pointer no DB pra deletar)
+ *
+ * Solução: in-memory promise map. Segunda chamada concorrente await na
+ * promise da primeira em vez de criar nova. Multi-node deploys precisariam
+ * de Postgres advisory lock — single-node Railway atual é OK com mutex
+ * em memória.
+ */
+const inFlightInstanceLookups = new Map<string, Promise<string>>();
+
+/**
  * Resolves the empresa's dedicated Whatsmiau instance, creating one on demand
  * if it doesn't have one yet. Multi-tenant safe — NEVER falls back to another
  * empresa's instance (in contrast with `getInstanceForEmpresa` which still
@@ -211,31 +229,46 @@ export async function createInstance(empresaId: string): Promise<string> {
  */
 export async function getOrCreateOwnInstanceForEmpresa(empresaId: string): Promise<string> {
   if (!empresaId) throw new Error('empresaId required');
-  await ensureCache();
-  const cached = empresaToInstance.get(empresaId);
-  if (cached) return cached;
 
-  // Cache miss — try direct lookup before paying the create round-trip.
-  try {
-    const { data } = await getServiceSupabase()
-      .from('empresa_perfil')
-      .select('whatsmiau_instance')
-      .eq('id', empresaId)
-      .maybeSingle();
-    const inst = (data as { whatsmiau_instance?: string | null } | null)?.whatsmiau_instance;
-    if (inst) {
-      empresaToInstance.set(empresaId, inst);
-      instanceToEmpresa.set(inst, empresaId);
-      return inst;
+  // P1.6 — se outra request pra essa empresa já está rodando o lookup/create,
+  // espera ela em vez de duplicar.
+  const inFlight = inFlightInstanceLookups.get(empresaId);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    await ensureCache();
+    const cached = empresaToInstance.get(empresaId);
+    if (cached) return cached;
+
+    // Cache miss — try direct lookup before paying the create round-trip.
+    try {
+      const { data } = await getServiceSupabase()
+        .from('empresa_perfil')
+        .select('whatsmiau_instance')
+        .eq('id', empresaId)
+        .maybeSingle();
+      const inst = (data as { whatsmiau_instance?: string | null } | null)?.whatsmiau_instance;
+      if (inst) {
+        empresaToInstance.set(empresaId, inst);
+        instanceToEmpresa.set(inst, empresaId);
+        return inst;
+      }
+    } catch (err) {
+      console.error('[instanceManager] direct lookup failed:', err instanceof Error ? err.message : err);
     }
-  } catch (err) {
-    console.error('[instanceManager] direct lookup failed:', err instanceof Error ? err.message : err);
-  }
 
-  // No instance assigned yet — create one. Webhook registration is a follow-up
-  // call from the route handler (kept out of this module to avoid a circular
-  // import with whatsapp.ts).
-  return createInstance(empresaId);
+    // No instance assigned yet — create one. Webhook registration is a follow-up
+    // call from the route handler (kept out of this module to avoid a circular
+    // import with whatsapp.ts).
+    return createInstance(empresaId);
+  })();
+
+  inFlightInstanceLookups.set(empresaId, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightInstanceLookups.delete(empresaId);
+  }
 }
 
 export async function deleteInstance(empresaId: string): Promise<void> {

@@ -1033,15 +1033,28 @@ export async function generateAndSendReply(
     // If you ever add a tool flow that spans multiple requests, you MUST stop filtering
     // here, otherwise OpenAI will reject the next request with "tool messages must
     // follow assistant messages with tool_calls".
+    //
+    // P1.20 — cap em últimas 60 mensagens (depois do filtro de role/content). Sem
+    // cap, um cliente que chateia há meses gera um prompt gigantesco a cada
+    // webhook, escalando custo/latência da OpenAI linearmente. 60 cobre ~30
+    // turnos de conversa user↔assistant, o que é confortável mesmo pra fluxos
+    // de pedido demorados (cardápio + perguntas + endereço + confirmação).
+    // O system prompt JÁ inclui customerHistory, então perder turnos antigos
+    // do prompt de runtime não perde memória do cliente.
+    const HISTORY_CAP = 60;
+    const filteredHistory = session.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .filter((m) => !!m.content); // skip tool-call-only assistant rows (content is null)
+    const trimmedHistory = filteredHistory.length > HISTORY_CAP
+      ? filteredHistory.slice(-HISTORY_CAP)
+      : filteredHistory;
+
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemInstruction },
-      ...session.messages
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .filter((m) => !!m.content) // skip tool-call-only assistant rows (content is null)
-        .map((m) => ({
-          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-          content: buildContentForModel(m),
-        })),
+      ...trimmedHistory.map((m) => ({
+        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: buildContentForModel(m),
+      })),
     ];
 
     const response = await openai.chat.completions.create({
