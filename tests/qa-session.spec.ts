@@ -21,41 +21,42 @@ function makeWebhookPayload(text: string, jid: string, fromMe = false) {
 // ─────────────────────────────────────────────
 // Group / broadcast filter
 // ─────────────────────────────────────────────
-test.describe('Group & broadcast filter', () => {
+// POST /webhook was removed (2026-04-29) — replaced by POST /webhook/:instance.
+// These tests document the removal: the legacy route returns 410.
+// Per-instance filtering behavior (group, fromMe, etc.) is exercised by the
+// backend logic in processWebhookEvent, reached via /webhook/:instance.
+test.describe('Legacy /webhook endpoint returns 410', () => {
 
-  test('group messages (@g.us) return 200 but are not processed', async () => {
+  test('POST /webhook (group jid) returns 410', async () => {
     const ctx = await request.newContext();
     const res = await ctx.post(`${BACKEND}/webhook`, {
       data: makeWebhookPayload('msg de grupo', '120363012345@g.us'),
     });
-    expect(res.status()).toBe(200);
-    // No crash — just silently dropped
+    expect(res.status()).toBe(410);
   });
 
-  test('broadcast messages (@broadcast) return 200 but are not processed', async () => {
+  test('POST /webhook (broadcast jid) returns 410', async () => {
     const ctx = await request.newContext();
     const res = await ctx.post(`${BACKEND}/webhook`, {
       data: makeWebhookPayload('broadcast msg', 'status@broadcast'),
     });
-    expect(res.status()).toBe(200);
+    expect(res.status()).toBe(410);
   });
 
-  test('fromMe messages return 200 but are not processed', async () => {
+  test('POST /webhook (fromMe) returns 410', async () => {
     const ctx = await request.newContext();
     const res = await ctx.post(`${BACKEND}/webhook`, {
       data: makeWebhookPayload('bot reply', '5514999990001@s.whatsapp.net', true),
     });
-    expect(res.status()).toBe(200);
+    expect(res.status()).toBe(410);
   });
 
-  test('individual messages (@s.whatsapp.net) ARE processed', async () => {
+  test('POST /webhook (individual message) returns 410', async () => {
     const ctx = await request.newContext();
     const res = await ctx.post(`${BACKEND}/webhook`, {
       data: makeWebhookPayload('quero pedir uma pizza', '5514999990099@s.whatsapp.net'),
     });
-    expect(res.status()).toBe(200);
-    const body = await res.json();
-    expect(body.ok).toBe(true);
+    expect(res.status()).toBe(410);
   });
 
 });
@@ -104,7 +105,7 @@ test.describe('POST /api/qr/refresh', () => {
 // ─────────────────────────────────────────────
 test.describe('Express body limit', () => {
 
-  test('150kb base64 payload does not return 413', async () => {
+  test('150kb base64 payload to legacy /webhook returns 410, not 413', async () => {
     const ctx = await request.newContext();
     const res = await ctx.post(`${BACKEND}/webhook`, {
       data: {
@@ -119,7 +120,7 @@ test.describe('Express body limit', () => {
       },
     });
     expect(res.status()).not.toBe(413);
-    expect(res.status()).toBe(200);
+    expect(res.status()).toBe(410);
   });
 
 });
@@ -129,23 +130,14 @@ test.describe('Express body limit', () => {
 // ─────────────────────────────────────────────
 test.describe('Contact deduplication (buildContactKey)', () => {
 
-  test('messages from 55-prefixed and bare JID map to same session', async () => {
+  test('POST /webhook returns 410 (dedup test deferred to /webhook/:instance)', async () => {
+    // Legacy /webhook is removed — dedup normalization is tested indirectly via
+    // /webhook/:instance with a seeded empresa. This test documents the removal.
     const ctx = await request.newContext();
-    const ts = Date.now();
-    const withPrefix    = `5514997${ts.toString().slice(-6)}@s.whatsapp.net`;
-    const withoutPrefix = `14997${ts.toString().slice(-6)}@s.whatsapp.net`;
-
-    // Send one message from each JID variation
-    await ctx.post(`${BACKEND}/webhook`, {
-      data: makeWebhookPayload('mensagem com prefixo', withPrefix),
+    const res = await ctx.post(`${BACKEND}/webhook`, {
+      data: makeWebhookPayload('mensagem qualquer', '5514997000001@s.whatsapp.net'),
     });
-    await new Promise(r => setTimeout(r, 300));
-    await ctx.post(`${BACKEND}/webhook`, {
-      data: makeWebhookPayload('mensagem sem prefixo', withoutPrefix),
-    });
-
-    // Both return 200 — no crash on dedup
-    expect(true).toBe(true); // actual dedup is verified in the DB; this confirms no error
+    expect(res.status()).toBe(410);
   });
 
 });

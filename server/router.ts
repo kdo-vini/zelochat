@@ -174,7 +174,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       // concurrent confirms can both insert the order — the original
       // duplicate-order bug, see CLAUDE.md §"Order confirmation flow".
       await serializeForJid(remoteJid, async () => {
-        recentlyHandled.set(remoteJid, Date.now()); // block duplicate events for 5s
+        recentlyHandled.set(`${empresaId}:${remoteJid}`, Date.now()); // block duplicate events for 5s
         const pending = await getPendingOrder(remoteJid, empresaId);
         if (pending) {
           try {
@@ -228,7 +228,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
         const handled = await serializeForJid(remoteJid, async () => {
           const pending = await getPendingOrder(remoteJid, empresaId);
           if (!pending) return false;
-          recentlyHandled.set(remoteJid, Date.now());
+          recentlyHandled.set(`${empresaId}:${remoteJid}`, Date.now());
           try {
             if (isSoftConfirm) {
               await confirmPendingOrder(remoteJid, empresaId);
@@ -248,10 +248,10 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     }
 
     // Suppress any further duplicate events within 5 seconds of a button action
-    const handledTs = recentlyHandled.get(remoteJid);
+    const handledTs = recentlyHandled.get(`${empresaId}:${remoteJid}`);
     if (handledTs) {
       if (Date.now() - handledTs < 5000) return; // duplicate — skip AI
-      recentlyHandled.delete(remoteJid);
+      recentlyHandled.delete(`${empresaId}:${remoteJid}`);
     }
 
     dispatchIncomingMessage(data, empresaId);

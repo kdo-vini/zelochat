@@ -7,7 +7,7 @@ import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl 
 import { handleIncomingMessage, getSession } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
-import { getBoundEmpresaId, setBoundEmpresaId, getServiceSupabase } from './supabase.js';
+import { setBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { ensureAiSettingsHydrated, getConfig } from './configStore.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
@@ -69,7 +69,6 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // 2. Auto-reply if enabled for this session
   const jid = msg.key?.remoteJid;
   if (!jid) return;
-  if (!empresaId) return;
 
   const session = await getSession(jid, empresaId);
   // Defense in depth: AI is gated by BOTH auto_reply AND status. An escalated
@@ -86,19 +85,19 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   const globalAiEnabled = getConfig(empresaId).aiEnabled === true;
 
   if (session?.autoReply && !isEscalated && globalAiEnabled && process.env.OPENAI_API_KEY) {
-    // Cancel previous pending reply for this JID to debounce rapid messages
-    const existing = pendingReplies.get(jid);
+    const replyKey = `${empresaId}:${jid}`;
+    const existing = pendingReplies.get(replyKey);
     if (existing) clearTimeout(existing);
 
     const timer = setTimeout(async () => {
-      pendingReplies.delete(jid);
+      pendingReplies.delete(replyKey);
       try {
         await generateAndSendReply(jid, empresaId);
       } catch (err) {
         console.error('[AutoReply] Error:', err);
       }
     }, 1500);
-    pendingReplies.set(jid, timer);
+    pendingReplies.set(replyKey, timer);
   }
 });
 
@@ -129,6 +128,26 @@ httpServer.listen(PORT, () => {
           setBoundEmpresaId(data.id);
           console.log(`[Server] Auto-bound empresa (single-tenant): ${data.id}`);
         }
+
+        // Legacy global WhatsApp lifecycle — only safe for single-tenant. In
+        // multi-tenant, each empresa manages its own instance via /api/qr, so
+        // startWhatsApp (and the broadcasts it triggers) must not run — it would
+        // fan out QR codes and connection events to every connected WS client.
+        startWhatsApp().catch((err) => {
+          console.error('[Server] WhatsApp startup error:', err);
+        });
+
+        // Watch for tunnel URL changes — re-register the bootstrap instance webhook
+        // when the cloudflared URL rotates (dev) or RAILWAY_PUBLIC_DOMAIN changes.
+        let lastKnownUrl = getPublicWebhookUrl();
+        setInterval(() => {
+          const current = getPublicWebhookUrl();
+          if (current !== lastKnownUrl) {
+            console.log(`[Server] Tunnel URL changed: ${lastKnownUrl} → ${current}. Re-registering webhook...`);
+            lastKnownUrl = current;
+            registerWebhook(true).catch((err) => console.error('[Server] Webhook re-register failed:', err));
+          }
+        }, 10_000);
       } else {
         console.log(`[Server] Multi-tenant detected (${count ?? 0} empresas) — skipping auto-bind. Each request resolves its own empresa via JWT or webhook path.`);
       }
@@ -136,21 +155,4 @@ httpServer.listen(PORT, () => {
       console.warn('[Server] Auto-bind failed:', err);
     }
   })();
-
-  // Start WhatsApp connection
-  startWhatsApp().catch((err) => {
-    console.error('[Server] WhatsApp startup error:', err);
-  });
-
-  // Watch for tunnel URL changes every 10s — auto re-register webhook
-  // This makes the system self-healing when cloudflared tunnel restarts with a new URL
-  let lastKnownUrl = getPublicWebhookUrl();
-  setInterval(() => {
-    const current = getPublicWebhookUrl();
-    if (current !== lastKnownUrl) {
-      console.log(`[Server] Tunnel URL changed: ${lastKnownUrl} → ${current}. Re-registering webhook...`);
-      lastKnownUrl = current;
-      registerWebhook(true).catch((err) => console.error('[Server] Webhook re-register failed:', err));
-    }
-  }, 10_000);
 });

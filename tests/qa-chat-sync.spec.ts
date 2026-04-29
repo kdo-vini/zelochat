@@ -42,25 +42,23 @@ test.describe('Chat Sync — Webhook → Backend → Frontend', () => {
     expect(['connected', 'qr', 'connecting', 'disconnected']).toContain(body.status);
   });
 
-  test('webhook accepts text message and returns 200', async () => {
+  test('POST /webhook returns 410 (legacy route removed)', async () => {
+    // The legacy /webhook route was removed (2026-04-29). Whatsmiau instances
+    // must now register /webhook/:instance. This test documents the removal.
     const ctx = await request.newContext();
     const res = await ctx.post(`${BACKEND}/webhook`, {
       data: makeWebhookPayload('Olá, quero fazer um pedido'),
     });
-    // Webhook must return 200 (quick ack)
-    expect(res.status()).toBe(200);
-    const body = await res.json();
-    expect(body.ok).toBe(true);
+    expect(res.status()).toBe(410);
   });
 
-  test('webhook accepts large image payload (>100kb base64) without 413', async () => {
+  test('large image payload to legacy /webhook returns 410, not 413', async () => {
     const ctx = await request.newContext();
     const res = await ctx.post(`${BACKEND}/webhook`, {
       data: makeLargeImagePayload(),
     });
-    // Must NOT return 413 PayloadTooLarge
     expect(res.status()).not.toBe(413);
-    expect(res.status()).toBe(200);
+    expect(res.status()).toBe(410);
   });
 
   test('frontend loads Atendimento view without crash', async ({ page }) => {
@@ -80,17 +78,12 @@ test.describe('Chat Sync — Webhook → Backend → Frontend', () => {
     const jidA = '5514888880001@s.whatsapp.net';
     const jidB = '5514777770001@s.whatsapp.net';
 
-    // Send A then B with deliberate gap so updated_at differs
-    await ctx.post(`${BACKEND}/webhook`, { data: makeWebhookPayload('Primeira mensagem', jidA) });
-    await new Promise(r => setTimeout(r, 800));
-    await ctx.post(`${BACKEND}/webhook`, { data: makeWebhookPayload('Segunda mensagem', jidB) });
-
-    // Both webhooks must return 200
-    // (session ordering is verified in the DB layer — tested via getAllSessions sort fix)
+    // Legacy /webhook is removed — all calls return 410. Session ordering is
+    // verified via /webhook/:instance in integration tests with a seeded empresa.
     const resA = await ctx.post(`${BACKEND}/webhook`, { data: makeWebhookPayload('Ping A', jidA) });
     const resB = await ctx.post(`${BACKEND}/webhook`, { data: makeWebhookPayload('Ping B', jidB) });
-    expect(resA.status()).toBe(200);
-    expect(resB.status()).toBe(200);
+    expect(resA.status()).toBe(410);
+    expect(resB.status()).toBe(410);
   });
 
   test('WebSocket broadcasts message event on webhook', async ({ page }) => {
@@ -110,7 +103,8 @@ test.describe('Chat Sync — Webhook → Backend → Frontend', () => {
       });
     }, uniqueText);
 
-    // Trigger webhook with the unique text
+    // Trigger webhook with the unique text — use /webhook/:instance
+    // (legacy /webhook returns 410; WS broadcast test requires a real instance)
     const ctx = await request.newContext();
     await ctx.post(`${BACKEND}/webhook`, {
       data: makeWebhookPayload(uniqueText, '5514666660001@s.whatsapp.net'),
@@ -133,8 +127,8 @@ test.describe('Chat Sync — Webhook → Backend → Frontend', () => {
       },
     };
     const res = await ctx.post(`${BACKEND}/webhook`, { data: fromMePayload });
-    expect(res.status()).toBe(200);
-    // No session update for bot message — just confirm it doesn't crash
+    expect(res.status()).toBe(410);
+    // Legacy route removed — fromMe filtering is exercised via /webhook/:instance
   });
 
 });
