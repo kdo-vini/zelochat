@@ -136,7 +136,7 @@ export async function registerWebhook(force = false): Promise<boolean> {
   }
 
   const publicUrl = getPublicWebhookUrl();
-  const webhookUrl = `${publicUrl}/webhook`;
+  const webhookUrl = `${publicUrl}/webhook/${INSTANCE_NAME}`;
 
   if (!force && webhookUrl === lastRegisteredWebhook) return true;
 
