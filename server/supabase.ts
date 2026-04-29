@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import { randomBytes } from 'crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 let serviceClient: SupabaseClient | null = null;
@@ -185,15 +186,38 @@ export async function requireActiveZelochatSubscription(req: Request): Promise<v
 const MEDIA_BUCKET = 'zelochat-media';
 const MEDIA_TTL_MS = 10 * 60 * 1000; // 10 minutes — enough for Whatsmiau to download
 
+/**
+ * P0.5 — Builds a per-empresa scoped object key with a 128-bit random slug.
+ *
+ * The previous pattern `send/${Date.now()}-${fileName}` was enumerable: an
+ * attacker with one URL could scan timestamps milliseconds apart to discover
+ * media uploaded by other tenants (customer photos, audios, PIX receipts).
+ * The new pattern `${prefix}/${empresaId}/${randomHex16}-${fileName}` requires
+ * BOTH the empresaId AND the 128-bit slug to guess a valid key — combinatorially
+ * infeasible.
+ *
+ * Bucket stays public for backwards compatibility (existing URLs in chat
+ * history rows must keep working — flipping to private would 403 every old
+ * image/audio for Casa dos Salgados). Defense relies on unguessable paths,
+ * not on auth at the bucket level. If we ever flip the bucket private, this
+ * helper still works — Storage just serves via signed URLs instead.
+ */
+function buildScopedMediaKey(prefix: 'send' | 'received', empresaId: string, fileName: string): string {
+  const slug = randomBytes(16).toString('hex'); // 128 bits of entropy
+  const safe = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `${prefix}/${empresaId}/${slug}-${safe}`;
+}
+
 export async function uploadMediaForSend(
   dataUrl: string,
   fileName: string,
   mimeType: string,
+  empresaId: string,
 ): Promise<string> {
   const supabase = getServiceSupabase();
   const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
   const buffer = Buffer.from(base64, 'base64');
-  const key = `send/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  const key = buildScopedMediaKey('send', empresaId, fileName);
 
   const { error } = await supabase.storage
     .from(MEDIA_BUCKET)
@@ -246,15 +270,27 @@ export function getBoundEmpresaId(): string | null {
 
 /**
  * Uploads received media (incoming messages) to Supabase Storage.
- * Unlike uploadMediaForSend, these files are NOT auto-deleted — users need to view them later.
+ *
+ * Unlike uploadMediaForSend, these files are NOT auto-deleted — operators
+ * need to view chat history later. That makes the enumeration risk worse:
+ * `received/` files persist forever, so an attacker who learns the pattern
+ * can scan ALL historical uploads. P0.5 closes this with the per-empresa +
+ * random-slug path — see `buildScopedMediaKey` above for the rationale.
+ *
+ * CAVEAT: this fix only protects NEW uploads. Files uploaded before this
+ * change are still at the old `received/${timestamp}-…` paths and remain
+ * enumerable. A separate retroactive cleanup migration would need to re-
+ * upload + update DB references to fully close the historical surface.
+ * Tracked in FIXES_PROGRESS.md.
  */
 export async function uploadReceivedMedia(
   buffer: Buffer,
   fileName: string,
   mimeType: string,
+  empresaId: string,
 ): Promise<string> {
   const supabase = getServiceSupabase();
-  const key = `received/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  const key = buildScopedMediaKey('received', empresaId, fileName);
 
   const { error } = await supabase.storage
     .from(MEDIA_BUCKET)

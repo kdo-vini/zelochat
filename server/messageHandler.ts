@@ -189,8 +189,13 @@ function extractText(msg: any): string | null {
  * Extracts the media data from an incoming webhook message.
  * Priority: base64 (uploaded to Supabase) → public mediaUrl from Whatsmiau.
  * Encrypted WhatsApp CDN URLs (mmg.whatsapp.net) are NOT usable directly.
+ *
+ * P0.5 — `empresaId` is required so the persistent upload lands at a per-tenant
+ * scoped path (`received/${empresaId}/${randomSlug}-${fileName}`). This makes
+ * cross-tenant enumeration combinatorially infeasible. See `buildScopedMediaKey`
+ * in server/supabase.ts for the rationale.
  */
-async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string): Promise<string | undefined> {
+async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string, empresaId: string): Promise<string | undefined> {
   // 1. Public mediaUrl — Whatsmiau provides this after uploading to its own Google Cloud storage
   const mediaUrl: string = msg.message?.mediaUrl ?? '';
   if (mediaUrl && !mediaUrl.includes('mmg.whatsapp.net') && !mediaUrl.endsWith('.enc')) {
@@ -205,7 +210,7 @@ async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: st
       // Upload to Supabase for a persistent public URL
       try {
         const buffer = Buffer.from(pure, 'base64');
-        return await uploadReceivedMedia(buffer, fileName, mimeType);
+        return await uploadReceivedMedia(buffer, fileName, mimeType, empresaId);
       } catch (err) {
         console.warn('[Media] Supabase upload failed, using data URI:', err);
         return `data:${mimeType};base64,${pure}`;
@@ -718,7 +723,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       sizeBytes: msg.message.imageMessage.fileLength
         ? Number(msg.message.imageMessage.fileLength)
         : undefined,
-      dataUrl: await extractAttachmentDataUrl(msg, mime, 'imagem-whatsapp.jpg'),
+      dataUrl: await extractAttachmentDataUrl(msg, mime, 'imagem-whatsapp.jpg', resolvedEmpresaId),
     };
   } else if (msg.message?.audioMessage) {
     const mime = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
@@ -729,7 +734,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       sizeBytes: msg.message.audioMessage.fileLength
         ? Number(msg.message.audioMessage.fileLength)
         : undefined,
-      dataUrl: await extractAttachmentDataUrl(msg, mime, 'audio-whatsapp.ogg'),
+      dataUrl: await extractAttachmentDataUrl(msg, mime, 'audio-whatsapp.ogg', resolvedEmpresaId),
     };
   } else if (msg.message?.documentMessage) {
     const rawMime = msg.message.documentMessage.mimetype || 'application/octet-stream';
@@ -741,7 +746,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       sizeBytes: msg.message.documentMessage.fileLength
         ? Number(msg.message.documentMessage.fileLength)
         : undefined,
-      dataUrl: await extractAttachmentDataUrl(msg, mime, sanitizeFileName(msg.message.documentMessage.fileName, 'documento')),
+      dataUrl: await extractAttachmentDataUrl(msg, mime, sanitizeFileName(msg.message.documentMessage.fileName, 'documento'), resolvedEmpresaId),
     };
   }
 

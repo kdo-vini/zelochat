@@ -722,11 +722,14 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
     const trimmedMessage = message?.trim() ?? '';
 
     if (attachment?.dataUrl) {
-      // Whatsmiau only accepts public URLs — upload to Supabase Storage first
+      // Whatsmiau only accepts public URLs — upload to Supabase Storage first.
+      // empresaId scopes the path per-tenant + adds a 128-bit random slug
+      // (P0.5) so cross-tenant enumeration is infeasible.
       const mediaUrl = await uploadMediaForSend(
         attachment.dataUrl,
         attachment.fileName,
         attachment.mimeType,
+        empresaId,
       );
       if (attachment.type === 'audio') {
         // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)

@@ -10,6 +10,7 @@ Use this doc to know **at a glance** what's safe in production right now and wha
 ## Legend
 
 - ✅ **Shipped** — code merged in this branch, type-checks clean, no prod migration needed.
+- 🟢 **partial** — fix shipped for the prospective surface; historical/legacy data still at risk. See per-row caveat.
 - 🟡 **Drafted** — code or migration written but **not applied** to prod. Ready for review + apply.
 - 🟥 **Blocked — operator approval** — fix touches shared infra (ZeloPDV) or needs a destructive prod migration.
 - ⏳ **Pending** — not started yet.
@@ -25,7 +26,7 @@ Use this doc to know **at a glance** what's safe in production right now and wha
 | P0.2 | `boundEmpresaId` singleton breaks 2nd tenant | ⏳ | `server/supabase.ts`, `server/index.ts`, `server/messageHandler.ts` | Single-tenant today; held back — large refactor. Critical-function doc added to `processWebhookEvent` warning about the hazard. |
 | P0.3 | `getEmpresaForInstance` cache-fallback on DB error | ⏳ | `server/instanceManager.ts` | Defense-in-depth; deferred. |
 | P0.4 | `/api/produtos` proxy unauthenticated | ✅ | `server/router.ts:1374` | `requireEmpresaId(req)` validates JWT locally before proxying upstream. Paywall middleware also gates it. |
-| P0.5 | `zelochat-media` bucket public + enumerable filenames | 🟥 | `server/supabase.ts`, storage migration | Needs data move + viewer URL update — operator approval. |
+| P0.5 | `zelochat-media` bucket public + enumerable filenames | 🟢 partial | `server/supabase.ts:188`, `server/messageHandler.ts:198`, `server/router.ts:726` | NEW uploads scoped per-empresa with 128-bit random slug (`${prefix}/${empresaId}/${slug}-${name}`). Bucket stays public for backwards compatibility. **Caveat:** historical files uploaded before this change are STILL at the old `received/${timestamp}-…` path and remain enumerable. A retroactive cleanup migration to re-upload + rewrite DB references is the remaining work. |
 | P0.6 | `empresa_perfil` UPDATE policy missing `WITH CHECK` | ❌ | (ZeloPDV-owned table) | Flag for ZeloPDV team — not safe to change here. |
 | P0.7 | `zelochat_pending_orders` RLS on but no policies | 🟡 | `supabase/migrations/014_zelochat_rls_hardening.sql` | Migration DRAFTED. Apply only after operator review. |
 | P0.8 | `zelochat_messages` no UPDATE/DELETE; `zelochat_escalation_events` no INSERT/DELETE | 🟡 ✅ | `supabase/migrations/014_zelochat_rls_hardening.sql` + `server/escalation.ts:293-340` | Migration DRAFTED. Code-side `.eq('empresa_id')` already added (P1.1 closed). |
@@ -73,6 +74,11 @@ These are out of scope or unsafe to change from this branch:
 ### Sprint 2 (shipped 2026-04-29) — schema in source control
 - ✅ P0.23, P0.12, P0.24 — captured live schema as `000_zelochat_schema.sql`. ZeloChat-only, idempotent, with explicit ZeloPDV-boundary header.
 - 📝 Old `001_*.sql … 013_*.sql` retained as historical record; superseded by `000_*.sql` for fresh-DB bootstrap.
+
+### Sprint 4 (shipped 2026-04-29) — P0.14 activation + P0.5 prospective hardening
+- ✅ P0.14 — `upsertInboundUserMessage` with `onConflict: 'empresa_id,wa_message_id'` shipped. `handleIncomingMessage` returns boolean; `index.ts` skips auto-reply on duplicate redelivery. Whatsmiau retries no longer create double messages or double-fire AI.
+- 🟢 P0.5 — NEW media uploads now use `${prefix}/${empresaId}/${randomHex16}-${fileName}`. Cross-tenant enumeration of new files is combinatorially infeasible (128-bit slug + scoped path). Historical files remain at old paths until a retroactive cleanup migration runs.
+- Type-check clean: `npm run lint` ✅ + `npx tsc --noEmit -p server/tsconfig.json` ✅
 
 ### Sprint 3 (shipped 2026-04-29) — remaining P0s
 **Code (no migration needed) — applied:**
