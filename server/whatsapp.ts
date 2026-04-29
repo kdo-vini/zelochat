@@ -9,6 +9,24 @@ import { sendDisconnectAlert, sendReconnectConfirmation } from './email.js';
 const BASE_URL = (process.env.WHATSMIAU_BASE_URL || 'https://api.whatsmiau.dev').replace(/\/$/, '');
 const API_KEY = process.env.WHATSMIAU_API_KEY || '';
 
+// Whatsmiau message IDs sent by this server process — used to skip the fromMe
+// webhook echo that Whatsmiau fires for every outbound API send. TTL: 30 s.
+const recentSentIds = new Map<string, number>();
+setInterval(() => {
+  const cutoff = Date.now() - 30_000;
+  for (const [id, ts] of recentSentIds) {
+    if (ts < cutoff) recentSentIds.delete(id);
+  }
+}, 60_000);
+
+function trackSent(id: string | undefined): void {
+  if (id) recentSentIds.set(id, Date.now());
+}
+
+export function wasSentByServer(id: string): boolean {
+  return recentSentIds.has(id);
+}
+
 // Bootstrap instance name. After P0-02 (multi-instance per empresa), this is
 // only used by the legacy connection lifecycle (status/QR/health-check) which
 // still tracks a single "primary" connection. All SEND functions now accept
@@ -290,13 +308,16 @@ export async function sendTextMessage(
   jid: string,
   text: string,
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendText/${instance}`,
     { number: jid, text },
     { headers: apiHeaders() },
   );
+  const id = (res.data as any)?.key?.id as string | undefined;
+  trackSent(id);
+  return id;
 }
 
 export interface ButtonDef {
@@ -343,13 +364,16 @@ export async function sendMediaMessage(
     fileName?: string;
   },
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendMedia/${instance}`,
     { number: jid, ...params },
     { headers: apiHeaders() },
   );
+  const id = (res.data as any)?.key?.id as string | undefined;
+  trackSent(id);
+  return id;
 }
 
 // PTT audio — uses a dedicated endpoint (sendWhatsAppAudio) per Whatsmiau docs
@@ -357,13 +381,16 @@ export async function sendWhatsAppAudio(
   jid: string,
   audioUrl: string,
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendWhatsAppAudio/${instance}`,
     { number: jid, audio: audioUrl, encoding: true },
     { headers: apiHeaders() },
   );
+  const id = (res.data as any)?.key?.id as string | undefined;
+  trackSent(id);
+  return id;
 }
 
 export async function fetchProfilePicture(

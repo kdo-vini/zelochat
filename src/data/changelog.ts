@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
+    category: 'hotfix',
+    title: 'Histórico completo: mensagens do celular agora aparecem',
+    description: 'Respostas enviadas diretamente pelo WhatsApp do operador já aparecem na conversa do ZeloChat, mantendo o histórico completo.',
+  },
+  {
+    date: '2026-04-28',
     category: 'medium',
     title: 'Pedidos agora têm campo de observação',
     description: 'Antes de mandar o botão de confirmar, a IA pergunta ao cliente se ele quer alterar algo ou tem alguma observação ("sem cebola", "ponto da carne", "deixar na portaria"…). Assim o cliente pensa duas vezes antes de bater o martelo, e a cozinha recebe o recado direitinho — sem precisar acionar atendente pra cada ajuste depois do pedido confirmado. No painel, pedidos com observação ficam destacados em amarelo no kanban e nos detalhes. Quem cria pedido manual em Produção também ganhou um campo de observação no formulário.',

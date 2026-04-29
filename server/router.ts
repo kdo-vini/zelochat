@@ -28,6 +28,7 @@ import {
   fetchInstanceQR,
   logoutInstance,
   setWebhookForInstance,
+  wasSentByServer,
 } from './whatsapp.js';
 import {
   getAllSessions,
@@ -162,7 +163,29 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
 
   if (event === 'messages.upsert') {
     if (!data.message) return;
-    if (data.key?.fromMe) return;
+
+    // Messages sent from the operator's phone (not via the app). Save them so the
+    // conversation history stays complete. Skip multi-device protocol artifacts and
+    // any message already saved by /api/send (identified by its Whatsmiau key id).
+    if (data.key?.fromMe) {
+      if (data.message?.deviceSentMessage) return;
+      const msgId: string = data.key?.id ?? '';
+      if (msgId && wasSentByServer(msgId)) return;
+      const remoteJid: string = data.key?.remoteJid ?? '';
+      if (!remoteJid.endsWith('@s.whatsapp.net')) return;
+      const msgText = (
+        data.message?.conversation ??
+        data.message?.extendedTextMessage?.text ??
+        ''
+      ).trim();
+      if (msgText) {
+        addAssistantMessage(remoteJid, msgText, undefined, empresaId).catch((err) =>
+          console.error('[Webhook] fromMe persist failed:', err),
+        );
+      }
+      return;
+    }
+
     // Secondary guard: outbound messages wrapped by multi-device protocol
     if (data.message?.deviceSentMessage) return;
     const remoteJid: string = data.key?.remoteJid ?? '';
