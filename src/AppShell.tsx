@@ -148,6 +148,13 @@ export default function AppShell() {
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // P1.34 — track consecutive sync failures to surface a SINGLE toast after
+  // sustained failure (not on every debounced 600ms attempt). A short blip
+  // is fine to swallow; hours of failed sync needs operator awareness so
+  // the AI doesn't run with stale config.
+  const syncConfigFailCountRef = useRef<number>(0);
+  const syncConfigToastShownRef = useRef<boolean>(false);
+  const SYNC_CONFIG_FAIL_THRESHOLD = 5; // ~3s of consecutive failures (5 × 600ms)
   const empresaHydratedRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -433,7 +440,7 @@ export default function AppShell() {
             .map((p) => ({ name: p.nome, price: p.preco, available: !p.ocultar_no_pdv })),
         };
       });
-      await fetch(apiUrl('/api/sync-config'), {
+      const res = await fetch(apiUrl('/api/sync-config'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
@@ -452,7 +459,30 @@ export default function AppShell() {
           managerPhone: s.businessInfo.managerPhone,
         }),
       });
-    } catch { /* backend offline during frontend work */ }
+      if (!res.ok) throw new Error(`sync-config returned ${res.status}`);
+      // P1.34 — sucesso reseta o contador. Se o operador via o toast
+      // anteriormente, mostramos um "voltou ao normal" pra fechar o ciclo.
+      if (syncConfigToastShownRef.current) {
+        toast.success('Configuração voltou a sincronizar.');
+        syncConfigToastShownRef.current = false;
+      }
+      syncConfigFailCountRef.current = 0;
+    } catch (err) {
+      // P1.34 — falha transitória é OK (dev offline, deploy em curso).
+      // Falha sustentada (>N consecutivas) significa que o AI tá rodando
+      // com config stale — operador precisa saber. One-shot toast pra não
+      // spammar, e re-disparamos só se voltar a falhar depois de uma fase
+      // de sucesso.
+      syncConfigFailCountRef.current += 1;
+      if (
+        syncConfigFailCountRef.current >= SYNC_CONFIG_FAIL_THRESHOLD &&
+        !syncConfigToastShownRef.current
+      ) {
+        toast.error('Algumas configurações não estão salvando no servidor. Verifique sua conexão.');
+        syncConfigToastShownRef.current = true;
+      }
+      console.warn('[AppShell] syncConfigToServer failed:', err);
+    }
   };
 
   // Sync inicial — dispara assim que o token estiver disponível
