@@ -153,6 +153,8 @@ export function useWhatsAppSessions(token: string | null) {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const connectedAtRef = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!token) {
@@ -321,6 +323,8 @@ export function useWhatsAppSessions(token: string | null) {
     // regardless of empresa (multi-tenant data leak).
     const wsUrl = `${WS_URL}${WS_URL.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
     let disposed = false;
+    reconnectAttemptRef.current = 0;
+    connectedAtRef.current = 0;
 
     const connect = () => {
       if (disposed) return;
@@ -466,13 +470,22 @@ export function useWhatsAppSessions(token: string | null) {
       };
 
       ws.onopen = () => {
+        connectedAtRef.current = Date.now();
         // Re-bind empresa on every (re)connect so server restarts don't break message routing
         void bindEmpresa(token);
       };
 
       ws.onclose = () => {
         if (disposed) return;
-        reconnectRef.current = setTimeout(connect, 3000);
+        // Reset backoff counter when the connection was stable for ≥10s
+        const stableMs = connectedAtRef.current > 0 ? Date.now() - connectedAtRef.current : 0;
+        if (stableMs >= 10_000) reconnectAttemptRef.current = 0;
+        connectedAtRef.current = 0;
+        const attempt = reconnectAttemptRef.current++;
+        // Exponential: 1s→2s→4s→8s→16s→30s cap, ±25% jitter to stagger tabs
+        const base = Math.min(1_000 * 2 ** attempt, 30_000);
+        const jitter = 0.75 + Math.random() * 0.5;
+        reconnectRef.current = setTimeout(connect, Math.round(base * jitter));
       };
 
       ws.onerror = () => {
