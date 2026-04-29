@@ -103,6 +103,24 @@ These are out of scope or unsafe to change from this branch:
 - ✅ P0.5 retroactive — dry-run via `storage.objects` revealed only 4 historical files at old enumerable paths, all confirmed orphans (zero references in `zelochat_messages.content`). One-off cleanup script `scripts/cleanup-orphan-media.ts` ships in this commit; run with `npx tsx scripts/cleanup-orphan-media.ts` to remove them via Storage API.
 - **All 24 P0s now addressed.** 24 fully closed pending one-time script execution for P0.5 cleanup.
 
+### Sprint 15 (shipped 2026-04-29) — Recovery dos dados perdidos pela regressão P0.14
+**Análise de impacto:**
+- 2 sessions afetadas: Gustavo + Ricardo (ambas Donutopia — empresa de teste do founder)
+- **Casa dos Salgados (R$3k cliente real): 0 mensagens perdidas** ✅
+- Janela: 18:00–22:00 UTC em 2026-04-29
+
+**Tentativa de recovery via Whatsmiau API:**
+- Probe em /v2/chat/findMessages, /evolution/chat/findMessages, /chat/fetchMessages, /message/findMessages, vários paths e variantes do instance ID. Todos 404.
+- Conclusão: Whatsmiau **não expõe endpoint de histórico de mensagens** — só envio + webhook config (/webhook/find/{instance} funciona). Histórico é "fire-and-forget"; perdido é perdido.
+
+**Recovery manual (apenas para Gustavo):**
+- "Opa" recuperado a partir de `zelochat_sessions.last_message` (que ensureSession atualizou mesmo quando o upsert falhou). INSERT manual em `zelochat_messages` com `wa_message_id = NULL` (sem ID original; partial unique index só constrange when not-null, então OK).
+- Ricardo: texto original perdido para sempre — `last_message` foi sobrescrito pelo reply da AI antes de eu poder fazer recovery. Lesson: ensureSession sobrescreve last_message tanto em msgs user quanto assistant.
+
+**Lessons learned:**
+1. Sempre que mexer em paths críticos de persistência, fazer dry-run com SQL `RETURNING` em ambiente real ANTES de deploy.
+2. Whatsmiau não tem fallback de history — toda perda em janela de bug é definitiva. Considerar persist webhook payload BRUTO em uma tabela de log antes de processar (defesa contra futuros bugs similares).
+
 ### Sprint 14 (shipped 2026-04-29) — P1.35 quick-response error feedback
 - ✅ P1.35 — `scheduleQrSave` em `AIConfigsView` agora mostra toast em failure. Antes só limpava `qrSaveState` e logava no console — operador via "Saving..." piscar e sumir, achava que tinha salvo, próxima vez que abria viu a mudança perdida.
 - Type-check ✅
