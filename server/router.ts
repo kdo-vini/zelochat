@@ -40,6 +40,7 @@ import {
   deleteSession,
   updateSessionName,
   formatPhone,
+  serializeForJid,
 } from './messageHandler.js';
 import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
 import { getConfig, setConfig } from './configStore.js';
@@ -222,27 +223,42 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       buttonId === 'CANCEL_ORDER' || msgText === '❌ Cancelar' || msgText === 'CANCEL_ORDER';
 
     if (isHardConfirm || isHardCancel) {
-      recentlyHandled.set(remoteJid, Date.now()); // block duplicate events for 5s
-      const pending = await getPendingOrder(remoteJid, empresaId);
-      if (pending) {
-        if (isHardConfirm) {
-          confirmPendingOrder(remoteJid, empresaId).catch((err) =>
-            console.error('[Webhook] confirmPendingOrder failed:', err));
-        } else {
-          cancelPendingOrder(remoteJid, empresaId).catch((err) =>
-            console.error('[Webhook] cancelPendingOrder failed:', err));
+      // Serialize through the same per-JID queue used by `handleIncomingMessage`
+      // so a button click and a parallel inbound text (or a webhook retry of
+      // the same click) cannot both pass the `getPendingOrder` check before
+      // either has called `clearPendingOrder`. Without the queue, two
+      // concurrent confirms can both insert the order — the original
+      // duplicate-order bug, see CLAUDE.md §"Order confirmation flow".
+      await serializeForJid(remoteJid, async () => {
+        recentlyHandled.set(remoteJid, Date.now()); // block duplicate events for 5s
+        const pending = await getPendingOrder(remoteJid, empresaId);
+        if (pending) {
+          try {
+            if (isHardConfirm) {
+              await confirmPendingOrder(remoteJid, empresaId);
+            } else {
+              await cancelPendingOrder(remoteJid, empresaId);
+            }
+          } catch (err) {
+            console.error(
+              `[Webhook] ${isHardConfirm ? 'confirm' : 'cancel'}PendingOrder failed:`,
+              err,
+            );
+          }
+          return;
         }
-        return;
-      }
-      // No pending — the order was already finalized (or never existed). Reply
-      // idempotently. NEVER fall through to the AI for a button click.
-      if (isHardConfirm) {
-        const ack = 'Seu pedido já foi confirmado! ✅ Qualquer dúvida é só chamar 😊';
-        sendTextMessage(remoteJid, ack, empresaId)
-          .then(() => addAssistantMessage(remoteJid, ack, undefined, empresaId))
-          .catch((err) => console.error('[Webhook] idempotent confirm reply failed:', err));
-      }
-      // For a cancel with no pending: silent return.
+        // No pending — order already finalized or never existed. Reply
+        // idempotently. NEVER fall through to the AI for a button click.
+        if (isHardConfirm) {
+          const ack = 'Seu pedido já foi confirmado! ✅ Qualquer dúvida é só chamar 😊';
+          try {
+            await sendTextMessage(remoteJid, ack, empresaId);
+            await addAssistantMessage(remoteJid, ack, undefined, empresaId);
+          } catch (err) {
+            console.error('[Webhook] idempotent confirm reply failed:', err);
+          }
+        }
+      });
       return;
     }
 
@@ -251,21 +267,39 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     // these when a pending order is actually waiting; otherwise let the AI
     // process them naturally (e.g. "Sim" answering an unrelated question).
     if (msgText) {
-      const isSoftConfirm = /^(sim|s)$/i.test(msgText);
-      const isSoftCancel = /^(n[aã]o|n)$/i.test(msgText);
+      // Normalize before regex: trim, lowercase, strip surrounding punctuation
+      // so "Sim.", " NÃO ", "sim!" all match. Anchored regex on raw text
+      // missed accents/casing/whitespace and leaked into the AI as freeform.
+      const normalized = msgText
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '') // strip combining accent marks
+        .replace(/[^a-z]/g, '');
+      const isSoftConfirm = normalized === 'sim' || normalized === 's';
+      const isSoftCancel = normalized === 'nao' || normalized === 'n';
       if (isSoftConfirm || isSoftCancel) {
-        const pending = await getPendingOrder(remoteJid, empresaId);
-        if (pending) {
+        // Serialize through the per-JID queue (see hard-confirm block above).
+        // Without this, a soft "Sim" arriving while a button click is in-flight
+        // can read the same pending row and trigger a second confirm.
+        const handled = await serializeForJid(remoteJid, async () => {
+          const pending = await getPendingOrder(remoteJid, empresaId);
+          if (!pending) return false;
           recentlyHandled.set(remoteJid, Date.now());
-          if (isSoftConfirm) {
-            confirmPendingOrder(remoteJid, empresaId).catch((err) =>
-              console.error('[Webhook] confirmPendingOrder failed:', err));
-          } else {
-            cancelPendingOrder(remoteJid, empresaId).catch((err) =>
-              console.error('[Webhook] cancelPendingOrder failed:', err));
+          try {
+            if (isSoftConfirm) {
+              await confirmPendingOrder(remoteJid, empresaId);
+            } else {
+              await cancelPendingOrder(remoteJid, empresaId);
+            }
+          } catch (err) {
+            console.error(
+              `[Webhook] soft ${isSoftConfirm ? 'confirm' : 'cancel'}PendingOrder failed:`,
+              err,
+            );
           }
-          return;
-        }
+          return true;
+        });
+        if (handled) return;
       }
     }
 
