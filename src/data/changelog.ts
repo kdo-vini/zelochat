@@ -16,8 +16,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-29',
     category: 'minor',
-    title: 'Sessão renova automaticamente sem precisar recarregar a página',
-    description: 'Quando o token de acesso expira, o app agora renova a sessão em segundo plano e reenvia a ação. Antes, qualquer mutação feita após a expiração falhava silenciosamente até o próximo F5.',
+    title: 'Conexões WhatsApp mais seguras para novas empresas',
+    description: 'Cada nova empresa recebe um endereço de webhook exclusivo com alta aleatoriedade, tornando impossível adivinhar ou enumerar os endereços de outras contas.',
   },
   {
     date: '2026-04-28',
