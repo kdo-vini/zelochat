@@ -260,6 +260,27 @@ export async function isEmpresaSubscriptionActive(empresaId: string): Promise<bo
   }
 }
 
+/**
+ * P0.2 — `boundEmpresaId` is the legacy single-tenant singleton. Its scope
+ * has been NARROWED: as of this commit, NO operational helper (message
+ * persistence, AI dispatch, escalation, etc.) consults it. It exists ONLY
+ * for the legacy WhatsApp connection-state broadcasts in `server/whatsapp.ts`
+ * which were originally written for the Donutopia single-tenant beta.
+ *
+ * If you find yourself wanting to read this singleton from any new code path,
+ * STOP and pass `empresaId` explicitly through the call chain instead. The
+ * audit (CODE_REVIEW.md P0.2) flagged the previous singleton-defaulting
+ * pattern as a cross-tenant leak waiting to happen the moment a 2nd customer
+ * onboards. We now rely on TypeScript's required-parameter enforcement to
+ * keep that surface closed.
+ *
+ * The setter is still wired to:
+ *   • `server/index.ts` startup auto-bind when `count===1` (single-tenant)
+ *   • `POST /api/bind-empresa` (legacy frontend bind, used by waApi.ts)
+ *
+ * Both are harmless today — the value is consulted only by
+ * `broadcastLegacyLifecycleEvent` in whatsapp.ts.
+ */
 export function setBoundEmpresaId(empresaId: string): void {
   boundEmpresaId = empresaId;
 }

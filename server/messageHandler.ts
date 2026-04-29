@@ -1,5 +1,5 @@
 import { broadcast } from './ws.js';
-import { getBoundEmpresaId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
+import { getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import { transcribeAudio } from './transcription.js';
 import type { AudioTranscriptStatus, ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
 import {
@@ -492,7 +492,10 @@ async function upsertInboundUserMessage(params: {
   return mapMessage(data[0] as MessageRow);
 }
 
-export async function getSession(jid: string, empresaId = getBoundEmpresaId()): Promise<StoredSession | null> {
+export async function getSession(jid: string, empresaId: string): Promise<StoredSession | null> {
+  // P0.2 — empresaId is REQUIRED. Previously defaulted to getBoundEmpresaId()
+  // which is null in multi-tenant deploys (count !== 1 at startup), causing
+  // operations to silently no-op or write to the wrong tenant.
   if (!empresaId) {
     return null;
   }
@@ -520,7 +523,7 @@ export async function getSession(jid: string, empresaId = getBoundEmpresaId()): 
   return mapSession(family, msgRows.map(mapMessage), latestUserSentAt);
 }
 
-export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<StoredSession[]> {
+export async function getAllSessions(empresaId: string): Promise<StoredSession[]> {
   if (!empresaId) {
     return [];
   }
@@ -577,7 +580,7 @@ export async function getAllSessions(empresaId = getBoundEmpresaId()): Promise<S
     });
 }
 
-export async function markSessionAsRead(jid: string, empresaId = getBoundEmpresaId()): Promise<void> {
+export async function markSessionAsRead(jid: string, empresaId: string): Promise<void> {
   if (!empresaId) {
     return;
   }
@@ -609,7 +612,7 @@ export async function markSessionAsRead(jid: string, empresaId = getBoundEmpresa
   );
 }
 
-export async function deleteSession(jid: string, empresaId = getBoundEmpresaId()): Promise<void> {
+export async function deleteSession(jid: string, empresaId: string): Promise<void> {
   if (!empresaId) {
     return;
   }
@@ -646,7 +649,7 @@ export async function deleteSession(jid: string, empresaId = getBoundEmpresaId()
 export async function updateSessionName(
   jid: string,
   name: string,
-  empresaId = getBoundEmpresaId(),
+  empresaId: string,
 ): Promise<void> {
   if (!empresaId) return;
 
@@ -664,24 +667,26 @@ export async function updateSessionName(
 
 /**
  * Persists an inbound webhook message and broadcasts to the dashboard.
- * `empresaId` is passed in by the webhook handler (review fix C3) — it comes from
- * the apikey-token lookup, NOT from the process-global singleton. The singleton
- * is consulted only as a legacy fallback (local dev without a configured token).
+ *
+ * P0.2 — `empresaId` is REQUIRED. The previous fallback to
+ * `getBoundEmpresaId()` was a footgun in multi-tenant deploys: if the
+ * webhook handler ever forgot to thread empresaId, the singleton (which
+ * could be NULL when count !== 1, or stale otherwise) silently
+ * mis-attributed messages.
  *
  * Returns `true` when the message was newly persisted, `false` when it was a
  * duplicate webhook delivery (already persisted by an earlier call) and the
  * caller should SKIP auto-reply scheduling. See `upsertInboundUserMessage`
  * for the dedup contract (P0.14).
  */
-export async function handleIncomingMessage(msg: any, empresaId?: string | null): Promise<boolean> {
-  const resolvedEmpresaId = empresaId ?? getBoundEmpresaId();
-  if (!resolvedEmpresaId) {
-    console.warn('[MessageHandler] Ignoring inbound message because no empresa is bound yet.');
+export async function handleIncomingMessage(msg: any, empresaId: string): Promise<boolean> {
+  if (!empresaId) {
+    console.warn('[MessageHandler] Ignoring inbound message — empresaId is required.');
     return false;
   }
   const jid = msg.key.remoteJid;
   if (!jid) return false;
-  return serializeForJid(jid, () => _handleIncomingMessage(msg, resolvedEmpresaId));
+  return serializeForJid(jid, () => _handleIncomingMessage(msg, empresaId));
 }
 
 async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<boolean> {
@@ -883,8 +888,8 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
 export async function addAssistantMessage(
   jid: string,
   content: string | null,
-  toolCalls?: any[],
-  empresaId = getBoundEmpresaId(),
+  toolCalls: any[] | undefined,
+  empresaId: string,
   attachment?: ChatAttachment,
 ): Promise<void> {
   if (!empresaId) {
@@ -944,7 +949,7 @@ export async function addToolMessage(
   jid: string,
   content: string,
   toolCallId: string,
-  empresaId = getBoundEmpresaId(),
+  empresaId: string,
 ): Promise<void> {
   if (!empresaId) return;
 
@@ -986,7 +991,7 @@ export async function addToolMessage(
 export async function setAutoReply(
   jid: string,
   enabled: boolean,
-  empresaId = getBoundEmpresaId(),
+  empresaId: string,
 ): Promise<void> {
   if (!empresaId) {
     return;

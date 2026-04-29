@@ -1,10 +1,35 @@
 import axios from 'axios';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { resolve } from 'path';
-import { broadcast } from './ws.js';
+import { broadcast, type WsEvent } from './ws.js';
 import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { getBoundEmpresaId } from './supabase.js';
 import { sendDisconnectAlert, sendReconnectConfirmation } from './email.js';
+
+/**
+ * P0.2 / P1.11 — broadcast a legacy single-tenant lifecycle event (QR, connect,
+ * disconnect) ONLY when the singleton empresaId is bound. The legacy WhatsApp
+ * lifecycle (`startWhatsApp`, `fetchQR`, `disconnectWhatsApp`,
+ * `syncStatusFromUpstream`, `handleConnectionUpdate`) was originally written
+ * for the single-tenant beta where every connected operator belonged to the
+ * same empresa.
+ *
+ * The previous pattern `broadcast(event, getBoundEmpresaId() ?? undefined)`
+ * fanned out to EVERY connected WS client when the singleton was null
+ * (multi-tenant mode), which leaked Donutopia's QR codes / connection events
+ * to every other empresa's dashboard. We now drop the broadcast entirely
+ * when there's no bound empresa — the per-instance webhook handler covers
+ * connection events for tenants with their own Whatsmiau instance.
+ */
+function broadcastLegacyLifecycleEvent(event: WsEvent): void {
+  const boundEmpresa = getBoundEmpresaId();
+  if (!boundEmpresa) {
+    // Multi-tenant mode — no global "primary" empresa. Per-empresa events
+    // come through /webhook/:instance and broadcast scoped via processWebhookEvent.
+    return;
+  }
+  broadcast(event, boundEmpresa);
+}
 
 const BASE_URL = (process.env.WHATSMIAU_BASE_URL || 'https://api.whatsmiau.dev').replace(/\/$/, '');
 const API_KEY = process.env.WHATSMIAU_API_KEY || '';
@@ -570,7 +595,7 @@ export async function fetchQR(): Promise<void> {
       // Scope the broadcast to the bound (legacy) empresa — without this, every
       // connected WS client (including tenants with their own instances) would
       // see Donutopia's connection events.
-      broadcast({ type: 'connection', data: 'connected' }, getBoundEmpresaId() ?? undefined);
+      broadcastLegacyLifecycleEvent({ type: 'connection', data: 'connected' });
       console.log('[WhatsApp] fetchQR: already connected — no QR needed.');
       return;
     }
@@ -594,7 +619,7 @@ export async function fetchQR(): Promise<void> {
       if (res.data?.connected === true) {
         connectionStatus = 'connected';
         currentQR = null;
-        broadcast({ type: 'connection', data: 'connected' }, getBoundEmpresaId() ?? undefined);
+        broadcastLegacyLifecycleEvent({ type: 'connection', data: 'connected' });
         console.log('[WhatsApp] fetchQR: already connected (connect endpoint confirmed).');
         return;
       }
@@ -603,7 +628,7 @@ export async function fetchQR(): Promise<void> {
       if (raw) {
         currentQR = raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`;
         connectionStatus = 'qr';
-        broadcast({ type: 'qr', data: currentQR }, getBoundEmpresaId() ?? undefined);
+        broadcastLegacyLifecycleEvent({ type: 'qr', data: currentQR });
         console.log('[WhatsApp] QR code ready — scan with your phone');
         return;
       }
@@ -646,7 +671,7 @@ export async function startWhatsApp(): Promise<void> {
       const instanceStatus: string = resolvedInstance.status ?? '';
       if (instanceStatus === 'CONNECTED' || instanceStatus === 'open') {
         connectionStatus = 'connected';
-        broadcast({ type: 'connection', data: 'connected' }, getBoundEmpresaId() ?? undefined);
+        broadcastLegacyLifecycleEvent({ type: 'connection', data: 'connected' });
         console.log('[WhatsApp] Already connected!');
       }
     } else {
@@ -721,7 +746,7 @@ export async function disconnectWhatsApp(): Promise<void> {
   currentQR = null;
   ownJid = '';
 
-  broadcast({ type: 'connection', data: 'disconnected' }, getBoundEmpresaId() ?? undefined);
+  broadcastLegacyLifecycleEvent({ type: 'connection', data: 'disconnected' });
   console.log('[WhatsApp] Disconnected by user.');
 }
 
@@ -750,7 +775,7 @@ export async function syncStatusFromUpstream(): Promise<ConnectionStatus> {
     if (resolved !== connectionStatus) {
       connectionStatus = resolved;
       if (resolved === 'disconnected') currentQR = null;
-      broadcast({ type: 'connection', data: resolved }, getBoundEmpresaId() ?? undefined);
+      broadcastLegacyLifecycleEvent({ type: 'connection', data: resolved });
       console.log(`[WhatsApp] Status synced from upstream → ${resolved}`);
     }
   } catch (err) {

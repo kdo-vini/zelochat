@@ -23,7 +23,7 @@ Use this doc to know **at a glance** what's safe in production right now and wha
 | ID | Title | Status | Files | Notes |
 |----|-------|--------|-------|-------|
 | P0.1 | `/webhook/:instance` no caller authentication | ✅ | `server/router.ts:357`, `server/instanceManager.ts:106` | Validate-if-present mode shipped. Set `WEBHOOK_REQUIRE_TOKEN=1` after Whatsmiau-side is configured to flip strict. |
-| P0.2 | `boundEmpresaId` singleton breaks 2nd tenant | ⏳ | `server/supabase.ts`, `server/index.ts`, `server/messageHandler.ts` | Single-tenant today; held back — large refactor. Critical-function doc added to `processWebhookEvent` warning about the hazard. |
+| P0.2 | `boundEmpresaId` singleton breaks 2nd tenant | ✅ | `server/supabase.ts:263`, `server/messageHandler.ts` (multiple), `server/ai.ts:903`, `server/whatsapp.ts:27` | All operational helpers now require `empresaId: string` — TypeScript enforces. Singleton narrowed to ONLY `broadcastLegacyLifecycleEvent` in whatsapp.ts which no-ops in multi-tenant (closes P1.11 fan-out leak too). |
 | P0.3 | `getEmpresaForInstance` cache-fallback on DB error | ✅ | `server/instanceManager.ts:149` | Removed entirely (dead code after P0.1 migrated all callers to `getEmpresaAndTokenForInstance`, which fails closed). On Supabase blip, webhook returns 404 → Whatsmiau retries → recovered DB processes once (idempotent via wa_message_id from P0.14). |
 | P0.4 | `/api/produtos` proxy unauthenticated | ✅ | `server/router.ts:1374` | `requireEmpresaId(req)` validates JWT locally before proxying upstream. Paywall middleware also gates it. |
 | P0.5 | `zelochat-media` bucket public + enumerable filenames | 🟢 partial | `server/supabase.ts:188`, `server/messageHandler.ts:198`, `server/router.ts:726` | NEW uploads scoped per-empresa with 128-bit random slug (`${prefix}/${empresaId}/${slug}-${name}`). Bucket stays public for backwards compatibility. **Caveat:** historical files uploaded before this change are STILL at the old `received/${timestamp}-…` path and remain enumerable. A retroactive cleanup migration to re-upload + rewrite DB references is the remaining work. |
@@ -75,9 +75,11 @@ These are out of scope or unsafe to change from this branch:
 - ✅ P0.23, P0.12, P0.24 — captured live schema as `000_zelochat_schema.sql`. ZeloChat-only, idempotent, with explicit ZeloPDV-boundary header.
 - 📝 Old `001_*.sql … 013_*.sql` retained as historical record; superseded by `000_*.sql` for fresh-DB bootstrap.
 
-### Sprint 4 (shipped 2026-04-29) — P0.14 activation + P0.5 prospective hardening
+### Sprint 4 (shipped 2026-04-29) — P0.14 activation + P0.5 hardening + P0.3 dead code + P0.2 singleton kill
 - ✅ P0.14 — `upsertInboundUserMessage` with `onConflict: 'empresa_id,wa_message_id'` shipped. `handleIncomingMessage` returns boolean; `index.ts` skips auto-reply on duplicate redelivery. Whatsmiau retries no longer create double messages or double-fire AI.
 - 🟢 P0.5 — NEW media uploads now use `${prefix}/${empresaId}/${randomHex16}-${fileName}`. Cross-tenant enumeration of new files is combinatorially infeasible (128-bit slug + scoped path). Historical files remain at old paths until a retroactive cleanup migration runs.
+- ✅ P0.3 — `getEmpresaForInstance` (with stale-cache fallback) deleted. Webhook path now exclusively uses `getEmpresaAndTokenForInstance` which fails closed → Whatsmiau retries → idempotent processing via wa_message_id.
+- ✅ P0.2 — `boundEmpresaId` singleton kill. All operational helpers (`getSession`, `getAllSessions`, `markSessionAsRead`, `deleteSession`, `addAssistantMessage`, `addToolMessage`, `setAutoReply`, `updateSessionName`, `handleIncomingMessage`, `generateAndSendReply`) require `empresaId: string` — TS enforces. The singleton is narrowed to ONLY `broadcastLegacyLifecycleEvent` in whatsapp.ts, which no-ops in multi-tenant mode (closes P1.11 fan-out leak too).
 - Type-check clean: `npm run lint` ✅ + `npx tsc --noEmit -p server/tsconfig.json` ✅
 
 ### Sprint 3 (shipped 2026-04-29) — remaining P0s
@@ -97,10 +99,8 @@ These are out of scope or unsafe to change from this branch:
 - ✅ `015_wa_message_id_idempotency.sql` — APPLIED. Code-side activation also shipped: `server/messageHandler.ts` now uses `upsertInboundUserMessage` with `onConflict: 'empresa_id,wa_message_id'`, returns `boolean`; `server/index.ts` skips auto-reply when handler returns `false` (duplicate redelivery). Closes P0.14 fully.
 
 **Out of scope / blocked:**
-- 🟥 P0.5 — `zelochat-media` bucket scoping (needs data move; operator approval)
-- 🟥 P0.2 — `boundEmpresaId` singleton kill (large refactor; current customer is single-tenant so urgency is forward-looking)
-- 🟥 P0.3 — `getEmpresaForInstance` no-fallback (deferred; risk of regression on transient DB blip)
 - ❌ P0.6 — `empresa_perfil` UPDATE WITH CHECK (PDV-owned table; flag for that team)
+- 📋 P0.5 retroactive — historical files at old enumerable paths (separate cleanup migration; operator approval)
 
 **Type-check status:** `npm run lint` ✅ + `npx tsc --noEmit -p server/tsconfig.json` ✅
 

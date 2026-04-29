@@ -6,7 +6,7 @@ import { OpenAI } from 'openai';
 import { getSession, addAssistantMessage, addToolMessage } from './messageHandler.js';
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig, ensureAiSettingsHydrated, type CatalogCategoriaGroup } from './configStore.js';
-import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
+import { getServiceSupabase } from './supabase.js';
 import { buildContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
@@ -902,13 +902,15 @@ const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
  */
 export async function generateAndSendReply(
   jid: string,
-  empresaId?: string,
+  empresaId: string,
 ): Promise<string | null> {
-  const resolvedEmpresaId = empresaId ?? getBoundEmpresaId();
-  if (!resolvedEmpresaId) {
-    console.warn('[AI] Cannot generate reply — no empresa bound for jid:', jid);
+  // P0.2 — empresaId is REQUIRED. Previously fell back to getBoundEmpresaId()
+  // which is null/stale in multi-tenant deploys.
+  if (!empresaId) {
+    console.warn('[AI] Cannot generate reply — empresaId is required for jid:', jid);
     return null;
   }
+  const resolvedEmpresaId = empresaId;
 
   // Global kill-switch — dono can disable the assistant without dropping the WhatsApp session.
   // Fail-closed: hydrate from DB on first webhook hit, and only proceed if aiEnabled is
