@@ -146,42 +146,20 @@ export async function getEmpresaAndTokenForInstance(
   }
 }
 
-export async function getEmpresaForInstance(instance: string): Promise<string | null> {
-  if (!instance) return null;
-
-  try {
-    const { data } = await getServiceSupabase()
-      .from('empresa_perfil')
-      .select('id')
-      .eq('whatsmiau_instance', instance)
-      .maybeSingle();
-    const empresaId = (data as { id?: string } | null)?.id ?? null;
-    if (empresaId) {
-      // Refresh cache with the verified mapping. If the cached entry pointed
-      // at a different empresa, evict that stale binding too so subsequent
-      // outbound sends don't keep routing to the wrong instance.
-      const stale = instanceToEmpresa.get(instance);
-      if (stale && stale !== empresaId) empresaToInstance.delete(stale);
-      empresaToInstance.set(empresaId, instance);
-      instanceToEmpresa.set(instance, empresaId);
-    } else {
-      // DB says no empresa owns this instance. Drop any stale cache binding so
-      // a future caller doesn't see the old attribution.
-      const stale = instanceToEmpresa.get(instance);
-      if (stale) {
-        empresaToInstance.delete(stale);
-        instanceToEmpresa.delete(instance);
-      }
-    }
-    return empresaId;
-  } catch (err) {
-    console.error('[instanceManager] reverse lookup failed:', err instanceof Error ? err.message : err);
-    // DB unreachable — fall back to cache as a soft-degrade. The TTL bound
-    // limits how stale this can be.
-    await ensureCache().catch(() => {});
-    return instanceToEmpresa.get(instance) ?? null;
-  }
-}
+/**
+ * P0.3 — Legacy lookup, removed. The previous implementation fell back to the
+ * in-memory cache when the DB query threw, which meant a single Supabase blip
+ * could route an inbound webhook to a STALE empresaId (cross-tenant message
+ * leak window of up to 60s — the cache TTL).
+ *
+ * The webhook path now uses `getEmpresaAndTokenForInstance` exclusively
+ * (returns null on any error → handler responds 404 → Whatsmiau retries
+ * → eventually DB recovers → message processed once, deduped by
+ * `wa_message_id` UNIQUE index from migration 015).
+ *
+ * Fail-closed > stale cache for an auth boundary. Fail-closed + idempotent
+ * retries > everything for THIS auth boundary specifically.
+ */
 
 /**
  * Creates a new Whatsmiau instance for an empresa and persists the name on
