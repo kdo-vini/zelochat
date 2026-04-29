@@ -13,12 +13,15 @@ import { getServiceSupabase } from './supabase.js';
  * Migration: supabase/migrations/016_webhook_events_raw.sql
  */
 
+export type WebhookAuthStatus = 'token_match' | 'token_missing' | 'token_mismatch';
+
 interface RawEventRow {
   instance: string;
   empresa_id: string | null;
   event_type: string | null;
   wa_message_id: string | null;
   payload: unknown;
+  auth_status: WebhookAuthStatus;
 }
 
 /**
@@ -81,6 +84,7 @@ export async function recordRawWebhookEvent(
   instance: string,
   empresaId: string | null,
   body: unknown,
+  authStatus: WebhookAuthStatus,
 ): Promise<string | null> {
   const row: RawEventRow = {
     instance,
@@ -88,6 +92,7 @@ export async function recordRawWebhookEvent(
     event_type: extractEventType(body),
     wa_message_id: extractWaMessageId(body),
     payload: sanitizePayloadForLog(body),
+    auth_status: authStatus,
   };
   try {
     const { data, error } = await getServiceSupabase()

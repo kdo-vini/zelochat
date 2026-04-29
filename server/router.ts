@@ -458,12 +458,14 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   const requireStrict = (process.env.WEBHOOK_REQUIRE_TOKEN ?? '').toLowerCase();
   const isStrict = requireStrict === '1' || requireStrict === 'true' || requireStrict === 'yes';
 
+  let authStatus: 'token_match' | 'token_missing' | 'token_mismatch';
   if (headerToken) {
     if (headerToken !== webhookToken) {
       console.warn(`[Webhook] 401 — token mismatch for instance "${instance}"`);
       res.status(401).json({ error: 'invalid webhook token' });
       return;
     }
+    authStatus = 'token_match';
   } else if (isStrict) {
     // Strict mode: missing token is a hard reject. Flip WEBHOOK_REQUIRE_TOKEN=1
     // only after Whatsmiau is confirmed to be sending the apikey header on
@@ -473,9 +475,11 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     return;
   } else {
     // Validate-if-present mode: log so we can monitor adoption before flipping
-    // strict. Once these warnings stop appearing in Railway logs, we know it's
-    // safe to set WEBHOOK_REQUIRE_TOKEN=1.
+    // strict. Once these warnings stop appearing in Railway logs (and the
+    // auth_status column in zelochat_webhook_events_raw shows zero
+    // token_missing rows), it's safe to set WEBHOOK_REQUIRE_TOKEN=1.
     console.warn(`[Webhook] token-missing for instance "${instance}" (validate-if-present mode; flip WEBHOOK_REQUIRE_TOKEN=1 once configured)`);
+    authStatus = 'token_missing';
   }
 
   // Ack the webhook FIRST — Whatsmiau's retry timer starts the moment we
@@ -490,7 +494,9 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   // the data forever — Whatsmiau exposes no history endpoint. Failures are
   // swallowed inside the helper; processing must continue even if the log
   // insert fails. See server/webhookLog.ts and migration 016.
-  const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body);
+  // The auth_status column captures whether the apikey header was present
+  // and matched, so we can verify Whatsmiau adoption before flipping strict.
+  const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus);
 
   let processingError: unknown = null;
   try {
