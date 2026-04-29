@@ -194,7 +194,14 @@ export const AIConfigsView = ({
         setQrSaveState(prev => ({ ...prev, [id]: 'saved' }));
         setTimeout(() => setQrSaveState(prev => { const next = { ...prev }; delete next[id]; return next; }), 2000);
       } catch (err) {
+        // P1.35 — antes esse catch só limpava o save state visual e logava
+        // no console. Operador via "Saving..." piscar e sumir, achava que
+        // tinha salvo. Próxima vez que abria, mudança não estava lá. Agora
+        // toast explícito + mantém o save state em "error" pra próximo
+        // batch (futuro: visual badge de erro). Por enquanto: limpamos
+        // estado mas mostramos toast.
         console.error('[AIConfigs] update QR failed:', err);
+        toast.error('Não consegui salvar a resposta rápida. Tente de novo.');
         setQrSaveState(prev => { const next = { ...prev }; delete next[id]; return next; });
       }
     }, 400);
