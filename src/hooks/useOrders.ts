@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
-import { WS_URL } from '../config';
+// WS_URL removido após P2.5 — websocket secundário deletado, realtime do
+// Supabase cuida das atualizações de zelochat_orders.
 import { updateOrderStatusApi } from '../services/waApi';
 import type { Order } from '../types';
 
@@ -250,18 +251,14 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
   }, [session?.user?.id, fetchEmpresaId]);
 
-  // Refresh orders whenever the server confirms a new WhatsApp order
-  useEffect(() => {
-    if (!session?.user?.id) return;
-    const ws = new WebSocket(WS_URL);
-    ws.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data as string);
-        if (parsed.type === 'order_created') void refresh();
-      } catch { /* ignore */ }
-    };
-    return () => ws.close();
-  }, [session?.user?.id, refresh]);
+  // P2.5 — segundo WebSocket REMOVIDO. Era redundante com a Supabase
+  // realtime subscription acima (que já pega INSERT/UPDATE/DELETE em
+  // zelochat_orders e atualiza o local state sem precisar refetch). Esta
+  // segunda WS conexão era unauthenticated (só hitava WS_URL sem token),
+  // duplicava a conexão WS por aba e disparava um refresh() completo a
+  // cada `order_created` em vez de apenas adicionar a row nova.
+  // Migração 012 ativou realtime em zelochat_orders — esse useEffect já
+  // estava obsoleto.
 
   return { orders, loading, error, refresh, addOrder, updateOrderStatus, updateOrder, deleteOrder };
 }

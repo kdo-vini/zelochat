@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { existsSync, readFileSync, rmSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { broadcast, type WsEvent } from './ws.js';
 import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
@@ -114,17 +114,12 @@ export function isManuallyDisconnected(): boolean {
   return manuallyDisconnected;
 }
 
-const AUTH_INFO_DIR = resolve('auth_info_baileys');
-function wipeAuthInfo(): void {
-  try {
-    if (existsSync(AUTH_INFO_DIR)) {
-      rmSync(AUTH_INFO_DIR, { recursive: true, force: true });
-      console.log('[WhatsApp] auth_info_baileys folder removed.');
-    }
-  } catch (err) {
-    console.warn('[WhatsApp] Failed to remove auth_info_baileys:', err instanceof Error ? err.message : err);
-  }
-}
+// P1.14 — `wipeAuthInfo` removida. Era safety net da era pré-Whatsmiau
+// quando rodávamos Baileys local. Agora todo auth está no Whatsmiau
+// upstream (não temos creds.json local). O rmSync com path relativo
+// `auth_info_baileys` era também um footgun: se algum dev rodasse o
+// server de um cwd inesperado, podia apagar conteúdo errado. Removendo
+// o código morto + import de fs.
 
 function apiHeaders() {
   return { apikey: API_KEY };
@@ -772,9 +767,6 @@ export async function disconnectWhatsApp(): Promise<void> {
       }
     }
   }
-
-  // Wipe legacy local Baileys auth so a stale creds.json can never silently re-auth.
-  wipeAuthInfo();
 
   // Clear in-memory session state.
   connectionStatus = 'disconnected';
