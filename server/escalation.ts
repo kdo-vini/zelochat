@@ -116,11 +116,36 @@ export function reasonLabelPt(r: ReasonCategory): string {
   return REASON_LABELS_PT[r] ?? r;
 }
 
+/**
+ * P1.24 — strict Brazilian phone validation before building a JID.
+ *
+ * Antes: aceitava qualquer string com 12+ dígitos, mesmo "211999998888"
+ * (12 dígitos sem o 55 do Brasil). O JID resultante era válido pra
+ * Whatsmiau aceitar a request HTTP, mas a entrega falhava silenciosa —
+ * gerente nunca recebia notificação, evento de escalação ficava
+ * registrado como "enviado" mas o operador descobria via "por que o
+ * gerente não foi avisado?" depois de horas.
+ *
+ * Agora: aceita apenas
+ *   • 10-11 dígitos (local Brasil sem código país) → prepend 55
+ *   • 12-13 dígitos começando com 55 (já com código país)
+ * Qualquer outra coisa → null. Caller deve reportar ao operador
+ * "manager phone inválido — corrija em Configurações > IA".
+ */
 function phoneToJid(phone: string): string | null {
   let digits = normalizePhoneNumber(phone);
   if (!digits) return null;
-  if (digits.length >= 10 && digits.length <= 11) digits = `55${digits}`;
-  if (digits.length < 12) return null;
+
+  // 10-11 dígitos: telefone local Brasil (sem DDI). Adiciona 55.
+  if (digits.length === 10 || digits.length === 11) {
+    digits = `55${digits}`;
+  }
+
+  // Após normalização, deve ter 12 (fixo BR) ou 13 (móvel BR) dígitos
+  // E DEVE começar com 55. Senão o número é estrangeiro / malformado.
+  if (digits.length !== 12 && digits.length !== 13) return null;
+  if (!digits.startsWith('55')) return null;
+
   return `${digits}@s.whatsapp.net`;
 }
 

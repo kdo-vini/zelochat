@@ -280,22 +280,53 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   const dateBR = isoToDisplayBR(pending.pickupDate) || pending.pickupDate;
   const obsLine = pending.observations ? `\n📝 Obs: ${pending.observations}` : '';
   const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${dateBR} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
-  await sendTextMessage(jid, reply, pending.empresaId);
-  await addAssistantMessage(jid, reply, undefined, pending.empresaId);
+
+  // P1.10 — send-failure detection. Antes, se sendTextMessage throws aqui
+  // (Whatsmiau 5xx, network blip), a exceção propagava e o operador via
+  // o pedido criado mas não sabia que o cliente NUNCA recebeu a confirmação.
+  // Customer pensava "será que meu pedido foi?" e ligava reclamando.
+  //
+  // Agora: persiste a tentativa com prefixo [FALHA NO ENVIO] caso o send
+  // falhe. Operador vê no chat history "tentei mandar isso mas falhou —
+  // me deixa retentar manualmente". Pedido continua válido (createOrderInDb
+  // já rolou). justConfirmedMap também é setado pra evitar que o próximo
+  // "obrigado" do cliente vire criar_pedido novamente.
+  let sendOk = true;
+  try {
+    await sendTextMessage(jid, reply, pending.empresaId);
+  } catch (sendErr) {
+    sendOk = false;
+    console.error('[AI] confirmPendingOrder: send to customer FAILED — order is in DB but customer was not notified:', sendErr);
+  }
+  const persistedReply = sendOk ? reply : `[FALHA NO ENVIO — reenviar manualmente]\n${reply}`;
+  await addAssistantMessage(jid, persistedReply, undefined, pending.empresaId);
+
   broadcast(
     { type: 'order_created', data: { orderId, empresaId: pending.empresaId } },
     pending.empresaId,
   );
   // Mark this JID so generateAndSendReply blocks any accidental criar_pedido for 5 min.
   justConfirmedMap.set(`${pending.empresaId}:${jid}`, Date.now());
-  console.log(`[AI] Confirmed pending order #${shortId} for ${jid}`);
+  console.log(`[AI] Confirmed pending order #${shortId} for ${jid} (send=${sendOk ? 'ok' : 'FAILED'})`);
 }
 
 export async function cancelPendingOrder(jid: string, empresaId: string): Promise<void> {
   await clearPendingOrder(jid, empresaId);
   const reply = 'Tudo bem! Pedido cancelado. Se quiser fazer outro, é só me chamar 😊';
-  await sendTextMessage(jid, reply, empresaId);
-  await addAssistantMessage(jid, reply, undefined, empresaId);
+  // P1.10 — same try/catch pattern as confirmPendingOrder. Cancelar é menos
+  // crítico (sem efeito colateral em zelochat_orders), mas se o customer não
+  // receber a mensagem ele continua mandando "não" e a IA pode ficar em loop
+  // de "Tudo bem! Pedido cancelado." invisível. Persistir com marker permite
+  // o operador detectar o problema rapidamente.
+  let sendOk = true;
+  try {
+    await sendTextMessage(jid, reply, empresaId);
+  } catch (sendErr) {
+    sendOk = false;
+    console.error('[AI] cancelPendingOrder: send to customer FAILED:', sendErr);
+  }
+  const persistedReply = sendOk ? reply : `[FALHA NO ENVIO — reenviar manualmente]\n${reply}`;
+  await addAssistantMessage(jid, persistedReply, undefined, empresaId);
 }
 
 /**
@@ -361,11 +392,19 @@ function getAvailableProducts(empresaId: string): { name: string; price: number;
   return getConfig(empresaId).products.filter((p) => p.available);
 }
 
+/**
+ * P1.24 — same strict Brazilian phone validation as in escalation.ts.
+ * Aceita 10-11 dígitos (Brasil sem DDI, prepend 55) ou 12-13 dígitos
+ * começando com 55. Tudo o mais retorna null pra que o caller reporte
+ * "manager phone inválido". Antes números como "211999998888" passavam
+ * e o gerente nunca recebia a notificação.
+ */
 function phoneToJid(phone: string): string | null {
   let digits = normalizePhoneNumber(phone);
   if (!digits) return null;
-  if (digits.length >= 10 && digits.length <= 11) digits = `55${digits}`;
-  if (digits.length < 12) return null;
+  if (digits.length === 10 || digits.length === 11) digits = `55${digits}`;
+  if (digits.length !== 12 && digits.length !== 13) return null;
+  if (!digits.startsWith('55')) return null;
   return `${digits}@s.whatsapp.net`;
 }
 
@@ -1118,6 +1157,18 @@ export async function generateAndSendReply(
           // button summary (which is a model-visible string + sent to the customer).
           // safeForPrompt strips \r\n and ` < > so a multi-line paste can't break the
           // summary layout or smuggle prompt-injection markers.
+          //
+          // P1.18 — sanitize EVERY user-controlled string field, not just observations.
+          // Antes só observations passava por safeForPrompt; customerName,
+          // deliveryAddress etc. iam raw pro DB. Em turnos posteriores essas strings
+          // são lidas de volta pra construir context — uma quebra de linha ou
+          // backtick num customerName virava prompt-injection. Quantity, total,
+          // deliveryFee são numbers — não precisam.
+          const sanitizedName = safeForPrompt(args.customerName, 120);
+          const sanitizedAddress = args.deliveryAddress ? safeForPrompt(args.deliveryAddress, 250) : undefined;
+          const sanitizedNeighborhood = args.deliveryNeighborhood ? safeForPrompt(args.deliveryNeighborhood, 80) : undefined;
+          const sanitizedPickupTime = safeForPrompt(args.pickupTime, 20);
+          const sanitizedPayment = args.paymentMethod ? safeForPrompt(args.paymentMethod, 40) : undefined;
           const sanitizedObs = args.observations ? safeForPrompt(args.observations, 300) : '';
 
           // Persist pending order to Supabase (review fix C2 — survives restarts).
@@ -1126,17 +1177,17 @@ export async function generateAndSendReply(
           await setPendingOrder({
             empresaId: resolvedEmpresaId,
             jid,
-            customerName: args.customerName,
+            customerName: sanitizedName,
             customerPhone: args.customerPhone,
             items: args.items,
             pickupDate: args.pickupDate,
-            pickupTime: args.pickupTime,
-            paymentMethod: args.paymentMethod,
+            pickupTime: sanitizedPickupTime,
+            paymentMethod: sanitizedPayment,
             total: args.total,
             toolCallId: toolCall.id,
             orderType: args.orderType || 'pickup',
-            deliveryAddress: args.deliveryAddress,
-            deliveryNeighborhood: args.deliveryNeighborhood,
+            deliveryAddress: sanitizedAddress,
+            deliveryNeighborhood: sanitizedNeighborhood,
             deliveryFee: args.deliveryFee,
             observations: sanitizedObs || undefined,
           });
