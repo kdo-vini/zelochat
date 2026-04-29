@@ -41,6 +41,13 @@ export function useNotificationSound() {
   const [muted, setMutedState] = useState<boolean>(() => readBool(MUTE_KEY, false));
   const audioRefs = useRef<Partial<Record<SoundKind, HTMLAudioElement>>>({});
   const lastAlertAtRef = useRef<number>(0);
+  // P1.39 — antes UM único play() falhando flipava unlocked=false e mostrava
+  // o banner novamente. Falhas transitórias (ex: garbage collection do audio
+  // element, throttling momentâneo) faziam o banner aparecer de novo
+  // erroneamente. Agora exigimos N consecutivas falhas pra considerar que o
+  // unlock realmente expirou.
+  const consecutiveFailRef = useRef<number>(0);
+  const PLAY_FAIL_THRESHOLD = 3;
 
   // Lazy-instantiate one Audio element per kind. They're tiny (a few KB) and
   // reused for every play() call — recreating per-event would re-fetch the file.
@@ -98,11 +105,19 @@ export function useNotificationSound() {
       const el = getAudio(kind);
       try {
         el.currentTime = 0;
-        void el.play().catch(() => {
-          // Autoplay can still fail (e.g. user revoked) — flip unlocked off so
-          // the banner shows again next time.
-          setUnlocked(false);
-          writeBool(UNLOCK_KEY, false);
+        void el.play().then(() => {
+          // P1.39 — sucesso reseta o contador de falhas
+          consecutiveFailRef.current = 0;
+        }).catch(() => {
+          // Autoplay can still fail (e.g. user revoked, GC do audio element,
+          // throttling). Só flipamos unlocked=false após N consecutivas pra
+          // não mostrar o banner em hiccups transitórios.
+          consecutiveFailRef.current += 1;
+          if (consecutiveFailRef.current >= PLAY_FAIL_THRESHOLD) {
+            setUnlocked(false);
+            writeBool(UNLOCK_KEY, false);
+            consecutiveFailRef.current = 0;
+          }
         });
       } catch {
         /* ignore */

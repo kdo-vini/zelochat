@@ -19,10 +19,15 @@ export default function OAuthCallbackPage() {
       }
     });
 
-    // Timeout fallback — if something goes wrong, redirect to auth with error
+    // Timeout fallback — if something goes wrong, redirect to auth with error.
+    // P1.38 — bump 8s → 20s. Conexões 3G/4G lentas no celular do dono da
+    // lanchonete demoravam mais de 8s pra Supabase resolver o callback,
+    // resultando em "OAuth falhou" injusto. 20s é largo o suficiente pra
+    // 99% dos cenários e ainda evita que o user fique olhando spinner
+    // infinito se algo travar de verdade.
     const t = setTimeout(() => {
       navigate('/auth?error=oauth_failed', { replace: true });
-    }, 8000);
+    }, 20000);
 
     return () => {
       subscription.unsubscribe();

@@ -261,7 +261,13 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     orderId = await createOrderInDb(pending.empresaId, pending);
   } catch (err) {
     console.error('[AI] Failed to insert order, keeping pending row:', err);
-    const errMsg = 'Desculpe, tive um problema momentâneo. Toque em "✅ Confirmar" de novo, por favor. 🙏';
+    // P1.23 — antes a mensagem dizia "Toque em ✅ Confirmar de novo" mas o
+    // botão original já foi consumido pelo WhatsApp (não dá pra clicar duas
+    // vezes no mesmo botão). Customer ficava preso. Agora pede pra responder
+    // *Sim* — o soft-confirm em router.ts pega esse texto e roda
+    // confirmPendingOrder de novo (a pending row continua intacta porque
+    // FIX H1 só limpa em sucesso).
+    const errMsg = 'Desculpe, tive um problema momentâneo. Pode responder *Sim* pra eu tentar confirmar de novo? 🙏';
     await sendTextMessage(jid, errMsg, pending.empresaId);
     await addAssistantMessage(jid, errMsg, undefined, pending.empresaId);
     return;
