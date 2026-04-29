@@ -150,6 +150,13 @@ export function useWhatsAppSessions(token: string | null) {
   const [error, setError] = useState<string | null>(null);
   const [lastEscalation, setLastEscalation] = useState<EscalationNotice | null>(null);
   const [waConnected, setWaConnected] = useState<boolean | null>(null);
+  // P1.33 — track the WebSocket layer separately from the WhatsApp/Whatsmiau
+  // connection. The previous state machine only flipped on explicit
+  // `connection` events from the server, so when the WS itself dropped the
+  // operator's UI showed stale "Conectado". Now `wsConnected` is true only
+  // while the socket is open; AppShell reads it to render a "Reconectando…"
+  // pill.
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -471,11 +478,13 @@ export function useWhatsAppSessions(token: string | null) {
 
       ws.onopen = () => {
         connectedAtRef.current = Date.now();
+        setWsConnected(true);
         // Re-bind empresa on every (re)connect so server restarts don't break message routing
         void bindEmpresa(token);
       };
 
       ws.onclose = () => {
+        setWsConnected(false);
         if (disposed) return;
         // Reset backoff counter when the connection was stable for ≥10s
         const stableMs = connectedAtRef.current > 0 ? Date.now() - connectedAtRef.current : 0;
@@ -521,5 +530,6 @@ export function useWhatsAppSessions(token: string | null) {
     escalateManually,
     acknowledgeEscalation,
     waConnected,
+    wsConnected,
   };
 }

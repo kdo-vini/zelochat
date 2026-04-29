@@ -3,6 +3,7 @@ import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog,
 import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
 import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
 import { useBuiltinTriggers } from '../../hooks/useBuiltinTriggers';
+import { useToast } from '../../contexts/ToastContext';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 
@@ -56,6 +57,7 @@ export const AIConfigsView = ({
   token,
 }: AIConfigsViewProps) => {
   const builtinTriggers = useBuiltinTriggers(token);
+  const toast = useToast();
   const [managerInput, setManagerInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [managerChatInput, setManagerChatInput] = useState('');
@@ -415,7 +417,8 @@ export const AIConfigsView = ({
                           {b.name}
                         </span>
                         <button
-                          onClick={() => void builtinTriggers.setDisabled(b.id, !b.disabled).catch(() => {})}
+                          onClick={() => void builtinTriggers.setDisabled(b.id, !b.disabled)
+                            .catch(() => toast.error('Falha ao atualizar gatilho. Tente novamente.'))}
                           className={`w-8 h-[18px] rounded-full relative flex-shrink-0 transition-colors ${
                             !b.disabled ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
                           }`}
@@ -465,11 +468,13 @@ export const AIConfigsView = ({
                         </span>
                         <input
                           value={t.name}
-                          onChange={e => void updateTrigger(t.id, { name: e.target.value }).catch(() => {})}
+                          onChange={e => void updateTrigger(t.id, { name: e.target.value })
+                            .catch(() => toast.error('Não consegui salvar o nome do gatilho. Tente de novo.'))}
                           className="flex-1 bg-transparent outline-none text-[12.5px] font-semibold min-w-0"
                         />
                         <button
-                          onClick={() => void updateTrigger(t.id, { active: !t.active }).catch(() => {})}
+                          onClick={() => void updateTrigger(t.id, { active: !t.active })
+                            .catch(() => toast.error('Não consegui ligar/desligar o gatilho.'))}
                           className={`w-8 h-[18px] rounded-full relative flex-shrink-0 transition-colors ${
                             t.active ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
                           }`}
@@ -482,7 +487,9 @@ export const AIConfigsView = ({
                         <button
                           onClick={() => {
                             if (confirm(`Remover o trigger "${t.name}"?`)) {
-                              void deleteTrigger(t.id).catch(() => {});
+                              void deleteTrigger(t.id)
+                                .then(() => toast.success(`Gatilho "${t.name}" removido.`))
+                                .catch(() => toast.error('Não consegui remover o gatilho. Tente novamente.'));
                             }
                           }}
                           className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] rounded transition-all"
@@ -493,7 +500,8 @@ export const AIConfigsView = ({
                       </div>
                       <input
                         value={t.conditionDescription}
-                        onChange={e => void updateTrigger(t.id, { conditionDescription: e.target.value }).catch(() => {})}
+                        onChange={e => void updateTrigger(t.id, { conditionDescription: e.target.value })
+                          .catch(() => toast.error('Não consegui salvar a descrição do gatilho.'))}
                         className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2.5 py-1.5 text-[11.5px] text-[var(--color-ink-muted)] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 transition-colors"
                       />
                     </div>

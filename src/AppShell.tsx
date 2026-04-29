@@ -41,6 +41,7 @@ import { useWhatsAppSessions } from './hooks/useWhatsAppSessions';
 import { useOpenEscalationCount } from './hooks/useEscalationEvents';
 import { useNotificationSound } from './hooks/useNotificationSound';
 import { useNotifications } from './hooks/useNotifications';
+import { useToast } from './contexts/ToastContext';
 import { SoundUnlockBanner } from './components/shared/SoundUnlockBanner';
 import { apiUrl } from './config';
 import { inferCategoria } from './services/zeloApi';
@@ -170,6 +171,7 @@ export default function AppShell() {
     escalateManually,
     acknowledgeEscalation,
     waConnected,
+    wsConnected,
   } = useWhatsAppSessions(token);
   const { count: openEscalationCount, reload: reloadOpenEscalationCount } = useOpenEscalationCount(
     token,
@@ -177,6 +179,7 @@ export default function AppShell() {
   );
   const sound = useNotificationSound();
   const { permission: notificationPermission, isVisible: tabVisible, requestPermission: requestNotificationPermission, notify } = useNotifications();
+  const toast = useToast();
   const catalog = useCatalog(session);
   const {
     drivers,
@@ -514,32 +517,67 @@ export default function AppShell() {
     }
   }, [state.sessions, activeSessionId, tabVisible, sound]);
 
+  // P1.30 — `updateOrderStatus` (drag-and-drop in kanban + status PATCH from
+  // chat) now ROLLS BACK the optimistic state on failure and surfaces a toast.
+  // Previously the card stayed in the wrong column forever and the operator
+  // didn't know the change hadn't actually persisted.
   const updateOrderStatus = (orderId: string, newStatus: Order['status']) => {
+    const prevOrders = state.orders;
     setState((prev) => ({
       ...prev,
       orders: prev.orders.map((o) => o.id === orderId ? { ...o, status: newStatus } : o),
     }));
-    void updateOrderStatusInSupabase(orderId, newStatus).catch((err) =>
-      console.error('[App] updateOrderStatus Supabase failed:', err),
-    );
+    void updateOrderStatusInSupabase(orderId, newStatus).catch((err) => {
+      console.error('[App] updateOrderStatus Supabase failed:', err);
+      setState((prev) => ({ ...prev, orders: prevOrders }));
+      toast.error('Não consegui mover o pedido. Voltei pra coluna anterior.');
+    });
   };
 
+  // P1.31 — order CRUD now reports failures to the operator instead of letting
+  // the modal close silently while the row stays in DB. Successes get a
+  // confirmation toast so the operator sees something happened.
   const handleAddOrder = async (payload: Omit<Order, 'id' | 'createdAt'>) => {
-    const order = await addOrderToSupabase(payload);
-    setState((prev) => ({ ...prev, orders: [order, ...prev.orders] }));
+    try {
+      const order = await addOrderToSupabase(payload);
+      setState((prev) => ({ ...prev, orders: [order, ...prev.orders] }));
+      toast.success('Pedido adicionado.');
+    } catch (err) {
+      console.error('[App] handleAddOrder failed:', err);
+      toast.error('Não consegui adicionar o pedido. Tente de novo.');
+      throw err; // let the modal show its own form error too
+    }
   };
 
   const handleEditOrder = async (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => {
-    await updateOrderInSupabase(id, payload);
-    setState((prev) => ({
-      ...prev,
-      orders: prev.orders.map((o) => o.id === id ? { ...o, ...payload } : o),
-    }));
+    const prevOrders = state.orders;
+    try {
+      await updateOrderInSupabase(id, payload);
+      setState((prev) => ({
+        ...prev,
+        orders: prev.orders.map((o) => o.id === id ? { ...o, ...payload } : o),
+      }));
+      toast.success('Pedido atualizado.');
+    } catch (err) {
+      console.error('[App] handleEditOrder failed:', err);
+      setState((prev) => ({ ...prev, orders: prevOrders }));
+      toast.error('Não consegui salvar as alterações.');
+      throw err;
+    }
   };
 
   const handleDeleteOrder = async (id: string) => {
-    await deleteOrderInSupabase(id);
+    const prevOrders = state.orders;
     setState((prev) => ({ ...prev, orders: prev.orders.filter((o) => o.id !== id) }));
+    try {
+      await deleteOrderInSupabase(id);
+      toast.success('Pedido excluído.');
+    } catch (err) {
+      console.error('[App] handleDeleteOrder failed:', err);
+      setState((prev) => ({ ...prev, orders: prevOrders }));
+      toast.error('Não consegui excluir o pedido.');
+      throw err;
+    }
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -552,11 +590,13 @@ export default function AppShell() {
 
     try {
       await deleteSession(sessionId);
+      toast.success('Conversa excluída.');
     } catch (err) {
       // Rollback optimistic removal on failure
       setState((prev) => ({ ...prev, sessions: prevSessions }));
       setActiveSessionId(prevActiveId);
       console.error('[App] handleDeleteSession failed:', err);
+      toast.error('Não consegui excluir a conversa. Tente de novo.');
     }
   };
 
@@ -589,6 +629,17 @@ export default function AppShell() {
           >
             Reconectar →
           </button>
+        </div>
+      )}
+
+      {/* P1.33 — WS reconnect indicator. Only fires while subscription is
+          active AND there's no higher-priority paywall/disconnect banner.
+          The amber color signals "transient — wait" vs the red disconnect
+          banner above which signals "click to fix". */}
+      {token && subscriptionActive && waConnected !== false && !wsConnected && (
+        <div className="flex items-center justify-center gap-2 bg-amber-500 text-white px-4 py-1.5 text-[12.5px] font-medium flex-shrink-0 z-40">
+          <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse" />
+          <span>Reconectando ao servidor — mensagens novas podem demorar uns segundos.</span>
         </div>
       )}
 

@@ -137,6 +137,36 @@ function SignupForm({ onSwitchToLogin }: SignupFormProps) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [success, setSuccess] = useState(false);
+  // P1.32 — resend e-mail de confirmação. O dono da lanchonete não é técnico:
+  // se o e-mail não chegar (typo, spam filter, throttle do Supabase), antes
+  // não tinha jeito de tentar de novo sem voltar pro form e refazer tudo.
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [resendMsg, setResendMsg] = useState('');
+
+  const handleResend = async () => {
+    if (!email) {
+      setResendState('error');
+      setResendMsg('E-mail não encontrado. Volte ao cadastro.');
+      return;
+    }
+    setResendState('sending');
+    setResendMsg('');
+    try {
+      // signUp com o mesmo e-mail re-dispara o e-mail de confirmação no Supabase
+      // quando o user existe mas ainda não confirmou. Sem precisar de novo
+      // endpoint backend.
+      const { error } = await signUp(email, password || 'placeholder-not-used-because-already-exists');
+      if (error && !error.message.toLowerCase().includes('already')) {
+        throw error;
+      }
+      setResendState('sent');
+      setResendMsg('Reenviado! Cheque a caixa de entrada e o spam.');
+    } catch (err) {
+      console.error('[AuthPage] resend confirmation failed:', err);
+      setResendState('error');
+      setResendMsg('Não consegui reenviar. Aguarde 1 minuto e tente de novo.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,10 +210,35 @@ function SignupForm({ onSwitchToLogin }: SignupFormProps) {
       <div className="space-y-4">
         <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-4">
           <p className="font-semibold mb-1">Conta criada com sucesso!</p>
-          <p>
-            Verifique seu e-mail para confirmar o cadastro e então faça login.
+          <p className="mb-2">
+            Enviamos um e-mail de confirmação pra <strong>{email}</strong>. Cheque a caixa de entrada (e a pasta de spam) e clique no link pra ativar.
+          </p>
+          <p className="text-[12.5px] text-green-800/80">
+            Não chegou? Espera 1-2 minutos antes de reenviar.
           </p>
         </div>
+
+        {resendMsg && (
+          <div className={`text-sm rounded-lg p-3 ${
+            resendState === 'sent'
+              ? 'text-green-700 bg-green-50 border border-green-200'
+              : 'text-red-700 bg-red-50 border border-red-200'
+          }`}>
+            {resendMsg}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleResend}
+          disabled={resendState === 'sending' || resendState === 'sent'}
+          className="w-full bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 rounded-lg h-11 font-semibold px-6 transition-colors"
+        >
+          {resendState === 'sending' ? 'Reenviando…' :
+           resendState === 'sent'    ? 'Reenviado ✓' :
+                                       'Reenviar e-mail de confirmação'}
+        </button>
+
         <button
           type="button"
           onClick={onSwitchToLogin}
