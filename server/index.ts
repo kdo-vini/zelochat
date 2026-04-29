@@ -111,11 +111,19 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
 
   // 1. Normalize and store the message — pass empresaId explicitly so the handler
   // doesn't fall back to the global singleton.
+  //
+  // P0.14 — handleIncomingMessage now returns boolean. `false` = duplicate
+  // webhook delivery (Whatsmiau retried, message already persisted earlier),
+  // and we MUST skip the auto-reply scheduling below. Without this skip, a
+  // single customer message could fire criar_pedido twice on Whatsmiau retry,
+  // bringing back the duplicate-order bug the dedup is supposed to prevent.
+  let persisted = false;
   try {
-    await handleIncomingMessage(msg, empresaId);
+    persisted = await handleIncomingMessage(msg, empresaId);
   } catch (error) {
     console.error('[Server] Failed to persist incoming message:', error);
   }
+  if (!persisted) return;
 
   // 2. Auto-reply if enabled for this session
   const jid = msg.key?.remoteJid;

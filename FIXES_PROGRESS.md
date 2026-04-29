@@ -34,7 +34,7 @@ Use this doc to know **at a glance** what's safe in production right now and wha
 | P0.11 | `justConfirmedMap` in-memory only — duplicate orders after restart | ✅ | `server/ai.ts:35-66, 905-915` | DB fallback via `wasOrderRecentlyConfirmedInDb`. |
 | P0.12 | Role CHECK widening migration not in source control | ✅ | `supabase/migrations/000_zelochat_schema.sql` | Verified live + captured. |
 | P0.13 | Hard-button short-circuit re-fires idempotent reply on Whatsmiau retry | ✅ | `server/router.ts:177-188` | `prevHandledAt` retry detection at top of serialize block. |
-| P0.14 | No idempotency on inbound webhook (`wa_message_id` UNIQUE missing) | 🟡 | `supabase/migrations/015_wa_message_id_idempotency.sql` | Migration DRAFTED (nullable column + partial unique index). Code-side change in `messageHandler.ts` is a follow-up. |
+| P0.14 | No idempotency on inbound webhook (`wa_message_id` UNIQUE missing) | ✅ | `supabase/migrations/015_wa_message_id_idempotency.sql` + `server/messageHandler.ts:430` + `server/index.ts:114` | Migration applied. Code-side `upsertInboundUserMessage` with `onConflict: 'empresa_id,wa_message_id'` shipped. `handleIncomingMessage` returns `boolean`; index.ts skips auto-reply on duplicate webhook redelivery. |
 | P0.15 | Paywall bypassed on every operational endpoint | ✅ | `server/index.ts:42` | Global middleware on `/api/*` w/ minimal exempt list. |
 | P0.16 | Frontend has no paywall gate, only banner | ✅ | `src/AppShell.tsx:718` | Paywall placeholder for any view except settings/profile/novidades. |
 | P0.17 | `isEmpresaSubscriptionActive` fails OPEN on DB error | ✅ | `server/supabase.ts:80-150` | Fail-closed cache w/ positive-cache fallback. |
@@ -86,9 +86,9 @@ These are out of scope or unsafe to change from this branch:
 - ✅ Critical-function butterfly-effect docs added to `generateAndSendReply`, `confirmPendingOrder`, `processWebhookEvent`, `/webhook/:instance`, paywall middleware
 - ✅ CLAUDE.md gained "Shared database with ZeloPDV" + "Critical functions" sections
 
-**Migrations DRAFTED (NOT yet applied to prod — needs operator approval):**
-- 🟡 `014_zelochat_rls_hardening.sql` — adds policies for `zelochat_pending_orders` (P0.7), UPDATE/DELETE on `zelochat_messages` (P0.8), INSERT/DELETE on `zelochat_escalation_events` (P0.8), DELETE on `zelochat_sessions`. All idempotent.
-- 🟡 `015_wa_message_id_idempotency.sql` — adds nullable `wa_message_id text` + partial unique index for inbound dedup (P0.14). Code-side switch from `insert` to `upsert(..., onConflict)` is a follow-up release after the migration applies.
+**Migrations APPLIED (and code activation):**
+- ✅ `014_zelochat_rls_hardening.sql` — APPLIED. Adds policies for `zelochat_pending_orders` (P0.7), UPDATE/DELETE on `zelochat_messages` (P0.8), INSERT/DELETE on `zelochat_escalation_events` (P0.8), DELETE on `zelochat_sessions`.
+- ✅ `015_wa_message_id_idempotency.sql` — APPLIED. Code-side activation also shipped: `server/messageHandler.ts` now uses `upsertInboundUserMessage` with `onConflict: 'empresa_id,wa_message_id'`, returns `boolean`; `server/index.ts` skips auto-reply when handler returns `false` (duplicate redelivery). Closes P0.14 fully.
 
 **Out of scope / blocked:**
 - 🟥 P0.5 — `zelochat-media` bucket scoping (needs data move; operator approval)

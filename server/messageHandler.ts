@@ -426,6 +426,67 @@ async function insertMessage(params: {
   return mapMessage(data as MessageRow);
 }
 
+/**
+ * P0.14 — idempotent insert for inbound customer messages, keyed on the
+ * WhatsApp message id (`data.key.id` from the Whatsmiau webhook payload).
+ *
+ * Whatsmiau retries webhook deliveries on slow ack or proxy timeout. Without
+ * dedup, a retry produced a SECOND row in `zelochat_messages` for the same
+ * message → the AI auto-reply ran twice, customer received two replies, two
+ * pending orders got created. The partial unique index
+ * `zelochat_messages_empresa_wa_msg_uniq` (migration 015) now constrains
+ * `(empresa_id, wa_message_id)` to be unique when wa_message_id is non-NULL.
+ *
+ * Returns null when the row already existed (this delivery is a retry of an
+ * earlier one). Caller MUST short-circuit downstream side-effects (unread
+ * bump, broadcast, AI dispatch) when null is returned — otherwise the dedup
+ * is defeated at the application layer even though the DB row is unique.
+ *
+ * BUTTERFLY EFFECT: this is the new authoritative dedup boundary for inbound.
+ * If you ever swap the partial unique index for a different schema, OR if
+ * you decide to also dedupe assistant/tool rows, READ the duplicate-order
+ * incident notes in CLAUDE.md before changing anything. The whole order
+ * confirmation pipeline depends on inbound being deduped HERE, not later.
+ */
+async function upsertInboundUserMessage(params: {
+  empresaId: string;
+  sessionId: string;
+  content: string | null;
+  sentAt: string;
+  waMessageId: string;
+}): Promise<ChatMessage | null> {
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from('zelochat_messages')
+    .upsert(
+      {
+        empresa_id: params.empresaId,
+        session_id: params.sessionId,
+        role: 'user' as MessageRole,
+        content: params.content,
+        sent_at: params.sentAt,
+        wa_message_id: params.waMessageId,
+      },
+      {
+        onConflict: 'empresa_id,wa_message_id',
+        ignoreDuplicates: true,
+      },
+    )
+    .select(MESSAGE_COLUMNS);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  // ignoreDuplicates: true → conflict returns an empty array. Treat that as
+  // "duplicate webhook delivery, already persisted earlier" and signal the
+  // caller to skip downstream side-effects.
+  if (!data || data.length === 0) {
+    return null;
+  }
+  return mapMessage(data[0] as MessageRow);
+}
+
 export async function getSession(jid: string, empresaId = getBoundEmpresaId()): Promise<StoredSession | null> {
   if (!empresaId) {
     return null;
@@ -601,19 +662,24 @@ export async function updateSessionName(
  * `empresaId` is passed in by the webhook handler (review fix C3) — it comes from
  * the apikey-token lookup, NOT from the process-global singleton. The singleton
  * is consulted only as a legacy fallback (local dev without a configured token).
+ *
+ * Returns `true` when the message was newly persisted, `false` when it was a
+ * duplicate webhook delivery (already persisted by an earlier call) and the
+ * caller should SKIP auto-reply scheduling. See `upsertInboundUserMessage`
+ * for the dedup contract (P0.14).
  */
-export async function handleIncomingMessage(msg: any, empresaId?: string | null): Promise<void> {
+export async function handleIncomingMessage(msg: any, empresaId?: string | null): Promise<boolean> {
   const resolvedEmpresaId = empresaId ?? getBoundEmpresaId();
   if (!resolvedEmpresaId) {
     console.warn('[MessageHandler] Ignoring inbound message because no empresa is bound yet.');
-    return;
+    return false;
   }
   const jid = msg.key.remoteJid;
-  if (!jid) return;
+  if (!jid) return false;
   return serializeForJid(jid, () => _handleIncomingMessage(msg, resolvedEmpresaId));
 }
 
-async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<void> {
+async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<boolean> {
   const jid = msg.key.remoteJid;
   console.log(`[MessageHandler] Incoming message — JID: ${jid} | pushName: ${msg.pushName}`);
 
@@ -686,7 +752,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     attachment,
   });
 
-  if (!preview) return;
+  if (!preview) return false;
 
   const existing = await fetchSessionFamily(resolvedEmpresaId, jid);
 
@@ -709,16 +775,49 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     // unreadCount intentionally omitted — incremented atomically below via RPC
   });
 
-  // Atomic increment — avoids race condition when two messages arrive simultaneously
-  await getServiceSupabase().rpc('zelochat_increment_unread', { p_session_id: sessionRow.id });
+  // P0.14 — persist the inbound message FIRST and dedup against retried
+  // webhook deliveries. We used to bump unread BEFORE the insert, which
+  // meant a duplicate Whatsmiau redelivery double-counted unread before we
+  // detected it. Reordered: upsert → if duplicate, return false → if new,
+  // bump unread + broadcast.
+  //
+  // wa_message_id comes from msg.key.id (Whatsmiau's webhook payload). If
+  // it's missing for some reason (unexpected payload shape, legacy
+  // Whatsmiau version), we fall back to the non-dedup insert so the message
+  // still persists. The fallback path logs a warning so we notice if it
+  // ever fires in prod.
+  const waMessageId = (msg.key?.id ?? null) as string | null;
 
-  const storedMsg = await insertMessage({
-    empresaId: resolvedEmpresaId,
-    sessionId: sessionRow.id,
-    role: 'user',
-    content: storedContent,
-    sentAt: sentAt.toISOString(),
-  });
+  let storedMsg: ChatMessage;
+  if (waMessageId) {
+    const upserted = await upsertInboundUserMessage({
+      empresaId: resolvedEmpresaId,
+      sessionId: sessionRow.id,
+      content: storedContent,
+      sentAt: sentAt.toISOString(),
+      waMessageId,
+    });
+    if (!upserted) {
+      console.log(`[MessageHandler] dedup: skip retry of wa_message_id=${waMessageId} for ${jid}`);
+      return false;
+    }
+    storedMsg = upserted;
+  } else {
+    console.warn('[MessageHandler] inbound message missing key.id — falling back to non-dedup insert. JID:', jid);
+    storedMsg = await insertMessage({
+      empresaId: resolvedEmpresaId,
+      sessionId: sessionRow.id,
+      role: 'user',
+      content: storedContent,
+      sentAt: sentAt.toISOString(),
+    });
+  }
+
+  // Atomic increment — runs ONLY for fresh messages. Avoids race condition when
+  // two DIFFERENT messages arrive simultaneously (the RPC is atomic at the DB
+  // layer); for the same message redelivered, the early-return above prevents
+  // re-entry entirely.
+  await getServiceSupabase().rpc('zelochat_increment_unread', { p_session_id: sessionRow.id });
 
   const family = await fetchSessionFamily(resolvedEmpresaId, jid);
   const mappedSession = family
@@ -768,6 +867,12 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       sizeBytes: attachment.sizeBytes,
     });
   }
+
+  // P0.14 — signal "freshly persisted, run downstream side-effects" to the
+  // caller in `index.ts` so the AI auto-reply is scheduled. Returning false
+  // anywhere above this line means a duplicate webhook delivery — caller
+  // MUST skip auto-reply or the dedup is defeated.
+  return true;
 }
 
 export async function addAssistantMessage(
