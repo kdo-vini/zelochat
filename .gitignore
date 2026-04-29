@@ -10,7 +10,12 @@ auth_info_baileys/
 .tunnel-url
 test-results/
 playwright-report/
-supabase/migrations/
-*.md
+.claude/settings.local.json
+
+# Markdown docs and SQL migrations are SOURCE-OF-TRUTH and MUST be tracked.
+# They were previously ignored which prevented cross-agent visibility of
+# CODE_REVIEW.md / FIXES_PROGRESS.md / supabase/migrations/*.sql. If you
+# need to exclude a personal scratch doc, use a `*.local.md` suffix or
+# keep it in a folder you add explicitly here.
 
 .vercel
