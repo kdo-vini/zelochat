@@ -16,6 +16,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-29',
     category: 'hotfix',
+    title: 'Conversas de cada conta ficam isoladas',
+    description: 'Corrigimos uma falha em que, em raras situações, mensagens recebidas em uma conta podiam aparecer em outra conta vinculada à mesma empresa-mãe. Agora cada conta só vê e responde às próprias conversas.',
+  },
+  {
+    date: '2026-04-29',
+    category: 'hotfix',
     title: 'Botão "Desativar IA" agora é respeitado de verdade',
     description: 'Corrigimos uma falha em que a IA podia continuar respondendo mesmo com o assistente desativado nas Configurações, em alguns momentos após o sistema reiniciar. Agora a IA só responde quando o botão estiver ligado de verdade.',
   },

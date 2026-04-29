@@ -63,7 +63,7 @@ import {
   resolveSession,
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
-import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { getEmpresaForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
 import type { ChatAttachment } from '../src/types.js';
@@ -80,71 +80,6 @@ setInterval(() => {
     if (ts < cutoff) recentlyHandled.delete(jid);
   }
 }, 30_000);
-
-/**
- * Resolves the empresa associated with a webhook request via the apikey header.
- *
- * Fallback chain (in order):
- * 1. No token present → bound empresa singleton (Whatsmiau fires webhooks without
- *    an apikey header by default — single-tenant Railway deployments are fine here).
- * 2. WHATSMIAU_WEBHOOK_TOKEN env var — exact match → bound empresa singleton
- * 3. WHATSMIAU_API_KEY env var — explicit API key match → bound empresa singleton
- * 4. UUID-shaped token → look up empresa_perfil.webhook_token in DB
- */
-async function resolveWebhookEmpresa(req: Request): Promise<string | null> {
-  const token = (req.header('apikey') || '').trim();
-
-  // No token — Whatsmiau does not send an apikey header by default.
-  // Fall back to the bound empresa singleton (single-tenant deployment).
-  if (!token) {
-    const empresaId = getBoundEmpresaId();
-    if (!empresaId) {
-      console.warn('[Webhook] 401 — no apikey header and no empresa bound yet');
-      return null;
-    }
-    return empresaId;
-  }
-
-  // 1. Explicit webhook token override
-  const devFallback = process.env.WHATSMIAU_WEBHOOK_TOKEN;
-  if (devFallback && token === devFallback) {
-    return getBoundEmpresaId();
-  }
-
-  // 2. Whatsmiau API key fallback — Whatsmiau sends its own API key as the
-  //    apikey header by default. Accept it and attribute to the bound empresa.
-  const apiKeyFallback = process.env.WHATSMIAU_API_KEY;
-  if (apiKeyFallback && token === apiKeyFallback) {
-    const empresaId = getBoundEmpresaId();
-    if (!empresaId) {
-      console.warn('[Webhook] 401 — WHATSMIAU_API_KEY matched but no empresa bound yet');
-      return null;
-    }
-    return empresaId;
-  }
-
-  // 3. UUID-shaped per-empresa token — look up in DB
-  if (!/^[0-9a-f-]{36}$/i.test(token)) {
-    console.warn(`[Webhook] 401 — token not UUID-shaped and does not match env fallbacks (prefix: ${token.slice(0, 8)}...)`);
-    return null;
-  }
-
-  try {
-    const { data } = await getServiceSupabase()
-      .from('empresa_perfil')
-      .select('id')
-      .eq('webhook_token', token)
-      .maybeSingle();
-    const resolved = (data as { id: string } | null)?.id ?? null;
-    if (!resolved) {
-      console.warn(`[Webhook] 401 — UUID token not found in empresa_perfil.webhook_token`);
-    }
-    return resolved;
-  } catch (err) {
-    console.error('[Webhook] empresa lookup failed:', err);
-    return null;
-  }
-}
 
 function safeJsonParse<T = any>(value: string): T | null {
   try { return JSON.parse(value) as T; } catch { return null; }
@@ -372,25 +307,18 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
 }
 
 /**
- * POST /webhook — Legacy single-tenant entry point.
+ * POST /webhook — REMOVED (2026-04-29).
  *
- * Authentication: header `apikey: <empresa.webhook_token>`. The token both
- * authenticates the call AND identifies which empresa the event belongs to
- * (review fixes C1 + C3). Whatsmiau by default sends its own API key as
- * `apikey`, which is matched against `WHATSMIAU_API_KEY` env and attributed
- * to the bound empresa singleton (single-tenant fallback).
- *
- * Prefer `/webhook/:instance` for new empresas — it scales to multi-tenant
- * without per-empresa apikey configuration on Whatsmiau.
+ * The legacy single-tenant route resolved empresaId via the bound singleton
+ * (`getBoundEmpresaId()`), which is non-deterministic in multi-tenant setups
+ * and caused a privacy leak: messages from one empresa were attributed to
+ * whichever empresa happened to be auto-bound at startup. All instances must
+ * now use the per-instance URL `/webhook/:instance`. We deliberately respond
+ * 410 (not 404) so any stale Whatsmiau registration surfaces loudly.
  */
-router.post('/webhook', async (req: Request, res: Response) => {
-  const empresaId = await resolveWebhookEmpresa(req);
-  if (!empresaId) {
-    res.status(401).json({ error: 'invalid webhook credentials' });
-    return;
-  }
-  res.json({ ok: true });
-  await processWebhookEvent(empresaId, req.body);
+router.post('/webhook', async (_req: Request, res: Response) => {
+  console.warn('[Webhook] 410 — POST /webhook is removed; use /webhook/:instance');
+  res.status(410).json({ error: 'legacy webhook removed; reconfigure to /webhook/:instance' });
 });
 
 /**

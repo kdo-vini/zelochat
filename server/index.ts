@@ -47,9 +47,16 @@ createWsServer(httpServer);
 const pendingReplies = new Map<string, ReturnType<typeof setTimeout>>();
 
 onIncomingMessage(async (msg, empresaIdFromWebhook) => {
-  // empresaIdFromWebhook is the trusted value derived from the apikey token (review fix C3).
-  // Fall back to the singleton only if the webhook didn't supply one (legacy path).
-  const empresaId = empresaIdFromWebhook ?? getBoundEmpresaId();
+  // SECURITY: empresaIdFromWebhook MUST come from the per-instance route
+  // (`/webhook/:instance` → empresa_perfil.whatsmiau_instance lookup). We do
+  // NOT fall back to the singleton — that's how messages from one tenant
+  // ended up attributed to another after the legacy `/webhook` route was
+  // resolved via `getBoundEmpresaId()`. If we don't know the empresa, drop.
+  const empresaId = empresaIdFromWebhook;
+  if (!empresaId) {
+    console.warn('[AutoReply] dropping incoming message — webhook did not resolve an empresaId');
+    return;
+  }
 
   // 1. Normalize and store the message — pass empresaId explicitly so the handler
   // doesn't fall back to the global singleton.
@@ -100,19 +107,30 @@ httpServer.listen(PORT, () => {
   console.log(`[Server] Listening on http://localhost:${PORT}`);
   console.log(`[Server] WebSocket on ws://localhost:${PORT}/ws`);
 
-  // Auto-bind empresa at startup so messages are routed without waiting for frontend login
+  // Auto-bind empresa at startup. SAFE only when exactly one empresa exists
+  // (single-tenant deploy). With 2+ empresas, the legacy `LIMIT 1` query was
+  // non-deterministic and caused mis-attribution of inbound webhook messages
+  // (see /webhook 410 in router.ts). In multi-tenant the singleton stays null;
+  // outbound broadcasts that previously relied on it become per-empresa scoped
+  // via the JWT path (frontend bindEmpresa) instead.
   (async () => {
     try {
-      const { data } = await getServiceSupabase()
+      const { count, error: countError } = await getServiceSupabase()
         .from('empresa_perfil')
-        .select('id')
-        .limit(1)
-        .maybeSingle();
-      if (data?.id) {
-        setBoundEmpresaId(data.id);
-        console.log(`[Server] Auto-bound empresa: ${data.id}`);
+        .select('id', { count: 'exact', head: true });
+      if (countError) throw countError;
+      if (count === 1) {
+        const { data } = await getServiceSupabase()
+          .from('empresa_perfil')
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        if (data?.id) {
+          setBoundEmpresaId(data.id);
+          console.log(`[Server] Auto-bound empresa (single-tenant): ${data.id}`);
+        }
       } else {
-        console.warn('[Server] No empresa found — messages will be ignored until frontend logs in.');
+        console.log(`[Server] Multi-tenant detected (${count ?? 0} empresas) — skipping auto-bind. Each request resolves its own empresa via JWT or webhook path.`);
       }
     } catch (err) {
       console.warn('[Server] Auto-bind failed:', err);
