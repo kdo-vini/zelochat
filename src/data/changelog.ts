@@ -14,6 +14,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-04-29',
+    category: 'minor',
+    title: 'Mensagens bloqueadas para planos cancelados',
+    description: 'Empresas com assinatura inativa não têm mais mensagens processadas pela IA, evitando cobranças inesperadas após o cancelamento.',
+  },
+  {
     date: '2026-04-28',
     category: 'hotfix',
     title: 'Histórico completo: mensagens do celular agora aparecem',
