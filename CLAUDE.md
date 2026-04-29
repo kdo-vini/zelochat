@@ -2,6 +2,18 @@
 
 WhatsApp-native customer service platform for Brazilian lanchonetes. All user-facing text, prompts, and seed data are in **Brazilian Portuguese**.
 
+## 📖 Required reading before any non-trivial change
+
+This repo has THREE companion docs at the project root that capture context not visible from the code alone. **Read them before touching anything customer-facing or anything tagged "CRITICAL":**
+
+1. **[CODE_REVIEW.md](./CODE_REVIEW.md)** — Senior-tier audit of the codebase (24 P0 / 47 P1 / 38 P2 / 24 P3). Each finding has file:line, repro steps, customer impact, and proposed fix. This is the source-of-truth catalog of known issues.
+2. **[FIXES_PROGRESS.md](./FIXES_PROGRESS.md)** — Live tracker of which audit findings are SHIPPED, DRAFTED, BLOCKED, or PENDING. Every fix entry links to the files that changed. Update this whenever you ship a fix or draft a migration.
+3. **[BILLING.md](./BILLING.md)** — Stripe/Asaas runbook. Subscription state, plan tiers, the cross-product (ZeloPDV) shared `subscriptions` table.
+
+Plus the two §sections in this file ("Shared database with ZeloPDV" and "Critical functions — touch with extreme care") — those are non-obvious tribal knowledge that breaking will cost real customer money.
+
+If you're an AI agent or new dev opening the repo for the first time: read those four docs in order before doing anything else. The audit alone took six senior reviewers ~40k tokens to produce — re-running that work is wasteful and the findings haven't been re-litigated.
+
 ## Novidades changelog convention
 
 **Não é todo commit/PR que vira entrada no changelog.** O Novidades é lido pelo dono da lanchonete — só entra o que **realmente muda a experiência dele** (novo recurso visível, correção de bug que ele sentiu, ajuste de comportamento da IA). Refactor interno, ajuste de copy de landing, mudança de infra, tweak de dev tooling, rename de variável, lint fix — **não vão pro changelog**. Na dúvida, não adiciona.
@@ -99,6 +111,58 @@ Tables:
 - `produtos` / `categorias` / `subcategorias` — **shared with ZeloPDV**. Same `auth.users` underlies both apps. ZeloChat writes here to add/edit products; changes reflect in ZeloPDV automatically. FKs: `produtos.id_categoria → categorias.id`, `produtos.id_subcategoria → subcategorias.id`, `subcategorias.id_categoria → categorias.id`. Multi-tenant by `id_usuario` (uuid, `auth.uid()`). RLS already scoped by `id_usuario`. Zero triggers.
 
 Session "families": a contact may have multiple rows (different JIDs for same phone). `fetchSessionFamily` groups them by normalized phone key — always use it instead of querying by JID directly.
+
+## 🛑 Shared database with ZeloPDV — what we MUST NOT touch from this repo
+
+ZeloChat and ZeloPDV are two separate apps that **share one Supabase project** (`xnnjyrblpvsqrtsshawa`). Same `auth.users`, same database, same migrations log. Changing schema from this repo that's owned by ZeloPDV will silently break the other product — and there is no test environment that covers both at once.
+
+### Tables we OWN (safe to migrate from this repo)
+- `zelochat_sessions`, `zelochat_messages`, `zelochat_drivers`, `zelochat_orders`,
+  `zelochat_triggers`, `zelochat_quick_responses`, `zelochat_pending_orders`,
+  `zelochat_escalation_events`
+- ZeloChat-specific COLUMNS added to `empresa_perfil` (e.g. `whatsmiau_instance`, `webhook_token`, `ai_enabled`, `manager_phone`, `chave_pix`, `notify_customer_*`, `delivery_config`, `manager_history`, `blocked_dates`, `zelochat_onboarding_done`, `zelochat_disabled_builtin_triggers`, `ai_can_reengage_pending`, `ai_instructions`, `horario_*`, `dias_fechamento`)
+- `zelochat-media` storage bucket and its policies
+- `zelochat_increment_unread` and `zelochat_orders_set_updated_at` functions
+
+### Tables we DO NOT OWN (NEVER ALTER from this repo)
+- **`empresa_perfil`** the table itself, its primary key, its `user_id` FK, and PDV-only columns (`nome_exibicao`, `documento`, `endereco`, `contato`, `timezone`, `logo_url`, `rodape_recibo`, `largura_bobina`, `modulo_pdv_ativo`, `modulo_delivery_ativo`, `pin_admin`, `razao_social`, `plataformas_pagamento`, `last_seen_at`, `onboarding_completed`, `tipo_negocio`). We can ADD columns; we cannot DROP or ALTER theirs.
+- **`subscriptions`** — owned by ZeloPDV's webhook handler. Schema, CHECK constraints (`plan_tier`, `status`), RLS. We READ; we never DDL.
+- **`super_admins`** — admin pool. ZeloPDV-owned.
+- **`produtos`, `categorias`, `subcategorias`** — shared catalog. ZeloChat reads + writes ROWS, but the SCHEMA is ZeloPDV's. Multi-tenant via `id_usuario` (note: PDV uses `id_usuario`, not `empresa_id` — different convention).
+- **`vendas*`, `caixas*`, `caixa_*`, `pessoas`, `expenses`, `vendas_pagamentos`, `mesas`, `comandas*`, `delivery_*`, `categorias_complementos`, `complementos`, `produtos_complementos_config`, `email_*`, `subscription_cron_logs`, `admin_activity_logs`** — PDV/admin only.
+- **`auth.*` schema** — Supabase platform.
+- **`storage.*` schema (objects/buckets table itself)** — Supabase platform; we add policies + buckets, never alter the platform tables.
+
+### Why this matters
+Adding `ALTER TABLE empresa_perfil DROP COLUMN ...` from here, or attempting to add a new RLS policy with a name that ZeloPDV already uses, or applying a migration that resets ZeloPDV's `subscriptions_status_check` constraint, will cause one of:
+- ZeloPDV's billing webhook handler stops writing rows (revenue lost on PDV side)
+- PDV operators can't read their own catalog (RLS misalignment)
+- Migration history desyncs and `supabase db reset` produces a different schema than prod
+- Worst case: data loss on a column we didn't realize was load-bearing for PDV
+
+### Workflow when you need to change a shared table
+1. Open an issue in the ZeloPDV repo describing the change and why ZeloChat needs it.
+2. Land the migration in ZeloPDV first.
+3. Pull the resulting prod schema back into ZeloChat's `000_zelochat_schema.sql` snapshot via `pg_dump` or the Supabase MCP.
+4. Never run a migration from THIS repo against shared tables.
+
+## 🚨 Critical functions — touch with extreme care
+
+These functions are CRITICAL for product correctness. Each one has caused (or has the potential to cause) a customer-visible outage if broken. Inline docs in the source explain the chain effect; this index is just the master list.
+
+| Function | Location | Why it's critical |
+|---|---|---|
+| `generateAndSendReply` | `server/ai.ts` | The AI dispatch entry point. Bad changes here = duplicate orders, wrong-confirms, prompt-injection. The 3-layer trap from §"Order confirmation flow" lives here. |
+| `confirmPendingOrder` / `cancelPendingOrder` / `clearPendingOrder` | `server/ai.ts` | The pending-order lifecycle. The order between insert/clear/send is load-bearing — see "FIX H1" comment in `confirmPendingOrder`. |
+| `dispatchIncomingMessage` and the hard-button short-circuit | `server/router.ts` | Layer 3 of the order-flow trap. Every customer reply path passes through here. |
+| `processWebhookEvent` and `/webhook/:instance` | `server/router.ts` | Auth boundary for inbound WhatsApp. Currently relies on instance name as secret (P0.1) — rotation/dedup decisions land here. |
+| `requireActiveZelochatSubscription` / `isEmpresaSubscriptionActive` / `resolveActiveSubscription` | `server/supabase.ts` | The paywall + the cache. Failing OPEN here = silent revenue leak across the fleet. |
+| `getEmpresaForInstance` / `getInstanceForEmpresa` / `createInstance` | `server/instanceManager.ts` | Multi-tenant routing. A stale cache hit = cross-tenant message leak. |
+| `getOrCreateSession` / `appendMessage` / `addToolMessage` | `server/messageHandler.ts` | Message persistence. Every helper defaulting `empresaId = getBoundEmpresaId()` is a cross-tenant hazard once a 2nd customer onboards. |
+| The paywall middleware in `server/index.ts` | `server/index.ts:42` | Guards every `/api/*` route. Adding a bypass to the exempt list without thinking through the abuse vector = revenue leak. |
+| `clearLocalAppState` (logout) | `src/services/authService.ts` | If new `zelochat_*`-prefixed localStorage keys are introduced, they MUST be wiped here, or the cross-tenant leak via shared device returns. |
+
+When changing any of these, follow the rule: read CLAUDE.md → read CODE_REVIEW.md → read the existing inline docstring → walk through ONE customer scenario in your head before editing.
 
 ## Legacy / ignore (delivery module was abandoned)
 
