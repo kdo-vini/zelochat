@@ -63,7 +63,7 @@ import {
   resolveSession,
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
-import { requireEmpresaId, requireActiveZelochatSubscription, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { getEmpresaForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe } from './billing.js';
 import type { ChatAttachment } from '../src/types.js';
@@ -164,6 +164,15 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
 
   if (event === 'messages.upsert') {
     if (!data.message) return;
+
+    // Block processing for empresas without an active subscription — inbound
+    // messages trigger AI inference and Supabase writes, both of which cost money.
+    // Fail-open on DB errors so a transient outage never silences a paying customer.
+    const subscriptionActive = await isEmpresaSubscriptionActive(empresaId);
+    if (!subscriptionActive) {
+      console.warn(`[Webhook] messages.upsert bloqueado — empresa ${empresaId} sem assinatura ativa`);
+      return;
+    }
 
     // Messages sent from the operator's phone (not via the app). Save them so the
     // conversation history stays complete. Skip multi-device protocol artifacts and

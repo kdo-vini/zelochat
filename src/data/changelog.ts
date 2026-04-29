@@ -16,8 +16,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-29',
     category: 'minor',
-    title: 'Reconexão em tempo real mais inteligente',
-    description: 'Quando a conexão cai, o app agora aguarda um tempo crescente antes de tentar reconectar — evitando sobrecarregar o servidor quando várias abas tentam se reconectar ao mesmo tempo.',
+
   },
   {
     date: '2026-04-28',
