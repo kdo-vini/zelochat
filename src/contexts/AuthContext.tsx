@@ -6,6 +6,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
+import { setTokenRefresher } from '../config';
 
 interface AuthContextValue {
   session: Session | null;
@@ -49,6 +50,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await checkProfile(session.user.id);
     }
   };
+
+  // Register the one-shot token refresher so apiFetch can recover 401s
+  // without requiring a page reload. Cleared on unmount.
+  useEffect(() => {
+    setTokenRefresher(async () => {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error || !data.session?.access_token) {
+        await supabase.auth.signOut();
+        return null;
+      }
+      return data.session.access_token;
+    });
+    return () => setTokenRefresher(null);
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {

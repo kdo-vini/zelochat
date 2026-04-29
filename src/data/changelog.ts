@@ -14,6 +14,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-04-29',
+    category: 'minor',
+    title: 'Sessão renova automaticamente sem precisar recarregar a página',
+    description: 'Quando o token de acesso expira, o app agora renova a sessão em segundo plano e reenvia a ação. Antes, qualquer mutação feita após a expiração falhava silenciosamente até o próximo F5.',
+  },
+  {
     date: '2026-04-28',
     category: 'hotfix',
     title: 'Histórico completo: mensagens do celular agora aparecem',
