@@ -27,7 +27,7 @@ Use this doc to know **at a glance** what's safe in production right now and wha
 | P0.3 | `getEmpresaForInstance` cache-fallback on DB error | ✅ | `server/instanceManager.ts:149` | Removed entirely (dead code after P0.1 migrated all callers to `getEmpresaAndTokenForInstance`, which fails closed). On Supabase blip, webhook returns 404 → Whatsmiau retries → recovered DB processes once (idempotent via wa_message_id from P0.14). |
 | P0.4 | `/api/produtos` proxy unauthenticated | ✅ | `server/router.ts:1374` | `requireEmpresaId(req)` validates JWT locally before proxying upstream. Paywall middleware also gates it. |
 | P0.5 | `zelochat-media` bucket public + enumerable filenames | 🟢 partial | `server/supabase.ts:188`, `server/messageHandler.ts:198`, `server/router.ts:726` | NEW uploads scoped per-empresa with 128-bit random slug (`${prefix}/${empresaId}/${slug}-${name}`). Bucket stays public for backwards compatibility. **Caveat:** historical files uploaded before this change are STILL at the old `received/${timestamp}-…` path and remain enumerable. A retroactive cleanup migration to re-upload + rewrite DB references is the remaining work. |
-| P0.6 | `empresa_perfil` UPDATE policy missing `WITH CHECK` | ❌ | (ZeloPDV-owned table) | Flag for ZeloPDV team — not safe to change here. |
+| P0.6 | `empresa_perfil` UPDATE policy missing `WITH CHECK` | ✅ | `zeloPDV-Prod/.ai/migrations/empresa_perfil_update_with_check.sql` (local — PDV gitignora `.ai/`) | Migration aplicada em prod via MCP em 2026-04-29. Verificada: `qual = with_check = (auth.uid() = user_id)`. Fecha vetor de roubo de empresa via `UPDATE empresa_perfil SET user_id = …`. Aplicada do repo PDV (tabela é PDV-owned). |
 | P0.7 | `zelochat_pending_orders` RLS on but no policies | 🟡 | `supabase/migrations/014_zelochat_rls_hardening.sql` | Migration DRAFTED. Apply only after operator review. |
 | P0.8 | `zelochat_messages` no UPDATE/DELETE; `zelochat_escalation_events` no INSERT/DELETE | 🟡 ✅ | `supabase/migrations/014_zelochat_rls_hardening.sql` + `server/escalation.ts:293-340` | Migration DRAFTED. Code-side `.eq('empresa_id')` already added (P1.1 closed). |
 | P0.9 | Affirmative-text regex prematurely confirms orders | ✅ | `server/ai.ts:34, 786` | Whitelist exact-match w/ accent-strip + trailing punct. |
@@ -99,8 +99,11 @@ These are out of scope or unsafe to change from this branch:
 - ✅ `015_wa_message_id_idempotency.sql` — APPLIED. Code-side activation also shipped: `server/messageHandler.ts` now uses `upsertInboundUserMessage` with `onConflict: 'empresa_id,wa_message_id'`, returns `boolean`; `server/index.ts` skips auto-reply when handler returns `false` (duplicate redelivery). Closes P0.14 fully.
 
 **Out of scope / blocked:**
-- ❌ P0.6 — `empresa_perfil` UPDATE WITH CHECK (PDV-owned table; flag for that team)
 - 📋 P0.5 retroactive — historical files at old enumerable paths (separate cleanup migration; operator approval)
+
+### Sprint 5 (shipped 2026-04-29) — P0.6 from PDV repo
+- ✅ P0.6 — `empresa_perfil` UPDATE policy gained `WITH CHECK (auth.uid() = user_id)`. Closes empresa transfer/theft vector. Applied to prod via Supabase MCP. SQL doc at `zeloPDV-Prod/.ai/migrations/empresa_perfil_update_with_check.sql` (PDV gitignora `.ai/` por convenção; migrations rastreadas via Supabase migration history).
+- **All 24 P0s now addressed.** 23 fully closed; P0.5 has documented residue (historical media files at enumerable paths) requiring a separate retroactive cleanup migration.
 
 **Type-check status:** `npm run lint` ✅ + `npx tsc --noEmit -p server/tsconfig.json` ✅
 
