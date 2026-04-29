@@ -306,15 +306,32 @@ interface WhatsAppIntegrationCardProps {
   onPlanChange: () => void;
 }
 
+// Module-level cache do último status conhecido. Sobrevive a remounts do
+// WhatsAppIntegrationCard (que acontecem toda vez que o operador navega
+// pra outra view e volta). Antes, o initial state hardcoded 'disconnected'
+// fazia o badge piscar vermelho por ~3s enquanto /api/status era buscado —
+// operador via "Desconectado" toda vez que abria Configurações, mesmo com
+// WhatsApp conectado o tempo todo.
+let lastKnownWaStatus: 'disconnected' | 'qr' | 'connecting' | 'connected' = 'connecting';
+let lastKnownQrCode: string | null = null;
+
 export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptionLoading, subscription, hasPdvOnly, onPlanChange }: WhatsAppIntegrationCardProps) => {
-  const [waStatus, setWaStatus] = useState<'disconnected' | 'qr' | 'connecting' | 'connected'>('disconnected');
-  const [qrCode, setQrCode] = useState<string | null>(null);
+  // Initial state usa o cache do módulo (último valor conhecido) em vez de
+  // 'disconnected' fixo. Primeira montagem da sessão começa em 'connecting'
+  // (loading state neutro), montagens subsequentes usam o último status
+  // sincronizado.
+  const [waStatus, setWaStatus] = useState<'disconnected' | 'qr' | 'connecting' | 'connected'>(lastKnownWaStatus);
+  const [qrCode, setQrCode] = useState<string | null>(lastKnownQrCode);
   const [isLoading, setIsLoading] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Sync local state → module cache so the next remount picks up where we left off.
+  useEffect(() => { lastKnownWaStatus = waStatus; }, [waStatus]);
+  useEffect(() => { lastKnownQrCode = qrCode; }, [qrCode]);
 
 
   // Poll the backend every 3s while QR is showing — catches connection even if webhook/tunnel fails
