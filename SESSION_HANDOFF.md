@@ -36,8 +36,8 @@ Deploy do P0.14 ativo (`a6912ff`) usou `supabase-js .upsert(..., { ignoreDuplica
 ## 🟡 Pendente — sem urgência operacional
 
 ### P0 com follow-up
-- **P0.5 cleanup**: rodar uma vez `npx tsx scripts/cleanup-orphan-media.ts` — apaga 4 órfãos pré-P0.5 do bucket. Inofensivo se não rodar.
-- **P0.1 strict mode**: setar `WEBHOOK_REQUIRE_TOKEN=1` na Railway DEPOIS de configurar `apikey: <empresa_perfil.webhook_token>` no dashboard Whatsmiau pra cada empresa. Hoje está em validate-if-present (logs `[Webhook] token-missing` aparecem normalmente).
+- ~~**P0.5 cleanup**~~: ✅ rodado em 2026-04-29 (Sprint 16). 0 órfãos restantes.
+- **P0.1 strict mode**: setar `WEBHOOK_REQUIRE_TOKEN=1` na Railway DEPOIS de configurar `apikey: <empresa_perfil.webhook_token>` no dashboard Whatsmiau pra cada empresa. Hoje está em validate-if-present (logs `[Webhook] token-missing` aparecem normalmente). Runbook abaixo em §"Como flipar P0.1 strict mode".
 
 ### P1s não shipped (lower impact)
 - P1.2 — `extractAttachmentDataUrl` trusts `mediaUrl` (mais leve agora que webhook é auth'd)
@@ -50,7 +50,7 @@ Deploy do P0.14 ativo (`a6912ff`) usou `supabase-js .upsert(..., { ignoreDuplica
 - P1.40 — forms preserve nothing on session expiry (complexo)
 
 ### Sugestão de defesa permanente
-Persistir o payload BRUTO de webhook em uma tabela `webhook_events_raw` ANTES de processar. Próximo bug similar ao P0.14 dá pra reprocessar a partir do log. Estimativa: ~30 min, ~50 linhas + 1 migration.
+~~Persistir o payload BRUTO de webhook em uma tabela `webhook_events_raw` ANTES de processar.~~ ✅ Shipped em Sprint 16: tabela `zelochat_webhook_events_raw` + helper `server/webhookLog.ts` + wiring em `/webhook/:instance`. Replay query: `SELECT * FROM zelochat_webhook_events_raw WHERE processed_at IS NULL OR processing_error IS NOT NULL ORDER BY received_at DESC`.
 
 ### P2 e P3 — não tocados
 38 P2s e 24 P3s da auditoria. Maioria é hardening / a11y / perf. Lista completa em CODE_REVIEW.md.
@@ -99,6 +99,77 @@ WHERE schemaname='public' AND tablename='empresa_perfil' AND cmd='UPDATE';
 ```
 
 Se algo aqui não bater, **investigar antes de mudar mais qualquer coisa**.
+
+---
+
+## 🔐 Como flipar P0.1 strict mode (`WEBHOOK_REQUIRE_TOKEN=1`)
+
+Hoje o `/webhook/:instance` está em validate-if-present: aceita header `apikey` ausente (loga warning), rejeita 401 se presente e mismatch. Strict mode rejeita 401 em ausência também — fecha o vetor de webhook-spoof de vez.
+
+**Pré-requisito**: cada empresa em uso (hoje 2 — Donutopia + Casa dos Salgados) precisa ter o Whatsmiau configurado pra enviar `apikey: <webhook_token>` em cada POST do webhook.
+
+### Passo 1 — pegar os tokens
+
+```sql
+SELECT user_id, whatsmiau_instance, webhook_token
+FROM empresa_perfil
+WHERE whatsmiau_instance IS NOT NULL;
+```
+
+Cada linha = 1 par `(instance, token)`. Token é UUID gerado pela migration 009.
+
+### Passo 2 — configurar Whatsmiau pra enviar o apikey header
+
+Pra cada par `(instance, token)`, atualize o webhook config do Whatsmiau. Via API:
+
+```bash
+curl -X POST "https://api.whatsmiau.dev/webhook/set/<instance>" \
+  -H "apikey: $WHATSMIAU_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "webhook": {
+      "enabled": true,
+      "url": "https://zelochat-production.up.railway.app/webhook/<instance>",
+      "webhookByEvents": false,
+      "webhookBase64": true,
+      "headers": { "apikey": "<webhook_token>" },
+      "events": ["MESSAGES_UPSERT","MESSAGES_UPDATE","MESSAGES_DELETE","CONNECTION_UPDATE","CONTACTS_UPSERT"]
+    }
+  }'
+```
+
+Ou pelo dashboard Whatsmiau (Webhook config da instance) — setar `Custom Headers: apikey = <webhook_token>`.
+
+> **Nota**: Whatsmiau v2 wrapper aceita `headers` no payload do webhook config. Se a flag não aparecer no dashboard, use a API REST direto.
+
+### Passo 3 — observar Railway logs por 24h
+
+Antes de flipar a flag, confirme que o token está chegando em 100% dos webhooks reais:
+
+- ❌ **Indicador de problema**: `[Webhook] token-missing for instance "<X>"` ainda aparece nos logs depois da config.
+- ✅ **OK pra flipar**: zero `token-missing` em 24h. Eventual `401 — token mismatch` é OK pra atacante (sinal de que strict bloqueia mesmo).
+
+Tempo recomendado: 24h ou 1 ciclo de pico de pedidos da Casa dos Salgados — qualquer dos dois.
+
+### Passo 4 — setar `WEBHOOK_REQUIRE_TOKEN=1` na Railway
+
+Painel Railway → ZeloChat service → Variables → adicionar `WEBHOOK_REQUIRE_TOKEN=1` → Deploy.
+
+### Passo 5 — verificar pós-flip
+
+```sql
+-- Volume normal de events nas últimas horas (deve continuar igual ao baseline)
+SELECT date_trunc('minute', received_at) AS minute, COUNT(*)
+FROM zelochat_webhook_events_raw
+WHERE received_at > now() - interval '30 minutes'
+GROUP BY 1 ORDER BY 1 DESC;
+```
+
+Logs Railway: 401 só aparece pra requests que não têm apikey (ou wrong). Se aparecer 401 pra requests vindos de instance legítima, reverter `WEBHOOK_REQUIRE_TOKEN` e investigar.
+
+### Rollback
+
+Setar `WEBHOOK_REQUIRE_TOKEN=0` (ou remover a var) → deploy. Volta pro modo validate-if-present sem perder eventos.
 
 ---
 

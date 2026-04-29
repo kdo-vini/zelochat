@@ -103,6 +103,11 @@ These are out of scope or unsafe to change from this branch:
 - ✅ P0.5 retroactive — dry-run via `storage.objects` revealed only 4 historical files at old enumerable paths, all confirmed orphans (zero references in `zelochat_messages.content`). One-off cleanup script `scripts/cleanup-orphan-media.ts` ships in this commit; run with `npx tsx scripts/cleanup-orphan-media.ts` to remove them via Storage API.
 - **All 24 P0s now addressed.** 24 fully closed pending one-time script execution for P0.5 cleanup.
 
+### Sprint 16 (shipped 2026-04-29) — webhook_events_raw defense + P0.5 cleanup executado
+- ✅ **Defense permanente contra futuros P0.14**: nova tabela `zelochat_webhook_events_raw` (migration `016_webhook_events_raw.sql`, APLICADA em prod via MCP) registra cada payload de `/webhook/:instance` ANTES do processamento. RLS on, 0 policies (service-role only) — payloads contêm telefones/conteúdo de outros tenants se a resolução de instance falhar. Helper em `server/webhookLog.ts` com `recordRawWebhookEvent` + `markWebhookEventProcessed`. Wired em `router.ts /webhook/:instance` após o ack (não bloqueia Whatsmiau). Falhas de log são swallowed — defense layer não pode quebrar o ack path. Base64 de mídia é stripped antes do insert pra manter row size bounded. Próxima regressão na persistência vira reprocessável via SELECT em `zelochat_webhook_events_raw WHERE processed_at IS NULL OR processing_error IS NOT NULL`.
+- ✅ P0.5 cleanup — `npx tsx scripts/cleanup-orphan-media.ts` rodado. 4 órfãos pré-P0.5 deletados via Storage API. Verificação: 0 arquivos restantes em paths enumeráveis. Bucket fully clean.
+- ✅ Type-check `npm run lint` + `tsc -p server/tsconfig.json`
+
 ### Sprint 15 (shipped 2026-04-29) — Recovery dos dados perdidos pela regressão P0.14
 **Análise de impacto:**
 - 2 sessions afetadas: Gustavo + Ricardo (ambas Donutopia — empresa de teste do founder)
