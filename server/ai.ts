@@ -5,7 +5,7 @@ import type {
 import { OpenAI } from 'openai';
 import { getSession, addAssistantMessage, addToolMessage } from './messageHandler.js';
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
-import { getConfig, type CatalogCategoriaGroup } from './configStore.js';
+import { getConfig, ensureAiSettingsHydrated, type CatalogCategoriaGroup } from './configStore.js';
 import { getBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { buildContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
@@ -757,8 +757,12 @@ export async function generateAndSendReply(
   }
 
   // Global kill-switch — dono can disable the assistant without dropping the WhatsApp session.
-  if (getConfig(resolvedEmpresaId).aiEnabled === false) {
-    console.log(`[AI] Global AI disabled for empresa ${resolvedEmpresaId} — skipping reply to ${jid}`);
+  // Fail-closed: hydrate from DB on first webhook hit, and only proceed if aiEnabled is
+  // explicitly `true`. `undefined` (DB query failed or empresa never seen) silences the AI
+  // until the next message retries hydration. See configStore.ts for the rationale.
+  await ensureAiSettingsHydrated(resolvedEmpresaId);
+  if (getConfig(resolvedEmpresaId).aiEnabled !== true) {
+    console.log(`[AI] Global AI disabled or not hydrated for empresa ${resolvedEmpresaId} — skipping reply to ${jid}`);
     return null;
   }
 

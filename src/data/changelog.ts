@@ -15,6 +15,18 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-29',
+    category: 'hotfix',
+    title: 'Botão "Desativar IA" agora é respeitado de verdade',
+    description: 'Corrigimos uma falha em que a IA podia continuar respondendo mesmo com o assistente desativado nas Configurações, em alguns momentos após o sistema reiniciar. Agora a IA só responde quando o botão estiver ligado de verdade.',
+  },
+  {
+    date: '2026-04-29',
+    category: 'medium',
+    title: 'Mudar de plano sem sair do ZeloChat',
+    description: 'Agora dá pra trocar de plano direto aqui em Configurações > Assinatura — antes você era levado pra outro site pra fazer upgrade. Quem tem só o ZeloPDV pode adicionar o atendimento por WhatsApp num clique, e quem usa o pacote completo pode voltar pra só atendimento se quiser. A diferença vai pra próxima fatura, sem cobrança imediata.',
+  },
+  {
+    date: '2026-04-29',
     category: 'minor',
     title: 'Conexões WhatsApp mais seguras para novas empresas',
     description: 'Cada nova empresa recebe um endereço de webhook exclusivo com alta aleatoriedade, tornando impossível adivinhar ou enumerar os endereços de outras contas.',
