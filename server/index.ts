@@ -26,7 +26,11 @@ const app = express();
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-    cb(new Error(`Origin not allowed by CORS: ${origin}`));
+    // P1.5 — antes throw new Error(`Origin not allowed by CORS: ${origin}`)
+    // virava resposta 500 com a allowed-origin no error string. Atacante
+    // descobria FRONTEND_URL via origin proibido. Agora cb(null, false)
+    // gera 403/no-CORS limpo sem vazar a allowlist.
+    return cb(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],

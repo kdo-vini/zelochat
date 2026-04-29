@@ -1551,6 +1551,17 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
 
 // ─── Validate WhatsApp numbers ────────────────────────────────────────────────
 
+// P1.3 — rate limit per-empresa pra /api/whatsapp/validate-numbers.
+// Antes: cap de 50 por request mas sem limite por unidade de tempo —
+// um operator (ou conta comprometida) podia rodar em loop e usar o
+// endpoint Whatsmiau como enumerador grátis de telefones em WhatsApp.
+// Limite agora: 200 números/empresa/hora. Sliding window simples em
+// memória; multi-node deploy precisaria de Redis, mas single-replica
+// Railway atual é OK.
+const validateNumbersUsage = new Map<string, { count: number; resetAt: number }>();
+const VALIDATE_NUMBERS_HOURLY_CAP = 200;
+const VALIDATE_NUMBERS_WINDOW_MS = 60 * 60 * 1000;
+
 router.post('/api/whatsapp/validate-numbers', async (req: Request, res: Response) => {
   const { numbers } = req.body as { numbers?: string[] };
   if (!Array.isArray(numbers) || numbers.length === 0) {
@@ -1562,6 +1573,22 @@ router.post('/api/whatsapp/validate-numbers', async (req: Request, res: Response
   }
   try {
     const empresaId = await requireEmpresaId(req);
+
+    // P1.3 — rate limit
+    const now = Date.now();
+    const entry = validateNumbersUsage.get(empresaId);
+    if (entry && entry.resetAt > now) {
+      if (entry.count + numbers.length > VALIDATE_NUMBERS_HOURLY_CAP) {
+        const minutesLeft = Math.ceil((entry.resetAt - now) / 60_000);
+        return res.status(429).json({
+          error: `Limite de ${VALIDATE_NUMBERS_HOURLY_CAP} números por hora atingido. Tente novamente em ${minutesLeft} min.`,
+        });
+      }
+      entry.count += numbers.length;
+    } else {
+      validateNumbersUsage.set(empresaId, { count: numbers.length, resetAt: now + VALIDATE_NUMBERS_WINDOW_MS });
+    }
+
     const result = await validateWhatsAppNumbers(numbers, empresaId);
     res.json({ result });
   } catch (error) {
