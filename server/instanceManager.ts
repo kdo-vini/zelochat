@@ -12,7 +12,11 @@ const FALLBACK_INSTANCE = process.env.WHATSMIAU_INSTANCE || '';
 const empresaToInstance = new Map<string, string>();
 const instanceToEmpresa = new Map<string, string>();
 let cachedAt = 0;
-const CACHE_TTL_MS = 60_000;
+// Bounded staleness window. Was 60s — reduced to 15s so an out-of-band write
+// to `empresa_perfil.whatsmiau_instance` (admin tool, dashboard, migration)
+// can poison cross-tenant routing for at most 15s. The webhook reverse lookup
+// (`getEmpresaForInstance`) bypasses this cache entirely — it's auth-critical.
+const CACHE_TTL_MS = 15_000;
 
 function apiHeaders() {
   return { apikey: API_KEY };
@@ -49,6 +53,18 @@ async function ensureCache(): Promise<void> {
 
 export function invalidateCache(): void {
   cachedAt = 0;
+}
+
+/**
+ * Selectively evict a single empresa from the cache. Call this after ANY code
+ * path that mutates `empresa_perfil.whatsmiau_instance` for that empresa
+ * outside of `createInstance`/`deleteInstance` (which already invalidate).
+ * Cheaper than `invalidateCache()` because it doesn't force a full DB reload.
+ */
+export function clearEmpresaCache(empresaId: string): void {
+  const inst = empresaToInstance.get(empresaId);
+  empresaToInstance.delete(empresaId);
+  if (inst) instanceToEmpresa.delete(inst);
 }
 
 /**
@@ -89,12 +105,15 @@ export async function getInstanceForEmpresa(
 /**
  * Reverse lookup used by the webhook handler. Resolves empresaId from an
  * instance name embedded in the webhook URL path (`/webhook/:instance`).
+ *
+ * AUTH-CRITICAL: this is what attributes an inbound message to a tenant. We
+ * always hit the DB and only fall back to the cache when the DB query fails
+ * — a stale cache here would route messages to the wrong empresa if an
+ * instance was reassigned. The hot path is one DB round-trip per inbound
+ * webhook event, which is fine (Whatsmiau already round-trips for delivery).
  */
 export async function getEmpresaForInstance(instance: string): Promise<string | null> {
   if (!instance) return null;
-  await ensureCache();
-  const cached = instanceToEmpresa.get(instance);
-  if (cached) return cached;
 
   try {
     const { data } = await getServiceSupabase()
@@ -104,13 +123,29 @@ export async function getEmpresaForInstance(instance: string): Promise<string | 
       .maybeSingle();
     const empresaId = (data as { id?: string } | null)?.id ?? null;
     if (empresaId) {
+      // Refresh cache with the verified mapping. If the cached entry pointed
+      // at a different empresa, evict that stale binding too so subsequent
+      // outbound sends don't keep routing to the wrong instance.
+      const stale = instanceToEmpresa.get(instance);
+      if (stale && stale !== empresaId) empresaToInstance.delete(stale);
       empresaToInstance.set(empresaId, instance);
       instanceToEmpresa.set(instance, empresaId);
+    } else {
+      // DB says no empresa owns this instance. Drop any stale cache binding so
+      // a future caller doesn't see the old attribution.
+      const stale = instanceToEmpresa.get(instance);
+      if (stale) {
+        empresaToInstance.delete(stale);
+        instanceToEmpresa.delete(instance);
+      }
     }
     return empresaId;
   } catch (err) {
     console.error('[instanceManager] reverse lookup failed:', err instanceof Error ? err.message : err);
-    return null;
+    // DB unreachable — fall back to cache as a soft-degrade. The TTL bound
+    // limits how stale this can be.
+    await ensureCache().catch(() => {});
+    return instanceToEmpresa.get(instance) ?? null;
   }
 }
 
