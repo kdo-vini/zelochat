@@ -8,6 +8,7 @@ import { handleIncomingMessage, getSession } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
 import { getBoundEmpresaId, setBoundEmpresaId, getServiceSupabase } from './supabase.js';
+import { ensureAiSettingsHydrated, getConfig } from './configStore.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -69,7 +70,15 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // sneaks in (race condition or data drift). The escalation handler always sets
   // both — this check is the second line of defense.
   const isEscalated = session?.status === 'escalated';
-  if (session?.autoReply && !isEscalated && process.env.OPENAI_API_KEY) {
+
+  // Global kill-switch — early gate to skip debounce/timer entirely. Fail-closed:
+  // if hydration hasn't happened yet (server just rebooted, frontend never opened),
+  // we treat aiEnabled as off until the DB confirms otherwise. ai.ts re-checks as
+  // a second line of defense; both must agree before we burn an OpenAI call.
+  await ensureAiSettingsHydrated(empresaId);
+  const globalAiEnabled = getConfig(empresaId).aiEnabled === true;
+
+  if (session?.autoReply && !isEscalated && globalAiEnabled && process.env.OPENAI_API_KEY) {
     // Cancel previous pending reply for this JID to debounce rapid messages
     const existing = pendingReplies.get(jid);
     if (existing) clearTimeout(existing);

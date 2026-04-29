@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Lock, Sparkles } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Lock, Sparkles, ArrowRightLeft } from 'lucide-react';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
@@ -7,6 +7,8 @@ import { maskBrazilianPhone } from '../../domain/chat';
 import { getAiEnabled, setAiEnabled as setAiEnabledApi } from '../../services/waApi';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useSubscription, type ZeloChatSubscription } from '../../hooks/useSubscription';
+import { startCheckout, openPortal, BillingError } from '../../services/billingApi';
+import { PlanChangeModal } from './PlanChangeModal';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -25,56 +27,16 @@ const SectionCard = ({ icon: Icon, title, children }: {
   </div>
 );
 
-interface BillingFlowResult {
-  url?: string;
-  error?: string;
-  code?: string;
-  upgradeUrl?: string;
-}
-
-async function startBillingFlow(
-  endpoint: 'checkout' | 'portal',
-  token: string | null,
-  body?: Record<string, unknown>,
-): Promise<BillingFlowResult> {
-  if (!token) return { error: 'Sessão expirada. Faça login novamente.' };
-  try {
-    const res = await apiFetch(`${API_BASE}/api/billing/${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify(body ?? {}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return {
-        error: data?.error ?? 'Não foi possível abrir o pagamento. Tente novamente.',
-        code: data?.code,
-        upgradeUrl: data?.upgradeUrl,
-      };
-    }
-    if (!data?.url) return { error: 'Resposta do servidor sem URL de pagamento.' };
-    return { url: data.url };
-  } catch (err) {
-    if (err instanceof WaServerOfflineError) return { error: err.message };
-    return { error: 'Falha ao conectar no servidor. Tente novamente.' };
-  }
-}
-
-// URL do app principal pra redirecionar upgrades. Configurável via env pra staging.
-const ZELOPDV_URL = (import.meta as ImportMeta & { env?: { VITE_ZELOPDV_URL?: string } }).env?.VITE_ZELOPDV_URL
-  ?? 'https://www.zelopdv.com.br';
-
 const SubscriptionPaywall = ({
   subscription,
   hasPdvOnly,
   token,
+  onPlanChange,
 }: {
   subscription: ZeloChatSubscription | null;
   hasPdvOnly: boolean;
   token: string | null;
+  onPlanChange: () => void;
 }) => {
   const status = subscription?.status;
   const [busy, setBusy] = useState<'checkout' | 'portal' | 'upgrade' | null>(null);
@@ -83,14 +45,9 @@ const SubscriptionPaywall = ({
   const needsPortal = status === 'past_due' || status === 'unpaid';
 
   // Variante 1: user tem PDV ativo → upsell pro Pacote Gestão + Atendimento (147 = +88 vs 156 separado).
-  // O upgrade roteia pro /assinatura?upgrade=bundle no app principal, que usa change-plan
-  // (modifica subscription Stripe existente) — evita criar 2 subscriptions pro mesmo user.
+  // Abre o PlanChangeModal nativo (currentPlan='pdv'), que chama /api/billing/change-plan
+  // pra modificar a subscription Stripe existente — sem redirecionar pro ZeloPDV.
   if (hasPdvOnly) {
-    const goToBundleUpgrade = () => {
-      setBusy('upgrade');
-      window.location.href = `${ZELOPDV_URL}/assinatura?upgrade=bundle`;
-    };
-
     return (
       <div className="space-y-4">
         <div className="flex items-start gap-3">
@@ -122,12 +79,11 @@ const SubscriptionPaywall = ({
 
         <button
           type="button"
-          onClick={goToBundleUpgrade}
-          disabled={busy !== null}
+          onClick={onPlanChange}
           className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-60 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
         >
-          {busy === 'upgrade' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" strokeWidth={2} />}
-          {busy === 'upgrade' ? 'Abrindo upgrade…' : 'Upgrade para Pacote Gestão + Atendimento'}
+          <Sparkles className="w-4 h-4" strokeWidth={2} />
+          Upgrade para Pacote Gestão + Atendimento
         </button>
 
         <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
@@ -159,25 +115,32 @@ const SubscriptionPaywall = ({
 
   const handleClick = async () => {
     setError(null);
-    const target = needsPortal ? 'portal' : 'checkout';
-    setBusy(target);
-    const result = await startBillingFlow(
-      target,
-      token,
-      target === 'checkout' ? { planTier: 'chat' } : undefined,
-    );
-    setBusy(null);
-    if (result.error) {
-      // Backend pode retornar PDV_UPGRADE_AVAILABLE caso detecte sub PDV ativa
-      // entre a hora do hook e a hora do click — redireciona pro upgrade.
-      if (result.code === 'PDV_UPGRADE_AVAILABLE' && result.upgradeUrl) {
-        window.location.href = result.upgradeUrl;
-        return;
-      }
-      setError(result.error);
+    if (!token) {
+      setError('Sessão expirada. Faça login novamente.');
       return;
     }
-    if (result.url) window.location.href = result.url;
+    const target = needsPortal ? 'portal' : 'checkout';
+    setBusy(target);
+    try {
+      const result = target === 'portal'
+        ? await openPortal(token)
+        : await startCheckout(token, 'chat');
+      window.location.href = result.url;
+    } catch (err) {
+      // Backend pode retornar PDV_UPGRADE_AVAILABLE caso detecte sub PDV ativa
+      // entre a hora do hook e a hora do click — abrimos o modal de troca de plano
+      // em vez de redirecionar pra fora do app.
+      if (err instanceof BillingError && err.code === 'PDV_UPGRADE_AVAILABLE') {
+        setBusy(null);
+        onPlanChange();
+        return;
+      }
+      const msg = err instanceof BillingError
+        ? err.message
+        : 'Não foi possível abrir o pagamento. Tente novamente.';
+      setError(msg);
+      setBusy(null);
+    }
   };
 
   return (
@@ -238,9 +201,11 @@ const SubscriptionPaywall = ({
 const BillingManagementCard = ({
   subscription,
   token,
+  onPlanChange,
 }: {
   subscription: ZeloChatSubscription | null;
   token: string | null;
+  onPlanChange: () => void;
 }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -253,17 +218,27 @@ const BillingManagementCard = ({
     ? new Date(periodEnd).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
     : null;
   const willCancel = !!subscription.cancel_at_period_end;
+  const canChangePlan =
+    subscription.status === 'active' &&
+    (subscription.plan_tier === 'chat' || subscription.plan_tier === 'bundle');
 
   const handleOpenPortal = async () => {
-    setError(null);
-    setBusy(true);
-    const result = await startBillingFlow('portal', token);
-    setBusy(false);
-    if (result.error) {
-      setError(result.error);
+    if (!token) {
+      setError('Sessão expirada. Faça login novamente.');
       return;
     }
-    if (result.url) window.location.href = result.url;
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await openPortal(token);
+      window.location.href = result.url;
+    } catch (err) {
+      const msg = err instanceof BillingError
+        ? err.message
+        : 'Não foi possível abrir o portal. Tente novamente.';
+      setError(msg);
+      setBusy(false);
+    }
   };
 
   return (
@@ -292,6 +267,18 @@ const BillingManagementCard = ({
           </div>
         )}
 
+        {canChangePlan && (
+          <button
+            type="button"
+            onClick={onPlanChange}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand-soft)] hover:bg-[var(--color-brand-soft)]/80 disabled:opacity-60 text-[var(--color-brand-deep)] py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors border border-[var(--color-brand)]/20"
+          >
+            <ArrowRightLeft className="w-4 h-4" strokeWidth={1.8} />
+            Mudar de plano
+          </button>
+        )}
+
         <button
           type="button"
           onClick={handleOpenPortal}
@@ -299,11 +286,11 @@ const BillingManagementCard = ({
           className="w-full flex items-center justify-center gap-2 bg-[var(--color-surface-muted)] hover:bg-[var(--color-line)] disabled:opacity-60 text-[var(--color-ink)] py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors border border-[var(--color-line)]"
         >
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCog className="w-4 h-4" strokeWidth={1.8} />}
-          {busy ? 'Abrindo portal…' : 'Gerenciar assinatura, cartão e cancelamento'}
+          {busy ? 'Abrindo portal…' : 'Gerenciar pagamento e cancelamento'}
         </button>
 
         <p className="text-[11px] text-[var(--color-ink-faint)] text-center">
-          Você é redirecionado para o portal seguro do Stripe.
+          Cartão, faturas e cancelamento ficam no portal seguro do Stripe.
         </p>
       </div>
     </SectionCard>
@@ -316,9 +303,10 @@ interface WhatsAppIntegrationCardProps {
   subscriptionLoading: boolean;
   subscription: ZeloChatSubscription | null;
   hasPdvOnly: boolean;
+  onPlanChange: () => void;
 }
 
-export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptionLoading, subscription, hasPdvOnly }: WhatsAppIntegrationCardProps) => {
+export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptionLoading, subscription, hasPdvOnly, onPlanChange }: WhatsAppIntegrationCardProps) => {
   const [waStatus, setWaStatus] = useState<'disconnected' | 'qr' | 'connecting' | 'connected'>('disconnected');
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -504,7 +492,7 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
   if (!subscriptionLoading && !subscriptionActive) {
     return (
       <SectionCard icon={Smartphone} title="Integração WhatsApp">
-        <SubscriptionPaywall subscription={subscription} hasPdvOnly={hasPdvOnly} token={token} />
+        <SubscriptionPaywall subscription={subscription} hasPdvOnly={hasPdvOnly} token={token} onPlanChange={onPlanChange} />
       </SectionCard>
     );
   }
@@ -965,7 +953,12 @@ function TimeInput({ label, value, onChange }: { label: string; value: string; o
 
 export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenticated, token }: SettingsViewProps) => {
   const { session } = useSupabaseSession();
-  const { subscription, isActive: subscriptionActive, hasPdvOnly, loading: subscriptionLoading } = useSubscription(session);
+  const { subscription, isActive: subscriptionActive, hasPdvOnly, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
+  const [planChangeOpen, setPlanChangeOpen] = useState(false);
+  const handlePlanChange = () => {
+    if (!subscription) return;
+    setPlanChangeOpen(true);
+  };
 
   // Local draft for identity fields — synced from state but independently editable
   const [draft, setDraft] = useState({
@@ -1221,7 +1214,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
 
           <div className="space-y-5">
             {subscriptionActive && (
-              <BillingManagementCard subscription={subscription} token={token} />
+              <BillingManagementCard subscription={subscription} token={token} onPlanChange={handlePlanChange} />
             )}
             <WhatsAppIntegrationCard
               token={token}
@@ -1229,6 +1222,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               subscriptionLoading={subscriptionLoading}
               subscription={subscription}
               hasPdvOnly={hasPdvOnly}
+              onPlanChange={handlePlanChange}
             />
 
             <AiGlobalToggleCard token={token} />
@@ -1285,6 +1279,17 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
           </div>
         </div>
       </div>
+
+      {subscription && (
+        <PlanChangeModal
+          open={planChangeOpen}
+          onClose={() => setPlanChangeOpen(false)}
+          currentPlan={subscription.plan_tier}
+          willCancel={!!subscription.cancel_at_period_end}
+          token={token}
+          onSuccess={refreshSubscription}
+        />
+      )}
     </div>
   );
 };

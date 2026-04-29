@@ -43,7 +43,7 @@ import {
   serializeForJid,
 } from './messageHandler.js';
 import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
-import { getConfig, setConfig } from './configStore.js';
+import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
   createTrigger,
@@ -65,7 +65,7 @@ import {
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, getBoundEmpresaId, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { getEmpresaForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
-import { createCheckoutSession, createPortalSession, syncFromStripe } from './billing.js';
+import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
 import type { ChatAttachment } from '../src/types.js';
 
 const router = Router();
@@ -503,6 +503,7 @@ function sendTriggerError(res: Response, error: unknown): void {
 router.post('/api/billing/checkout', createCheckoutSession);
 router.post('/api/billing/portal', createPortalSession);
 router.post('/api/billing/sync', syncFromStripe);
+router.post('/api/billing/change-plan', changePlan);
 
 /**
  * GET /api/healthz — Always-200 liveness probe. Used by Railway's health
@@ -726,18 +727,10 @@ router.post('/api/bind-empresa', async (req: Request, res: Response) => {
     const empresaId = await requireEmpresaId(req);
     setBoundEmpresaId(empresaId);
     // Hydrate the in-memory kill-switch + re-engage flag from the DB so restarts
-    // preserve the dono's choice.
+    // preserve the dono's choice. Same canonical loader used by the lazy webhook
+    // path — single source of truth for these flags.
     try {
-      const { data } = await getServiceSupabase()
-        .from('empresa_perfil')
-        .select('ai_enabled, ai_can_reengage_pending')
-        .eq('id', empresaId)
-        .maybeSingle();
-      const row = (data as { ai_enabled?: boolean; ai_can_reengage_pending?: boolean } | null);
-      const patch: Partial<{ aiEnabled: boolean; aiCanReengagePending: boolean }> = {};
-      if (typeof row?.ai_enabled === 'boolean') patch.aiEnabled = row.ai_enabled;
-      if (typeof row?.ai_can_reengage_pending === 'boolean') patch.aiCanReengagePending = row.ai_can_reengage_pending;
-      if (Object.keys(patch).length > 0) setConfig(empresaId, patch);
+      await loadAiSettingsFromDb(empresaId);
     } catch (err) {
       // Columns may not exist yet (migrations 008/009 not applied) — defaults apply.
       console.warn('[Router] ai_enabled/ai_can_reengage_pending column unavailable:', err);
@@ -754,7 +747,11 @@ router.post('/api/bind-empresa', async (req: Request, res: Response) => {
 router.get('/api/ai-enabled', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    res.json({ enabled: getConfig(empresaId).aiEnabled !== false });
+    // Ensure the in-memory cache reflects the DB before answering — otherwise the
+    // frontend could render the toggle as "on" when the DB says "off" simply because
+    // the server just rebooted and nobody had bound this empresa yet.
+    await ensureAiSettingsHydrated(empresaId);
+    res.json({ enabled: getConfig(empresaId).aiEnabled === true });
   } catch (error) {
     sendAuthError(res, error);
   }

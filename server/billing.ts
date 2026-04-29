@@ -8,14 +8,17 @@
  * the same Stripe credentials and the same Supabase project.
  *
  * What this file owns (ZeloChat-side, no operator action required):
- * - POST /api/billing/checkout — start a Stripe Checkout session for the
+ * - POST /api/billing/checkout     — start a Stripe Checkout session for the
  *   chat or bundle plan. NO TRIAL — the chat plan charges immediately.
  *   Pre-records an 'incomplete' row so the webhook has something to update.
- * - POST /api/billing/portal   — open Stripe Billing Portal for self-service
+ * - POST /api/billing/portal       — open Stripe Billing Portal for self-service
  *   cancel / update card / view invoices.
- * - POST /api/billing/sync     — manual fallback if a webhook is delayed: the
+ * - POST /api/billing/sync         — manual fallback if a webhook is delayed: the
  *   client calls this after returning from Checkout to flip the row to active
  *   without waiting for the webhook race.
+ * - POST /api/billing/change-plan  — swap plan tier in place via
+ *   stripe.subscriptions.update (pdv→bundle, chat→bundle, bundle→chat). Lets
+ *   ZeloChat handle plan changes natively — no redirect to ZeloPDV.
  */
 import type { Request, Response } from 'express';
 import Stripe from 'stripe';
@@ -115,11 +118,66 @@ function sendBillingError(res: Response, err: unknown): void {
     return;
   }
   if (message === 'PDV_UPGRADE_AVAILABLE') {
-    const zelopdvUrl = process.env.ZELOPDV_URL || 'https://www.zelopdv.com.br';
     res.status(409).json({
-      error: 'Você já tem ZeloPDV. Faça upgrade pro Pacote Gestão + Atendimento por R$ 147/mês (economiza R$ 9 vs Chat avulso).',
+      error: 'Você já tem ZeloPDV. Use "Mudar de plano" para fazer upgrade pro Pacote Gestão + Atendimento (R$ 147/mês — R$ 9 mais barato que Chat avulso).',
       code: 'PDV_UPGRADE_AVAILABLE',
-      upgradeUrl: `${zelopdvUrl}/assinatura?upgrade=bundle`,
+    });
+    return;
+  }
+  if (message === 'NO_SUBSCRIPTION') {
+    res.status(404).json({
+      error: 'Nenhuma assinatura ativa encontrada. Comece pelo Checkout.',
+      code: 'NO_SUBSCRIPTION',
+    });
+    return;
+  }
+  if (message === 'SAME_PLAN') {
+    res.status(409).json({
+      error: 'Você já está nesse plano.',
+      code: 'SAME_PLAN',
+    });
+    return;
+  }
+  if (message === 'INVALID_TRANSITION') {
+    res.status(409).json({
+      error: 'Esta troca de plano não é suportada. Para cancelar ou mudar pro PDV, use o portal do Stripe.',
+      code: 'INVALID_TRANSITION',
+    });
+    return;
+  }
+  if (message === 'SUBSCRIPTION_PAYMENT_ISSUE') {
+    res.status(409).json({
+      error: 'Sua assinatura tem um problema de pagamento. Regularize antes de mudar de plano.',
+      code: 'SUBSCRIPTION_PAYMENT_ISSUE',
+    });
+    return;
+  }
+  if (message === 'SUBSCRIPTION_NOT_RESUMABLE') {
+    res.status(409).json({
+      error: 'Sua assinatura foi encerrada. Faça uma nova assinatura pelo Checkout.',
+      code: 'SUBSCRIPTION_NOT_RESUMABLE',
+    });
+    return;
+  }
+  if (message === 'SUBSCRIPTION_INCOMPLETE') {
+    res.status(409).json({
+      error: 'Sua assinatura ainda está sendo finalizada. Tente novamente em alguns segundos.',
+      code: 'SUBSCRIPTION_INCOMPLETE',
+    });
+    return;
+  }
+  if (message === 'CUSTOMER_MISMATCH' || message === 'NO_MATCHING_ITEM') {
+    console.error('[billing] data integrity error:', message, err);
+    res.status(500).json({
+      error: 'Inconsistência detectada na assinatura. Entre em contato com o suporte.',
+      code: message,
+    });
+    return;
+  }
+  if (message === 'STRIPE_ERROR') {
+    res.status(502).json({
+      error: 'Erro ao processar pagamento. Tente novamente em instantes.',
+      code: 'STRIPE_ERROR',
     });
     return;
   }
@@ -409,6 +467,182 @@ export async function syncFromStripe(req: Request, res: Response): Promise<void>
     }
 
     res.json({ synced: true, planTier: chosenTier, status: payload.status });
+  } catch (err) {
+    sendBillingError(res, err);
+  }
+}
+
+/**
+ * POST /api/billing/change-plan
+ *
+ * Body: { targetPlan: 'chat' | 'bundle' }
+ * Returns: { ok: true, planTier, status, currentPeriodEnd, prorationBRL? }
+ *
+ * Swaps the user's existing Stripe subscription to the requested plan tier
+ * via stripe.subscriptions.update — no Checkout, no Portal redirect, no
+ * trip to ZeloPDV's site. Allowed transitions: pdv→bundle, chat→bundle,
+ * bundle→chat. Cancel-at-period-end is cleared as part of the swap.
+ *
+ * Proration goes to the next invoice (no immediate charge), so a declined
+ * card here doesn't surface — the next invoice attempt will. We mirror the
+ * canonical state into Supabase right after Stripe confirms; the ZeloPDV
+ * webhook lands within ~30s with the same payload (idempotent merge).
+ */
+export async function changePlan(req: Request, res: Response): Promise<void> {
+  try {
+    const user = await authenticate(req);
+    const stripe = getStripe();
+    const catalog = getPlanCatalog();
+
+    const targetPlan = req.body?.targetPlan as string | undefined;
+    if (targetPlan !== 'chat' && targetPlan !== 'bundle') {
+      throw new Error('INVALID_PLAN');
+    }
+
+    const supabase = getServiceSupabase();
+    const { data: row } = await supabase
+      .from('subscriptions')
+      .select('id, status, plan_tier, provider_subscription_id, provider_customer_id, current_period_end, cancel_at_period_end')
+      .eq('user_id', user.id)
+      .eq('payment_provider', 'stripe')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!row || !row.provider_subscription_id) {
+      throw new Error('NO_SUBSCRIPTION');
+    }
+
+    // Status guardrails — fail fast on irreversible / mid-flight states.
+    switch (row.status) {
+      case 'canceled':
+      case 'incomplete_expired':
+        throw new Error('SUBSCRIPTION_NOT_RESUMABLE');
+      case 'past_due':
+      case 'unpaid':
+      case 'paused':
+        throw new Error('SUBSCRIPTION_PAYMENT_ISSUE');
+      case 'incomplete':
+        throw new Error('SUBSCRIPTION_INCOMPLETE');
+    }
+
+    const currentPlan = row.plan_tier as 'pdv' | 'chat' | 'bundle';
+    if (currentPlan === targetPlan) {
+      throw new Error('SAME_PLAN');
+    }
+    // Allowed: pdv→bundle, chat→bundle, bundle→chat. Block *→pdv and pdv→chat.
+    const allowed =
+      (currentPlan === 'pdv' && targetPlan === 'bundle') ||
+      (currentPlan === 'chat' && targetPlan === 'bundle') ||
+      (currentPlan === 'bundle' && targetPlan === 'chat');
+    if (!allowed) {
+      throw new Error('INVALID_TRANSITION');
+    }
+
+    // Fetch the live Stripe subscription to get the item id for the in-place swap.
+    let sub: Stripe.Subscription;
+    try {
+      sub = await stripe.subscriptions.retrieve(row.provider_subscription_id, {
+        expand: ['items.data.price'],
+      });
+    } catch (err) {
+      console.error('[billing] change-plan: stripe.retrieve failed', err);
+      throw new Error('STRIPE_ERROR');
+    }
+
+    if (row.provider_customer_id && sub.customer !== row.provider_customer_id) {
+      throw new Error('CUSTOMER_MISMATCH');
+    }
+    if (sub.status === 'canceled') {
+      throw new Error('SUBSCRIPTION_NOT_RESUMABLE');
+    }
+
+    // Identify which subscription_item carries the plan price. If the sub has a
+    // single recurring item, use it. Otherwise match against known price IDs.
+    const knownPriceIds = new Set<string>([catalog.chat.priceId, catalog.bundle.priceId]);
+    const pdvPriceId = process.env.STRIPE_PRICE_PDV;
+    if (pdvPriceId) knownPriceIds.add(pdvPriceId);
+
+    const item = sub.items.data.length === 1
+      ? sub.items.data[0]
+      : sub.items.data.find((i) => {
+          const priceId = typeof i.price === 'string' ? i.price : i.price?.id;
+          return priceId ? knownPriceIds.has(priceId) : false;
+        });
+    if (!item) {
+      throw new Error('NO_MATCHING_ITEM');
+    }
+
+    const targetPriceId = catalog[targetPlan].priceId;
+
+    // Idempotency: 1-minute bucket per user/target so an accidental retry
+    // within the same minute hits the same Stripe response without double-billing.
+    const minuteBucket = Math.floor(Date.now() / 60000);
+    const idempotencyKey = `change-plan-${user.id}-${targetPlan}-${minuteBucket}`;
+
+    let updated: Stripe.Subscription;
+    try {
+      updated = await stripe.subscriptions.update(
+        row.provider_subscription_id,
+        {
+          items: [{ id: item.id, price: targetPriceId }],
+          proration_behavior: 'create_prorations',
+          payment_behavior: 'error_if_incomplete',
+          cancel_at_period_end: false,
+          metadata: {
+            ...(sub.metadata ?? {}),
+            plan_tier: targetPlan,
+            last_change_source: 'zelochat',
+            last_change_at: new Date().toISOString(),
+          },
+        },
+        { idempotencyKey },
+      );
+    } catch (err) {
+      console.error('[billing] change-plan: stripe.update failed', err);
+      throw new Error('STRIPE_ERROR');
+    }
+
+    const statusMap: Record<string, string> = {
+      active: 'active',
+      trialing: 'trialing',
+      past_due: 'past_due',
+      canceled: 'canceled',
+      unpaid: 'past_due',
+      incomplete: 'incomplete',
+      incomplete_expired: 'canceled',
+      paused: 'paused',
+    };
+
+    const mappedStatus = statusMap[updated.status] ?? updated.status;
+    const periodEndIso = updated.current_period_end
+      ? new Date(updated.current_period_end * 1000).toISOString()
+      : null;
+
+    // Mirror canonical state into Supabase so the UI reflects the new plan
+    // immediately (don't wait for the ZeloPDV webhook). If this write fails
+    // we don't roll Stripe back — the webhook will reconcile within ~30s.
+    const { error: dbErr } = await supabase
+      .from('subscriptions')
+      .update({
+        plan_tier: targetPlan,
+        status: mappedStatus,
+        current_period_end: periodEndIso,
+        cancel_at_period_end: !!updated.cancel_at_period_end,
+        provider_subscription_id: updated.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', row.id);
+    if (dbErr) {
+      console.error('[billing] change-plan: stripe ok, db update failed, webhook will reconcile', dbErr);
+    }
+
+    res.json({
+      ok: true,
+      planTier: targetPlan,
+      status: mappedStatus,
+      currentPeriodEnd: periodEndIso,
+    });
   } catch (err) {
     sendBillingError(res, err);
   }

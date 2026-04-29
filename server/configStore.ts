@@ -14,6 +14,8 @@ export interface CatalogCategoriaGroup {
   produtosDireto: { name: string; price: number; available: boolean }[];
 }
 
+import { getServiceSupabase } from './supabase.js';
+
 export interface BusinessConfig {
   name: string;
   specialty: string;
@@ -27,8 +29,14 @@ export interface BusinessConfig {
   dailyContext: { id: string; text: string }[];
   aiInstructions: string;
   managerPhone: string;
-  /** Global kill-switch for auto-reply. When false, messages still arrive in the UI but the AI stays silent. */
-  aiEnabled: boolean;
+  /**
+   * Global kill-switch for auto-reply. Tri-state on purpose:
+   *   true      — dono confirmed AI is on (DB row hydrated).
+   *   false     — dono confirmed AI is off.
+   *   undefined — not yet hydrated from DB; kill-switch must treat as off (fail-closed).
+   * Always read via `getConfig().aiEnabled === true` to be safe.
+   */
+  aiEnabled?: boolean;
   /** Allow the AI to proactively reference unconfirmed pending orders in conversation. */
   aiCanReengagePending: boolean;
   deliveryConfig: DeliveryConfig | null;
@@ -47,7 +55,9 @@ const DEFAULT_CONFIG: BusinessConfig = {
   dailyContext: [],
   aiInstructions: '',
   managerPhone: '',
-  aiEnabled: true,
+  // aiEnabled intentionally omitted — undefined means "not hydrated yet". Hydration
+  // happens via loadAiSettingsFromDb / ensureAiSettingsHydrated. This is the fail-closed
+  // posture for the global kill-switch: until we've read the DB, we don't reply.
   aiCanReengagePending: false,
   deliveryConfig: null,
 };
@@ -62,4 +72,49 @@ export function getConfig(empresaId: string): BusinessConfig {
 export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
   const existing = configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
   configMap.set(empresaId, { ...existing, ...c });
+}
+
+// Tracks which empresas had their AI settings successfully hydrated from the DB.
+// On failure we leave the empresa OUT of this set so the next message retries —
+// fail-closed in the meantime (aiEnabled stays undefined → kill-switch treats as off).
+const hydratedAiSettings = new Set<string>();
+
+/**
+ * Reads `ai_enabled` and `ai_can_reengage_pending` from `empresa_perfil` and merges
+ * them into the in-memory config. Idempotent. On DB errors, throws — caller decides
+ * whether to swallow (lazy hydration) or propagate (startup hydration).
+ *
+ * This is the single source of truth for hydrating these flags. Used by:
+ *   - POST /api/bind-empresa (frontend boot)
+ *   - ensureAiSettingsHydrated (lazy on first webhook message)
+ */
+export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
+  const { data, error } = await getServiceSupabase()
+    .from('empresa_perfil')
+    .select('ai_enabled, ai_can_reengage_pending')
+    .eq('id', empresaId)
+    .maybeSingle();
+  if (error) throw error;
+  const row = (data as { ai_enabled?: boolean; ai_can_reengage_pending?: boolean } | null);
+  const patch: Partial<BusinessConfig> = {};
+  if (typeof row?.ai_enabled === 'boolean') patch.aiEnabled = row.ai_enabled;
+  if (typeof row?.ai_can_reengage_pending === 'boolean') patch.aiCanReengagePending = row.ai_can_reengage_pending;
+  if (Object.keys(patch).length > 0) setConfig(empresaId, patch);
+  hydratedAiSettings.add(empresaId);
+}
+
+/**
+ * Lazy hydration for the webhook hot-path. Skips the DB call if we've already
+ * hydrated this empresa in this server lifetime. On DB error, logs and leaves
+ * `aiEnabled` undefined — the kill-switch will then keep the AI silent until
+ * the next message retries. This is intentional: we'd rather miss a reply than
+ * send a reply when the dono asked us to stay quiet.
+ */
+export async function ensureAiSettingsHydrated(empresaId: string): Promise<void> {
+  if (hydratedAiSettings.has(empresaId)) return;
+  try {
+    await loadAiSettingsFromDb(empresaId);
+  } catch (err) {
+    console.warn(`[configStore] ai settings hydration failed for ${empresaId} — kill-switch stays fail-closed:`, err);
+  }
 }
