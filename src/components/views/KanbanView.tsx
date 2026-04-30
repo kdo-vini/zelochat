@@ -6,6 +6,7 @@ import { ZeloState, Order } from '../../types';
 import { STATUS_LABELS } from '../../constants';
 import { format, parseISO, isToday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { Modal, useModalTitleId } from '../Modal';
 
 type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'settings' | 'profile' | 'drivers' | 'catalog';
 
@@ -26,6 +27,7 @@ export const KanbanView = ({
   state, onDragEnd, setActiveView,
 }: { state: ZeloState; onDragEnd: (r: DropResult) => void; setActiveView: (v: View) => void }) => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const selectedOrderTitleId = useModalTitleId();
 
   const todayOrders = state.orders.filter(o => isToday(parseISO(o.pickupDate)));
 
@@ -133,27 +135,21 @@ export const KanbanView = ({
           )}
       </div>
 
-      <AnimatePresence>
-        {selectedOrder && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/25 z-40"
-              onClick={() => setSelectedOrder(null)}
-            />
-            <motion.div
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', stiffness: 340, damping: 32 }}
-              className="fixed right-0 top-0 h-full w-full max-w-sm bg-[var(--color-surface)] shadow-[var(--shadow-pop)] z-50 flex flex-col"
-            >
+      {selectedOrder && (
+        <Modal
+          open
+          onClose={() => setSelectedOrder(null)}
+          titleId={selectedOrderTitleId}
+          containerClassName="fixed inset-0 z-50 flex justify-end p-0"
+          backdropClassName="absolute inset-0 bg-black/25"
+          panelLayoutClassName="h-full w-full max-w-sm"
+          panelClassName="flex flex-col bg-[var(--color-surface)] shadow-[var(--shadow-pop)]"
+        >
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-line)]">
-                <h3 className="text-[15px] font-semibold">Detalhes do pedido</h3>
+                <h3 id={selectedOrderTitleId} className="text-[15px] font-semibold">Detalhes do pedido</h3>
                 <button
                   onClick={() => setSelectedOrder(null)}
+                  aria-label="Fechar detalhes do pedido"
                   className="p-1.5 rounded-md hover:bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] transition-colors"
                 >
                   <X className="w-4 h-4" />
@@ -250,10 +246,8 @@ export const KanbanView = ({
                   Fechar
                 </button>
               </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+        </Modal>
+      )}
     </div>
   );
 };

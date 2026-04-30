@@ -11,6 +11,7 @@ import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
 import { STATUS_LABELS, STATUS_COLORS } from '../../constants';
 import { format, parseISO, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { Modal, useModalTitleId } from '../Modal';
 
 type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'settings' | 'profile' | 'drivers' | 'catalog';
 
@@ -106,6 +107,7 @@ function OrderModal({
   const [dateDisplay, setDateDisplay] = useState(() => isoToBR(initialForm.pickupDate));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const titleId = useModalTitleId();
 
   const setField = <K extends keyof OrderFormData>(k: K, v: OrderFormData[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }));
@@ -154,32 +156,30 @@ function OrderModal({
   };
 
   return (
-    <>
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/30 z-40"
-        onClick={onClose}
-      />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
-      >
-        <div
-          className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-pop)] w-full max-w-md max-h-[90vh] flex flex-col pointer-events-auto"
-          onClick={(e) => e.stopPropagation()}
-        >
+    <Modal
+      open
+      onClose={() => {
+        if (!saving) onClose();
+      }}
+      titleId={titleId}
+      disableEscape={saving}
+      backdropClassName="absolute inset-0 bg-black/30"
+      panelLayoutClassName="w-full max-w-md max-h-[90vh]"
+      panelClassName="flex flex-col rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-pop)]"
+    >
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-line)]">
             <div className="flex items-center gap-2">
               <ShoppingBag className="w-4 h-4 text-[var(--color-brand)]" strokeWidth={2} />
-              <h3 className="text-[15px] font-semibold">{editOrder ? 'Editar pedido' : 'Novo pedido manual'}</h3>
+              <h3 id={titleId} className="text-[15px] font-semibold">{editOrder ? 'Editar pedido' : 'Novo pedido manual'}</h3>
             </div>
             <button
-              onClick={onClose}
-              className="p-1.5 rounded-md hover:bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]"
+              onClick={() => {
+                if (!saving) onClose();
+              }}
+              disabled={saving}
+              aria-label="Fechar pedido"
+              className="p-1.5 rounded-md hover:bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <X className="w-4 h-4" />
             </button>
@@ -401,8 +401,11 @@ function OrderModal({
           <div className="px-5 py-4 border-t border-[var(--color-line)] flex gap-2">
             <button
               type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-lg text-[13.5px] font-semibold bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] hover:bg-[var(--color-line)] transition-colors"
+              onClick={() => {
+                if (!saving) onClose();
+              }}
+              disabled={saving}
+              className="flex-1 py-2.5 rounded-lg text-[13.5px] font-semibold bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] hover:bg-[var(--color-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancelar
             </button>
@@ -414,9 +417,7 @@ function OrderModal({
               {saving ? 'Salvando…' : editOrder ? 'Salvar alterações' : 'Salvar pedido'}
             </button>
           </div>
-        </div>
-      </motion.div>
-    </>
+    </Modal>
   );
 }
 
@@ -437,22 +438,22 @@ function OrderDrawer({
   onUpdateStatus: (id: string, status: Order['status']) => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const titleId = useModalTitleId();
 
   return (
     <>
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/25 z-40"
-        onClick={onClose}
-      />
-      <motion.div
-        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-        transition={{ type: 'spring', stiffness: 340, damping: 32 }}
-        className="fixed right-0 top-0 h-full w-full max-w-sm bg-[var(--color-surface)] shadow-[var(--shadow-pop)] z-50 flex flex-col"
+      <Modal
+        open
+        onClose={onClose}
+        titleId={titleId}
+        containerClassName="fixed inset-0 z-50 flex justify-end p-0"
+        backdropClassName="absolute inset-0 bg-black/25"
+        panelLayoutClassName="h-full w-full max-w-sm"
+        panelClassName="flex flex-col bg-[var(--color-surface)] shadow-[var(--shadow-pop)]"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-line)]">
-          <h3 className="text-[15px] font-semibold">Detalhes do pedido</h3>
-          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]">
+          <h3 id={titleId} className="text-[15px] font-semibold">Detalhes do pedido</h3>
+          <button onClick={onClose} aria-label="Fechar detalhes do pedido" className="p-1.5 rounded-md hover:bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -625,7 +626,7 @@ function OrderDrawer({
             Fechar
           </button>
         </div>
-      </motion.div>
+      </Modal>
 
       <ConfirmModal
         open={confirmDelete}

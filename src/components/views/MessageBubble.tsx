@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { FileAudio, FileText, FileVideo, ImageOff, Pause, Play, X } from 'lucide-react';
 import type { ChatMessage, MessageStatus } from '../../types';
 import { parseStructuredMessage } from '../../domain/chat';
+import { Modal, useModalTitleId } from '../Modal';
 
 /* ─── Helpers ─────────────────────────────────────────────────────── */
 
@@ -217,13 +218,20 @@ function AudioTranscript({
 /* ─── Lightbox (image/video full-screen viewer) ──────────────────── */
 
 function Lightbox({ type, src, alt, onClose }: { type: 'image' | 'video'; src: string; alt?: string; onClose: () => void }) {
+  const titleId = useModalTitleId();
+  const title = type === 'image' ? 'Visualização da imagem' : 'Visualização do vídeo';
+
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90"
-      onClick={onClose}
+    <Modal
+      open
+      onClose={onClose}
+      titleId={titleId}
+      containerClassName="fixed inset-0 z-[200] flex items-center justify-center p-4"
+      backdropClassName="absolute inset-0 bg-black/90"
+      panelLayoutClassName="max-w-[90vw] max-h-[90vh]"
+      panelClassName="outline-none"
     >
+      <h3 id={titleId} className="sr-only">{title}</h3>
       <button
         onClick={onClose}
         aria-label="Fechar"
@@ -238,7 +246,7 @@ function Lightbox({ type, src, alt, onClose }: { type: 'image' | 'video'; src: s
           <video src={src} controls autoPlay className="max-w-full max-h-[90vh] rounded-lg" />
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

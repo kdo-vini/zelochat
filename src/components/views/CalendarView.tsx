@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ConfirmModal } from '../ConfirmModal';
 import { useToast } from '../../contexts/ToastContext';
 import { AnimatePresence, motion } from 'motion/react';
+import { Modal, useModalTitleId } from '../Modal';
 import {
   AlertTriangle,
   Calendar as CalendarIcon,
@@ -88,6 +89,7 @@ export const CalendarView = ({
   const [newBlockReason, setNewBlockReason] = useState('');
   const [blockError, setBlockError] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const selectedOrderTitleId = useModalTitleId();
   const [confirmPrinterConnect, setConfirmPrinterConnect] = useState(false);
   const printer = usePrinter();
   const toast = useToast();
@@ -435,27 +437,21 @@ export const CalendarView = ({
       </div>
 
       {/* Order detail drawer */}
-      <AnimatePresence>
-        {selectedOrder && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40 bg-black/25"
-              onClick={() => setSelectedOrder(null)}
-            />
-            <motion.div
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', stiffness: 340, damping: 32 }}
-              className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-[var(--color-surface)] shadow-[var(--shadow-pop)]"
-            >
+      {selectedOrder && (
+        <Modal
+          open
+          onClose={() => setSelectedOrder(null)}
+          titleId={selectedOrderTitleId}
+          containerClassName="fixed inset-0 z-50 flex justify-end p-0"
+          backdropClassName="absolute inset-0 bg-black/25"
+          panelLayoutClassName="h-full w-full max-w-sm"
+          panelClassName="flex flex-col bg-[var(--color-surface)] shadow-[var(--shadow-pop)]"
+        >
               <div className="flex items-center justify-between border-b border-[var(--color-line)] px-5 py-4">
-                <h3 className="text-[15px] font-semibold">Detalhes do pedido</h3>
+                <h3 id={selectedOrderTitleId} className="text-[15px] font-semibold">Detalhes do pedido</h3>
                 <button
                   onClick={() => setSelectedOrder(null)}
+                  aria-label="Fechar detalhes do pedido"
                   className="rounded-md p-1.5 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)]"
                 >
                   <X className="h-4 w-4" />
@@ -534,10 +530,8 @@ export const CalendarView = ({
                   Fechar
                 </button>
               </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+        </Modal>
+      )}
 
       <ConfirmModal
         open={confirmPrinterConnect}

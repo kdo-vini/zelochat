@@ -13,6 +13,12 @@ interface ModalProps {
    * — pass it to the heading element via the render prop pattern below.
    */
   titleId?: string;
+  /** Classes applied to the fixed root wrapper. Defaults to centered modal layout. */
+  containerClassName?: string;
+  /** Classes applied to the backdrop element. */
+  backdropClassName?: string;
+  /** Width/position classes applied before panelClassName. */
+  panelLayoutClassName?: string;
   /** Extra classes applied to the inner panel wrapper. */
   panelClassName?: string;
   /** When true, pressing Escape does NOT close the modal (e.g. mid-async call). */
@@ -53,6 +59,9 @@ export function Modal({
   onClose,
   children,
   titleId: externalTitleId,
+  containerClassName = 'fixed inset-0 z-50 flex items-center justify-center p-4',
+  backdropClassName = 'absolute inset-0 bg-black/40',
+  panelLayoutClassName = 'w-full max-w-md',
   panelClassName = '',
   disableEscape = false,
 }: ModalProps) {
@@ -131,10 +140,10 @@ export function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className={containerClassName}>
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/40"
+        className={backdropClassName}
         onClick={onClose}
         aria-hidden="true"
       />
@@ -144,7 +153,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`relative w-full max-w-md ${panelClassName}`}
+        className={`relative ${panelLayoutClassName} ${panelClassName}`}
         // Prevent backdrop click from firing when clicking inside the panel.
         onClick={(e) => e.stopPropagation()}
       >
