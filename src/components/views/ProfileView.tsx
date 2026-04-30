@@ -17,8 +17,10 @@ const PASSWORD_RULES = [
   { label: 'Um caractere especial', test: (pw: string) => /[^A-Za-z0-9]/.test(pw) },
 ];
 
+type ProfileState = Pick<ZeloState, 'profile'>;
+
 interface ProfileViewProps {
-  state: ZeloState;
+  state: ProfileState;
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
   empresa: EmpresaPerfil | null;
   saveEmpresa: (patch: Partial<Omit<EmpresaPerfil, 'id'>>) => Promise<boolean>;

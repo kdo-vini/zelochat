@@ -34,6 +34,7 @@ import { STATUS_COLORS, STATUS_LABELS } from '../../constants';
 import { usePrinter } from '../../hooks/usePrinter';
 
 type CalendarMode = 'day' | 'week' | 'month';
+type CalendarState = Pick<ZeloState, 'orders' | 'blockedDates' | 'businessInfo'>;
 
 const MODE_STORAGE_KEY = 'zelochat_calendar_mode';
 
@@ -68,7 +69,7 @@ export const CalendarView = ({
   setState,
   onNavigateToKanban,
 }: {
-  state: ZeloState;
+  state: CalendarState;
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
   onNavigateToKanban: () => void;
 }) => {

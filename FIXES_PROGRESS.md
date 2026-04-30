@@ -3,13 +3,13 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 26 open)
+## 📊 Status atual (2026-04-30 Sprint 27 open)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
 | **P1** | 47 | **41** | 0 | 3 | **87% ✅** |
-| **P2** | 38 | 23 | 15 | 0 | 61% |
+| **P2** | 38 | 24 | 14 | 0 | 63% |
 | **P3** | 24 | 0 | 24 | 0 | 0% |
 
 **P1 closed = 34 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo). P1.37 shipped Sprint 19 (paywall flicker).
@@ -116,6 +116,11 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 27 (2026-04-30) — AppShell render containment
+
+- ✅ P2.6 — `AppShell` agora memoiza as bordas das views e passa fatias estáveis de estado para telas que não consomem conversas. Mensagens novas no WhatsApp deixam de forçar repaint do kanban, agenda, configurações, perfil, motoboys e catálogo quando esses dados não mudaram — `src/AppShell.tsx`, `src/components/views/DashboardView.tsx`, `src/components/views/ProductionView.tsx`, `src/components/views/CalendarView.tsx`, `src/components/views/AIConfigsView.tsx`, `src/components/views/SettingsView.tsx`, `src/components/views/ProfileView.tsx`
+- Type-check/build verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`, `vite build`
 
 ### Sprint 26 (2026-04-30) — Modal accessibility closeout
 

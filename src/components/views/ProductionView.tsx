@@ -14,6 +14,7 @@ import { ptBR } from 'date-fns/locale';
 import { Modal, useModalTitleId } from '../Modal';
 
 type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'settings' | 'profile' | 'drivers' | 'catalog';
+type ProductionState = Pick<ZeloState, 'orders'>;
 
 const COLUMNS: Order['status'][] = ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
 
@@ -725,7 +726,7 @@ export const ProductionView = ({
   onUpdateStatus,
   isAuthenticated,
 }: {
-  state: ZeloState;
+  state: ProductionState;
   onDragEnd: (r: DropResult) => void;
   setActiveView: (v: View) => void;
   onAddOrder: (payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;

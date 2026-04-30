@@ -738,8 +738,13 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
 
 const DAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 
+type SettingsState = Pick<
+  ZeloState,
+  'aiInstructions' | 'blockedDates' | 'businessInfo' | 'deliveryConfig' | 'drivers' | 'quickResponses' | 'triggers'
+>;
+
 interface SettingsViewProps {
-  state: ZeloState;
+  state: SettingsState;
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
   empresa: EmpresaPerfil | null;
   saveEmpresa: (patch: Partial<Omit<EmpresaPerfil, 'id'>>) => Promise<boolean>;

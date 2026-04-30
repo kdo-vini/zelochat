@@ -8,6 +8,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { ConfirmModal } from '../ConfirmModal';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
+type AIConfigsState = Pick<ZeloState, 'aiInstructions' | 'blockedDates' | 'dailyContext' | 'managerHistory'>;
 
 const SectionHeader = ({ icon: Icon, title, subtitle, action }: {
   icon: typeof Clock;
@@ -28,7 +29,7 @@ const SectionHeader = ({ icon: Icon, title, subtitle, action }: {
 );
 
 interface AIConfigsViewProps {
-  state: ZeloState;
+  state: AIConfigsState;
   setState: React.Dispatch<React.SetStateAction<ZeloState>>;
   triggers: Trigger[];
   triggersError: string | null;

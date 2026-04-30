@@ -32,9 +32,11 @@ const Metric = ({
   </div>
 );
 
+type DashboardState = Pick<ZeloState, 'orders' | 'sessions' | 'profile'>;
+
 export const DashboardView = ({
   state, setActiveView,
-}: { state: ZeloState; setActiveView: (v: View) => void }) => {
+}: { state: DashboardState; setActiveView: (v: View) => void }) => {
   const today = new Date().toISOString().split('T')[0];
 
   const { todayOrders, todayRevenue, activeChats, aiReplies, alertSessions, pendingOrders } = useMemo(() => {

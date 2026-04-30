@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import {
   Bike,
@@ -91,7 +91,7 @@ interface NavButtonProps {
   onClick: () => void;
 }
 
-const NavButton: React.FC<NavButtonProps> = ({ item, active, expanded, badge, onClick }) => {
+const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badge, onClick }) => {
   const Icon = item.icon;
   return (
     <button
@@ -133,7 +133,19 @@ const NavButton: React.FC<NavButtonProps> = ({ item, active, expanded, badge, on
       )}
     </button>
   );
-};
+});
+
+NavButton.displayName = 'NavButton';
+
+const MemoChatView = memo(ChatView);
+const MemoDashboardView = memo(DashboardView);
+const MemoProductionView = memo(ProductionView);
+const MemoCalendarView = memo(CalendarView);
+const MemoAIConfigsView = memo(AIConfigsView);
+const MemoSettingsView = memo(SettingsView);
+const MemoProfileView = memo(ProfileView);
+const MemoDriversView = memo(DriversView);
+const MemoCatalogView = memo(CatalogView);
 
 /* ─── AppShell ────────────────────────────────────────────────── */
 export default function AppShell() {
@@ -324,9 +336,9 @@ export default function AppShell() {
     });
   }, [quickResponses]);
 
-  const saveAiInstructions = async (instructions: string): Promise<boolean> => {
+  const saveAiInstructions = useCallback(async (instructions: string): Promise<boolean> => {
     return saveEmpresa({ ai_instructions: instructions });
-  };
+  }, [saveEmpresa]);
 
   useEffect(() => {
     setState((prev) => prev.sessions === sessions ? prev : { ...prev, sessions });
@@ -501,7 +513,10 @@ export default function AppShell() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, catalog.categorias, catalog.subcategorias]);
 
-  const totalUnread = state.sessions.reduce((sum, s) => sum + (s.unreadCount ?? 0), 0);
+  const totalUnread = useMemo(
+    () => state.sessions.reduce((sum, s) => sum + (s.unreadCount ?? 0), 0),
+    [state.sessions],
+  );
 
   // Reload the open-escalation counter after the operator marks one resolved.
   // (lastEscalation already triggers a reload via the deps in useOpenEscalationCount.)
@@ -555,7 +570,7 @@ export default function AppShell() {
   // chat) now ROLLS BACK the optimistic state on failure and surfaces a toast.
   // Previously the card stayed in the wrong column forever and the operator
   // didn't know the change hadn't actually persisted.
-  const updateOrderStatus = (orderId: string, newStatus: Order['status']) => {
+  const updateOrderStatus = useCallback((orderId: string, newStatus: Order['status']) => {
     const prevOrders = state.orders;
     setState((prev) => ({
       ...prev,
@@ -566,12 +581,12 @@ export default function AppShell() {
       setState((prev) => ({ ...prev, orders: prevOrders }));
       toast.error('Não consegui mover o pedido. Voltei pra coluna anterior.');
     });
-  };
+  }, [state.orders, toast, updateOrderStatusInSupabase]);
 
   // P1.31 — order CRUD now reports failures to the operator instead of letting
   // the modal close silently while the row stays in DB. Successes get a
   // confirmation toast so the operator sees something happened.
-  const handleAddOrder = async (payload: Omit<Order, 'id' | 'createdAt'>) => {
+  const handleAddOrder = useCallback(async (payload: Omit<Order, 'id' | 'createdAt'>) => {
     try {
       const order = await addOrderToSupabase(payload);
       setState((prev) => ({ ...prev, orders: [order, ...prev.orders] }));
@@ -581,9 +596,9 @@ export default function AppShell() {
       toast.error('Não consegui adicionar o pedido. Tente de novo.');
       throw err; // let the modal show its own form error too
     }
-  };
+  }, [addOrderToSupabase, toast]);
 
-  const handleEditOrder = async (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => {
+  const handleEditOrder = useCallback(async (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => {
     const prevOrders = state.orders;
     try {
       await updateOrderInSupabase(id, payload);
@@ -598,9 +613,9 @@ export default function AppShell() {
       toast.error('Não consegui salvar as alterações.');
       throw err;
     }
-  };
+  }, [state.orders, toast, updateOrderInSupabase]);
 
-  const handleDeleteOrder = async (id: string) => {
+  const handleDeleteOrder = useCallback(async (id: string) => {
     const prevOrders = state.orders;
     setState((prev) => ({ ...prev, orders: prev.orders.filter((o) => o.id !== id) }));
     try {
@@ -612,9 +627,9 @@ export default function AppShell() {
       toast.error('Não consegui excluir o pedido.');
       throw err;
     }
-  };
+  }, [deleteOrderInSupabase, state.orders, toast]);
 
-  const handleDeleteSession = async (sessionId: string) => {
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
     // Snapshot for rollback before optimistic removal
     const prevSessions = state.sessions;
     const prevActiveId = activeSessionId;
@@ -632,14 +647,74 @@ export default function AppShell() {
       console.error('[App] handleDeleteSession failed:', err);
       toast.error('Não consegui excluir a conversa. Tente de novo.');
     }
-  };
+  }, [activeSessionId, deleteSession, state.sessions, toast]);
 
-  const onDragEnd = (result: DropResult) => {
+  const onDragEnd = useCallback((result: DropResult) => {
     if (!result.destination) return;
     updateOrderStatus(result.draggableId, result.destination.droppableId as Order['status']);
-  };
+  }, [updateOrderStatus]);
 
-  const firstNameOnly = state.profile.name.split(' ')[0];
+  const handleDailyContextUpdate = useCallback((items: ZeloState['dailyContext']) => {
+    setState((prev) => ({ ...prev, dailyContext: [...(prev.dailyContext ?? []), ...items] }));
+  }, []);
+
+  const handleResolveEscalation = useCallback(async (jid: string) => {
+    await resolveEscalation(jid);
+    await reloadOpenEscalationCount();
+  }, [reloadOpenEscalationCount, resolveEscalation]);
+
+  const handleNavigateToKanban = useCallback(() => {
+    setActiveView('kanban');
+  }, []);
+
+  const handleDispatchSuccess = useCallback((orderId: string) => {
+    updateOrderStatus(orderId, 'out_for_delivery');
+  }, [updateOrderStatus]);
+
+  const firstNameOnly = useMemo(() => state.profile.name.split(' ')[0], [state.profile.name]);
+
+  // P2.6 — keep non-chat views insulated from WhatsApp session churn. Incoming
+  // WS messages replace `state.sessions`; these memoized slices preserve prop
+  // identity for views that don't consume conversations.
+  const dashboardState = useMemo(
+    () => ({ orders: state.orders, sessions: state.sessions, profile: state.profile }),
+    [state.orders, state.profile, state.sessions],
+  );
+  const productionState = useMemo(() => ({ orders: state.orders }), [state.orders]);
+  const calendarState = useMemo(
+    () => ({ orders: state.orders, blockedDates: state.blockedDates, businessInfo: state.businessInfo }),
+    [state.blockedDates, state.businessInfo, state.orders],
+  );
+  const aiConfigsState = useMemo(
+    () => ({
+      aiInstructions: state.aiInstructions,
+      blockedDates: state.blockedDates,
+      dailyContext: state.dailyContext,
+      managerHistory: state.managerHistory,
+    }),
+    [state.aiInstructions, state.blockedDates, state.dailyContext, state.managerHistory],
+  );
+  const settingsState = useMemo(
+    () => ({
+      aiInstructions: state.aiInstructions,
+      blockedDates: state.blockedDates,
+      businessInfo: state.businessInfo,
+      deliveryConfig: state.deliveryConfig,
+      drivers: state.drivers,
+      quickResponses: state.quickResponses,
+      triggers: state.triggers,
+    }),
+    [
+      state.aiInstructions,
+      state.blockedDates,
+      state.businessInfo,
+      state.deliveryConfig,
+      state.drivers,
+      state.quickResponses,
+      state.triggers,
+    ],
+  );
+  const profileState = useMemo(() => ({ profile: state.profile }), [state.profile]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-canvas)]">
@@ -825,7 +900,7 @@ export default function AppShell() {
             </div>
           </div>
         ) : activeView === 'chat' ? (
-          <ChatView
+          <MemoChatView
             sessions={state.sessions}
             activeSessionId={activeSessionId}
             setActiveSessionId={setActiveSessionId}
@@ -840,13 +915,8 @@ export default function AppShell() {
             updateSessionName={updateSessionName}
             hydrateSession={hydrateSession}
             onDeleteSession={handleDeleteSession}
-            onDailyContextUpdate={(items) =>
-              setState((prev) => ({ ...prev, dailyContext: [...(prev.dailyContext ?? []), ...items] }))
-            }
-            resolveEscalation={async (jid) => {
-              await resolveEscalation(jid);
-              await reloadOpenEscalationCount();
-            }}
+            onDailyContextUpdate={handleDailyContextUpdate}
+            resolveEscalation={handleResolveEscalation}
             escalateManually={escalateManually}
             acknowledgeEscalation={acknowledgeEscalation}
             escalationRefetchKey={lastEscalation?.event.id ?? null}
@@ -855,12 +925,12 @@ export default function AppShell() {
           /* ── Other views ────────────────────────────────────────── */
           <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
             {activeView === 'dashboard' && (
-              <DashboardView state={state} setActiveView={setActiveView} />
+              <MemoDashboardView state={dashboardState} setActiveView={setActiveView} />
             )}
             {activeView === 'kanban' && (
               <DragDropContext onDragEnd={onDragEnd}>
-                <ProductionView
-                  state={state}
+                <MemoProductionView
+                  state={productionState}
                   onDragEnd={onDragEnd}
                   setActiveView={setActiveView}
                   onAddOrder={handleAddOrder}
@@ -872,14 +942,14 @@ export default function AppShell() {
               </DragDropContext>
             )}
             {activeView === 'calendar' && (
-              <CalendarView
-                state={state}
+              <MemoCalendarView
+                state={calendarState}
                 setState={setState}
-                onNavigateToKanban={() => setActiveView('kanban')}
+                onNavigateToKanban={handleNavigateToKanban}
               />
             )}
             {activeView === 'catalog' && (
-              <CatalogView
+              <MemoCatalogView
                 isAuthenticated={!!session}
                 authLoading={authLoading}
                 loading={catalog.loading}
@@ -900,8 +970,8 @@ export default function AppShell() {
               />
             )}
             {activeView === 'ai-configs' && (
-              <AIConfigsView
-                state={state}
+              <MemoAIConfigsView
+                state={aiConfigsState}
                 setState={setState}
                 triggers={triggers}
                 triggersError={triggersError}
@@ -917,8 +987,8 @@ export default function AppShell() {
               />
             )}
             {activeView === 'settings' && (
-              <SettingsView
-                state={state}
+              <MemoSettingsView
+                state={settingsState}
                 setState={setState}
                 empresa={empresa}
                 saveEmpresa={saveEmpresa}
@@ -927,15 +997,15 @@ export default function AppShell() {
               />
             )}
             {activeView === 'profile' && (
-              <ProfileView
-                state={state}
+              <MemoProfileView
+                state={profileState}
                 setState={setState}
                 empresa={empresa}
                 saveEmpresa={saveEmpresa}
               />
             )}
             {activeView === 'drivers' && (
-              <DriversView
+              <MemoDriversView
                 orders={state.orders}
                 drivers={drivers}
                 isAuthenticated={!!token}
@@ -945,7 +1015,7 @@ export default function AppShell() {
                 updateDriver={updateDriver}
                 deleteDriver={deleteDriver}
                 token={token}
-                onDispatchSuccess={(orderId) => updateOrderStatus(orderId, 'out_for_delivery')}
+                onDispatchSuccess={handleDispatchSuccess}
               />
             )}
             {activeView === 'novidades' && (
