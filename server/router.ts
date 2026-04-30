@@ -44,6 +44,7 @@ import {
 } from './messageHandler.js';
 import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
+import { redactInstance } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
@@ -440,11 +441,38 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   }
   const ctx = await getEmpresaAndTokenForInstance(instance);
   if (!ctx) {
-    console.warn(`[Webhook] 404 — instance "${instance}" has no empresa assigned`);
+    console.warn(`[Webhook] 404 — instance "${redactInstance(instance)}" has no empresa assigned`);
     res.status(404).json({ error: 'unknown instance' });
     return;
   }
   const { empresaId, webhookToken } = ctx;
+
+  // TEMPORARY DIAGNOSTIC — gated by WEBHOOK_DEBUG_HEADERS=1. Investigation:
+  // Whatsmiau accepts `headers.apikey` in /webhook/set/{instance} config
+  // (verified via GET) but observed inbound webhooks arrive with
+  // auth_status='token_missing'. This block prints the names of every
+  // header on the request so we can confirm whether the apikey is being
+  // forwarded under a different name (x-apikey, etc.) vs. not at all.
+  // Header VALUES are not logged — only lengths for auth-shaped headers —
+  // so a stray real token won't leak to the log. Remove once Whatsmiau
+  // forwarding is confirmed working OR after pivot to URL-as-secret.
+  if ((process.env.WEBHOOK_DEBUG_HEADERS ?? '').match(/^(1|true|yes)$/i)) {
+    const headerNames = Object.keys(req.headers).sort();
+    const sensitive = headerNames
+      .filter((h) => /apikey|auth|token|signature/i.test(h))
+      .map((h) => {
+        const v = req.headers[h];
+        const s = Array.isArray(v) ? v.join(',') : (v ?? '');
+        return `${h}=len${s.length}`;
+      });
+    const bodyKeys =
+      req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)
+        ? Object.keys(req.body).sort().slice(0, 30).join(',')
+        : `<${typeof req.body}>`;
+    console.log(
+      `[Webhook][debug] inst=${redactInstance(instance)} headers=[${headerNames.join(',')}] sensitive=[${sensitive.join(' ')}] bodyKeys=[${bodyKeys}]`,
+    );
+  }
 
   // Webhook token auth (P0.1). Whatsmiau forwards configured headers under
   // `apikey`; we also accept `x-webhook-token` for flexibility. Constant-time
@@ -461,7 +489,7 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   let authStatus: 'token_match' | 'token_missing' | 'token_mismatch';
   if (headerToken) {
     if (headerToken !== webhookToken) {
-      console.warn(`[Webhook] 401 — token mismatch for instance "${instance}"`);
+      console.warn(`[Webhook] 401 — token mismatch for instance "${redactInstance(instance)}"`);
       res.status(401).json({ error: 'invalid webhook token' });
       return;
     }
@@ -470,7 +498,7 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     // Strict mode: missing token is a hard reject. Flip WEBHOOK_REQUIRE_TOKEN=1
     // only after Whatsmiau is confirmed to be sending the apikey header on
     // 100% of inbound webhooks for ALL active empresas.
-    console.warn(`[Webhook] 401 — strict mode rejected missing token for instance "${instance}"`);
+    console.warn(`[Webhook] 401 — strict mode rejected missing token for instance "${redactInstance(instance)}"`);
     res.status(401).json({ error: 'webhook token required' });
     return;
   } else {
@@ -478,7 +506,7 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     // strict. Once these warnings stop appearing in Railway logs (and the
     // auth_status column in zelochat_webhook_events_raw shows zero
     // token_missing rows), it's safe to set WEBHOOK_REQUIRE_TOKEN=1.
-    console.warn(`[Webhook] token-missing for instance "${instance}" (validate-if-present mode; flip WEBHOOK_REQUIRE_TOKEN=1 once configured)`);
+    console.warn(`[Webhook] token-missing for instance "${redactInstance(instance)}" (validate-if-present mode; flip WEBHOOK_REQUIRE_TOKEN=1 once configured)`);
     authStatus = 'token_missing';
   }
 
@@ -503,7 +531,7 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     await processWebhookEvent(empresaId, req.body);
   } catch (err) {
     processingError = err;
-    console.error(`[Webhook] processWebhookEvent threw for instance "${instance}":`, err);
+    console.error(`[Webhook] processWebhookEvent threw for instance "${redactInstance(instance)}":`, err);
   }
   await markWebhookEventProcessed(rawEventId, processingError);
 });

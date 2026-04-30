@@ -5,6 +5,7 @@ import { broadcast, type WsEvent } from './ws.js';
 import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { getBoundEmpresaId } from './supabase.js';
 import { sendDisconnectAlert, sendReconnectConfirmation } from './email.js';
+import { redactInstance } from './redact.js';
 
 /**
  * P0.2 / P1.11 — broadcast a legacy single-tenant lifecycle event (QR, connect,
@@ -483,7 +484,7 @@ export async function fetchInstanceConnectionState(instanceName: string): Promis
     if (status === 'connecting') return 'connecting';
     return 'disconnected';
   } catch (err) {
-    console.warn(`[WhatsApp] fetchInstanceConnectionState(${instanceName}) failed:`, err instanceof Error ? err.message : err);
+    console.warn(`[WhatsApp] fetchInstanceConnectionState(${redactInstance(instanceName)}) failed:`, err instanceof Error ? err.message : err);
     return 'disconnected';
   }
 }
@@ -526,7 +527,7 @@ export async function fetchInstanceQR(instanceName: string): Promise<{ status: C
       const status = (err as { response?: { status?: number } })?.response?.status;
       const msg = err instanceof Error ? err.message : String(err);
       lastUpstreamError = status ? `whatsmiau ${status}: ${msg}` : msg;
-      console.error(`[WhatsApp] fetchInstanceQR(${instanceName}) tentativa falhou:`, lastUpstreamError);
+      console.error(`[WhatsApp] fetchInstanceQR(${redactInstance(instanceName)}) tentativa falhou:`, lastUpstreamError);
     }
   }
 
@@ -590,9 +591,9 @@ export async function setWebhookForInstance(instanceName: string): Promise<void>
       // Non-fatal — the /webhook/set call above already enables it. The /v2/instance/update
       // is a redundancy belt that's only needed for media base64 propagation.
     }
-    console.log(`[WhatsApp] webhook registered for instance "${instanceName}" → ${webhookUrl}`);
+    console.log(`[WhatsApp] webhook registered for instance "${redactInstance(instanceName)}"`);
   } catch (err) {
-    console.error(`[WhatsApp] setWebhookForInstance(${instanceName}) failed:`, err instanceof Error ? err.message : err);
+    console.error(`[WhatsApp] setWebhookForInstance(${redactInstance(instanceName)}) failed:`, err instanceof Error ? err.message : err);
   }
 }
 
@@ -664,7 +665,7 @@ export async function fetchQR(): Promise<void> {
       }
       console.warn('[WhatsApp] Connect response had no QR field:', JSON.stringify(res.data)?.slice(0, 400));
     } catch (err) {
-      console.error(`[WhatsApp] fetchQR error for id "${id}":`, err instanceof Error ? err.message : err);
+      console.error(`[WhatsApp] fetchQR error for id "${redactInstance(id)}":`, err instanceof Error ? err.message : err);
     }
   }
 
@@ -683,7 +684,7 @@ export async function startWhatsApp(): Promise<void> {
       headers: apiHeaders(),
     });
     const list: any[] = Array.isArray(instances) ? instances : (instances?.data ?? []);
-    console.log('[WhatsApp] Instances found:', JSON.stringify(list, null, 2));
+    console.log(`[WhatsApp] Instances found: count=${list.length}`);
 
     const resolveName = (i: any): string =>
       i.whatsmiau_instance_id ?? i.name ?? i.instanceName ?? i.instance?.instanceName ?? '';
@@ -695,7 +696,7 @@ export async function startWhatsApp(): Promise<void> {
       INSTANCE_NAME = resolveName(resolvedInstance) || INSTANCE_NAME;
       instanceInternalId = resolvedInstance.id ?? '';
       setOwnJid(resolvedInstance.ownerJid ?? resolvedInstance.owner ?? resolvedInstance.phoneNumber ?? '');
-      console.log(`[WhatsApp] Using instance "${INSTANCE_NAME}" (id: ${instanceInternalId}).`);
+      console.log(`[WhatsApp] Using instance "${redactInstance(INSTANCE_NAME)}" (id: ${redactInstance(instanceInternalId)}).`);
 
       // Check if already connected via status field (connectionState endpoint is not supported)
       const instanceStatus: string = resolvedInstance.status ?? '';
@@ -710,7 +711,7 @@ export async function startWhatsApp(): Promise<void> {
         { instanceName: INSTANCE_NAME, qrcode: true, integration: 'WHATSAPP-BAILEYS' },
         { headers: apiHeaders() },
       );
-      console.log(`[WhatsApp] Instance "${INSTANCE_NAME}" created.`);
+      console.log(`[WhatsApp] Instance "${redactInstance(INSTANCE_NAME)}" created.`);
     }
   } catch (err) {
     console.error('[WhatsApp] Error during instance setup:', err);

@@ -24,7 +24,7 @@ Os comentários `🚨 CRITICAL — butterfly effect` no código (grep `🚨 CRIT
 ## 💰 Cliente atual
 
 - **Casa dos Salgados** (`leri.nascimento@hotmail.com`, empresa `70ec4c72-…`, instance `zelo-70ec4c72`)
-- Contrato R$3k, `manually_extended_until = 2026-05-31`. Renovar antes disso.
+- Contrato R$3k, `manually_extended_until = 2026-05-31`. ✅ Renovação já alinhada com o cliente.
 - **Donutopia** é teste pessoal do founder — pode quebrar.
 
 ## 🔥 Incidente da sessão (resolvido)
@@ -37,17 +37,19 @@ Deploy do P0.14 ativo (`a6912ff`) usou `supabase-js .upsert(..., { ignoreDuplica
 
 ### P0 com follow-up
 - ~~**P0.5 cleanup**~~: ✅ rodado em 2026-04-29 (Sprint 16). 0 órfãos restantes.
-- **P0.1 strict mode**: setar `WEBHOOK_REQUIRE_TOKEN=1` na Railway DEPOIS de configurar `apikey: <empresa_perfil.webhook_token>` no dashboard Whatsmiau pra cada empresa. Hoje está em validate-if-present (logs `[Webhook] token-missing` aparecem normalmente). Runbook abaixo em §"Como flipar P0.1 strict mode".
+- **P0.1 strict mode — BLOQUEADO em diagnóstico**: validation period rodada em 2026-04-29 mostrou que **Whatsmiau aceita o campo `headers.apikey` em /webhook/set/{instance} (verificável via GET) mas NÃO está forwardando esse header nas entregas reais.** Donutopia: 2 events recebidos, ambos `auth_status='token_missing'`. Casa dos Salgados: aguardando tráfego. **Não flipar `WEBHOOK_REQUIRE_TOKEN=1`** — todo tráfego viraria 401. Próximo passo: setar `WEBHOOK_DEBUG_HEADERS=1` na Railway (gate de log, redação por length nos auth-shaped headers, sem leak de valor) → mandar 1 mensagem teste → grep `[Webhook][debug]` em Railway logs pra ver se o apikey chega com nome diferente. Se confirmado que Whatsmiau não forward: pivotar pra **URL-as-secret + rotação das instâncias legacy** (novas já usam `zelo-{empresa8}-{16hexrandom}` = 64 bits de entropia; legacy `zelo-{empresa8}` é enumerável). Runbook abaixo em §"Como flipar P0.1 strict mode".
 
 ### P1s não shipped (lower impact)
 - P1.2 — `extractAttachmentDataUrl` trusts `mediaUrl` (mais leve agora que webhook é auth'd)
-- P1.4 — instance names em logs (defense-in-depth)
 - P1.8 — phone normalization landline vs mobile families (edge case)
-- P1.13 — subscription cancel deveria deleteInstance (precisa cron na PDV side)
 - P1.16, P1.17 — multi-replica concerns (single-node Railway hoje)
 - P1.25-29 — Stripe (a maioria fechada via P0.18/P0.19)
 - P1.37 — paywall banner flicker on subscriptionLoading (cosmético)
 - P1.40 — forms preserve nothing on session expiry (complexo)
+
+### P1s shipped na Sprint 17 (pós-handoff anterior)
+- ✅ P1.4 — instance names redatados em logs via `server/redact.ts`. Pattern `zelo-***4c72`. Cobertura: router, whatsapp, sweeper.
+- ✅ P1.13 — subscription sweeper (`server/subscriptionSweeper.ts` + cron 6h em `index.ts` + CLI `scripts/sweep-canceled-subscriptions.ts`). Reapa instâncias Whatsmiau de empresas churned (grace 30d). Customer data preservada — só `whatsmiau_instance` vai pra NULL.
 
 ### Sugestão de defesa permanente
 ~~Persistir o payload BRUTO de webhook em uma tabela `webhook_events_raw` ANTES de processar.~~ ✅ Shipped em Sprint 16: tabela `zelochat_webhook_events_raw` + helper `server/webhookLog.ts` + wiring em `/webhook/:instance`. Replay query: `SELECT * FROM zelochat_webhook_events_raw WHERE processed_at IS NULL OR processing_error IS NOT NULL ORDER BY received_at DESC`.

@@ -1,5 +1,6 @@
 import { getServiceSupabase } from './supabase.js';
 import { deleteInstance } from './instanceManager.js';
+import { redactInstance } from './redact.js';
 
 /**
  * Subscription sweeper — closes P1.13.
@@ -175,7 +176,7 @@ export async function sweepCanceledSubscriptions(
   );
   for (const c of candidates) {
     console.warn(
-      `  - empresa=${c.empresaId} instance=${c.instance} status=${c.status ?? 'null'} expired=${c.effectiveExpiry ?? 'null'} (${c.daysSinceExpiry?.toFixed(1) ?? '?'} days ago)`,
+      `  - empresa=${c.empresaId} instance=${redactInstance(c.instance)} status=${c.status ?? 'null'} expired=${c.effectiveExpiry ?? 'null'} (${c.daysSinceExpiry?.toFixed(1) ?? '?'} days ago)`,
     );
   }
 
@@ -184,11 +185,11 @@ export async function sweepCanceledSubscriptions(
   for (const c of candidates) {
     try {
       await deleteInstance(c.empresaId);
-      console.log(`[sweeper] deleted instance ${c.instance} for empresa ${c.empresaId}`);
+      console.log(`[sweeper] deleted instance ${redactInstance(c.instance)} for empresa ${c.empresaId}`);
       result.deleted += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[sweeper] failed to delete instance ${c.instance} for empresa ${c.empresaId}:`, message);
+      console.error(`[sweeper] failed to delete instance ${redactInstance(c.instance)} for empresa ${c.empresaId}:`, message);
       result.errors.push({ empresaId: c.empresaId, instance: c.instance, error: message });
     }
   }
