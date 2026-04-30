@@ -12,6 +12,7 @@ RUN npm ci
 COPY server ./server
 COPY src/types.ts ./src/types.ts
 COPY src/domain ./src/domain
+COPY src/data ./src/data
 COPY tsconfig*.json ./
 
 # Railway/Fly/Render inject PORT — server already reads SERVER_PORT; map both
