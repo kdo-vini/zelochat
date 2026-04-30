@@ -44,13 +44,39 @@ export default function OnboardingPage() {
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
   };
 
+  /**
+   * Validates that the number is a Brazilian WhatsApp mobile number.
+   * Accepts only 11-digit numbers: DDD (2 digits) + '9' + 8 subscriber digits.
+   * Rejects 10-digit landlines (e.g. (11) 3333-4444).
+   * WhatsApp Business só funciona em celular.
+   */
+  const isValidWhatsAppMobile = (raw: string): boolean => {
+    const digits = raw.replace(/\D/g, '').replace(/^55/, '');
+    return digits.length === 11 && digits[2] === '9';
+  };
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [phoneError, setPhoneError] = useState('');
 
   useEffect(() => {
     document.body.classList.add('landing-theme');
     return () => document.body.classList.remove('landing-theme');
   }, []);
+
+  // Validate phone as user types — only show error once they've entered enough digits
+  useEffect(() => {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length === 0) {
+      setPhoneError('');
+      return;
+    }
+    if (digits.length >= 10 && !isValidWhatsAppMobile(phone)) {
+      setPhoneError('Esse número parece ser um fixo. WhatsApp Business só funciona em celular (11 dígitos com 9). Confira o número.');
+    } else {
+      setPhoneError('');
+    }
+  }, [phone]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -58,7 +84,7 @@ export default function OnboardingPage() {
   };
 
   const isStep1Valid = companyName.trim().length > 0 && businessType !== '';
-  const isStep2Valid = phone.replace(/\D/g, '').length >= 10;
+  const isStep2Valid = isValidWhatsAppMobile(phone);
 
   const handleStep1Next = () => {
     setErrorMsg('');
@@ -73,8 +99,8 @@ export default function OnboardingPage() {
     e.preventDefault();
     setErrorMsg('');
 
-    if (!isStep2Valid) {
-      setErrorMsg('Informe o número do WhatsApp.');
+    if (!isValidWhatsAppMobile(phone)) {
+      setErrorMsg('Informe um número de celular válido com DDD (ex: (11) 99999-9999). Fixos não funcionam no WhatsApp.');
       return;
     }
     if (!user) {
@@ -252,8 +278,20 @@ export default function OnboardingPage() {
                       value={phone}
                       onChange={(e) => setPhone(maskPhone(e.target.value))}
                       placeholder="(XX) XXXXX-XXXX"
-                      className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
+                      className={`border rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:border-transparent text-[#0B1120] placeholder:text-[#64748B] ${
+                        phoneError
+                          ? 'border-red-400 focus:ring-red-300'
+                          : 'border-[#E5E7EB] focus:ring-[#25D366]'
+                      }`}
                     />
+                    {phoneError && (
+                      <p className="mt-1.5 text-xs text-red-600 leading-snug">{phoneError}</p>
+                    )}
+                    {!phoneError && (
+                      <p className="mt-1.5 text-xs text-[#64748B]">
+                        Apenas celular (ex: (11) 99999-9999). Fixos não funcionam no WhatsApp.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex gap-3 mt-2">

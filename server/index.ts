@@ -103,6 +103,46 @@ createWsServer(httpServer);
 // --- Wire up incoming messages → store + auto-reply ---
 const pendingReplies = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * Per-contact AI reply rate limiter — in-memory sliding window.
+ *
+ * Key: `${empresaId}:${remoteJid}`
+ * Value: { count, windowStart } where windowStart is Date.now() in ms.
+ *
+ * Cap: MAX_AI_REPLIES_PER_WINDOW replies per RATE_LIMIT_WINDOW_MS per contact.
+ *
+ * SINGLE-REPLICA CONCERN: this state is in-memory only. If the process is
+ * horizontally scaled across multiple Railway replicas, each replica keeps its
+ * own counter and the effective cap becomes N × MAX_AI_REPLIES_PER_WINDOW.
+ * Acceptable for the current single-node deployment; if we ever go multi-replica,
+ * migrate to a Redis sorted-set or Supabase row with row-level locking.
+ */
+interface RateLimitEntry { count: number; windowStart: number; }
+const autoReplyRateLimits = new Map<string, RateLimitEntry>();
+const MAX_AI_REPLIES_PER_WINDOW = 3;
+const RATE_LIMIT_WINDOW_MS = 60_000; // 60 seconds
+
+function checkAutoReplyRateLimit(empresaId: string, jid: string): boolean {
+  const key = `${empresaId}:${jid}`;
+  const now = Date.now();
+  const entry = autoReplyRateLimits.get(key);
+
+  if (!entry || now > entry.windowStart + RATE_LIMIT_WINDOW_MS) {
+    // No entry yet, or window expired — start fresh
+    autoReplyRateLimits.set(key, { count: 1, windowStart: now });
+    return true; // within limit
+  }
+
+  if (entry.count < MAX_AI_REPLIES_PER_WINDOW) {
+    entry.count += 1;
+    return true; // within limit
+  }
+
+  // Cap hit — log and reject
+  console.warn(`[auto_reply] rate-limit hit for empresa=${empresaId} jid=${jid} (${MAX_AI_REPLIES_PER_WINDOW}/${RATE_LIMIT_WINDOW_MS / 1000}s)`);
+  return false;
+}
+
 onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // SECURITY: empresaIdFromWebhook MUST come from the per-instance route
   // (`/webhook/:instance` → empresa_perfil.whatsmiau_instance lookup). We do
@@ -150,6 +190,11 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   const globalAiEnabled = getConfig(empresaId).aiEnabled === true;
 
   if (session?.autoReply && !isEscalated && globalAiEnabled && process.env.OPENAI_API_KEY) {
+    // Rate limit check: cap AI replies to MAX_AI_REPLIES_PER_WINDOW per contact per window.
+    // checkAutoReplyRateLimit increments the counter when under limit (returns true)
+    // or swallows the trigger when capped (returns false, logs warning).
+    if (!checkAutoReplyRateLimit(empresaId, jid)) return;
+
     const replyKey = `${empresaId}:${jid}`;
     const existing = pendingReplies.get(replyKey);
     if (existing) clearTimeout(existing);

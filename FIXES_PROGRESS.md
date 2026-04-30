@@ -3,13 +3,13 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 21 open)
+## 📊 Status atual (2026-04-30 Sprint 22 open)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
 | **P1** | 47 | **41** | 0 | 3 | **87% ✅** |
-| **P2** | 38 | 10 | 28 | 0 | 26% |
+| **P2** | 38 | 13 | 25 | 0 | 34% |
 | **P3** | 24 | 0 | 24 | 0 | 0% |
 
 **P1 closed = 34 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo). P1.37 shipped Sprint 19 (paywall flicker).
@@ -116,6 +116,15 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 22 (2026-04-30) — Tier 1 UX batch (mobile + churn prevention)
+
+- ✅ P2.3 / P2.7 — Mobile chat detail panel: header button "Detalhes" (Info icon, `md:hidden`) abre overlay full-screen com backdrop animado no mobile; desktop inalterado (`md:flex` inline) — `src/components/views/ChatView.tsx`
+- ✅ P2.8 — Onboarding phone validator agora rejeita 10-dígitos landline; aceita apenas 11-dígitos mobile (DDD + 9 + 8 dígitos); inline error PT-BR com highlight vermelho no campo; mensagem de ajuda contextual — `src/pages/OnboardingPage.tsx`
+- ✅ P2.20 — `auto_reply` rate limit: máx 3 respostas AI por contato por 60s; cap-hit loga `[auto_reply] rate-limit hit for empresa=X jid=Y`; sliding window in-memory (single-replica concern documented inline em `server/index.ts`) — `server/index.ts`
+- Type-check verde: frontend `tsc --noEmit` + `tsc --noEmit -p server/tsconfig.json`
+
+---
 
 ### Sprint 21 (2026-04-30) — P2 security/LGPD + operational health
 

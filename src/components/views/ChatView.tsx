@@ -6,6 +6,7 @@ import {
   Check,
   FileText,
   ImagePlus,
+  Info,
   Loader2,
   MessageCircle,
   Mic,
@@ -113,6 +114,7 @@ export function ChatView({
   const [ownerInput, setOwnerInput] = useState('');
   const [chatActionError, setChatActionError] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(true);
+  const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<ChatAttachment | null>(null);
@@ -203,6 +205,7 @@ export function ChatView({
 
   useEffect(() => {
     setEditingName(false);
+    setMobileDetailsOpen(false);
   }, [activeSessionId]);
 
   // Stamp acknowledged_at on the open escalation event the first time the
@@ -623,11 +626,20 @@ export function ChatView({
                       IA
                     </button>
                   </div>
+                  {/* Desktop toggle */}
                   <button
                     onClick={() => setDetailsOpen((v) => !v)}
                     className="hidden md:inline-flex rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
                   >
                     {detailsOpen ? 'Fechar perfil' : 'Abrir perfil'}
+                  </button>
+                  {/* Mobile: open details overlay */}
+                  <button
+                    onClick={() => setMobileDetailsOpen(true)}
+                    aria-label="Detalhes"
+                    className="md:hidden flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)]/70 transition-colors"
+                  >
+                    <Info className="h-5 w-5" strokeWidth={1.8} />
                   </button>
                   <div className="relative">
                     <button
@@ -864,13 +876,36 @@ export function ChatView({
           )}
         </main>
 
-        {/* Customer details panel */}
-        {detailsOpen && activeSession && (
-          <aside className="w-[260px] flex-shrink-0 hidden md:flex flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] overflow-y-auto custom-scrollbar">
+        {/* Customer details panel — desktop inline + mobile overlay */}
+        {activeSession && (
+          <>
+            {/* Mobile backdrop */}
+            <AnimatePresence>
+              {mobileDetailsOpen && (
+                <motion.div
+                  key="mobile-details-backdrop"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="fixed inset-0 z-40 bg-black/40 md:hidden"
+                  onClick={() => setMobileDetailsOpen(false)}
+                />
+              )}
+            </AnimatePresence>
+
+          <aside className={`flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] overflow-y-auto custom-scrollbar
+            ${mobileDetailsOpen
+              ? 'flex fixed inset-y-0 right-0 z-50 w-[85vw] max-w-[320px] shadow-2xl'
+              : detailsOpen
+                ? 'hidden md:flex w-[260px] flex-shrink-0'
+                : 'hidden'
+            }
+          `}>
             <div className="px-4 py-3.5 border-b border-[var(--color-line)] flex-shrink-0 flex items-center justify-between">
               <h3 className="text-[13.5px] font-semibold text-[var(--color-ink)]">Perfil do cliente</h3>
               <button
-                onClick={() => setDetailsOpen(false)}
+                onClick={() => { setDetailsOpen(false); setMobileDetailsOpen(false); }}
                 className="rounded-md p-1 text-[var(--color-ink-faint)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] transition-colors"
               >
                 <X className="h-4 w-4" strokeWidth={1.8} />
@@ -995,6 +1030,7 @@ export function ChatView({
               <EscalationLogCard events={escalationEvents} loading={escalationsLoading} />
             </div>
           </aside>
+          </>
         )}
       </div>
 
