@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-04-30',
+    category: 'medium',
+    title: 'Áudios com problema chamam um atendente',
+    description: 'Quando o sistema não consegue entender vários áudios seguidos, a conversa passa para atendimento humano e o cliente recebe um aviso claro.',
+  },
+  {
     date: '2026-04-29',
     category: 'hotfix',
     title: 'Conversas de cada conta ficam isoladas',

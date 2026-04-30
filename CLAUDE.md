@@ -286,7 +286,7 @@ Source: `server/billing.ts`. Front: `SubscriptionPaywall` + `BillingManagementCa
 **Env vars no Railway** (backend) — runbook completo em `BILLING.md`:
 - `STRIPE_SECRET_KEY` (obrigatório, mesma do ZeloPDV)
 - `PUBLIC_APP_URL=https://chat.zelopdv.com.br` (obrigatório, return URLs)
-- `STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE` (opcional, defaults hardcoded)
+- `STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE` (obrigatórios; sem fallback hardcoded para evitar usar price de produção em dev)
 
 `requireActiveZelochatSubscription()` em `server/supabase.ts` rejeita `'trialing'` propositalmente — política produto é "sem teste grátis".
 

@@ -1070,6 +1070,30 @@ export async function generateAndSendReply(
       tool_choice: 'auto',
     });
 
+    // P2.21 — Escalation race condition: re-fetch auto_reply AFTER the OpenAI
+    // round-trip completes. This is the last gate before any sendTextMessage call.
+    // If the operator escalated the chat while the OpenAI request was in flight
+    // (debounce fired → request started → operator clicked "take over" → request
+    // returned), we abort here and discard the reply. Without this check the
+    // AI reply would still ship and the operator's screen would show both their
+    // "Vou te ajudar" and the AI's response simultaneously — broken UX.
+    //
+    // We re-fetch from DB (not from the in-memory session captured above) to get
+    // the current state, not the snapshot from before the OpenAI call. The extra
+    // Supabase round-trip (~5ms) is negligible compared to the OpenAI latency.
+    try {
+      const freshSession = await getSession(jid, resolvedEmpresaId);
+      if (freshSession && (!freshSession.autoReply || freshSession.status === 'escalated')) {
+        console.log(`[ai] aborted reply: auto_reply turned off mid-flight for empresa=${resolvedEmpresaId} jid=${jid}`);
+        return null;
+      }
+    } catch (recheckErr) {
+      // If the re-check itself fails, fail-closed: abort. We'd rather miss one
+      // reply than send an unwanted AI message into an escalated conversation.
+      console.warn('[AI] auto_reply re-check failed — aborting reply as a precaution:', recheckErr);
+      return null;
+    }
+
     const choice = response.choices[0];
 
     if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {

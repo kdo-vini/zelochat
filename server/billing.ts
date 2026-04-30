@@ -40,6 +40,25 @@ function getStripe(): Stripe {
   return stripeClient;
 }
 
+function stripeObjectId(value: string | { id?: string } | null | undefined): string | null {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  return typeof value.id === 'string' ? value.id : null;
+}
+
+// P2.10 — Stripe price IDs must come from env. Previously these had hardcoded
+// fallback values ('price_1TR0...'), meaning a dev environment without
+// STRIPE_PRICE_CHAT / STRIPE_PRICE_BUNDLE set would silently use the production
+// price IDs and potentially charge real customers. The throw at module load
+// makes misconfigured deployments fail fast instead of silently using prod prices.
+//
+// Production Railway already has both vars set (see BILLING.md).
+// Local dev must set them in .env (use test-mode price IDs from Stripe dashboard).
+const PRICE_CHAT = process.env.STRIPE_PRICE_CHAT;
+const PRICE_BUNDLE = process.env.STRIPE_PRICE_BUNDLE;
+if (!PRICE_CHAT) throw new Error('STRIPE_PRICE_CHAT env var is required');
+if (!PRICE_BUNDLE) throw new Error('STRIPE_PRICE_BUNDLE env var is required');
+
 interface PlanCatalogEntry {
   tier: 'chat' | 'bundle';
   priceId: string;
@@ -48,18 +67,16 @@ interface PlanCatalogEntry {
 }
 
 function getPlanCatalog(): Record<'chat' | 'bundle', PlanCatalogEntry> {
-  // Defaults match the live Stripe price IDs in zeloPDV's pricing.js.
-  // Override per env for staging / future price changes.
   return {
     chat: {
       tier: 'chat',
-      priceId: process.env.STRIPE_PRICE_CHAT || 'price_1TR0xGLUJWyE4PkYcBy0cOoD',
+      priceId: PRICE_CHAT as string,
       label: 'ZeloChat Pro',
       priceBRL: PRICING.chat.priceBRL,
     },
     bundle: {
       tier: 'bundle',
-      priceId: process.env.STRIPE_PRICE_BUNDLE || 'price_1TR0xGLUJWyE4PkYY0DMOWLI',
+      priceId: PRICE_BUNDLE as string,
       label: 'ZeloChat + ZeloPDV',
       priceBRL: PRICING.bundle.priceBRL,
     },
@@ -438,14 +455,6 @@ export async function syncFromStripe(req: Request, res: Response): Promise<void>
       return;
     }
 
-    const subs = await stripe.subscriptions.list({
-      customer: customerId,
-      status: 'all',
-      limit: 5,
-      expand: ['data.items.data.price'],
-    });
-
-    // Pick the most recent chat/bundle subscription.
     const catalog = getPlanCatalog();
     const priceToTier: Record<string, 'chat' | 'bundle'> = {
       [catalog.chat.priceId]: 'chat',
@@ -454,14 +463,58 @@ export async function syncFromStripe(req: Request, res: Response): Promise<void>
 
     let chosen: Stripe.Subscription | null = null;
     let chosenTier: 'chat' | 'bundle' | null = null;
-    for (const sub of subs.data) {
-      for (const item of sub.items.data) {
+
+    const checkoutSessionId = typeof req.body?.sessionId === 'string'
+      ? req.body.sessionId.trim()
+      : '';
+
+    if (checkoutSessionId) {
+      // P2.13 — Checkout return sync must prove the session belongs to the
+      // authenticated user's Stripe customer before we mirror anything into
+      // Supabase. Portal returns still use the legacy "latest subscription"
+      // sync below because Stripe Billing Portal does not return a checkout id.
+      const checkout = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
+        expand: ['subscription', 'subscription.items.data.price'],
+      });
+      if (stripeObjectId(checkout.customer) !== customerId) {
+        res.status(403).json({ synced: false, reason: 'checkout_customer_mismatch' });
+        return;
+      }
+      if (!checkout.subscription) {
+        res.json({ synced: false, reason: 'checkout_without_subscription' });
+        return;
+      }
+
+      chosen = typeof checkout.subscription === 'string'
+        ? await stripe.subscriptions.retrieve(checkout.subscription, { expand: ['items.data.price'] })
+        : checkout.subscription;
+
+      for (const item of chosen.items.data) {
         const priceId = typeof item.price === 'string' ? item.price : item.price?.id;
         const tier = priceId ? priceToTier[priceId] : undefined;
         if (tier) {
-          if (!chosen || sub.created > chosen.created) {
-            chosen = sub;
-            chosenTier = tier;
+          chosenTier = tier;
+          break;
+        }
+      }
+    } else {
+      const subs = await stripe.subscriptions.list({
+        customer: customerId,
+        status: 'all',
+        limit: 5,
+        expand: ['data.items.data.price'],
+      });
+
+      // Pick the most recent chat/bundle subscription.
+      for (const sub of subs.data) {
+        for (const item of sub.items.data) {
+          const priceId = typeof item.price === 'string' ? item.price : item.price?.id;
+          const tier = priceId ? priceToTier[priceId] : undefined;
+          if (tier) {
+            if (!chosen || sub.created > chosen.created) {
+              chosen = sub;
+              chosenTier = tier;
+            }
           }
         }
       }

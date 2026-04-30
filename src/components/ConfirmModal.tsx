@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { Modal, useModalTitleId } from './Modal';
 
 type Props = {
   open: boolean;
@@ -24,21 +25,17 @@ export function ConfirmModal({
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const titleId = useModalTitleId();
 
   useEffect(() => {
     if (open) setErr(null);
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [open, onClose]);
-
   if (!open) return null;
+
+  const handleClose = () => {
+    if (!loading) onClose();
+  };
 
   const handleConfirm = async () => {
     setLoading(true);
@@ -54,13 +51,18 @@ export function ConfirmModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
-      <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl">
+    <Modal
+      open={open}
+      onClose={handleClose}
+      titleId={titleId}
+      disableEscape={loading}
+      panelClassName="rounded-2xl bg-white shadow-xl"
+    >
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-5">
-          <h3 className="text-base font-bold text-gray-800">{title}</h3>
+          <h3 id={titleId} className="text-base font-bold text-gray-800">{title}</h3>
           <button
-            onClick={onClose}
+            onClick={handleClose}
+            disabled={loading}
             className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
             aria-label="Fechar"
           >
@@ -73,7 +75,7 @@ export function ConfirmModal({
           <div className="mt-6 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={loading}
               className="rounded-lg px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 disabled:opacity-50"
             >
@@ -91,7 +93,6 @@ export function ConfirmModal({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

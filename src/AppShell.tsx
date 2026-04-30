@@ -240,19 +240,22 @@ export default function AppShell() {
     if (!token) return;
     const params = new URLSearchParams(window.location.search);
     const billing = params.get('billing');
+    const checkoutSessionId = params.get('session_id');
     if (!billing) return;
 
     if (billing === 'success' || billing === 'portal-return') {
       void (async () => {
         try {
-          await fetch(apiUrl('/api/billing/sync'), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
-            },
-            body: '{}',
-          });
+          if (billing === 'portal-return' || checkoutSessionId) {
+            await fetch(apiUrl('/api/billing/sync'), {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+              },
+              body: JSON.stringify(checkoutSessionId ? { sessionId: checkoutSessionId } : {}),
+            });
+          }
         } catch {
           // Webhook will eventually catch up — sync is best-effort.
         }

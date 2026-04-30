@@ -19,7 +19,6 @@ import {
   Search,
   Send,
   Trash2,
-  User,
   UserCheck,
   X,
 } from 'lucide-react';
@@ -32,6 +31,7 @@ import { SlaTimer } from '../shared/SlaTimer';
 import { EscalationLogCard } from '../shared/EscalationLogCard';
 import { useEscalationEvents } from '../../hooks/useEscalationEvents';
 import { ConfirmModal } from '../ConfirmModal';
+import { ContactAvatar } from '../ContactAvatar';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -473,13 +473,11 @@ export function ChatView({
                   onClick={() => setActiveSessionId(s.id)}
                   className="flex items-center gap-3 flex-1 min-w-0 text-left"
                 >
-                  <div className="w-10 h-10 flex-shrink-0 rounded-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] flex items-center justify-center overflow-hidden">
-                    {profilePics[s.id] ? (
-                      <img src={profilePics[s.id]} alt={s.customerName} className="w-full h-full object-cover" />
-                    ) : (
-                      <User className="w-4.5 h-4.5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
-                    )}
-                  </div>
+                  <ContactAvatar
+                    url={profilePics[s.id]}
+                    name={s.customerName}
+                    size="md"
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
                       <div className="flex items-center gap-1.5 min-w-0">
@@ -578,13 +576,11 @@ export function ChatView({
                   onClick={() => setDetailsOpen((v) => !v)}
                   className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface)]/70"
                 >
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-[var(--color-line)] bg-[var(--color-surface-muted)] overflow-hidden">
-                    {profilePics[activeSession.id] ? (
-                      <img src={profilePics[activeSession.id]} alt={activeSession.customerName} className="w-full h-full object-cover" />
-                    ) : (
-                      <User className="h-4.5 w-4.5 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
-                    )}
-                  </div>
+                  <ContactAvatar
+                    url={profilePics[activeSession.id]}
+                    name={activeSession.customerName}
+                    size="md"
+                  />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <h2 className="truncate text-[13.5px] font-semibold text-[var(--color-ink)]">
@@ -933,13 +929,11 @@ export function ChatView({
             )}
 
             <div className="flex flex-col items-center gap-2 px-4 py-5 border-b border-[var(--color-line)]">
-              <div className="w-14 h-14 rounded-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] flex items-center justify-center overflow-hidden">
-                {profilePics[activeSession.id] ? (
-                  <img src={profilePics[activeSession.id]} alt={activeSession.customerName} className="w-full h-full object-cover" />
-                ) : (
-                  <User className="w-6 h-6 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
-                )}
-              </div>
+              <ContactAvatar
+                url={profilePics[activeSession.id]}
+                name={activeSession.customerName}
+                size="lg"
+              />
               <div className="text-center w-full px-2">
                 {editingName ? (
                   <div className="flex items-center gap-1">

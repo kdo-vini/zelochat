@@ -3,13 +3,13 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 22 open)
+## 📊 Status atual (2026-04-30 Sprint 23 fechado)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
 | **P1** | 47 | **41** | 0 | 3 | **87% ✅** |
-| **P2** | 38 | 13 | 25 | 0 | 34% |
+| **P2** | 38 | 19 | 19 | 0 | 50% |
 | **P3** | 24 | 0 | 24 | 0 | 0% |
 
 **P1 closed = 34 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo). P1.37 shipped Sprint 19 (paywall flicker).
@@ -116,6 +116,18 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 23 (2026-04-30) — P2 billing + WhatsApp hardening + audio recovery
+
+- ✅ P2.10 — Stripe price IDs não têm mais fallback hardcoded: `STRIPE_PRICE_CHAT` e `STRIPE_PRICE_BUNDLE` agora são obrigatórios, com runbook atualizado — `server/billing.ts`, `BILLING.md`, `CLAUDE.md`
+- ✅ P2.13 — retorno `?billing=success` só chama sync quando há `session_id`; backend valida que o Checkout Session pertence ao Stripe customer do usuário antes de espelhar assinatura — `src/AppShell.tsx`, `server/billing.ts`
+- ✅ P2.15 — `fetchInstanceQR()` não faz mais sleeps de retry dentro do handler HTTP; retorna `connecting` rápido quando Whatsmiau ainda não entregou o QR — `server/whatsapp.ts`
+- ✅ P2.18 — falhas consecutivas de transcrição de áudio agora escalam o atendimento após 3 tentativas, com aviso claro ao cliente e contador single-replica documentado — `server/messageHandler.ts`
+- ✅ P2.21 — resposta da IA revalida `auto_reply`/`status` depois da chamada OpenAI e aborta se o operador assumiu a conversa durante o voo — `server/ai.ts`
+- ✅ P2.25 — avatar de contato agora cai para iniciais estáveis quando a foto do Whatsmiau expira ou quebra, evitando imagem quebrada no chat — `src/components/ContactAvatar.tsx`, `src/components/views/ChatView.tsx`
+- 🟢 P2.2 parcial — `ConfirmModal` agora usa o novo primitive acessível (`role="dialog"`, `aria-modal`, focus trap, Escape, return-focus). Não contado como fechado até migrar os modais custom restantes — `src/components/Modal.tsx`, `src/components/ConfirmModal.tsx`
+- Novidades: entrada PT-BR para o handoff de áudio com falha — `src/data/changelog.ts`
+- Type-check verde: frontend `tsc --noEmit` + `tsc --noEmit -p server/tsconfig.json`
 
 ### Sprint 22 (2026-04-30) — Tier 1 UX batch (mobile + churn prevention)
 

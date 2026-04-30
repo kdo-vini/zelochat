@@ -34,14 +34,14 @@
 
 ## Variáveis de ambiente
 
-Coloque as três no **Railway** (`zelochat-production`):
+Coloque as quatro obrigatórias no **Railway** (`zelochat-production`):
 
 | Variável                                   | Valor                                                    | Obrigatória? |
 | ------------------------------------------ | -------------------------------------------------------- | ------------ |
 | `STRIPE_SECRET_KEY`                        | `sk_live_…` (mesma do ZeloPDV)                          | ✅ Sim       |
 | `PUBLIC_APP_URL`                           | `https://chat.zelopdv.com.br`                            | ✅ Sim       |
-| `STRIPE_PRICE_CHAT`                        | `price_1TR0xGLUJWyE4PkYcBy0cOoD` (default — só override se mudar) | ⚪ Não      |
-| `STRIPE_PRICE_BUNDLE`                      | `price_1TR0xGLUJWyE4PkYY0DMOWLI` (default — só override se mudar)| ⚪ Não      |
+| `STRIPE_PRICE_CHAT`                        | `price_…` do plano Chat na conta Stripe correta                  | ✅ Sim      |
+| `STRIPE_PRICE_BUNDLE`                      | `price_…` do pacote Chat + PDV na conta Stripe correta            | ✅ Sim      |
 | `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`   | `bpc_…` (se quiser portal customizado)                  | ⚪ Não      |
 
 **No Vercel não precisa nada novo** — o frontend só chama `/api/billing/*` no Railway via `VITE_API_URL`, que já está configurado.
@@ -61,6 +61,8 @@ railway link    # selecione o projeto zelochat-production
 # 3. Sobe as envs (substitua o sk_live_… pela chave real do ZeloPDV)
 railway variables --set "STRIPE_SECRET_KEY=sk_live_REPLACE_ME"
 railway variables --set "PUBLIC_APP_URL=https://chat.zelopdv.com.br"
+railway variables --set "STRIPE_PRICE_CHAT=price_REPLACE_ME"
+railway variables --set "STRIPE_PRICE_BUNDLE=price_REPLACE_ME"
 
 # 4. Re-deploy para o backend pegar as novas envs
 railway redeploy

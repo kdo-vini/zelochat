@@ -502,36 +502,35 @@ export async function fetchInstanceQR(instanceName: string): Promise<{ status: C
   const upstream = await fetchInstanceConnectionState(instanceName);
   if (upstream === 'connected') return { status: 'connected', qr: null };
 
-  // Whatsmiau às vezes retorna sem QR no primeiro request logo após criar a
-  // instância — leva uns segundos pra propagar. Tentamos até 3x com backoff.
-  const delays = [0, 1500, 3500];
-  let lastUpstreamError = '';
-  for (const delay of delays) {
-    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
-    try {
-      const res = await axios.get(`${BASE_URL}/v2/instance/connect/${instanceName}`, {
-        headers: apiHeaders(),
-        timeout: 15_000,
-      });
-      if (res.data?.connected === true) {
-        return { status: 'connected', qr: null };
-      }
-      const raw: string = res.data?.base64 ?? res.data?.qrcode?.base64 ?? res.data?.code ?? '';
-      if (raw) {
-        const qr = raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`;
-        return { status: 'qr', qr };
-      }
-      // Resposta válida sem QR — capturar pra contexto (raro)
-      lastUpstreamError = 'whatsmiau respondeu sem QR; tentando novamente';
-    } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      const msg = err instanceof Error ? err.message : String(err);
-      lastUpstreamError = status ? `whatsmiau ${status}: ${msg}` : msg;
-      console.error(`[WhatsApp] fetchInstanceQR(${redactInstance(instanceName)}) tentativa falhou:`, lastUpstreamError);
+  // P2.15 — keep the HTTP request fast. Whatsmiau can take a few seconds to
+  // propagate a newly created instance; the previous implementation slept
+  // 1.5s + 3.5s inside the /api/qr handler. Return "connecting" instead and
+  // let the frontend's existing refresh/poll path ask again.
+  try {
+    const res = await axios.get(`${BASE_URL}/v2/instance/connect/${instanceName}`, {
+      headers: apiHeaders(),
+      timeout: 10_000,
+    });
+    if (res.data?.connected === true) {
+      return { status: 'connected', qr: null };
     }
+    const raw: string = res.data?.base64 ?? res.data?.qrcode?.base64 ?? res.data?.code ?? '';
+    if (raw) {
+      const qr = raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`;
+      return { status: 'qr', qr };
+    }
+    return {
+      status: 'connecting',
+      qr: null,
+      upstreamError: 'whatsmiau ainda não retornou o QR; tente novamente em alguns segundos',
+    };
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    const msg = err instanceof Error ? err.message : String(err);
+    const upstreamError = status ? `whatsmiau ${status}: ${msg}` : msg;
+    console.error(`[WhatsApp] fetchInstanceQR(${redactInstance(instanceName)}) falhou:`, upstreamError);
+    return { status: 'disconnected', qr: null, upstreamError };
   }
-
-  return { status: 'disconnected', qr: null, upstreamError: lastUpstreamError || 'whatsmiau não retornou QR após retries' };
 }
 
 /**

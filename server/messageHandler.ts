@@ -1,6 +1,7 @@
 import { broadcast } from './ws.js';
 import { getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import { transcribeAudio } from './transcription.js';
+import { sendTextMessage } from './whatsapp.js';
 import type { AudioTranscriptStatus, ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
 import {
   buildAttachmentPreview,
@@ -10,6 +11,97 @@ import {
   parseStructuredMessage,
   serializeStructuredMessage,
 } from '../src/domain/chat.js';
+
+// P2.18 — Per-session counter for consecutive Whisper transcription failures.
+// After TRANSCRIPTION_FAILURE_THRESHOLD consecutive failures the session is
+// auto-escalated and the customer receives a plain-language explanation.
+//
+// SINGLE-REPLICA CONCERN: this counter is in-memory only. On a horizontally
+// scaled deployment (multiple Railway replicas), each replica keeps its own
+// counter and the effective threshold becomes N × TRANSCRIPTION_FAILURE_THRESHOLD.
+// Acceptable for the current single-node deployment; if we go multi-replica,
+// migrate to a Redis counter or a Supabase row with row-level locking.
+const TRANSCRIPTION_FAILURE_THRESHOLD = 3;
+const transcriptionFailures = new Map<string, number>();
+
+function transcriptionKey(empresaId: string, jid: string): string {
+  return `${empresaId}:${jid}`;
+}
+
+/**
+ * Wraps `transcribeAudio` and tracks consecutive Whisper failures per session.
+ * Resets the counter on any successful transcription OR any non-audio message
+ * (caller is responsible for resetting on non-audio — see handleIncomingMessage).
+ * After TRANSCRIPTION_FAILURE_THRESHOLD consecutive failures, auto-escalates
+ * the session and sends the customer a notification message.
+ */
+async function transcribeAudioWithFailureTracking(
+  params: Parameters<typeof transcribeAudio>[0],
+): Promise<void> {
+  const { empresaId, jid } = params;
+  const key = transcriptionKey(empresaId, jid);
+
+  // transcribeAudio persists its own status instead of returning one, so the
+  // wrapper re-reads the row after the async Whisper attempt completes.
+  await transcribeAudio(params);
+
+  // Re-read the message row to check the outcome.
+  try {
+    const { data } = await getServiceSupabase()
+      .from('zelochat_messages')
+      .select('audio_transcript_status')
+      .eq('id', params.messageId)
+      .eq('empresa_id', empresaId)
+      .maybeSingle();
+
+    const status = (data as { audio_transcript_status?: string } | null)?.audio_transcript_status;
+
+    if (status === 'done') {
+      // Success — reset the failure counter for this session.
+      transcriptionFailures.delete(key);
+      return;
+    }
+
+    // Status is 'failed' (or unknown) — count the failure.
+    const next = (transcriptionFailures.get(key) ?? 0) + 1;
+    transcriptionFailures.set(key, next);
+
+    if (next < TRANSCRIPTION_FAILURE_THRESHOLD) return;
+
+    // Threshold reached — auto-escalate.
+    console.log(`[transcription] auto-escalated empresa=${empresaId} jid=${jid} after 3 consecutive Whisper failures`);
+    transcriptionFailures.delete(key);
+
+    try {
+      // Keep this import lazy to avoid a static cycle at module load:
+      // escalation.ts imports addAssistantMessage from this file for the normal
+      // handoff path, while this rare audio-failure path needs escalateSession.
+      const { escalateSession } = await import('./escalation.js');
+      await escalateSession(empresaId, jid, {
+        triggerId: null,
+        triggerKind: 'escalate_human',
+        triggerName: 'Falha repetida de transcrição de áudio',
+        reasonCategory: 'repeated_ai_failure',
+        reasonText: `Whisper falhou ${next} vezes consecutivas para mensagens de áudio. Atendente humano solicitado.`,
+        // Skip the default handoff message — we send our own below.
+        skipCustomerMessage: true,
+      });
+
+      const audioEscalationMsg = 'Tive dificuldade em ouvir seus áudios. Um atendente vai te ajudar agora.';
+      await sendTextMessage(jid, audioEscalationMsg, empresaId);
+      await addAssistantMessage(jid, audioEscalationMsg, undefined, empresaId);
+    } catch (escalateErr) {
+      console.error('[transcription] Auto-escalation after Whisper failures threw:', escalateErr);
+    }
+  } catch (readErr) {
+    console.warn('[transcription] Failed to read transcript status after Whisper call:', readErr);
+  }
+}
+
+/** Resets the Whisper failure counter for a session (call on any non-audio message). */
+export function resetTranscriptionFailureCounter(empresaId: string, jid: string): void {
+  transcriptionFailures.delete(transcriptionKey(empresaId, jid));
+}
 
 const jidQueues = new Map<string, Promise<void>>();
 
@@ -933,8 +1025,13 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // patch arrives — otherwise the patch lands on a missing message and the
   // "Transcrevendo áudio…" placeholder is silently dropped. Errors stay inside
   // transcribeAudio (status='failed'), never bubbling back to the webhook.
+  //
+  // P2.18 — wraps transcribeAudio with a failure counter. After 3 consecutive
+  // Whisper failures for this session the conversation is auto-escalated and the
+  // customer receives a PT-BR explanation. Non-audio messages reset the counter
+  // (see the else branch below).
   if (attachment?.type === 'audio') {
-    void transcribeAudio({
+    void transcribeAudioWithFailureTracking({
       empresaId: resolvedEmpresaId,
       jid,
       messageId: storedMsg.id,
@@ -943,6 +1040,10 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       fileName: attachment.fileName,
       sizeBytes: attachment.sizeBytes,
     });
+  } else {
+    // Non-audio message — reset the transcription failure counter so the customer
+    // gets a fresh 3-strike window if they send audio again later.
+    resetTranscriptionFailureCounter(resolvedEmpresaId, jid);
   }
 
   // P0.14 — signal "freshly persisted, run downstream side-effects" to the
