@@ -45,7 +45,7 @@ Não estão na lista de "shipped explicit" mas foram verificados como já resolv
 | P1.17 | `configStore` desync entre réplicas | Deferred | quando scale |
 | P1.28 | `'trialing'` users locked out sem path claro | UX | 21 |
 | P1.29 | `'paused'` status sem UI pra unpause | UX | 21 |
-| P1.37 | Paywall banner flicker on `subscriptionLoading=true` | Cosmético | 19 (overnight-safe) |
+| P1.37 | ✅ Paywall banner flicker on `subscriptionLoading=true` | Cosmético | 19 (overnight-safe) |
 | P1.40 | Forms perdem state on session expiry | Médio (complexo) | 19 |
 | P1.43 | `getAllSessions` table scan (escala >2k sessions) | Deferred | quando scale |
 
@@ -109,9 +109,10 @@ These are out of scope or unsafe to change from this branch:
 
 ### Sprint 19 (overnight automated, 2026-04-30)
 
-- ✅ P3 — copy polish + remove dead Camera button — task 1
+- ✅ P3 — copy polish (PT consistency + remove dead Camera button) — task 1
 - ✅ P2.11 — `priceBRL` constants consolidados em `src/data/pricing.ts` — task 2
-- (in progress: P1.37 paywall flicker — task 3)
+- ✅ P1.37 — paywall banner hide on `subscriptionLoading=true` — task 3
+- (in progress: P2.1 confirm/alert modal — task 4)
 - Type-check verde
 
 ### Sprint 1 (shipped 2026-04-29) — revenue + correctness
