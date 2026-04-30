@@ -24,6 +24,24 @@ async function callAI(
   return data.content;
 }
 
+function getBrazilNowContext(): string {
+  const now = new Date();
+  const date = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(now);
+  const time = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
+  return `Data e hora atuais em Brasília: ${date}, ${time}. Use este ano e esta data como referência. Ignore datas antigas do histórico.`;
+}
+
 /**
  * Agente 1: Atendimento ao Cliente (WhatsApp Style)
  */
@@ -104,10 +122,14 @@ export async function generateAgentInstructions(hint?: string): Promise<string> 
  * Agente 2: Construção do Contexto Diário (Uso Interno)
  */
 export async function getOwnerResponse(managerInput: string): Promise<string[]> {
+  const nowContext = getBrazilNowContext();
   const systemInstruction = `
     Você é um classificador de comandos gerenciais para a lanchonete ZeloChat.
     O gerente digitou um recado/aviso operacional em linguagem natural (ex: falta de estoque, mudança de horário de hoje).
     Sua função é APENAS extrair do texto as diretrizes imperativas e diretas que a IA de Atendimento a Clientes deve seguir.
+
+    CONTEXTO ATUAL:
+    - ${nowContext}
 
     REGRAS DE RETORNO:
     - Retorne APENAS um array JSON de strings com os "bullet points" extraídos. Zero formatação Markdown antes/depois do JSON.
@@ -144,9 +166,15 @@ export async function getGeneralManagerResponse(
   history: ChatMessage[],
   userInput: string
 ) {
+  const nowContext = getBrazilNowContext();
   const systemInstruction = `
     Você é o Assistente de Gestão Geral da Lanchonete ZeloChat.
     Você conversa com a dona da lanchonete para realizar configurações estruturais do sistema, como bloquear dias no calendário.
+
+    CONTEXTO ATUAL OBRIGATÓRIO:
+    - ${nowContext}
+    - Ao interpretar "hoje", "amanhã", "sexta", "dia 1" ou qualquer data relativa, use SEMPRE o contexto atual acima.
+    - Se o histórico trouxer anos antigos, como 2023, ignore para cálculo de novas ações.
 
     REGRA DE BLOQUEIO DE CALENDÁRIO:
     - A dona pode pedir para bloquear dias (ex: "não vamos abrir dia x, y e z").

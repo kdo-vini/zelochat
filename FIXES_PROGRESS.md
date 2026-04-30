@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 30 hotfix)
+## 📊 Status atual (2026-04-30 Sprint 31 hotfix)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
@@ -116,6 +116,13 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 31 (2026-04-30) — Hotfix horário ativo da IA
+
+- ✅ P0 hotfix — A IA agora trata horário de funcionamento como regra forte no backend: hidrata abertura/fechamento/dias fechados direto do Supabase, bloqueia pedido para “agora/hoje” fora do horário antes da OpenAI e mantém segunda trava no `criar_pedido` para impedir botão de confirmação em horário inválido — `server/configStore.ts`, `server/ai.ts`, `server/router.ts`, `src/AppShell.tsx`
+- ✅ Gestão por conversa — O assistente interno agora recebe data e hora atuais de Brasília e ignora anos antigos do histórico, evitando bloqueios de calendário em 2023 ou datas erradas — `src/services/openaiService.ts`
+- Novidades: entrada PT-BR para o respeito ao horário de atendimento — `src/data/changelog.ts`
+- Type-check/build verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`, `vite build` (mantém o aviso existente de chunk >500 kB)
 
 ### Sprint 30 (2026-04-30) — Hotfix datas bloqueadas da IA
 

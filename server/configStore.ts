@@ -20,6 +20,8 @@ export interface BusinessConfig {
   name: string;
   specialty: string;
   hours: string;
+  openTime: string;
+  closeTime: string;
   closedDays: string[];
   address: string;
   pixKey: string;
@@ -46,6 +48,8 @@ const DEFAULT_CONFIG: BusinessConfig = {
   name: '',
   specialty: '',
   hours: '',
+  openTime: '',
+  closeTime: '',
   closedDays: [],
   address: '',
   pixKey: '',
@@ -79,6 +83,33 @@ function normalizeBlockedDates(value: unknown): BusinessConfig['blockedDates'] {
     .filter((item): item is { date: string; reason: string } => item !== null);
 }
 
+function normalizeTime(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return '';
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return '';
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function parseHoursRange(value: unknown): { openTime: string; closeTime: string } {
+  if (typeof value !== 'string') return { openTime: '', closeTime: '' };
+  const matches = [...value.matchAll(/(\d{1,2}):(\d{2})/g)];
+  return {
+    openTime: normalizeTime(matches[0]?.[0] ?? ''),
+    closeTime: normalizeTime(matches[1]?.[0] ?? ''),
+  };
+}
+
+function normalizeClosedDays(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']);
+  return value
+    .filter((day): day is string => typeof day === 'string' && allowed.has(day));
+}
+
 export function getConfig(empresaId: string): BusinessConfig {
   return configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
 }
@@ -86,6 +117,13 @@ export function getConfig(empresaId: string): BusinessConfig {
 export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
   const existing = configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
   const patch: Partial<BusinessConfig> = { ...c };
+  const parsedHours = parseHoursRange(patch.hours);
+  if (!patch.openTime && parsedHours.openTime) patch.openTime = parsedHours.openTime;
+  if (!patch.closeTime && parsedHours.closeTime) patch.closeTime = parsedHours.closeTime;
+  if ('openTime' in patch) patch.openTime = normalizeTime(patch.openTime);
+  if ('closeTime' in patch) patch.closeTime = normalizeTime(patch.closeTime);
+  if (patch.openTime && patch.closeTime) patch.hours = `${patch.openTime}–${patch.closeTime}`;
+  if ('closedDays' in patch) patch.closedDays = normalizeClosedDays(patch.closedDays);
   if ('blockedDates' in patch) {
     if (patch.blockedDates === undefined) {
       delete patch.blockedDates;
@@ -113,7 +151,7 @@ const hydratedAiSettings = new Set<string>();
 export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   const { data, error } = await getServiceSupabase()
     .from('empresa_perfil')
-    .select('ai_enabled, ai_can_reengage_pending, blocked_dates')
+    .select('ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento')
     .eq('id', empresaId)
     .maybeSingle();
   if (error) throw error;
@@ -121,11 +159,20 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     ai_enabled?: boolean;
     ai_can_reengage_pending?: boolean;
     blocked_dates?: unknown;
+    horario_abertura?: string | null;
+    horario_fechamento?: string | null;
+    dias_fechamento?: unknown;
   } | null);
   const patch: Partial<BusinessConfig> = {};
   if (typeof row?.ai_enabled === 'boolean') patch.aiEnabled = row.ai_enabled;
   if (typeof row?.ai_can_reengage_pending === 'boolean') patch.aiCanReengagePending = row.ai_can_reengage_pending;
   if (row && 'blocked_dates' in row) patch.blockedDates = normalizeBlockedDates(row.blocked_dates);
+  const openTime = normalizeTime(row?.horario_abertura);
+  const closeTime = normalizeTime(row?.horario_fechamento);
+  if (openTime) patch.openTime = openTime;
+  if (closeTime) patch.closeTime = closeTime;
+  if (openTime && closeTime) patch.hours = `${openTime}–${closeTime}`;
+  if (row && 'dias_fechamento' in row) patch.closedDays = normalizeClosedDays(row.dias_fechamento);
   if (Object.keys(patch).length > 0) setConfig(empresaId, patch);
   hydratedAiSettings.add(empresaId);
 }

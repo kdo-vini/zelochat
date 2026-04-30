@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-30',
     category: 'hotfix',
+    title: 'IA respeita horário de atendimento',
+    description: 'Quando o cliente pede para hoje ou informa um horário fora do funcionamento, a IA avisa na hora e oferece outro horário, outro dia ou atendimento humano.',
+  },
+  {
+    date: '2026-04-30',
+    category: 'hotfix',
     title: 'IA respeita datas bloqueadas na hora',
     description: 'Quando um cliente pede encomenda para feriado ou outra data bloqueada na agenda, a IA avisa imediatamente e oferece outro dia ou atendimento humano.',
   },

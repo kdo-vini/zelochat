@@ -1579,10 +1579,10 @@ router.get('/api/produtos', async (req: Request, res: Response) => {
 router.post('/api/sync-config', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { name, specialty, hours, closedDays, address, pixKey,
+    const { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
             products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
             aiEnabled, aiCanReengagePending, deliveryConfig } = req.body;
-    setConfig(empresaId, { name, specialty, hours, closedDays, address, pixKey,
+    setConfig(empresaId, { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
                            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
                            ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}),
                            ...(typeof aiCanReengagePending === 'boolean' ? { aiCanReengagePending } : {}),

@@ -569,6 +569,254 @@ async function sendBlockedDateReply(
   return reply;
 }
 
+interface OperatingWindow {
+  openMinutes: number;
+  closeMinutes: number;
+  openLabel: string;
+  closeLabel: string;
+}
+
+interface BusinessHoursIssue {
+  date: string;
+  timeMinutes?: number;
+  kind: 'before_open' | 'after_close' | 'currently_closed' | 'closed_day';
+  window: OperatingWindow | null;
+  dayLabel: string;
+}
+
+function parseTimeToMinutes(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function minutesToDisplay(minutes: number): string {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function getBrazilTimeParts(d: Date): { hour: number; minute: number; label: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  const normalizedHour = hour === 24 ? 0 : hour;
+  return {
+    hour: normalizedHour,
+    minute,
+    label: `${String(normalizedHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+    minutes: normalizedHour * 60 + minute,
+  };
+}
+
+function getOperatingWindow(empresaId: string): OperatingWindow | null {
+  const cfg = getConfig(empresaId);
+  let open = parseTimeToMinutes((cfg as typeof cfg & { openTime?: string }).openTime);
+  let close = parseTimeToMinutes((cfg as typeof cfg & { closeTime?: string }).closeTime);
+
+  if (open === null || close === null) {
+    const matches = [...String(cfg.hours || '').matchAll(/(\d{1,2}):(\d{2})/g)];
+    open = open ?? parseTimeToMinutes(matches[0]?.[0]);
+    close = close ?? parseTimeToMinutes(matches[1]?.[0]);
+  }
+
+  if (open === null || close === null) return null;
+  return {
+    openMinutes: open,
+    closeMinutes: close,
+    openLabel: minutesToDisplay(open),
+    closeLabel: minutesToDisplay(close),
+  };
+}
+
+function isWithinOperatingWindow(minutes: number, window: OperatingWindow): boolean {
+  if (window.openMinutes <= window.closeMinutes) {
+    return minutes >= window.openMinutes && minutes <= window.closeMinutes;
+  }
+  return minutes >= window.openMinutes || minutes <= window.closeMinutes;
+}
+
+function collectRequestedTimeMinutes(text: string): number[] {
+  const times = new Set<number>();
+  const addTime = (hourRaw: string | undefined, minuteRaw: string | undefined) => {
+    if (!hourRaw) return;
+    const hour = Number(hourRaw);
+    const minute = minuteRaw ? Number(minuteRaw) : 0;
+    if (!Number.isInteger(hour) || !Number.isInteger(minute)) return;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return;
+    times.add(hour * 60 + minute);
+  };
+
+  const normalized = normalizeDateText(text);
+  let match: RegExpExecArray | null;
+
+  const colonRe = /\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
+  while ((match = colonRe.exec(normalized)) !== null) {
+    addTime(match[1], match[2]);
+  }
+
+  const hourMarkerRe = /\b([01]?\d|2[0-3])\s*(?:h|hs|hrs|horas)\b/g;
+  while ((match = hourMarkerRe.exec(normalized)) !== null) {
+    addTime(match[1], undefined);
+  }
+
+  const prepositionRe = /\b(?:as|a)\s+([01]?\d|2[0-3])(?:[:h]([0-5]\d))?\b/g;
+  while ((match = prepositionRe.exec(normalized)) !== null) {
+    addTime(match[1], match[2]);
+  }
+
+  return [...times];
+}
+
+function hasOrderIntent(text: string): boolean {
+  const normalized = normalizeDateText(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  return /\b(pedido|pedir|pede|quero|queria|preciso|encomenda|encomendar|agendar|agenda|reservar|reserva|retirada|retirar|buscar|entrega|entregar|delivery|para|pra|pro|pode ser|seria|dia|data|horario|hora|cento|salgado|salgados|doce|doces|bolo|bolos|kit|kits)\b/u.test(normalized);
+}
+
+function hasImmediateOrderIntent(text: string): boolean {
+  const normalized = normalizeDateText(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  return /\b(fazer pedido|fazer um pedido|pedido|pedir|pede|encomenda|encomendar|agendar|agenda|reservar|reserva|retirada|retirar|buscar|entrega|entregar|delivery|cento|salgado|salgados|doce|doces|bolo|bolos|kit|kits)\b/u.test(normalized);
+}
+
+function getDayLabelFromIso(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return '';
+  return dayLabelBrazil(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function findBusinessHoursIssueForSchedule(
+  empresaId: string,
+  pickupDate: string,
+  pickupTime?: string,
+): BusinessHoursIssue | null {
+  const cfg = getConfig(empresaId);
+  const dayLabel = getDayLabelFromIso(pickupDate);
+  if (dayLabel && cfg.closedDays.includes(dayLabel)) {
+    return { date: pickupDate, kind: 'closed_day', window: getOperatingWindow(empresaId), dayLabel };
+  }
+
+  const window = getOperatingWindow(empresaId);
+  const timeMinutes = parseTimeToMinutes(pickupTime);
+  if (!window || timeMinutes === null) return null;
+  if (isWithinOperatingWindow(timeMinutes, window)) return null;
+
+  return {
+    date: pickupDate,
+    timeMinutes,
+    kind: timeMinutes < window.openMinutes ? 'before_open' : 'after_close',
+    window,
+    dayLabel,
+  };
+}
+
+function findBusinessHoursIssueFromCustomerText(
+  empresaId: string,
+  text: string,
+  now = new Date(),
+): BusinessHoursIssue | null {
+  const window = getOperatingWindow(empresaId);
+  const cfg = getConfig(empresaId);
+  const todayIso = toIsoBrazil(now);
+  const todayLabel = dayLabelBrazil(now);
+  const requestedDates = collectRequestedDateIsos(text, now);
+  const requestedTimes = collectRequestedTimeMinutes(text);
+  const hasIntent = hasOrderIntent(text);
+  if (!hasIntent && requestedTimes.length === 0) return null;
+
+  if (requestedTimes.length > 0) {
+    const dates = requestedDates.length > 0 ? requestedDates : [todayIso];
+    for (const date of dates) {
+      const dayLabel = getDayLabelFromIso(date);
+      if (dayLabel && cfg.closedDays.includes(dayLabel)) {
+        return { date, timeMinutes: requestedTimes[0], kind: 'closed_day', window, dayLabel };
+      }
+      if (!window) continue;
+      for (const timeMinutes of requestedTimes) {
+        if (!isWithinOperatingWindow(timeMinutes, window)) {
+          return {
+            date,
+            timeMinutes,
+            kind: timeMinutes < window.openMinutes ? 'before_open' : 'after_close',
+            window,
+            dayLabel,
+          };
+        }
+      }
+    }
+  }
+
+  if (requestedDates.length === 0 && hasImmediateOrderIntent(text)) {
+    if (cfg.closedDays.includes(todayLabel)) {
+      return { date: todayIso, kind: 'closed_day', window, dayLabel: todayLabel };
+    }
+    if (window) {
+      const nowBr = getBrazilTimeParts(now);
+      if (!isWithinOperatingWindow(nowBr.minutes, window)) {
+        return {
+          date: todayIso,
+          timeMinutes: nowBr.minutes,
+          kind: 'currently_closed',
+          window,
+          dayLabel: todayLabel,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildBusinessHoursReply(issue: BusinessHoursIssue): string {
+  const dateLabel = issue.date === toIsoBrazil(new Date())
+    ? 'hoje'
+    : isoToDisplayBR(issue.date);
+  const windowText = issue.window
+    ? `O atendimento funciona das ${issue.window.openLabel} às ${issue.window.closeLabel}.`
+    : 'Esse dia está marcado como fechado.';
+
+  if (issue.kind === 'closed_day') {
+    const day = issue.dayLabel || 'esse dia';
+    return `Para ${dateLabel}, não estamos aceitando pedidos porque ${day} é dia de fechamento. Posso te ajudar a escolher outro dia, antecipar para antes, deixar para depois ou chamar um atendente.`;
+  }
+
+  if (issue.kind === 'currently_closed') {
+    const timeText = issue.timeMinutes !== undefined ? ` Agora são ${minutesToDisplay(issue.timeMinutes)}.` : '';
+    return `Hoje já estamos fora do horário de atendimento.${timeText} ${windowText} Posso te ajudar a agendar para outro horário dentro desse período, escolher outro dia ou chamar um atendente.`;
+  }
+
+  const requestedTime = issue.timeMinutes !== undefined ? ` às ${minutesToDisplay(issue.timeMinutes)}` : '';
+  return `Para ${dateLabel}${requestedTime}, não estamos aceitando pedidos fora do horário de atendimento. ${windowText} Posso te ajudar a escolher outro horário dentro desse período, outro dia ou chamar um atendente.`;
+}
+
+async function sendBusinessHoursReply(
+  jid: string,
+  empresaId: string,
+  issue: BusinessHoursIssue,
+): Promise<string> {
+  const reply = buildBusinessHoursReply(issue);
+  await sendTextMessage(jid, reply, empresaId);
+  await addAssistantMessage(jid, reply, undefined, empresaId);
+  return reply;
+}
+
 let ai: OpenAI | null = null;
 
 export function getAI(): OpenAI {
@@ -909,8 +1157,13 @@ function buildSystemInstruction(
     : '';
 
   const now = new Date();
+  const currentTimeBR = getBrazilTimeParts(now).label;
   const todayLabel = dayLabelBrazil(now);
   const isClosedToday = cfg.closedDays.includes(todayLabel);
+  const operatingWindow = getOperatingWindow(empresaId);
+  const operatingHoursStr = operatingWindow
+    ? `${operatingWindow.openLabel}–${operatingWindow.closeLabel}`
+    : (cfg.hours || 'Consulte a loja');
   const closedDayWarning = isClosedToday
     ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
     : '';
@@ -935,7 +1188,7 @@ function buildSystemInstruction(
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
 
 DATA E HORA ATUAL (use SEMPRE, NUNCA invente datas ou anos):
-- Hoje é ${todayLabel}, ${todayBR} (interno: ${todayISO})
+- Agora é ${todayLabel}, ${todayBR}, ${currentTimeBR} no horário de Brasília (interno: ${todayISO} ${currentTimeBR})
 - Amanhã é ${tomorrowBR} (interno: ${tomorrowISO})
 - Próximos 7 dias: ${nextDaysStr}
 - Ao interpretar datas relativas ("sábado", "semana que vem", "amanhã"), calcule SEMPRE a partir da data de hoje acima.
@@ -949,11 +1202,17 @@ FORMATO DE DATAS E HORAS (OBRIGATÓRIO):
 
 INFORMAÇÕES DA LANCHONETE:
 - Cardápio disponível: ${availableProducts}${catalogHierarchyStr}
-- Horário de funcionamento: ${cfg.hours || 'Consulte a loja'}
+- Horário de funcionamento: ${operatingHoursStr}
 - Dias fechados: ${cfg.closedDays.join(', ') || 'Nenhum'}
 - Endereço: ${cfg.address || 'Consulte a loja'}
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
 - Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}${closedDayWarning}
+
+REGRA OBRIGATÓRIA PARA HORÁRIO DE ATENDIMENTO:
+- Use a data e hora atual acima em TODA resposta sobre pedidos.
+- Se o cliente quiser pedir "agora", "hoje" ou sem deixar claro que é para outro dia/horário e agora estiver fora do horário ${operatingHoursStr}, informe imediatamente que estamos fora do horário e ofereça agendar outro horário, outro dia ou chamar um atendente.
+- Se o cliente pedir retirada/entrega em horário fora de ${operatingHoursStr}, avise imediatamente. NÃO continue coletando produto, nome, pagamento, endereço ou observação.
+- NUNCA chame criar_pedido com pickupTime fora do horário de funcionamento ou pickupDate em dia fechado.
 
 REGRA OBRIGATÓRIA PARA DATAS BLOQUEADAS:
 - Se o cliente pedir, sugerir, confirmar ou perguntar sobre encomenda/pedido para uma data bloqueada, avise IMEDIATAMENTE que não aceitamos encomendas nessa data e diga o motivo cadastrado.
@@ -1212,6 +1471,13 @@ export async function generateAndSendReply(
     console.log(`[AI] Blocking reply before OpenAI: requested blocked date ${blockedDateFromMessage.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
     return sendBlockedDateReply(jid, resolvedEmpresaId, blockedDateFromMessage);
   }
+  const businessHoursIssueFromMessage = lastUserTextForDate
+    ? findBusinessHoursIssueFromCustomerText(resolvedEmpresaId, lastUserTextForDate)
+    : null;
+  if (businessHoursIssueFromMessage) {
+    console.log(`[AI] Blocking reply before OpenAI: requested outside business hours for empresa=${resolvedEmpresaId} jid=${jid}`);
+    return sendBusinessHoursReply(jid, resolvedEmpresaId, businessHoursIssueFromMessage);
+  }
 
   const [customerHistory, triggers, activeOrdersBlock] = await Promise.all([
     fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
@@ -1365,6 +1631,13 @@ export async function generateAndSendReply(
           if (blockedPickupDate) {
             console.log(`[AI] Blocking criar_pedido: pickupDate ${blockedPickupDate.date} is blocked for empresa=${resolvedEmpresaId} jid=${jid}`);
             return sendBlockedDateReply(jid, resolvedEmpresaId, blockedPickupDate);
+          }
+          const businessHoursIssue = normalizedPickupDate
+            ? findBusinessHoursIssueForSchedule(resolvedEmpresaId, normalizedPickupDate, args.pickupTime)
+            : null;
+          if (businessHoursIssue) {
+            console.log(`[AI] Blocking criar_pedido: pickup schedule outside business hours for empresa=${resolvedEmpresaId} jid=${jid}`);
+            return sendBusinessHoursReply(jid, resolvedEmpresaId, businessHoursIssue);
           }
 
           const available = getAvailableProducts(resolvedEmpresaId);

@@ -464,6 +464,8 @@ export default function AppShell() {
           name: s.businessInfo.name,
           specialty: s.businessInfo.specialty,
           hours: `${s.businessInfo.openTime}–${s.businessInfo.closeTime}`,
+          openTime: s.businessInfo.openTime,
+          closeTime: s.businessInfo.closeTime,
           closedDays: s.businessInfo.closedDays,
           address: s.businessInfo.address,
           pixKey: s.businessInfo.pixKey,
