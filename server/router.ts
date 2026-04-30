@@ -447,36 +447,18 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   }
   const { empresaId, webhookToken } = ctx;
 
-  // TEMPORARY DIAGNOSTIC — gated by WEBHOOK_DEBUG_HEADERS=1. Investigation:
-  // Whatsmiau accepts `headers.apikey` in /webhook/set/{instance} config
-  // (verified via GET) but observed inbound webhooks arrive with
-  // auth_status='token_missing'. This block prints the names of every
-  // header on the request so we can confirm whether the apikey is being
-  // forwarded under a different name (x-apikey, etc.) vs. not at all.
-  // Header VALUES are not logged — only lengths for auth-shaped headers —
-  // so a stray real token won't leak to the log. Remove once Whatsmiau
-  // forwarding is confirmed working OR after pivot to URL-as-secret.
-  if ((process.env.WEBHOOK_DEBUG_HEADERS ?? '').match(/^(1|true|yes)$/i)) {
-    const headerNames = Object.keys(req.headers).sort();
-    const sensitive = headerNames
-      .filter((h) => /apikey|auth|token|signature/i.test(h))
-      .map((h) => {
-        const v = req.headers[h];
-        const s = Array.isArray(v) ? v.join(',') : (v ?? '');
-        return `${h}=len${s.length}`;
-      });
-    const bodyKeys =
-      req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)
-        ? Object.keys(req.body).sort().slice(0, 30).join(',')
-        : `<${typeof req.body}>`;
-    console.log(
-      `[Webhook][debug] inst=${redactInstance(instance)} headers=[${headerNames.join(',')}] sensitive=[${sensitive.join(' ')}] bodyKeys=[${bodyKeys}]`,
-    );
-  }
-
-  // Webhook token auth (P0.1). Whatsmiau forwards configured headers under
-  // `apikey`; we also accept `x-webhook-token` for flexibility. Constant-time
-  // comparison via Buffer length check + equality avoids leaking timing info.
+  // Webhook token auth (P0.1) — currently DORMANT. Investigation in
+  // 2026-04-29 (via the WEBHOOK_DEBUG_HEADERS diagnostic, since removed)
+  // proved that Whatsmiau v2's webhook config accepts a `headers.apikey`
+  // field (visible in GET /v2/webhook/find/{instance}) but its delivery
+  // layer does NOT actually forward that header on inbound webhook calls.
+  // The field is UI-only on their side. Until they fix it, no real
+  // request will ever carry an apikey header, so strict mode would 401
+  // 100% of legitimate traffic. Code is kept so that if Whatsmiau ever
+  // fixes the forwarding, we just flip WEBHOOK_REQUIRE_TOKEN=1 with no
+  // further changes. The actual auth boundary today is the per-instance
+  // URL path (64-bit random suffix on new instances). See SESSION_HANDOFF
+  // §"P0.1 strict mode" + CLAUDE.md §"Webhook auth boundary".
   const headerToken = (
     (req.headers['apikey'] as string | undefined) ??
     (req.headers['x-webhook-token'] as string | undefined) ??
@@ -502,11 +484,13 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     res.status(401).json({ error: 'webhook token required' });
     return;
   } else {
-    // Validate-if-present mode: log so we can monitor adoption before flipping
-    // strict. Once these warnings stop appearing in Railway logs (and the
-    // auth_status column in zelochat_webhook_events_raw shows zero
-    // token_missing rows), it's safe to set WEBHOOK_REQUIRE_TOKEN=1.
-    console.warn(`[Webhook] token-missing for instance "${redactInstance(instance)}" (validate-if-present mode; flip WEBHOOK_REQUIRE_TOKEN=1 once configured)`);
+    // Validate-if-present mode (default). The auth_status column on
+    // zelochat_webhook_events_raw still records `token_missing` so the
+    // DB is the canary — if Whatsmiau ever starts forwarding headers,
+    // we'll see token_match rows show up without any code change. No
+    // log here because, given the current Whatsmiau bug (see header
+    // comment), this branch fires on 100% of real traffic and would
+    // be pure noise.
     authStatus = 'token_missing';
   }
 

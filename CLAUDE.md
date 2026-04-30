@@ -97,7 +97,18 @@ Cada empresa tem sua própria instância Whatsmiau. Mapeamento em `empresa_perfi
 - **Webhook por instância**: `POST /webhook/:instance` resolve `empresaId` via `instanceManager.getEmpresaForInstance(instance)`. Whatsmiau registra a URL `${PUBLIC_URL}/webhook/${instance}` para cada empresa nova. A rota legacy `POST /webhook` (apikey-header auth) continua funcionando pra empresas antigas.
 - **`instanceManager.ts`** expõe: `getInstanceForEmpresa`, `getOrCreateOwnInstanceForEmpresa`, `getEmpresaForInstance`, `createInstance`, `deleteInstance`, `setConnectionState`. Cache em memória com TTL 60s.
 - **Connection lifecycle (status/QR/disconnect) é per-empresa** desde P1-01. As rotas `/api/status`, `/api/qr`, `/api/qr/refresh` e `/api/whatsapp/disconnect` exigem JWT e usam `getOrCreateOwnInstanceForEmpresa()` — nunca caem no FALLBACK_INSTANCE de outra empresa. Helpers em `whatsapp.ts`: `fetchInstanceConnectionState`, `fetchInstanceQR`, `logoutInstance`, `setWebhookForInstance`.
-- **Auto-create on first QR**: se a empresa ainda não tem instância (`whatsmiau_instance = NULL`), o primeiro `/api/qr` cria uma chamada `zelo-{empresaId-first-8}`, persiste em `empresa_perfil` e registra o webhook `/webhook/{instance}` no Whatsmiau.
+- **Auto-create on first QR**: se a empresa ainda não tem instância (`whatsmiau_instance = NULL`), o primeiro `/api/qr` cria uma chamada `zelo-{empresaId-first-8}-{16hex-random}`, persiste em `empresa_perfil` e registra o webhook `/webhook/{instance}` no Whatsmiau. O sufixo aleatório de 16 hex (64 bits) é o auth boundary efetivo — ver §"Webhook auth boundary" abaixo.
+
+### Webhook auth boundary — URL-as-secret (post-P0.1 investigation)
+
+Investigação em 2026-04-29 (commit 8b367c4 com diagnóstico `WEBHOOK_DEBUG_HEADERS`) provou que **Whatsmiau v2 aceita o campo `headers.apikey` em `/webhook/set/{instance}` (visível em GET) mas não forwarda esse header nas entregas reais.** Bug deles, sem ETA. Logo, `WEBHOOK_REQUIRE_TOKEN=1` (strict mode) NÃO É VIÁVEL — flipar agora 401 100% do tráfego legítimo.
+
+**Auth boundary efetivo hoje: o nome da instância no path da URL.**
+- **Instâncias novas**: `zelo-{empresaId8}-{16hex}` = 64 bits de entropia → unguessable. Suporta escala nacional.
+- **Instâncias legacy (pré-rotação)**: `zelo-{empresaId8}` ou `Comercial_d3c6ca80`. Enumeráveis a partir do UUID da empresa. **Devem ser rotacionadas** (deletar + recriar via fluxo normal de `/api/qr`).
+- O código de validação de `apikey` em `/webhook/:instance` está dormente (lê o header, compara, mas como nunca chega, é no-op). Se Whatsmiau consertar o forwarding, `WEBHOOK_REQUIRE_TOKEN=1` passa a ser viável sem mudança de código — `auth_status` em `zelochat_webhook_events_raw` é a canary.
+
+**NÃO regenere a coluna `webhook_token` em `empresa_perfil`** — ela é dormente mas será o segredo quando strict mode virar viável. Manter estável.
 - **Legacy global lifecycle** (`fetchQR`, `disconnectWhatsApp`, `syncStatusFromUpstream` em `whatsapp.ts`) ainda existe pra rodar o auto-reconnect e health check da empresa "primary" (Donutopia). Os broadcasts WS dessas funções são escopados via `getBoundEmpresaId()` pra não vazar pra outros tenants.
 - **Backfill**: a empresa Donutopia (única ativa no beta) recebeu `whatsmiau_instance = 'Comercial_d3c6ca80'` na migration. Outras empresas ficam NULL até clicarem em "Gerar QR Code" pela primeira vez.
 
