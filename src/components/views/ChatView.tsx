@@ -36,6 +36,10 @@ import { Modal, useModalTitleId } from '../Modal';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
+const CHAT_SESSION_ROW_HEIGHT = 73;
+const CHAT_LIST_OVERSCAN = 8;
+const CHAT_LIST_VIRTUALIZE_AFTER = 80;
+
 function formatPhoneDisplay(phone: string): string {
   if (!phone) return phone;
   const digits = normalizePhoneNumber(phone);
@@ -129,6 +133,9 @@ export function ChatView({
   const [newChatError, setNewChatError] = useState<string | null>(null);
   const [deleteSessionPending, setDeleteSessionPending] = useState<{ id: string; name: string } | null>(null);
   const newChatTitleId = useModalTitleId();
+  const chatListRef = useRef<HTMLDivElement>(null);
+  const [chatListScrollTop, setChatListScrollTop] = useState(0);
+  const [chatListViewportHeight, setChatListViewportHeight] = useState(0);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -199,6 +206,43 @@ export function ChatView({
       );
     });
   }, [sessions, searchQuery]);
+
+  useEffect(() => {
+    const el = chatListRef.current;
+    if (!el) return;
+    const updateHeight = () => setChatListViewportHeight(el.clientHeight);
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setChatListScrollTop(0);
+    chatListRef.current?.scrollTo({ top: 0 });
+  }, [searchQuery]);
+
+  const chatListWindow = useMemo(() => {
+    const shouldVirtualize = filteredSessions.length > CHAT_LIST_VIRTUALIZE_AFTER;
+    if (!shouldVirtualize) {
+      return {
+        sessions: filteredSessions,
+        topPad: 0,
+        bottomPad: 0,
+      };
+    }
+
+    const viewport = chatListViewportHeight || 640;
+    const start = Math.max(0, Math.floor(chatListScrollTop / CHAT_SESSION_ROW_HEIGHT) - CHAT_LIST_OVERSCAN);
+    const visibleCount = Math.ceil(viewport / CHAT_SESSION_ROW_HEIGHT) + CHAT_LIST_OVERSCAN * 2;
+    const end = Math.min(filteredSessions.length, start + visibleCount);
+
+    return {
+      sessions: filteredSessions.slice(start, end),
+      topPad: start * CHAT_SESSION_ROW_HEIGHT,
+      bottomPad: (filteredSessions.length - end) * CHAT_SESSION_ROW_HEIGHT,
+    };
+  }, [chatListScrollTop, chatListViewportHeight, filteredSessions]);
 
   const activeSessionMessages = useMemo(
     () => sessions.find((s) => s.id === activeSessionId)?.messages,
@@ -431,7 +475,11 @@ export function ChatView({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <div
+            ref={chatListRef}
+            onScroll={(e) => setChatListScrollTop(e.currentTarget.scrollTop)}
+            className="flex-1 overflow-y-auto custom-scrollbar"
+          >
             {chatLoading && sessions.length === 0 && (
               <p className="px-4 py-3 text-[12.5px] text-[var(--color-ink-muted)]">Carregando conversas…</p>
             )}
@@ -454,11 +502,16 @@ export function ChatView({
               <p className="px-4 py-3 text-[12.5px] text-[var(--color-ink-muted)]">Nenhuma conversa encontrada.</p>
             )}
 
-            {filteredSessions.map((s) => {
+            {chatListWindow.topPad > 0 && (
+              <div aria-hidden="true" style={{ height: chatListWindow.topPad }} />
+            )}
+
+            {chatListWindow.sessions.map((s) => {
               const isEscalated = s.status === 'escalated';
               return (
               <div
                 key={s.id}
+                style={{ height: CHAT_SESSION_ROW_HEIGHT }}
                 className={`relative flex items-center gap-3 px-3 py-3 border-b border-[var(--color-line)] transition-colors group ${
                   isEscalated ? 'border-l-4 border-l-[var(--color-alert)] bg-[var(--color-alert-soft)]' : ''
                 } ${
@@ -525,6 +578,10 @@ export function ChatView({
               </div>
               );
             })}
+
+            {chatListWindow.bottomPad > 0 && (
+              <div aria-hidden="true" style={{ height: chatListWindow.bottomPad }} />
+            )}
           </div>
 
           {/* Drag handle to resize the conversation list. The thin visible bar sits on the
