@@ -1,8 +1,8 @@
 # Session Handoff — 2026-04-29 (Sprint 18 close)
 
-## ⚠️ Overnight Sprint 19 — task 3 não foi ativada — rodar manualmente
+## ⚠️ Overnight Sprint 19 — task 4 não foi ativada — rodar manualmente
 
-Task `overnight-3-p137-paywall-flicker` precisa ser ativada manualmente. O agente da task 2 (P2.11) não conseguiu chamar `update_scheduled_task` de dentro de uma sessão de scheduled task (runtime restriction). Ir em scheduled tasks e ativar `overnight-3-p137-paywall-flicker` manualmente.
+Task `overnight-4-p21-confirm-modal` precisa ser ativada manualmente. O agente da task 3 (P1.37) não conseguiu chamar `update_scheduled_task` de dentro de uma sessão de scheduled task (runtime restriction). Ir em scheduled tasks e ativar `overnight-4-p21-confirm-modal` manualmente.
 
 Sessão original ~14h + continuação Sprint 18 (rotação Whatsmiau + admin painel fix). 27+ commits em produção. Este doc é o **briefing pro próximo agente** começar limpo.
 
