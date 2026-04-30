@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-30',
+    category: 'hotfix',
+    title: 'IA respeita datas bloqueadas na hora',
+    description: 'Quando um cliente pede encomenda para feriado ou outra data bloqueada na agenda, a IA avisa imediatamente e oferece outro dia ou atendimento humano.',
+  },
+  {
+    date: '2026-04-30',
     category: 'medium',
     title: 'Áudios com problema chamam um atendente',
     description: 'Quando o sistema não consegue entender vários áudios seguidos, a conversa passa para atendimento humano e o cliente recebe um aviso claro.',

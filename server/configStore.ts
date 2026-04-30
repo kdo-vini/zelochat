@@ -65,13 +65,35 @@ const DEFAULT_CONFIG: BusinessConfig = {
 // Keyed by empresaId — one config entry per authenticated empresa.
 const configMap = new Map<string, BusinessConfig>();
 
+function normalizeBlockedDates(value: unknown): BusinessConfig['blockedDates'] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as { date?: unknown; reason?: unknown };
+      const date = typeof row.date === 'string' ? row.date.trim() : '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      const reason = typeof row.reason === 'string' ? row.reason.trim() : '';
+      return { date, reason };
+    })
+    .filter((item): item is { date: string; reason: string } => item !== null);
+}
+
 export function getConfig(empresaId: string): BusinessConfig {
   return configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
 }
 
 export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
   const existing = configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
-  configMap.set(empresaId, { ...existing, ...c });
+  const patch: Partial<BusinessConfig> = { ...c };
+  if ('blockedDates' in patch) {
+    if (patch.blockedDates === undefined) {
+      delete patch.blockedDates;
+    } else {
+      patch.blockedDates = normalizeBlockedDates(patch.blockedDates);
+    }
+  }
+  configMap.set(empresaId, { ...existing, ...patch });
 }
 
 // Tracks which empresas had their AI settings successfully hydrated from the DB.
@@ -80,9 +102,9 @@ export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
 const hydratedAiSettings = new Set<string>();
 
 /**
- * Reads `ai_enabled` and `ai_can_reengage_pending` from `empresa_perfil` and merges
- * them into the in-memory config. Idempotent. On DB errors, throws — caller decides
- * whether to swallow (lazy hydration) or propagate (startup hydration).
+ * Reads AI runtime settings from `empresa_perfil` and merges them into the
+ * in-memory config. Idempotent. On DB errors, throws — caller decides whether
+ * to swallow (lazy hydration) or propagate (startup hydration).
  *
  * This is the single source of truth for hydrating these flags. Used by:
  *   - POST /api/bind-empresa (frontend boot)
@@ -91,14 +113,19 @@ const hydratedAiSettings = new Set<string>();
 export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   const { data, error } = await getServiceSupabase()
     .from('empresa_perfil')
-    .select('ai_enabled, ai_can_reengage_pending')
+    .select('ai_enabled, ai_can_reengage_pending, blocked_dates')
     .eq('id', empresaId)
     .maybeSingle();
   if (error) throw error;
-  const row = (data as { ai_enabled?: boolean; ai_can_reengage_pending?: boolean } | null);
+  const row = (data as {
+    ai_enabled?: boolean;
+    ai_can_reengage_pending?: boolean;
+    blocked_dates?: unknown;
+  } | null);
   const patch: Partial<BusinessConfig> = {};
   if (typeof row?.ai_enabled === 'boolean') patch.aiEnabled = row.ai_enabled;
   if (typeof row?.ai_can_reengage_pending === 'boolean') patch.aiCanReengagePending = row.ai_can_reengage_pending;
+  if (row && 'blocked_dates' in row) patch.blockedDates = normalizeBlockedDates(row.blocked_dates);
   if (Object.keys(patch).length > 0) setConfig(empresaId, patch);
   hydratedAiSettings.add(empresaId);
 }

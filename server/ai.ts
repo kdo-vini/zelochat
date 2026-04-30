@@ -382,6 +382,192 @@ function dayLabelBrazil(d: Date): string {
 }
 
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const MONTH_BY_NAME: Record<string, number> = {
+  janeiro: 1,
+  fevereiro: 2,
+  marco: 3,
+  abril: 4,
+  maio: 5,
+  junho: 6,
+  julho: 7,
+  agosto: 8,
+  setembro: 9,
+  outubro: 10,
+  novembro: 11,
+  dezembro: 12,
+};
+
+const WEEKDAY_BY_NAME: Record<string, number> = {
+  domingo: 0,
+  'segunda feira': 1,
+  segunda: 1,
+  'terca feira': 2,
+  terca: 2,
+  'quarta feira': 3,
+  quarta: 3,
+  'quinta feira': 4,
+  quinta: 4,
+  'sexta feira': 5,
+  sexta: 5,
+  sabado: 6,
+};
+
+function normalizeDateText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Mn}/gu, '')
+    .replace(/[ºª]/g, '')
+    .replace(/[-_]+/g, ' ');
+}
+
+function datePartsToIso(year: number, month: number, day: number): string | null {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (year < 2020 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const utc = new Date(Date.UTC(year, month - 1, day, 12));
+  if (
+    utc.getUTCFullYear() !== year ||
+    utc.getUTCMonth() !== month - 1 ||
+    utc.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function normalizeIsoDateInput(value: string): string | null {
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+  return datePartsToIso(Number(match[1]), Number(match[2]), Number(match[3]));
+}
+
+function normalizeCustomerYear(year: string | undefined, fallbackYear: number): number {
+  if (!year) return fallbackYear;
+  const parsed = Number(year);
+  if (year.length === 2) return 2000 + parsed;
+  return parsed;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collectRequestedDateIsos(text: string, now = new Date()): string[] {
+  const isos = new Set<string>();
+  const addIso = (iso: string | null) => {
+    if (iso) isos.add(iso);
+  };
+
+  const todayIso = toIsoBrazil(now);
+  const currentYear = Number(todayIso.slice(0, 4));
+  const raw = text.toLowerCase();
+
+  let match: RegExpExecArray | null;
+  const isoRe = /\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g;
+  while ((match = isoRe.exec(raw)) !== null) {
+    addIso(datePartsToIso(Number(match[1]), Number(match[2]), Number(match[3])));
+  }
+
+  const slashRe = /\b(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\b/g;
+  while ((match = slashRe.exec(raw)) !== null) {
+    const year = normalizeCustomerYear(match[3], currentYear);
+    addIso(datePartsToIso(year, Number(match[2]), Number(match[1])));
+  }
+
+  const normalized = normalizeDateText(text);
+  const monthNames = Object.keys(MONTH_BY_NAME).map(escapeRegExp).join('|');
+  const monthNameRe = new RegExp(`\\b(\\d{1,2})\\s*(?:de\\s+)?(${monthNames})(?:\\s*(?:de\\s*)?(\\d{2,4}))?\\b`, 'g');
+  while ((match = monthNameRe.exec(normalized)) !== null) {
+    const day = Number(match[1]);
+    const month = MONTH_BY_NAME[match[2]];
+    const year = normalizeCustomerYear(match[3], currentYear);
+    addIso(datePartsToIso(year, month, day));
+  }
+
+  if (/\bhoje\b/.test(normalized)) {
+    addIso(todayIso);
+  }
+
+  const hasAfterTomorrow = /\bdepois\s+de\s+amanha\b/.test(normalized);
+  if (hasAfterTomorrow) {
+    addIso(toIsoBrazil(new Date(now.getTime() + 2 * 86400000)));
+  }
+  const withoutAfterTomorrow = normalized.replace(/\bdepois\s+de\s+amanha\b/g, '');
+  if (/\bamanha\b/.test(withoutAfterTomorrow)) {
+    addIso(toIsoBrazil(new Date(now.getTime() + 86400000)));
+  }
+
+  const wordText = normalized.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const currentWeekday = DAY_LABELS.indexOf(dayLabelBrazil(now));
+  if (currentWeekday >= 0) {
+    const targetWeekdays = new Set<number>();
+    for (const alias of Object.keys(WEEKDAY_BY_NAME).sort((a, b) => b.length - a.length)) {
+      const aliasRe = new RegExp(`\\b${escapeRegExp(alias)}\\b`, 'u');
+      if (aliasRe.test(wordText)) targetWeekdays.add(WEEKDAY_BY_NAME[alias]);
+    }
+    for (const targetWeekday of targetWeekdays) {
+      const deltaDays = (targetWeekday - currentWeekday + 7) % 7;
+      addIso(toIsoBrazil(new Date(now.getTime() + deltaDays * 86400000)));
+    }
+  }
+
+  return [...isos];
+}
+
+function hasSchedulingIntentForBlockedDate(text: string, dateCount: number): boolean {
+  if (dateCount === 0) return false;
+  const normalized = normalizeDateText(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normalized.length <= 40) return true;
+  return /\b(pedido|pedir|pede|quero|queria|preciso|encomenda|encomendar|agendar|agenda|reservar|reserva|retirada|retirar|buscar|entrega|entregar|delivery|para|pra|pro|pode ser|seria|dia|data|horario|hora|cento|salgado|salgados|doce|doces|bolo|bolos|kit|kits)\b/u.test(normalized);
+}
+
+function getBlockedDates(empresaId: string): { date: string; reason: string }[] {
+  const dates = getConfig(empresaId).blockedDates;
+  return Array.isArray(dates) ? dates : [];
+}
+
+function findBlockedDateFromCustomerText(
+  empresaId: string,
+  text: string,
+): { date: string; reason: string } | null {
+  const requestedDates = collectRequestedDateIsos(text);
+  if (!hasSchedulingIntentForBlockedDate(text, requestedDates.length)) return null;
+  const blockedDates = getBlockedDates(empresaId);
+  return requestedDates
+    .map((iso) => blockedDates.find((blocked) => blocked.date === iso) ?? null)
+    .find((blocked): blocked is { date: string; reason: string } => blocked !== null) ?? null;
+}
+
+function getBlockedDateByIso(empresaId: string, isoDate: string): { date: string; reason: string } | null {
+  return getBlockedDates(empresaId).find((blocked) => blocked.date === isoDate) ?? null;
+}
+
+function isoToShortDisplayBR(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-');
+  if (!year || !month || !day) return isoDate;
+  return `${day}/${month}`;
+}
+
+function buildBlockedDateReply(blockedDate: { date: string; reason: string }): string {
+  const dateLabel = isoToShortDisplayBR(blockedDate.date);
+  const reason = safeForPrompt(blockedDate.reason, 120);
+  const reasonText = reason ? ` porque é ${reason}` : ' porque essa data está bloqueada';
+  return `Para ${dateLabel} não estamos aceitando encomendas${reasonText}. Posso te ajudar a escolher outro dia, antecipar para antes, deixar para depois ou chamar um atendente.`;
+}
+
+async function sendBlockedDateReply(
+  jid: string,
+  empresaId: string,
+  blockedDate: { date: string; reason: string },
+): Promise<string> {
+  const reply = buildBlockedDateReply(blockedDate);
+  await sendTextMessage(jid, reply, empresaId);
+  await addAssistantMessage(jid, reply, undefined, empresaId);
+  return reply;
+}
 
 let ai: OpenAI | null = null;
 
@@ -713,8 +899,9 @@ function buildSystemInstruction(
 
   const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
 
-  const blockedDatesStr = cfg.blockedDates.length > 0
-    ? cfg.blockedDates.map((bd) => `${bd.date} (${bd.reason})`).join(', ')
+  const blockedDates = getBlockedDates(empresaId);
+  const blockedDatesStr = blockedDates.length > 0
+    ? blockedDates.map((bd) => `${safeForPrompt(bd.date, 10)} (${safeForPrompt(bd.reason || 'sem motivo informado', 100)})`).join(', ')
     : 'Nenhuma';
 
   const dailyContextStr = cfg.dailyContext.length > 0
@@ -767,6 +954,12 @@ INFORMAÇÕES DA LANCHONETE:
 - Endereço: ${cfg.address || 'Consulte a loja'}
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
 - Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}${closedDayWarning}
+
+REGRA OBRIGATÓRIA PARA DATAS BLOQUEADAS:
+- Se o cliente pedir, sugerir, confirmar ou perguntar sobre encomenda/pedido para uma data bloqueada, avise IMEDIATAMENTE que não aceitamos encomendas nessa data e diga o motivo cadastrado.
+- Não continue coletando nome, pagamento, endereço ou observação para uma data bloqueada.
+- Ofereça saídas claras: escolher outro dia, antecipar para antes, deixar para depois ou chamar um atendente.
+- NUNCA chame criar_pedido com pickupDate em uma data bloqueada.
 
 REGRAS DE CÁLCULO PARA "CENTOS" (MUITO IMPORTANTE):
 - Produtos como "mini salgados" ou que tenham "Cento" no nome frequentemente têm o preço cadastrado por UNIDADE (ex: R$ 0.80 ou R$ 0.90).
@@ -1008,6 +1201,18 @@ export async function generateAndSendReply(
     return editAck;
   }
 
+  const lastUserMsgForDate = [...session.messages].reverse().find((m) => m.role === 'user');
+  const lastUserTextForDate = lastUserMsgForDate
+    ? (buildContentForModel(lastUserMsgForDate) || lastUserMsgForDate.preview || '')
+    : '';
+  const blockedDateFromMessage = lastUserTextForDate
+    ? findBlockedDateFromCustomerText(resolvedEmpresaId, lastUserTextForDate)
+    : null;
+  if (blockedDateFromMessage) {
+    console.log(`[AI] Blocking reply before OpenAI: requested blocked date ${blockedDateFromMessage.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
+    return sendBlockedDateReply(jid, resolvedEmpresaId, blockedDateFromMessage);
+  }
+
   const [customerHistory, triggers, activeOrdersBlock] = await Promise.all([
     fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
     fetchActiveTriggers(resolvedEmpresaId),
@@ -1152,6 +1357,16 @@ export async function generateAndSendReply(
 
           if (!args.customerPhone) args.customerPhone = session.customerPhone;
           const cfg = getConfig(resolvedEmpresaId);
+          const normalizedPickupDate = normalizeIsoDateInput(args.pickupDate);
+          if (normalizedPickupDate) args.pickupDate = normalizedPickupDate;
+          const blockedPickupDate = normalizedPickupDate
+            ? getBlockedDateByIso(resolvedEmpresaId, normalizedPickupDate)
+            : null;
+          if (blockedPickupDate) {
+            console.log(`[AI] Blocking criar_pedido: pickupDate ${blockedPickupDate.date} is blocked for empresa=${resolvedEmpresaId} jid=${jid}`);
+            return sendBlockedDateReply(jid, resolvedEmpresaId, blockedPickupDate);
+          }
+
           const available = getAvailableProducts(resolvedEmpresaId);
 
           // Recalculate products subtotal server-side — never trust the model's arithmetic
