@@ -99,8 +99,16 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa }: ProfileVi
 
   const handleSignOut = async () => {
     setSigningOut(true);
-    await signOut();
-    navigate('/auth');
+    try {
+      const { error } = await signOut();
+      if (error) {
+        throw new Error('Não consegui encerrar sua sessão no servidor. Verifique sua conexão e tente de novo.');
+      }
+      navigate('/auth');
+    } catch (err) {
+      setSigningOut(false);
+      throw err;
+    }
   };
 
   return (
