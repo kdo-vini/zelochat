@@ -179,6 +179,13 @@ function sendBillingError(res: Response, err: unknown): void {
     });
     return;
   }
+  if (message === 'PAYMENT_ACTION_REQUIRED') {
+    res.status(409).json({
+      error: 'O banco pediu uma confirmação do cartão antes de concluir a troca. Abra o portal de cobrança para confirmar o pagamento.',
+      code: 'PAYMENT_ACTION_REQUIRED',
+    });
+    return;
+  }
   // P1.29 — Paused is a voluntary pause, not a payment issue.
   if (message === 'SUBSCRIPTION_PAUSED') {
     res.status(409).json({
@@ -220,6 +227,28 @@ function sendBillingError(res: Response, err: unknown): void {
   // Redact PII: avoid logging the full error object which may contain email/customer_id from Stripe
   console.error('[billing] error:', message);
   res.status(500).json({ error: message });
+}
+
+function isPaymentActionRequired(err: unknown): boolean {
+  const e = err as {
+    code?: string;
+    decline_code?: string;
+    message?: string;
+    raw?: { code?: string; decline_code?: string; message?: string };
+    payment_intent?: { status?: string };
+  };
+  const code = e.code ?? e.raw?.code ?? '';
+  const declineCode = e.decline_code ?? e.raw?.decline_code ?? '';
+  const message = `${e.message ?? ''} ${e.raw?.message ?? ''}`.toLowerCase();
+  return (
+    code === 'payment_intent_authentication_failure' ||
+    code === 'invoice_payment_intent_requires_action' ||
+    code === 'payment_intent_requires_action' ||
+    declineCode === 'authentication_required' ||
+    e.payment_intent?.status === 'requires_action' ||
+    message.includes('requires_action') ||
+    message.includes('authentication_required')
+  );
 }
 
 /**
@@ -701,6 +730,9 @@ export async function changePlan(req: Request, res: Response): Promise<void> {
       // Redact PII: log customer reference via helper, not the raw Stripe error object
       const stripeMsg = err instanceof Error ? err.message : String(err);
       console.error('[billing] change-plan: stripe.update failed — customer:', redactCustomerId(row.provider_customer_id), '— stripe:', stripeMsg);
+      if (isPaymentActionRequired(err)) {
+        throw new Error('PAYMENT_ACTION_REQUIRED');
+      }
       throw new Error('STRIPE_ERROR');
     }
 

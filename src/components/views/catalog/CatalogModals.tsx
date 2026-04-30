@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { X, ExternalLink } from 'lucide-react';
 import { ConfirmModal } from '../../ConfirmModal';
+import { Modal, useModalTitleId } from '../../Modal';
 import type {
   Categoria,
   Subcategoria,
@@ -18,21 +19,18 @@ type ModalShellProps = {
 };
 
 function ModalShell({ title, subtitle, onClose, children }: ModalShellProps) {
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+  const titleId = useModalTitleId();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
-      <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl">
+    <Modal
+      open
+      onClose={onClose}
+      titleId={titleId}
+      panelClassName="rounded-2xl bg-white shadow-xl"
+    >
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-5">
           <div>
-            <h3 className="text-base font-bold text-gray-800">{title}</h3>
+            <h3 id={titleId} className="text-base font-bold text-gray-800">{title}</h3>
             {subtitle && <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>}
           </div>
           <button
@@ -44,8 +42,7 @@ function ModalShell({ title, subtitle, onClose, children }: ModalShellProps) {
           </button>
         </div>
         <div className="p-5">{children}</div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

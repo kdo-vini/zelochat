@@ -3,13 +3,13 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 23 fechado)
+## 📊 Status atual (2026-04-30 Sprint 24 open)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
 | **P1** | 47 | **41** | 0 | 3 | **87% ✅** |
-| **P2** | 38 | 19 | 19 | 0 | 50% |
+| **P2** | 38 | 21 | 17 | 0 | 55% |
 | **P3** | 24 | 0 | 24 | 0 | 0% |
 
 **P1 closed = 34 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo). P1.37 shipped Sprint 19 (paywall flicker).
@@ -116,6 +116,13 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 24 (2026-04-30) — Modal accessibility + billing edge cases
+
+- ✅ P2.12 — `change-plan` agora detecta erro Stripe de confirmação/autenticação do cartão e retorna `PAYMENT_ACTION_REQUIRED`; frontend mostra ação de abrir portal em vez de erro genérico — `server/billing.ts`, `src/components/views/PlanChangeModal.tsx`
+- ✅ P2.23 — Verificado como fechado via schema commitado: `zelochat_orders` tem RLS ligada + policy `zelochat_orders_empresa_owner` em `000_zelochat_schema.sql`, antes da publicação realtime — `supabase/migrations/000_zelochat_schema.sql`
+- 🟢 P2.2 parcial ampliado — `PlanChangeModal`, modais de catálogo e "Nova conversa" agora usam o primitive acessível (`role="dialog"`, `aria-modal`, focus trap, Escape, return-focus). Restam drawers/overlays de detalhe antes de contar P2.2 como fechado — `src/components/views/PlanChangeModal.tsx`, `src/components/views/catalog/CatalogModals.tsx`, `src/components/views/ChatView.tsx`
+- Type-check verde: frontend `tsc --noEmit` + `tsc --noEmit -p server/tsconfig.json`
 
 ### Sprint 23 (2026-04-30) — P2 billing + WhatsApp hardening + audio recovery
 

@@ -32,6 +32,7 @@ import { EscalationLogCard } from '../shared/EscalationLogCard';
 import { useEscalationEvents } from '../../hooks/useEscalationEvents';
 import { ConfirmModal } from '../ConfirmModal';
 import { ContactAvatar } from '../ContactAvatar';
+import { Modal, useModalTitleId } from '../Modal';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -127,6 +128,7 @@ export function ChatView({
   const [newChatLoading, setNewChatLoading] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
   const [deleteSessionPending, setDeleteSessionPending] = useState<{ id: string; name: string } | null>(null);
+  const newChatTitleId = useModalTitleId();
 
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -1029,32 +1031,30 @@ export function ChatView({
       </div>
 
       {/* ── Nova conversa modal ──────────────────────────────────── */}
-      <AnimatePresence>
-        {showNewChatModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-            onClick={(e) => { if (e.target === e.currentTarget) setShowNewChatModal(false); }}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 8 }}
-              transition={{ duration: 0.15 }}
-              className="w-[400px] bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-pop)] border border-[var(--color-line)] overflow-hidden"
-            >
+      {showNewChatModal && (
+        <Modal
+          open
+          onClose={() => {
+            if (!newChatLoading) setShowNewChatModal(false);
+          }}
+          titleId={newChatTitleId}
+          disableEscape={newChatLoading}
+          panelClassName="w-[400px] max-w-[calc(100vw-2rem)] bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-pop)] border border-[var(--color-line)] overflow-hidden"
+        >
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-line)]">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-xl bg-[var(--color-brand-soft)] flex items-center justify-center">
                     <Phone className="w-4 h-4 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
                   </div>
-                  <h3 className="text-[14px] font-semibold text-[var(--color-ink)]">Nova conversa</h3>
+                  <h3 id={newChatTitleId} className="text-[14px] font-semibold text-[var(--color-ink)]">Nova conversa</h3>
                 </div>
                 <button
-                  onClick={() => setShowNewChatModal(false)}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] transition-colors"
+                  onClick={() => {
+                    if (!newChatLoading) setShowNewChatModal(false);
+                  }}
+                  disabled={newChatLoading}
+                  aria-label="Fechar"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <X className="w-4 h-4" strokeWidth={1.8} />
                 </button>
@@ -1101,8 +1101,11 @@ export function ChatView({
 
               <div className="px-5 pb-5 flex items-center justify-end gap-2">
                 <button
-                  onClick={() => setShowNewChatModal(false)}
-                  className="px-4 py-2 rounded-xl text-[13px] font-medium text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] transition-colors"
+                  onClick={() => {
+                    if (!newChatLoading) setShowNewChatModal(false);
+                  }}
+                  disabled={newChatLoading}
+                  className="px-4 py-2 rounded-xl text-[13px] font-medium text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Cancelar
                 </button>
@@ -1119,10 +1122,8 @@ export function ChatView({
                   {newChatLoading ? 'Enviando…' : 'Iniciar conversa'}
                 </button>
               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        </Modal>
+      )}
 
       <ConfirmModal
         open={deleteSessionPending !== null}

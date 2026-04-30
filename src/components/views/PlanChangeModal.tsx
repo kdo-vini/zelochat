@@ -10,6 +10,7 @@ import {
   type PlanTier,
 } from '../../services/billingApi';
 import { PRICING } from '../../data/pricing';
+import { Modal, useModalTitleId } from '../Modal';
 
 interface PlanChangeModalProps {
   open: boolean;
@@ -91,16 +92,6 @@ export const PlanChangeModal = ({
       inFlightRef.current = false;
     }
   }, [open]);
-
-  // Esc-to-close, but only when not mid-call.
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && phase !== 'confirming') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open, phase, onClose]);
 
   if (!open) return null;
 
@@ -187,7 +178,8 @@ export const PlanChangeModal = ({
 
   return (
     <ModalShell
-      onClose={phase === 'confirming' ? () => {} : onClose}
+      onClose={onClose}
+      closeDisabled={phase === 'confirming'}
       title="Mudar de plano"
     >
       {phase === 'select' && (
@@ -321,7 +313,7 @@ export const PlanChangeModal = ({
             >
               Fechar
             </button>
-            {errorCode === 'SUBSCRIPTION_PAYMENT_ISSUE' ? (
+            {errorCode === 'SUBSCRIPTION_PAYMENT_ISSUE' || errorCode === 'PAYMENT_ACTION_REQUIRED' ? (
               <button
                 type="button"
                 onClick={handleOpenPortal}
@@ -365,26 +357,36 @@ interface ModalShellProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  closeDisabled?: boolean;
 }
 
-function ModalShell({ onClose, title, children }: ModalShellProps) {
+function ModalShell({ onClose, title, children, closeDisabled = false }: ModalShellProps) {
+  const titleId = useModalTitleId();
+  const handleClose = () => {
+    if (!closeDisabled) onClose();
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
-      <div className="relative w-full max-w-md rounded-2xl bg-[var(--color-surface)] border border-[var(--color-line)] shadow-xl">
+    <Modal
+      open
+      onClose={handleClose}
+      titleId={titleId}
+      disableEscape={closeDisabled}
+      panelClassName="rounded-2xl bg-[var(--color-surface)] border border-[var(--color-line)] shadow-xl"
+    >
         <div className="flex items-center justify-between gap-4 border-b border-[var(--color-line)] px-5 py-4">
-          <h3 className="text-[14px] font-semibold">{title}</h3>
+          <h3 id={titleId} className="text-[14px] font-semibold">{title}</h3>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
+            disabled={closeDisabled}
             aria-label="Fechar"
-            className="text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] transition-colors"
+            className="text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           >
             <X className="w-4 h-4" strokeWidth={2} />
           </button>
         </div>
         <div className="p-5">{children}</div>
-      </div>
-    </div>
+    </Modal>
   );
 }
