@@ -47,6 +47,7 @@ import { apiUrl } from './config';
 import { inferCategoria } from './services/zeloApi';
 import { loadInitialState, saveInitialState } from './services/statePersistence';
 import type { Order, ZeloState } from './types';
+import { PRICING } from './data/pricing';
 
 type View =
   | 'dashboard'
@@ -810,7 +811,7 @@ export default function AppShell() {
                 Ative seu plano para usar o ZeloChat
               </h2>
               <p className="text-[14px] text-[var(--color-ink-muted)] leading-relaxed mb-6">
-                A IA, o WhatsApp, o kanban e o catálogo ficam disponíveis assim que sua assinatura estiver ativa. R$97/mês, cancela quando quiser.
+                A IA, o WhatsApp, o kanban e o catálogo ficam disponíveis assim que sua assinatura estiver ativa. R${PRICING.chat.priceBRL}/mês, cancela quando quiser.
               </p>
               <button
                 onClick={() => setActiveView('settings')}

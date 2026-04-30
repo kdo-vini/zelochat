@@ -9,6 +9,7 @@ import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useSubscription, type ZeloChatSubscription } from '../../hooks/useSubscription';
 import { startCheckout, openPortal, BillingError } from '../../services/billingApi';
 import { PlanChangeModal } from './PlanChangeModal';
+import { PRICING } from '../../data/pricing';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -58,7 +59,7 @@ const SubscriptionPaywall = ({
             <p className="text-[14px] font-semibold leading-snug">Você já tem o ZeloPDV. Adicione o Atendimento.</p>
             <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-1 leading-relaxed">
               Faça upgrade para o <strong>Pacote Gestão + Atendimento</strong> e tenha PDV completo + IA no WhatsApp por
-              <strong> R$ 147/mês</strong> — você economiza <strong>R$ 9/mês</strong> em vez de assinar separado.
+              <strong> R$ {PRICING.bundle.priceBRL}/mês</strong> — você economiza <strong>R$ 9/mês</strong> em vez de assinar separado.
             </p>
           </div>
         </div>
@@ -87,7 +88,7 @@ const SubscriptionPaywall = ({
         </button>
 
         <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
-          R$ 147/mês total · proporção do mês atual cobrada · cancele quando quiser
+          R$ {PRICING.bundle.priceBRL}/mês total · proporção do mês atual cobrada · cancele quando quiser
         </p>
       </div>
     );
@@ -192,7 +193,7 @@ const SubscriptionPaywall = ({
       </button>
 
       <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
-        R$ 97/mês · Sem fidelidade · Cancele a qualquer momento
+        R$ {PRICING.chat.priceBRL}/mês · Sem fidelidade · Cancele a qualquer momento
       </p>
     </div>
   );

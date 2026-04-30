@@ -9,6 +9,7 @@ import {
   type ChangePlanTarget,
   type PlanTier,
 } from '../../services/billingApi';
+import { PRICING } from '../../data/pricing';
 
 interface PlanChangeModalProps {
   open: boolean;
@@ -35,22 +36,22 @@ function getTargetOption(currentPlan: PlanTier): PlanOption | null {
       return {
         target: 'bundle',
         label: 'Pacote Gestão + Atendimento',
-        priceBRL: 147,
-        pitch: 'Adiciona o atendimento por WhatsApp com IA ao seu PDV. Pagamento único — economiza R$ 9/mês vs assinar separado.',
+        priceBRL: PRICING.bundle.priceBRL,
+        pitch: `Adiciona o atendimento por WhatsApp com IA ao seu PDV. Pagamento único — economiza R$ 9/mês vs assinar separado.`,
       };
     case 'chat':
       return {
         target: 'bundle',
         label: 'Pacote Gestão + Atendimento',
-        priceBRL: 147,
-        pitch: 'Mantém tudo do ZeloChat e adiciona o ZeloPDV completo. Pagamento único de R$ 147/mês.',
+        priceBRL: PRICING.bundle.priceBRL,
+        pitch: `Mantém tudo do ZeloChat e adiciona o ZeloPDV completo. Pagamento único de R$ ${PRICING.bundle.priceBRL}/mês.`,
       };
     case 'bundle':
       return {
         target: 'chat',
         label: 'ZeloChat Pro',
-        priceBRL: 97,
-        pitch: 'Mantém o atendimento por WhatsApp com IA por R$ 97/mês.',
+        priceBRL: PRICING.chat.priceBRL,
+        pitch: `Mantém o atendimento por WhatsApp com IA por R$ ${PRICING.chat.priceBRL}/mês.`,
         warning: 'Você perderá acesso ao ZeloPDV. Pedidos, gestão de estoque e relatórios deixam de funcionar.',
       };
   }

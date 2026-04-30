@@ -1,3 +1,5 @@
+import { PRICING } from './pricing';
+
 export type ChangeCategory = 'big' | 'medium' | 'minor' | 'hotfix';
 
 export interface ChangelogEntry {
@@ -64,8 +66,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-28',
     category: 'big',
-    title: 'ZeloChat Pro chegou: WhatsApp com IA por R$ 97/mês',
-    description: 'Ative o plano direto no app — a IA atende seus clientes pelo WhatsApp 24/7. Pagamento, troca de cartão e cancelamento ficam no portal seguro do Stripe, acessível pelo botão "Gerenciar assinatura". Quem já é cliente do ZeloPDV pega o Pacote Gestão + Atendimento por R$ 147/mês — uma cobrança só, R$ 9 mais barato.',
+    title: `ZeloChat Pro chegou: WhatsApp com IA por R$ ${PRICING.chat.priceBRL}/mês`,
+    description: `Ative o plano direto no app — a IA atende seus clientes pelo WhatsApp 24/7. Pagamento, troca de cartão e cancelamento ficam no portal seguro do Stripe, acessível pelo botão "Gerenciar assinatura". Quem já é cliente do ZeloPDV pega o Pacote Gestão + Atendimento por R$ ${PRICING.bundle.priceBRL}/mês — uma cobrança só, R$ 9 mais barato.`,
   },
   {
     date: '2026-04-27',

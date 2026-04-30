@@ -23,6 +23,7 @@
 import type { Request, Response } from 'express';
 import Stripe from 'stripe';
 import { extractBearerToken, getServiceSupabase } from './supabase.js';
+import { PRICING } from '../src/data/pricing.js';
 
 const STRIPE_API_VERSION = '2024-06-20';
 
@@ -53,13 +54,13 @@ function getPlanCatalog(): Record<'chat' | 'bundle', PlanCatalogEntry> {
       tier: 'chat',
       priceId: process.env.STRIPE_PRICE_CHAT || 'price_1TR0xGLUJWyE4PkYcBy0cOoD',
       label: 'ZeloChat Pro',
-      priceBRL: 97,
+      priceBRL: PRICING.chat.priceBRL,
     },
     bundle: {
       tier: 'bundle',
       priceId: process.env.STRIPE_PRICE_BUNDLE || 'price_1TR0xGLUJWyE4PkYY0DMOWLI',
       label: 'ZeloChat + ZeloPDV',
-      priceBRL: 147,
+      priceBRL: PRICING.bundle.priceBRL,
     },
   };
 }
@@ -119,7 +120,7 @@ function sendBillingError(res: Response, err: unknown): void {
   }
   if (message === 'PDV_UPGRADE_AVAILABLE') {
     res.status(409).json({
-      error: 'Você já tem ZeloPDV. Use "Mudar de plano" para fazer upgrade pro Pacote Gestão + Atendimento (R$ 147/mês — R$ 9 mais barato que Chat avulso).',
+      error: `Você já tem ZeloPDV. Use "Mudar de plano" para fazer upgrade pro Pacote Gestão + Atendimento (R$ ${PRICING.bundle.priceBRL}/mês — R$ 9 mais barato que Chat avulso).`,
       code: 'PDV_UPGRADE_AVAILABLE',
     });
     return;
@@ -224,7 +225,7 @@ export async function createCheckoutSession(req: Request, res: Response): Promis
     if (activeChat) throw new Error('ALREADY_ACTIVE');
 
     // Safety net: usuário com plano PDV ativo NÃO deve criar nova subscription Chat
-    // (resultaria em 2 subscriptions Stripe pro mesmo user, R$ 156 vs R$ 147 do bundle).
+    // (resultaria em 2 subscriptions Stripe pro mesmo user, vs bundle price único).
     // Bloqueia aqui mesmo se chamarem direto a API; o frontend já redireciona via UX.
     // Plan tier swap pdv→bundle vai pelo endpoint /api/billing/change-plan no zeloPDV-Prod.
     const activePdv = existing.find((row) =>

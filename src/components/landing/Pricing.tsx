@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Check } from 'lucide-react';
 import { ZeloPDVLink } from './ZeloPDVLink';
+import { PRICING } from '../../data/pricing';
 
 const INCLUDED: ReactNode[] = [
   'Atendimento ilimitado pelo WhatsApp',
@@ -61,7 +62,7 @@ export function Pricing() {
 
               <div className="mt-8 flex items-baseline gap-2">
                 <span className="text-[15px] text-white/60">R$</span>
-                <span className="text-[56px] font-bold tracking-tight leading-none">97</span>
+                <span className="text-[56px] font-bold tracking-tight leading-none">{PRICING.chat.priceBRL}</span>
                 <span className="text-[15px] text-white/60">/mês</span>
               </div>
               <p className="mt-1 text-[12.5px] text-white/50">
