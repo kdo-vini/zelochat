@@ -3,14 +3,14 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 28 open)
+## 📊 Status atual (2026-04-30 Sprint 29 open)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
 | **P1** | 47 | **41** | 0 | 3 | **87% ✅** |
 | **P2** | 38 | 24 | 14 | 0 | 63% |
-| **P3** | 24 | 1 | 23 | 0 | 4% |
+| **P3** | 24 | 2 | 22 | 0 | 8% |
 
 **P1 closed = 34 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo). P1.37 shipped Sprint 19 (paywall flicker).
 
@@ -116,6 +116,11 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 29 (2026-04-30) — Printer failure visibility
+
+- ✅ P3 — Falha na impressão automática de pedido agora aparece como aviso para o operador, além do erro interno da impressora. Isso evita pedido novo ficando sem comanda impressa sem ninguém perceber — `src/AppShell.tsx`
+- Type-check/build verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`, `vite build`
 
 ### Sprint 28 (2026-04-30) — Profile logout hardening
 

@@ -228,6 +228,7 @@ export default function AppShell() {
   } = useOrders(session, (order) => {
     printer.print(order, state.businessInfo.name || 'ZeloChat').catch((err) => {
       console.error('[printer] auto-print falhou para pedido', order.id, err);
+      toast.error('Não consegui imprimir o pedido automaticamente. Verifique a impressora.');
     });
   });
   const {
