@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useLocalDraft } from '../../hooks/useLocalDraft';
 import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown } from 'lucide-react';
 import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
 import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
@@ -69,8 +70,13 @@ export const AIConfigsView = ({
   const kindMenuRef = useRef<HTMLDivElement>(null);
   const [triggerBusy, setTriggerBusy] = useState(false);
   const [triggerLocalError, setTriggerLocalError] = useState<string | null>(null);
-  const [promptDraft, setPromptDraft] = useState(state.aiInstructions || '');
-  const [promptDirty, setPromptDirty] = useState(false);
+  const {
+    draft: promptDraft,
+    setDraft: setPromptDraft,
+    clearDraft: clearPromptDraft,
+    isDirtyVsServer: promptDirty,
+    hasStoredDraft: hasPromptDraft,
+  } = useLocalDraft('ai_instructions', state.aiInstructions ?? '');
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptJustSaved, setPromptJustSaved] = useState(false);
   const [promptGenerating, setPromptGenerating] = useState(false);
@@ -79,10 +85,12 @@ export const AIConfigsView = ({
   const [qrSaveState, setQrSaveState] = useState<Record<string, 'saving' | 'saved'>>({});
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
-  // Sync draft when aiInstructions loads from DB
   useEffect(() => {
-    if (!promptDirty) setPromptDraft(state.aiInstructions || '');
-  }, [state.aiInstructions, promptDirty]);
+    if (hasPromptDraft) {
+      toast.info('Encontramos alterações não salvas nas instruções da IA. Revise e salve para não perdê-las.');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!kindMenuOpen) return;
@@ -154,7 +162,6 @@ export const AIConfigsView = ({
       const generated = await generateAgentInstructions(promptDraft.trim() || undefined);
       if (generated) {
         setPromptDraft(generated);
-        setPromptDirty(true);
         setPromptJustSaved(false);
         promptRef.current?.focus();
       } else {
@@ -174,7 +181,7 @@ export const AIConfigsView = ({
       const ok = await saveAiInstructions(promptDraft);
       if (ok) {
         setState(prev => ({ ...prev, aiInstructions: promptDraft }));
-        setPromptDirty(false);
+        clearPromptDraft();
         setPromptJustSaved(true);
         setTimeout(() => setPromptJustSaved(false), 2000);
       } else {
@@ -618,7 +625,7 @@ export const AIConfigsView = ({
               ref={promptRef}
               className="w-full h-40 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-4 text-[13px] font-mono outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] resize-none leading-relaxed transition-colors"
               value={promptDraft}
-              onChange={e => { setPromptDraft(e.target.value); setPromptDirty(true); setPromptJustSaved(false); }}
+              onChange={e => { setPromptDraft(e.target.value); setPromptJustSaved(false); }}
               placeholder="Descreva como sua IA deve falar, o tom, limites e prioridades — ou clique em Gerar com IA."
             />
             {promptError && (

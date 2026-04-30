@@ -97,6 +97,10 @@ export function formatPhone(phone: string): string {
   if (local.length === 11) {
     return `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`;
   }
+  // P1.8 — Format 10-digit local numbers (landlines and legacy mobile format)
+  if (local.length === 10) {
+    return `(${local.slice(0, 2)}) ${local.slice(2, 6)}-${local.slice(6)}`;
+  }
   return phone;
 }
 
@@ -202,14 +206,43 @@ function extractText(msg: any): string | null {
 // placeholder e o operador é informado via [MÍDIA GRANDE — pedir reenvio].
 const MAX_INBOUND_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
 
+// P1.2 — Allowlist de domínios legítimos para mediaUrl recebida do webhook.
+// Sem esta validação, um atacante que injete um webhook pode colocar qualquer
+// URL aqui — ela seria armazenada no DB e renderizada como <img src> no
+// browser do operador, vazando o IP/UA dele para o servidor do atacante.
+// Se o Whatsmiau mudar de CDN e imagens pararem de aparecer, adicionar o novo
+// hostname aqui (verificar no log: "[Media] mediaUrl blocked").
+const ALLOWED_MEDIA_HOSTS: readonly string[] = [
+  'storage.googleapis.com',     // Whatsmiau GCS bucket (comentário no código original)
+  'lh3.googleusercontent.com',  // Google CDN
+  'whatsmiau.dev',               // CDN próprio do Whatsmiau
+  'supabase.co',                 // Storage do nosso projeto
+  'supabase.in',                 // Região EU do Supabase
+];
+
+function isAllowedMediaUrl(raw: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(raw);
+    if (protocol !== 'https:') return false;
+    return ALLOWED_MEDIA_HOSTS.some(
+      (h) => hostname === h || hostname.endsWith(`.${h}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string, empresaId: string): Promise<string | undefined> {
   // 1. Public mediaUrl — Whatsmiau provides this after uploading to its own Google Cloud storage.
   // Esses URLs públicos não consomem nossa memória (cliente baixa direto), então
   // não precisam de cap. Tamanho declarado vem do msg.message.{type}Message.fileLength
   // quando relevante — checagem feita no caller via skip-attachment.
   const mediaUrl: string = msg.message?.mediaUrl ?? '';
-  if (mediaUrl && !mediaUrl.includes('mmg.whatsapp.net') && !mediaUrl.endsWith('.enc')) {
-    return mediaUrl;
+  if (mediaUrl) {
+    if (isAllowedMediaUrl(mediaUrl)) {
+      return mediaUrl;
+    }
+    console.warn('[Media] mediaUrl blocked (not in allowlist):', (() => { try { return new URL(mediaUrl).hostname; } catch { return mediaUrl; } })());
   }
 
   // 2. Base64 path — Whatsmiau enviou bytes inline. AQUI precisamos de cap

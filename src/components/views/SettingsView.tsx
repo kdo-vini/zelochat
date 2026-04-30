@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocalDraft } from '../../hooks/useLocalDraft';
+import { useToast } from '../../contexts/ToastContext';
 import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Lock, Sparkles, ArrowRightLeft } from 'lucide-react';
 import { ConfirmModal } from '../ConfirmModal';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
@@ -44,7 +46,10 @@ const SubscriptionPaywall = ({
   const [busy, setBusy] = useState<'checkout' | 'portal' | 'upgrade' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const needsPortal = status === 'past_due' || status === 'unpaid';
+  // P1.28/P1.29 — 'trialing' goes to portal to convert trial to paid (not checkout,
+  // which would create a duplicate subscription). 'paused' also goes to portal where
+  // Stripe lets the user resume the subscription.
+  const needsPortal = status === 'past_due' || status === 'unpaid' || status === 'trialing' || status === 'paused';
 
   // Variante 1: user tem PDV ativo → upsell pro Pacote Gestão + Atendimento (147 = +88 vs 156 separado).
   // Abre o PlanChangeModal nativo (currentPlan='pdv'), que chama /api/billing/change-plan
@@ -101,6 +106,7 @@ const SubscriptionPaywall = ({
     if (status === 'past_due' || status === 'unpaid') return 'Sua assinatura está com pagamento pendente';
     if (status === 'canceled' || status === 'incomplete_expired') return 'Sua assinatura foi encerrada';
     if (status === 'paused') return 'Sua assinatura está pausada';
+    if (status === 'trialing') return 'Você está em período de avaliação';
     if (status === 'incomplete') return 'Finalize a ativação da sua assinatura';
     return 'Ative o ZeloChat para conectar o WhatsApp';
   })();
@@ -109,7 +115,13 @@ const SubscriptionPaywall = ({
     if (status === 'past_due' || status === 'unpaid') {
       return 'Regularize o pagamento para reconectar o WhatsApp e voltar a atender clientes pela IA.';
     }
-    if (status === 'canceled' || status === 'incomplete_expired' || status === 'paused') {
+    if (status === 'paused') {
+      return 'Sua assinatura está pausada. Clique abaixo para reativá-la e voltar a atender clientes.';
+    }
+    if (status === 'trialing') {
+      return 'Seu período de avaliação ainda está ativo. Clique abaixo para converter para o plano pago e garantir acesso contínuo.';
+    }
+    if (status === 'canceled' || status === 'incomplete_expired') {
       return 'Reative seu plano para conectar o WhatsApp e continuar usando a IA do ZeloChat.';
     }
     return 'Você pode configurar tudo agora — produtos, horários e a personalidade da IA. Para conectar o WhatsApp e começar a atender, ative o plano ZeloChat Pro.';
@@ -135,6 +147,12 @@ const SubscriptionPaywall = ({
       if (err instanceof BillingError && err.code === 'PDV_UPGRADE_AVAILABLE') {
         setBusy(null);
         onPlanChange();
+        return;
+      }
+      // P1.28 — Status can change between render and click (e.g. trial just converted).
+      // Reload so the UI reflects the current state.
+      if (err instanceof BillingError && err.code === 'TRIALING_USE_PORTAL') {
+        window.location.reload();
         return;
       }
       const msg = err instanceof BillingError
@@ -188,9 +206,13 @@ const SubscriptionPaywall = ({
         {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" strokeWidth={2} />}
         {busy
           ? 'Abrindo pagamento…'
-          : needsPortal
-            ? 'Regularizar pagamento'
-            : 'Ativar ZeloChat Pro'}
+          : status === 'trialing'
+            ? 'Ativar plano pago'
+            : status === 'paused'
+              ? 'Reativar plano'
+              : needsPortal
+                ? 'Regularizar pagamento'
+                : 'Ativar ZeloChat Pro'}
       </button>
 
       <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
@@ -223,6 +245,23 @@ const BillingManagementCard = ({
   const canChangePlan =
     subscription.status === 'active' &&
     (subscription.plan_tier === 'chat' || subscription.plan_tier === 'bundle');
+
+  // P1.29 — Dynamic status badge instead of hardcoded "Ativo"
+  const STATUS_LABEL: Record<string, string> = {
+    active: 'Ativo',
+    trialing: 'Em avaliação',
+    paused: 'Pausado',
+    past_due: 'Pagamento pendente',
+    unpaid: 'Pagamento pendente',
+    canceled: 'Cancelado',
+    incomplete: 'Pendente',
+    incomplete_expired: 'Expirado',
+  };
+  const badgeClass = subscription.status === 'active'
+    ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+    : subscription.status === 'paused' || subscription.status === 'trialing'
+      ? 'bg-amber-50 text-amber-700'
+      : 'bg-red-50 text-red-700';
 
   const handleOpenPortal = async () => {
     if (!token) {
@@ -257,9 +296,9 @@ const BillingManagementCard = ({
                   : 'Plano ativo.'}
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2 py-1 rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" />
-            Ativo
+          <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2 py-1 rounded-full ${badgeClass}`}>
+            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
+            {STATUS_LABEL[subscription.status] ?? subscription.status}
           </span>
         </div>
 
@@ -991,54 +1030,47 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
     setPlanChangeOpen(true);
   };
 
-  // Local draft for identity fields — synced from state but independently editable
-  const [draft, setDraft] = useState({
-    name:    state.businessInfo.name,
-    address: state.businessInfo.address,
-    phone:   state.businessInfo.phone,
-    pixKey:  state.businessInfo.pixKey,
+  const toast = useToast();
+
+  // P1.40 — Persist unsaved drafts to localStorage so the user doesn't lose
+  // in-progress edits when the session expires and they're redirected to login.
+  const serverBusinessInfo = {
+    name:         state.businessInfo.name,
+    address:      state.businessInfo.address,
+    phone:        state.businessInfo.phone,
+    pixKey:       state.businessInfo.pixKey,
     managerPhone: state.businessInfo.managerPhone,
-  });
+  };
+  const {
+    draft,
+    setDraft,
+    clearDraft: clearBusinessDraft,
+    isDirtyVsServer: isDirty,
+    hasStoredDraft: hasBusinessDraft,
+  } = useLocalDraft('business', serverBusinessInfo);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // Draft for hours section
-  const [hoursDraft, setHoursDraft] = useState({
+  const serverHours = {
     openTime:   state.businessInfo.openTime,
     closeTime:  state.businessInfo.closeTime,
     closedDays: state.businessInfo.closedDays,
-  });
+  };
+  const {
+    draft: hoursDraft,
+    setDraft: setHoursDraft,
+    clearDraft: clearHoursDraft,
+    isDirtyVsServer: isHoursDirty,
+    hasStoredDraft: hasHoursDraft,
+  } = useLocalDraft('hours', serverHours);
   const [hoursSaveState, setHoursSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // Keep draft in sync if state.businessInfo is hydrated from Supabase after mount
+  // Notify the user once on mount if a stored draft was found.
   useEffect(() => {
-    setDraft({
-      name:    state.businessInfo.name,
-      address: state.businessInfo.address,
-      phone:   state.businessInfo.phone,
-      pixKey:  state.businessInfo.pixKey,
-      managerPhone: state.businessInfo.managerPhone,
-    });
-  }, [state.businessInfo.name, state.businessInfo.address, state.businessInfo.phone, state.businessInfo.pixKey, state.businessInfo.managerPhone]);
-
-  useEffect(() => {
-    setHoursDraft({
-      openTime:   state.businessInfo.openTime,
-      closeTime:  state.businessInfo.closeTime,
-      closedDays: state.businessInfo.closedDays,
-    });
-  }, [state.businessInfo.openTime, state.businessInfo.closeTime, state.businessInfo.closedDays]);
-
-  const isDirty =
-    draft.name    !== state.businessInfo.name    ||
-    draft.address !== state.businessInfo.address ||
-    draft.phone   !== state.businessInfo.phone   ||
-    draft.pixKey  !== state.businessInfo.pixKey  ||
-    draft.managerPhone !== state.businessInfo.managerPhone;
-
-  const isHoursDirty =
-    hoursDraft.openTime   !== state.businessInfo.openTime   ||
-    hoursDraft.closeTime  !== state.businessInfo.closeTime  ||
-    JSON.stringify(hoursDraft.closedDays) !== JSON.stringify(state.businessInfo.closedDays);
+    if (hasBusinessDraft || hasHoursDraft) {
+      toast.info('Encontramos alterações não salvas neste formulário. Revise e salve para não perdê-las.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSaveEmpresa = async () => {
     setSaveState('saving');
@@ -1062,6 +1094,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
           managerPhone: draft.managerPhone,
         },
       }));
+      clearBusinessDraft();
       setSaveState('saved');
       setTimeout(() => setSaveState('idle'), 2500);
     } else {
@@ -1087,6 +1120,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
           closedDays: hoursDraft.closedDays,
         },
       }));
+      clearHoursDraft();
       setHoursSaveState('saved');
       setTimeout(() => setHoursSaveState('idle'), 2500);
     } else {

@@ -111,6 +111,14 @@ function sendBillingError(res: Response, err: unknown): void {
     });
     return;
   }
+  // P1.28 — Trialing user attempted checkout; route them to the portal instead.
+  if (message === 'TRIALING_USE_PORTAL') {
+    res.status(409).json({
+      error: 'Você já tem um período de avaliação ativo. Use o portal para ativar o plano pago.',
+      code: 'TRIALING_USE_PORTAL',
+    });
+    return;
+  }
   if (message === 'NO_CUSTOMER') {
     res.status(404).json({
       error: 'Nenhum cliente Stripe associado a esta conta. Faça uma assinatura primeiro.',
@@ -150,6 +158,14 @@ function sendBillingError(res: Response, err: unknown): void {
     res.status(409).json({
       error: 'Sua assinatura tem um problema de pagamento. Regularize antes de mudar de plano.',
       code: 'SUBSCRIPTION_PAYMENT_ISSUE',
+    });
+    return;
+  }
+  // P1.29 — Paused is a voluntary pause, not a payment issue.
+  if (message === 'SUBSCRIPTION_PAUSED') {
+    res.status(409).json({
+      error: 'Sua assinatura está pausada. Reative-a antes de trocar de plano.',
+      code: 'SUBSCRIPTION_PAUSED',
     });
     return;
   }
@@ -216,13 +232,19 @@ export async function createCheckoutSession(req: Request, res: Response): Promis
       .order('updated_at', { ascending: false });
 
     const existing = existingRows ?? [];
-    const activeChat = existing.find((row) =>
+    // P1.28 — Block checkout for both active AND trialing subscriptions.
+    // Previously only 'active' was checked, so a trialing user who clicked
+    // "Ativar" would silently create a second Stripe subscription.
+    const activeOrTrialing = existing.find((row) =>
       ['chat', 'bundle'].includes(row.plan_tier) &&
-      row.status === 'active' &&
+      ['active', 'trialing'].includes(row.status) &&
       row.current_period_end &&
       new Date(row.current_period_end).getTime() > Date.now(),
     );
-    if (activeChat) throw new Error('ALREADY_ACTIVE');
+    if (activeOrTrialing) {
+      if (activeOrTrialing.status === 'trialing') throw new Error('TRIALING_USE_PORTAL');
+      throw new Error('ALREADY_ACTIVE');
+    }
 
     // Safety net: usuário com plano PDV ativo NÃO deve criar nova subscription Chat
     // (resultaria em 2 subscriptions Stripe pro mesmo user, vs bundle price único).
@@ -534,8 +556,11 @@ export async function changePlan(req: Request, res: Response): Promise<void> {
         throw new Error('SUBSCRIPTION_NOT_RESUMABLE');
       case 'past_due':
       case 'unpaid':
-      case 'paused':
         throw new Error('SUBSCRIPTION_PAYMENT_ISSUE');
+      case 'paused':
+        // P1.29 — 'paused' is a voluntary pause, not a payment issue. Give a
+        // distinct error so the frontend can show the correct message.
+        throw new Error('SUBSCRIPTION_PAUSED');
       case 'incomplete':
         throw new Error('SUBSCRIPTION_INCOMPLETE');
     }

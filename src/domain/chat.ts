@@ -55,6 +55,14 @@ export function buildContactKey(value: string): string {
   if (normalized.startsWith('55') && normalized.length >= 12) {
     normalized = normalized.slice(2);
   }
+  // P1.8 — Normalize 11-digit mobile (DDD + '9' + 8 digits) to 10-digit base so the
+  // modern WhatsApp format ("14997000091") and the legacy registration ("1497000091")
+  // for the same contact end up in the same session family.
+  // The '9' sits at index 2 (right after the 2-digit DDD). Landlines are also 10 digits
+  // but their 3rd digit is never '9' in the ANATEL numbering plan, so they are unaffected.
+  if (normalized.length === 11 && normalized.charAt(2) === '9') {
+    normalized = normalized.slice(0, 2) + normalized.slice(3);
+  }
   return normalized || value.trim().toLowerCase();
 }
 

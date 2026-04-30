@@ -3,20 +3,20 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-29 Sprint 18 close)
+## 📊 Status atual (2026-04-30 Sprint 20 close)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
-| **P1** | 47 | 35 | 9 | 3 | 74% |
+| **P1** | 47 | 40 | 4 | 3 | 85% |
 | **P2** | 38 | 1 | 37 | 0 | 3% |
 | **P3** | 24 | 0 | 24 | 0 | 0% |
 
-**P1 closed = 28 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo).
+**P1 closed = 33 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo).
 
 **P1 deferred (3)**: P1.16, P1.17, P1.43 — multi-replica concerns, NÃO fazer enquanto single-node Railway. CLAUDE.md flag deploy invariant.
 
-**P1 actively pending (9)**: P1.2, P1.8, P1.28, P1.29, P1.37, P1.40 (+ P1.16, P1.17, P1.43 listados como deferred).
+**P1 actively pending (4)**: P1.37 (+ P1.16, P1.17, P1.43 listados como deferred).
 
 Use this doc to know **at a glance** what's safe in production right now and what's still on fire. Each fix has a `Status`, the `Files touched`, and the `Risk` it eliminates. Fixes that need a prod migration are marked `BLOCKED — needs operator approval` until the user signs off on applying.
 
@@ -35,18 +35,18 @@ Não estão na lista de "shipped explicit" mas foram verificados como já resolv
 | P1.42 | `zelochat_sessions_empresa_remote_unique` UNIQUE INDEX | `migration 000:99-100` |
 | P1.44 | `zelochat_increment_unread` RPC | `migration 000:500` |
 
-## P1s actively pending (9)
+## P1s actively pending (4)
 
 | ID | Descrição | Risco | Sprint sugerido |
 |---|---|---|---|
-| P1.2 | `extractAttachmentDataUrl` confia em `mediaUrl` do payload | Médio (auth boundary) | 19 |
-| P1.8 | Phone normalization landline (10 dig) vs mobile (11 dig) edge case | Baixo (UX) | 19 |
+| ✅ P1.2 | `extractAttachmentDataUrl` confia em `mediaUrl` do payload — allowlist HTTPS + hostname | Médio (auth boundary) | Sprint 20 |
+| ✅ P1.8 | Phone normalization landline (10 dig) vs mobile (11 dig) — normalize 11-digit com '9' | Baixo (UX) | Sprint 20 |
 | P1.16 | `recordAiFailure` in-memory, multi-replica = sem escalação | Deferred | quando scale |
 | P1.17 | `configStore` desync entre réplicas | Deferred | quando scale |
-| P1.28 | `'trialing'` users locked out sem path claro | UX | 21 |
-| P1.29 | `'paused'` status sem UI pra unpause | UX | 21 |
-| P1.37 | ✅ Paywall banner flicker on `subscriptionLoading=true` | Cosmético | 19 (overnight-safe) |
-| P1.40 | Forms perdem state on session expiry | Médio (complexo) | 19 |
+| ✅ P1.28 | `'trialing'` users locked out sem path claro — UI + backend guard | UX | Sprint 20 |
+| ✅ P1.29 | `'paused'` status sem UI pra unpause — badge dinâmico + portal routing | UX | Sprint 20 |
+| P1.37 | Paywall banner flicker on `subscriptionLoading=true` | Cosmético | próximo sprint |
+| ✅ P1.40 | Forms perdem state on session expiry — `useLocalDraft` hook + toast | Médio (complexo) | Sprint 20 |
 | P1.43 | `getAllSessions` table scan (escala >2k sessions) | Deferred | quando scale |
 
 ---
@@ -106,6 +106,15 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 20 (2026-04-30) — P1 security + billing UX + form persistence
+
+- ✅ P1.2 — `isAllowedMediaUrl` allowlist: HTTPS + hostname against `storage.googleapis.com`, `supabase.co`, `whatsmiau.dev` etc. Blocks attacker-controlled URLs in webhook payload — `server/messageHandler.ts`
+- ✅ P1.8 — `buildContactKey` normalizes 11-digit mobile (DDD + '9' + 8 digits) to 10-digit base; `formatPhone` handles 10-digit local numbers — `src/domain/chat.ts`, `server/messageHandler.ts`
+- ✅ P1.28 — Trialing users: backend blocks duplicate Stripe checkout with `TRIALING_USE_PORTAL` error; frontend shows "período de avaliação" headline + routes to portal — `server/billing.ts`, `src/components/views/SettingsView.tsx`
+- ✅ P1.29 — Paused subscription: `needsPortal` includes `'paused'`; dynamic badge (`STATUS_LABEL` map + color classes); `SUBSCRIPTION_PAUSED` error replaces misleading `SUBSCRIPTION_PAYMENT_ISSUE` — `server/billing.ts`, `src/components/views/SettingsView.tsx`
+- ✅ P1.40 — `useLocalDraft` hook: debounced localStorage persistence, server-sync guard, `isDirtyVsServer`, `hasStoredDraft`; wired into `SettingsView` (business info + hours) and `AIConfigsView` (AI instructions); restore toast on mount — `src/hooks/useLocalDraft.ts`, `src/components/views/SettingsView.tsx`, `src/components/views/AIConfigsView.tsx`
+- Type-check verde: frontend `tsc --noEmit` + `tsc --noEmit -p server/tsconfig.json`
 
 ### Sprint 19 (overnight automated, 2026-04-30)
 

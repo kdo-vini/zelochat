@@ -1,1 +1,0 @@
-ao clicar em mudar de plano no zelochat, encaminha para o zelopdv na secao de assinatura, mas se o user não tiver o zelopdv, fica sem acesso à pagina. precisamo de uma pagina nativa(tipo uma tab dentro de perfil pra gerenciar subs) no zelochat ou alguma API
