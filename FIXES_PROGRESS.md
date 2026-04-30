@@ -3,20 +3,20 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 20 close)
+## 📊 Status atual (2026-04-30 Sprint 21 open)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
-| **P1** | 47 | 40 | 4 | 3 | 85% |
-| **P2** | 38 | 1 | 37 | 0 | 3% |
+| **P1** | 47 | **41** | 0 | 3 | **87% ✅** |
+| **P2** | 38 | 10 | 28 | 0 | 26% |
 | **P3** | 24 | 0 | 24 | 0 | 0% |
 
-**P1 closed = 33 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo).
+**P1 closed = 34 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo). P1.37 shipped Sprint 19 (paywall flicker).
 
 **P1 deferred (3)**: P1.16, P1.17, P1.43 — multi-replica concerns, NÃO fazer enquanto single-node Railway. CLAUDE.md flag deploy invariant.
 
-**P1 actively pending (4)**: P1.37 (+ P1.16, P1.17, P1.43 listados como deferred).
+**P1 actively pending (0)**: todos fechados. 3 deferred (P1.16, P1.17, P1.43) para multi-replica.
 
 Use this doc to know **at a glance** what's safe in production right now and what's still on fire. Each fix has a `Status`, the `Files touched`, and the `Risk` it eliminates. Fixes that need a prod migration are marked `BLOCKED — needs operator approval` until the user signs off on applying.
 
@@ -35,7 +35,7 @@ Não estão na lista de "shipped explicit" mas foram verificados como já resolv
 | P1.42 | `zelochat_sessions_empresa_remote_unique` UNIQUE INDEX | `migration 000:99-100` |
 | P1.44 | `zelochat_increment_unread` RPC | `migration 000:500` |
 
-## P1s actively pending (4)
+## P1s actively pending (0 — todos fechados)
 
 | ID | Descrição | Risco | Sprint sugerido |
 |---|---|---|---|
@@ -45,7 +45,7 @@ Não estão na lista de "shipped explicit" mas foram verificados como já resolv
 | P1.17 | `configStore` desync entre réplicas | Deferred | quando scale |
 | ✅ P1.28 | `'trialing'` users locked out sem path claro — UI + backend guard | UX | Sprint 20 |
 | ✅ P1.29 | `'paused'` status sem UI pra unpause — badge dinâmico + portal routing | UX | Sprint 20 |
-| P1.37 | Paywall banner flicker on `subscriptionLoading=true` | Cosmético | próximo sprint |
+| ✅ P1.37 | Paywall banner flicker on `subscriptionLoading=true` | Cosmético | Sprint 19 |
 | ✅ P1.40 | Forms perdem state on session expiry — `useLocalDraft` hook + toast | Médio (complexo) | Sprint 20 |
 | P1.43 | `getAllSessions` table scan (escala >2k sessions) | Deferred | quando scale |
 
@@ -72,8 +72,8 @@ Não estão na lista de "shipped explicit" mas foram verificados como já resolv
 | P0.4 | `/api/produtos` proxy unauthenticated | ✅ | `server/router.ts:1374` | `requireEmpresaId(req)` validates JWT locally before proxying upstream. Paywall middleware also gates it. |
 | P0.5 | `zelochat-media` bucket public + enumerable filenames | ✅ | `server/supabase.ts:188`, `server/messageHandler.ts:198`, `server/router.ts:726`, `scripts/cleanup-orphan-media.ts` | NEW uploads scoped per-empresa with 128-bit random slug. Dry-run revealed only 4 historical files at old paths, ALL ORPHANS (not referenced in `zelochat_messages.content`). Cleanup script `scripts/cleanup-orphan-media.ts` lists the 4 explicit names and uses Storage API to delete (Supabase blocks direct DELETE FROM storage.objects). Run once via `npx tsx scripts/cleanup-orphan-media.ts`. |
 | P0.6 | `empresa_perfil` UPDATE policy missing `WITH CHECK` | ✅ | `zeloPDV-Prod/.ai/migrations/empresa_perfil_update_with_check.sql` (local — PDV gitignora `.ai/`) | Migration aplicada em prod via MCP em 2026-04-29. Verificada: `qual = with_check = (auth.uid() = user_id)`. Fecha vetor de roubo de empresa via `UPDATE empresa_perfil SET user_id = …`. Aplicada do repo PDV (tabela é PDV-owned). |
-| P0.7 | `zelochat_pending_orders` RLS on but no policies | 🟡 | `supabase/migrations/014_zelochat_rls_hardening.sql` | Migration DRAFTED. Apply only after operator review. |
-| P0.8 | `zelochat_messages` no UPDATE/DELETE; `zelochat_escalation_events` no INSERT/DELETE | 🟡 ✅ | `supabase/migrations/014_zelochat_rls_hardening.sql` + `server/escalation.ts:293-340` | Migration DRAFTED. Code-side `.eq('empresa_id')` already added (P1.1 closed). |
+| P0.7 | `zelochat_pending_orders` RLS on but no policies | ✅ | `supabase/migrations/014_zelochat_rls_hardening.sql` | Migration APPLIED em prod (version 20260429192428, verified 2026-04-30 via MCP). |
+| P0.8 | `zelochat_messages` no UPDATE/DELETE; `zelochat_escalation_events` no INSERT/DELETE | ✅ | `supabase/migrations/014_zelochat_rls_hardening.sql` + `server/escalation.ts:293-340` | Migration APPLIED em prod (same as P0.7). Code-side `.eq('empresa_id')` already added (P1.1 closed). |
 | P0.9 | Affirmative-text regex prematurely confirms orders | ✅ | `server/ai.ts:34, 786` | Whitelist exact-match w/ accent-strip + trailing punct. |
 | P0.10 | Negative-text regex aggressively cancels orders | ✅ | `server/ai.ts:34, 787` | Same fix as P0.9. |
 | P0.11 | `justConfirmedMap` in-memory only — duplicate orders after restart | ✅ | `server/ai.ts:35-66, 905-915` | DB fallback via `wasOrderRecentlyConfirmedInDb`. |
@@ -105,7 +105,29 @@ These are out of scope or unsafe to change from this branch:
 
 ---
 
+## P2s closed via previous sprints (verificados 2026-04-30)
+
+| ID | Como foi closed | Sprint |
+|---|---|---|
+| P2.1 | `confirm()`/`alert()` → `ConfirmModal` + `useToast` em 8 callsites | Sprint 19 |
+| P2.5 | segundo WebSocket unauthenticated em `useOrders` removido | Sprint 11 |
+| P2.11 | `priceBRL` consolidado em `src/data/pricing.ts` | Sprint 19 |
+
+---
+
 ## Sprint history
+
+### Sprint 21 (2026-04-30) — P2 security/LGPD + operational health
+
+- ✅ P2.14 — PII redacted from billing logs: `redactEmail()` + `redactCustomerId()` helpers em `server/redact.ts`; aplicados em todos os logs de `server/billing.ts` que continham email, customer_id, last4
+- ✅ P2.16 — `messages.update` broadcast agora valida `empresa_id === empresaId` antes de transmitir pro frontend; JID format check também — `server/router.ts`
+- ✅ P2.9 — "Exportar backup" agora exporta apenas config (businessInfo, triggers, quickResponses, aiInstructions, drivers, blockedDates, deliveryConfig). Sessions, messages, orders e managerHistory excluídos. Arquivo renomeado `zelochat-config-*` + `_notice` explicativo — `src/components/views/SettingsView.tsx`
+- ✅ P2.19 — `startPendingOrderSweeper()`: roda 2min após boot + a cada 24h, deleta `zelochat_pending_orders` com `expires_at < NOW() - 7 days` — `server/pendingOrderSweeper.ts` (novo) + wired em `server/index.ts`
+- ✅ P2.22 — `managerHistory` capped em 100 entries via `.slice(-100)` nos dois paths de append — `src/components/views/AIConfigsView.tsx`
+- ✅ P2.17 — `extractText` agora loga `[extractText] unknown message type:` antes do fallback `return null` — `server/messageHandler.ts`
+- Type-check verde: frontend `tsc --noEmit` + `tsc --noEmit -p server/tsconfig.json`
+
+---
 
 ### Sprint 20 (2026-04-30) — P1 security + billing UX + form persistence
 

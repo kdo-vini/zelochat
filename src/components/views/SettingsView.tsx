@@ -1325,11 +1325,27 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
                 </p>
                 <button
                   onClick={() => {
-                    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+                    // P2.9 — LGPD compliance: strip all keys that contain customer PII
+                    // (chat history, orders, sessions) before exporting. Only
+                    // configuration-level keys are included. Chat data remains in
+                    // Supabase and is never written to a local file.
+                    const safeBackup = {
+                      _notice: 'Dados de conversa não incluídos neste backup. Apenas configurações do sistema.',
+                      businessInfo: state.businessInfo,
+                      triggers: state.triggers,
+                      quickResponses: state.quickResponses,
+                      aiInstructions: state.aiInstructions,
+                      drivers: state.drivers,
+                      blockedDates: state.blockedDates,
+                      deliveryConfig: state.deliveryConfig,
+                      // Intentionally excluded: sessions, orders, managerHistory, products
+                      // (products come from ZeloPDV and are not backed up here)
+                    };
+                    const blob = new Blob([JSON.stringify(safeBackup, null, 2)], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `zelochat-backup-${new Date().toISOString().split('T')[0]}.json`;
+                    a.download = `zelochat-config-${new Date().toISOString().split('T')[0]}.json`;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);

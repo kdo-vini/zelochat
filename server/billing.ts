@@ -24,6 +24,7 @@ import type { Request, Response } from 'express';
 import Stripe from 'stripe';
 import { extractBearerToken, getServiceSupabase } from './supabase.js';
 import { PRICING } from '../src/data/pricing.js';
+import { redactEmail, redactCustomerId } from './redact.js';
 
 const STRIPE_API_VERSION = '2024-06-20';
 
@@ -184,7 +185,8 @@ function sendBillingError(res: Response, err: unknown): void {
     return;
   }
   if (message === 'CUSTOMER_MISMATCH' || message === 'NO_MATCHING_ITEM') {
-    console.error('[billing] data integrity error:', message, err);
+    // Redact PII: log only the error code, not the full Stripe object (may contain email/customer_id)
+    console.error('[billing] data integrity error:', message);
     res.status(500).json({
       error: 'Inconsistência detectada na assinatura. Entre em contato com o suporte.',
       code: message,
@@ -198,7 +200,8 @@ function sendBillingError(res: Response, err: unknown): void {
     });
     return;
   }
-  console.error('[billing] error:', err);
+  // Redact PII: avoid logging the full error object which may contain email/customer_id from Stripe
+  console.error('[billing] error:', message);
   res.status(500).json({ error: message });
 }
 
@@ -282,6 +285,8 @@ export async function createCheckoutSession(req: Request, res: Response): Promis
         metadata: { user_id: user.id },
       });
       stripeCustomerId = created.id;
+      // Redact PII in log: email and customer_id are LGPD-sensitive
+      console.log('[billing] created new Stripe customer:', redactCustomerId(stripeCustomerId), 'for email:', redactEmail(user.email));
     }
 
     const origin = getReturnOrigin(req);
@@ -585,7 +590,9 @@ export async function changePlan(req: Request, res: Response): Promise<void> {
         expand: ['items.data.price'],
       });
     } catch (err) {
-      console.error('[billing] change-plan: stripe.retrieve failed', err);
+      // Redact PII: log customer reference via helper, not the raw Stripe error object
+      const stripeMsg = err instanceof Error ? err.message : String(err);
+      console.error('[billing] change-plan: stripe.retrieve failed — customer:', redactCustomerId(row.provider_customer_id), '— stripe:', stripeMsg);
       throw new Error('STRIPE_ERROR');
     }
 
@@ -638,7 +645,9 @@ export async function changePlan(req: Request, res: Response): Promise<void> {
         { idempotencyKey },
       );
     } catch (err) {
-      console.error('[billing] change-plan: stripe.update failed', err);
+      // Redact PII: log customer reference via helper, not the raw Stripe error object
+      const stripeMsg = err instanceof Error ? err.message : String(err);
+      console.error('[billing] change-plan: stripe.update failed — customer:', redactCustomerId(row.provider_customer_id), '— stripe:', stripeMsg);
       throw new Error('STRIPE_ERROR');
     }
 

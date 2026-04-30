@@ -39,3 +39,35 @@ export function redactToken(token: string | null | undefined): string {
   if (token.length <= 4) return '***';
   return `***${token.slice(-4)}`;
 }
+
+/**
+ * Redact a customer email address for LGPD-compliant logging.
+ * `someone@example.com` → `so***@***.com`
+ * Keeps the first 2 chars of the local-part and the TLD of the domain.
+ */
+export function redactEmail(email: string | null | undefined): string {
+  if (!email) return '<no-email>';
+  const atIdx = email.indexOf('@');
+  if (atIdx < 0) return '***';
+  const local = email.slice(0, atIdx);
+  const domain = email.slice(atIdx + 1);
+  const redactedLocal = local.length > 2 ? `${local.slice(0, 2)}***` : '***';
+  // Keep only the TLD portion: last segment after the final dot
+  const lastDot = domain.lastIndexOf('.');
+  const tld = lastDot >= 0 ? domain.slice(lastDot) : '';
+  return `${redactedLocal}@***${tld}`;
+}
+
+/**
+ * Redact a Stripe customer ID for LGPD-compliant logging.
+ * `cus_1A2B3C4D5E6F` → `cus_***6F`  (keeps prefix type + last 4 chars)
+ */
+export function redactCustomerId(id: string | null | undefined): string {
+  if (!id) return '<no-customer>';
+  const underscoreIdx = id.indexOf('_');
+  if (underscoreIdx < 0) return `***${id.slice(-4)}`;
+  const prefix = id.slice(0, underscoreIdx + 1); // e.g. "cus_"
+  const rest = id.slice(underscoreIdx + 1);
+  const tail = rest.length > 4 ? rest.slice(-4) : rest;
+  return `${prefix}***${tail}`;
+}

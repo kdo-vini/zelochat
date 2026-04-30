@@ -10,6 +10,7 @@ import router from './router.js';
 import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscription } from './supabase.js';
 import { ensureAiSettingsHydrated, getConfig } from './configStore.js';
 import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
+import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -225,4 +226,9 @@ httpServer.listen(PORT, () => {
   // re-running after a successful sweep is a no-op. Customers within the
   // 30-day grace window are NOT touched.
   startSubscriptionSweepLoop();
+
+  // P2.19 — periodic sweep of expired pending orders. Runs 2 min after startup,
+  // then every 24h. Deletes rows where expires_at < NOW() - 7 days. Non-critical:
+  // errors are swallowed and never crash the process.
+  startPendingOrderSweeper();
 });

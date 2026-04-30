@@ -336,16 +336,31 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
   } else if (event === 'connection.update') {
     handleConnectionUpdate(data, empresaId);
   } else if (event === 'messages.update') {
-    // Delivery / read receipts — broadcast to frontend so it can update message ticks
+    // Delivery / read receipts — broadcast to frontend so it can update message ticks.
+    // P2.16 — Guard: only broadcast if the payload carries a remoteJid that indicates
+    // this update belongs to the resolved empresa. The empresaId itself is already
+    // validated at the webhook entry point (/webhook/:instance → DB lookup), but a
+    // malformed or cross-tenant payload could carry a mismatched empresa_id in its
+    // metadata. If empresa_id is present in the payload, assert it matches; otherwise
+    // require at minimum a valid remoteJid (non-empty, individual chat) before
+    // broadcasting.
     const updates = Array.isArray(data) ? data : [data];
     for (const u of updates) {
       if (!u?.keyId && !u?.messageId) continue;
+      // If the payload includes an empresa_id field, verify it matches the resolved empresa.
+      if (u.empresa_id && u.empresa_id !== empresaId) {
+        console.warn('[Webhook] messages.update: payload empresa_id mismatch — expected', empresaId, 'got', u.empresa_id, '— skipping broadcast');
+        continue;
+      }
+      // Require a valid individual-chat JID; skip if missing or group/broadcast.
+      const remoteJid: string = u.remoteJid ?? '';
+      if (!remoteJid || !remoteJid.endsWith('@s.whatsapp.net')) continue;
       broadcast(
         {
           type: 'message_status',
           data: {
             messageId: u.keyId ?? u.messageId,
-            remoteJid: u.remoteJid,
+            remoteJid,
             status: u.status, // 'DELIVERY_ACK' | 'READ'
           },
         },

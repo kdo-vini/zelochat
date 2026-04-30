@@ -133,7 +133,8 @@ export const AIConfigsView = ({
   const handleGeneralManagerSend = async () => {
     if (!managerChatInput.trim()) return;
     const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: managerChatInput, preview: managerChatInput, kind: 'text', timestamp: new Date().toISOString() };
-    setState(prev => ({ ...prev, managerHistory: [...(prev.managerHistory || []), userMsg] }));
+    // P2.22 — cap at 100 entries to prevent unbounded JSONB growth in empresa_perfil
+    setState(prev => ({ ...prev, managerHistory: [...(prev.managerHistory || []), userMsg].slice(-100) }));
     setManagerChatInput('');
     setIsProcessing(true);
     try {
@@ -141,7 +142,8 @@ export const AIConfigsView = ({
       const result = await getGeneralManagerResponse(currentHistory, userMsg.content);
       const botMsg: ChatMessage = { id: Date.now().toString(), role: 'assistant', content: result.reply, preview: result.reply, kind: 'text', timestamp: new Date().toISOString() };
       setState(prev => {
-        let newState = { ...prev, managerHistory: [...(prev.managerHistory || []), botMsg] };
+        // P2.22 — cap at 100 entries
+        let newState = { ...prev, managerHistory: [...(prev.managerHistory || []), botMsg].slice(-100) };
         if (result.actions?.length > 0) {
           result.actions.forEach((action: { type: string; payload: { date: string; reason: string } }) => {
             if (action.type === 'BLOCK_DATE') {

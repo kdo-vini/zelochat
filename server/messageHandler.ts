@@ -186,6 +186,11 @@ function extractText(msg: any): string | null {
   if (message.buttonsResponseMessage?.selectedDisplayText) return message.buttonsResponseMessage.selectedDisplayText;
   if (message.templateButtonReplyMessage?.selectedDisplayText) return message.templateButtonReplyMessage.selectedDisplayText;
 
+  // P2.17 — log unknown message types so they surface in Railway logs and can be
+  // added to the allowlist above when Whatsmiau introduces new payload shapes.
+  const messageType = Object.keys(message)[0] ?? 'unknown';
+  const remoteJid: string = msg.key?.remoteJid ?? 'unknown';
+  console.warn('[extractText] unknown message type:', messageType, 'from:', remoteJid);
   return null;
 }
 
