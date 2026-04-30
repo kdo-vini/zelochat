@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react';
+import { ConfirmModal } from '../ConfirmModal';
+import { useToast } from '../../contexts/ToastContext';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
@@ -86,7 +88,9 @@ export const CalendarView = ({
   const [newBlockReason, setNewBlockReason] = useState('');
   const [blockError, setBlockError] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [confirmPrinterConnect, setConfirmPrinterConnect] = useState(false);
   const printer = usePrinter();
+  const toast = useToast();
 
   const ordersMap = useMemo(() => ordersByDate(state.orders), [state.orders]);
   const blockedMap = useMemo(() => {
@@ -165,26 +169,29 @@ export const CalendarView = ({
     const key = dateKey(anchor);
     const orders = ordersMap.get(key) ?? [];
     if (orders.length === 0) {
-      alert('Nenhum pedido para este dia.');
+      toast.info('Nenhum pedido para este dia.');
       return;
     }
 
     if (!printer.connected) {
-      const confirmConnect = window.confirm('Impressora não conectada. Deseja conectar agora?');
-      if (confirmConnect) {
-        await printer.connect();
-      }
+      setConfirmPrinterConnect(true);
       return;
     }
 
+    await doPrint();
+  };
+
+  const doPrint = async () => {
+    const key = dateKey(anchor);
+    const orders = ordersMap.get(key) ?? [];
     const dateLabel = format(anchor, "dd/MM/yyyy", { locale: ptBR });
     const businessName = state.businessInfo?.name || 'ZeloChat';
-    
+
     try {
       await printer.printDay(dateLabel, orders, businessName);
     } catch (err) {
       console.error('Print error:', err);
-      alert('Erro ao imprimir na impressora USB. Verifique a conexão.');
+      toast.error('Erro ao imprimir na impressora USB. Verifique a conexão.');
     }
   };
 
@@ -531,6 +538,17 @@ export const CalendarView = ({
           </>
         )}
       </AnimatePresence>
+
+      <ConfirmModal
+        open={confirmPrinterConnect}
+        title="Impressora não conectada"
+        message="Deseja conectar a impressora agora?"
+        onClose={() => setConfirmPrinterConnect(false)}
+        onConfirm={async () => { await printer.connect(); }}
+        confirmLabel="Conectar"
+        confirmLoadingLabel="Conectando..."
+        destructive={false}
+      />
     </div>
   );
 };

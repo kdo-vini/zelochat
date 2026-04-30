@@ -30,6 +30,7 @@ import { EscaladoBadge } from '../shared/EscaladoBadge';
 import { SlaTimer } from '../shared/SlaTimer';
 import { EscalationLogCard } from '../shared/EscalationLogCard';
 import { useEscalationEvents } from '../../hooks/useEscalationEvents';
+import { ConfirmModal } from '../ConfirmModal';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -123,6 +124,7 @@ export function ChatView({
   const [newChatMessage, setNewChatMessage] = useState('');
   const [newChatLoading, setNewChatLoading] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
+  const [deleteSessionPending, setDeleteSessionPending] = useState<{ id: string; name: string } | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -509,9 +511,7 @@ export function ChatView({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (window.confirm(`Excluir a conversa com ${s.customerName}? Esta ação não pode ser desfeita.`)) {
-                        void onDeleteSession(s.id);
-                      }
+                      setDeleteSessionPending({ id: s.id, name: s.customerName });
                     }}
                     title="Excluir conversa"
                     className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-alert-soft)] hover:text-[var(--color-alert)] transition-colors flex-shrink-0"
@@ -643,8 +643,8 @@ export function ChatView({
                           <button
                             onClick={() => {
                               setChatMenuOpen(false);
-                              if (activeSession && window.confirm(`Excluir a conversa com ${activeSession.customerName}? Esta ação não pode ser desfeita.`)) {
-                                void onDeleteSession(activeSession.id);
+                              if (activeSession) {
+                                setDeleteSessionPending({ id: activeSession.id, name: activeSession.customerName });
                               }
                             }}
                             className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)] transition-colors"
@@ -1093,6 +1093,16 @@ export function ChatView({
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ConfirmModal
+        open={deleteSessionPending !== null}
+        title="Excluir conversa?"
+        message={`Excluir a conversa com ${deleteSessionPending?.name}? Esta ação não pode ser desfeita.`}
+        onClose={() => setDeleteSessionPending(null)}
+        onConfirm={async () => { await onDeleteSession(deleteSessionPending!.id); }}
+        confirmLabel="Excluir"
+        confirmLoadingLabel="Excluindo..."
+      />
     </>
   );
 }

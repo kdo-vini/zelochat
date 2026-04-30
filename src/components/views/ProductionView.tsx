@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ConfirmModal } from '../ConfirmModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import {
@@ -435,6 +436,8 @@ function OrderDrawer({
   onDelete: (id: string) => void;
   onUpdateStatus: (id: string, status: Order['status']) => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   return (
     <>
       <motion.div
@@ -608,12 +611,7 @@ function OrderDrawer({
               Editar
             </button>
             <button
-              onClick={() => {
-                if (confirm(`Excluir pedido de ${order.customerName}?`)) {
-                  onDelete(order.id);
-                  onClose();
-                }
-              }}
+              onClick={() => setConfirmDelete(true)}
               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-[13.5px] font-semibold bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
@@ -628,6 +626,16 @@ function OrderDrawer({
           </button>
         </div>
       </motion.div>
+
+      <ConfirmModal
+        open={confirmDelete}
+        title="Excluir pedido?"
+        message={`Excluir o pedido de ${order.customerName}? Esta ação não pode ser desfeita.`}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={async () => { onDelete(order.id); onClose(); }}
+        confirmLabel="Excluir"
+        confirmLoadingLabel="Excluindo..."
+      />
     </>
   );
 }

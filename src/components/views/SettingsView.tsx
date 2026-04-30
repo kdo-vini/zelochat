@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Lock, Sparkles, ArrowRightLeft } from 'lucide-react';
+import { ConfirmModal } from '../ConfirmModal';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
@@ -325,6 +326,7 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
   const [qrCode, setQrCode] = useState<string | null>(lastKnownQrCode);
   const [isLoading, setIsLoading] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -454,7 +456,6 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
   };
 
   const disconnectWA = async () => {
-    if (!confirm('Desconectar o WhatsApp? Você precisará escanear o QR Code novamente para reconectar.')) return;
     setIsDisconnecting(true);
     setError(null);
 
@@ -516,6 +517,7 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
   }
 
   return (
+    <>
     <SectionCard icon={Smartphone} title="Integração WhatsApp">
       <div className="flex items-center justify-between mb-5">
         <span className={`inline-flex items-center gap-2 text-[12.5px] font-semibold px-2.5 py-1.5 rounded-full ${cfg.badge}`}>
@@ -539,7 +541,7 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
             </div>
           )}
           <button
-            onClick={disconnectWA}
+            onClick={() => setConfirmDisconnect(true)}
             disabled={isDisconnecting}
             className="flex items-center gap-2 mx-auto text-[12.5px] text-[var(--color-ink-muted)] hover:text-[var(--color-alert)] disabled:opacity-50 transition-colors"
           >
@@ -589,6 +591,17 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
         </div>
       )}
     </SectionCard>
+
+    <ConfirmModal
+      open={confirmDisconnect}
+      title="Desconectar WhatsApp?"
+      message="Você precisará escanear o QR Code novamente para reconectar o WhatsApp."
+      onClose={() => setConfirmDisconnect(false)}
+      onConfirm={disconnectWA}
+      confirmLabel="Desconectar"
+      confirmLoadingLabel="Desconectando..."
+    />
+    </>
   );
 };
 

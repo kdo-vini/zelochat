@@ -4,6 +4,7 @@ import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../
 import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
 import { useBuiltinTriggers } from '../../hooks/useBuiltinTriggers';
 import { useToast } from '../../contexts/ToastContext';
+import { ConfirmModal } from '../ConfirmModal';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 
@@ -58,6 +59,7 @@ export const AIConfigsView = ({
 }: AIConfigsViewProps) => {
   const builtinTriggers = useBuiltinTriggers(token);
   const toast = useToast();
+  const [deletingTrigger, setDeletingTrigger] = useState<{ id: string; name: string } | null>(null);
   const [managerInput, setManagerInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [managerChatInput, setManagerChatInput] = useState('');
@@ -492,13 +494,7 @@ export const AIConfigsView = ({
                           }`} />
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`Remover o gatilho "${t.name}"?`)) {
-                              void deleteTrigger(t.id)
-                                .then(() => toast.success(`Gatilho "${t.name}" removido.`))
-                                .catch(() => toast.error('Não consegui remover o gatilho. Tente novamente.'));
-                            }
-                          }}
+                          onClick={() => setDeletingTrigger({ id: t.id, name: t.name })}
                           className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] rounded transition-all"
                           title="Remover"
                         >
@@ -634,6 +630,19 @@ export const AIConfigsView = ({
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        open={deletingTrigger !== null}
+        title="Remover gatilho?"
+        message={`Remover o gatilho "${deletingTrigger?.name}"? Esta ação não pode ser desfeita.`}
+        onClose={() => setDeletingTrigger(null)}
+        onConfirm={async () => {
+          await deleteTrigger(deletingTrigger!.id);
+          toast.success(`Gatilho "${deletingTrigger!.name}" removido.`);
+        }}
+        confirmLabel="Remover"
+        confirmLoadingLabel="Removendo..."
+      />
     </div>
   );
 };

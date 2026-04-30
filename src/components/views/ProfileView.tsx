@@ -5,6 +5,7 @@ import { ZeloState } from '../../types';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { signOut, updateUserPassword } from '../../services/authService';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
+import { ConfirmModal } from '../ConfirmModal';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -41,6 +42,7 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa }: ProfileVi
 
   // Logout state
   const [signingOut, setSigningOut] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   useEffect(() => {
     if (empresa?.nome_exibicao) setDraftName(empresa.nome_exibicao);
@@ -94,7 +96,6 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa }: ProfileVi
   };
 
   const handleSignOut = async () => {
-    if (!window.confirm('Sair da sua conta?')) return;
     setSigningOut(true);
     await signOut();
     navigate('/auth');
@@ -196,7 +197,7 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa }: ProfileVi
               </div>
             </button>
             <button
-              onClick={handleSignOut}
+              onClick={() => setConfirmLogout(true)}
               disabled={signingOut}
               className="flex items-center gap-3 p-4 bg-[var(--color-alert-soft)] border border-[var(--color-alert)]/20 rounded-xl text-left hover:border-[var(--color-alert)]/40 transition-colors disabled:opacity-60"
             >
@@ -307,6 +308,16 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa }: ProfileVi
 
         <p className="text-center text-[12px] text-[var(--color-ink-faint)]">ZeloChat · v1.4.2-beta</p>
       </div>
+
+      <ConfirmModal
+        open={confirmLogout}
+        title="Sair da conta?"
+        message="Você será desconectado do ZeloChat neste dispositivo."
+        onClose={() => setConfirmLogout(false)}
+        onConfirm={handleSignOut}
+        confirmLabel="Sair"
+        confirmLoadingLabel="Saindo..."
+      />
     </div>
   );
 };

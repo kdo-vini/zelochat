@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { X, ExternalLink } from 'lucide-react';
+import { ConfirmModal } from '../../ConfirmModal';
 import type {
   Categoria,
   Subcategoria,
@@ -434,50 +435,16 @@ type ConfirmDeleteProps = {
 };
 
 export function ConfirmDelete({ open, title, message, onClose, onConfirm }: ConfirmDeleteProps) {
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) setErr(null);
-  }, [open]);
-
-  if (!open) return null;
-
-  const handleConfirm = async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      await onConfirm();
-      onClose();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Erro ao excluir.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
-    <ModalShell title={title} onClose={onClose}>
-      <p className="text-sm text-gray-700">{message}</p>
-      {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
-      <div className="mt-6 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100"
-        >
-          Cancelar
-        </button>
-        <button
-          type="button"
-          onClick={handleConfirm}
-          disabled={loading}
-          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-        >
-          {loading ? 'Excluindo...' : 'Excluir'}
-        </button>
-      </div>
-    </ModalShell>
+    <ConfirmModal
+      open={open}
+      title={title}
+      message={message}
+      onClose={onClose}
+      onConfirm={onConfirm}
+      confirmLabel="Excluir"
+      confirmLoadingLabel="Excluindo..."
+    />
   );
 }
 

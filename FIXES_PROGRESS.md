@@ -112,8 +112,12 @@ These are out of scope or unsafe to change from this branch:
 - ✅ P3 — copy polish (PT consistency + remove dead Camera button) — task 1
 - ✅ P2.11 — `priceBRL` constants consolidados em `src/data/pricing.ts` — task 2
 - ✅ P1.37 — paywall banner hide on `subscriptionLoading=true` — task 3
-- (in progress: P2.1 confirm/alert modal — task 4)
-- Type-check verde
+- ✅ P2.1 — confirm/alert nativos substituídos por `ConfirmModal` + `useToast` — task 4
+  - Novo `src/components/ConfirmModal.tsx` (shared, reused in all 8 callsites)
+  - `CatalogModals.ConfirmDelete` delegado ao novo `ConfirmModal`
+  - 8 callsites migrados: CalendarView, AIConfigsView, ChatView (×2), DriversView, ProductionView, ProfileView, SettingsView
+  - 2 alert() → useToast (CalendarView: info + error)
+- Type-check verde nos 2 tsconfigs
 
 ### Sprint 1 (shipped 2026-04-29) — revenue + correctness
 - ✅ P0.9, P0.10 — order-confirm regex

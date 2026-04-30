@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Bike, Check, Loader2, MapPin, Pencil, Plus, X } from 'lucide-react';
 import type { DeliveryDriver, Order } from '../../types';
 import { dispatchDriver } from '../../services/waApi';
+import { ConfirmModal } from '../ConfirmModal';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 
@@ -78,6 +79,7 @@ export const DriversView = ({
   const [draft, setDraft] = useState<DriverDraft>(EMPTY_DRAFT);
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingDriver, setDeletingDriver] = useState<DeliveryDriver | null>(null);
 
   const pendingDeliveries = orders.filter((order): order is Order => order.status === 'ready');
   const isEditing = !!draft.id;
@@ -138,16 +140,12 @@ export const DriversView = ({
     }
   };
 
-  const handleRemoveDriver = async (driver: DeliveryDriver) => {
-    if (submitting) {
-      return;
-    }
+  const handleRemoveDriver = (driver: DeliveryDriver) => {
+    if (submitting) return;
+    setDeletingDriver(driver);
+  };
 
-    const confirmed = window.confirm(`Remover o entregador ${driver.name}?`);
-    if (!confirmed) {
-      return;
-    }
-
+  const confirmRemoveDriver = async (driver: DeliveryDriver) => {
     setSubmitting(true);
     setActionError(null);
 
@@ -460,6 +458,16 @@ export const DriversView = ({
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        open={deletingDriver !== null}
+        title="Remover entregador?"
+        message={`Remover ${deletingDriver?.name} da lista de entregadores?`}
+        onClose={() => setDeletingDriver(null)}
+        onConfirm={async () => { await confirmRemoveDriver(deletingDriver!); }}
+        confirmLabel="Remover"
+        confirmLoadingLabel="Removendo..."
+      />
     </div>
   );
 };
