@@ -107,6 +107,13 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 19 (overnight automated, 2026-04-30)
+
+- ✅ P3 — copy polish + remove dead Camera button — task 1
+- ✅ P2.11 — `priceBRL` constants consolidados em `src/data/pricing.ts` — task 2
+- (in progress: P1.37 paywall flicker — task 3)
+- Type-check verde
+
 ### Sprint 1 (shipped 2026-04-29) — revenue + correctness
 - ✅ P0.9, P0.10 — order-confirm regex
 - ✅ P0.11 — last_confirmed_at DB fallback
