@@ -120,6 +120,7 @@ These are out of scope or unsafe to change from this branch:
 ### Sprint 30 (2026-04-30) — Hotfix datas bloqueadas da IA
 
 - ✅ P0 hotfix — A IA agora trata datas bloqueadas como regra forte no backend: hidrata `blocked_dates` direto do Supabase, bloqueia mensagens que já pedem/encomendam para uma data bloqueada antes de chamar a OpenAI e mantém uma segunda trava no `criar_pedido` para impedir botão de confirmação em feriado ou bloqueio manual — `server/configStore.ts`, `server/ai.ts`
+- ✅ Deploy hotfix — Configuração ausente de price ID do Stripe não derruba mais o servidor inteiro no import: WhatsApp/IA e `/api/healthz` sobem normalmente; ações de cobrança falham fechadas com erro claro até a env ser configurada — `server/billing.ts`
 - Novidades: entrada PT-BR para o aviso imediato de data bloqueada — `src/data/changelog.ts`
 - Type-check/build verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`, `vite build` (mantém o aviso existente de chunk >500 kB)
 

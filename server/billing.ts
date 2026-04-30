@@ -49,15 +49,19 @@ function stripeObjectId(value: string | { id?: string } | null | undefined): str
 // P2.10 — Stripe price IDs must come from env. Previously these had hardcoded
 // fallback values ('price_1TR0...'), meaning a dev environment without
 // STRIPE_PRICE_CHAT / STRIPE_PRICE_BUNDLE set would silently use the production
-// price IDs and potentially charge real customers. The throw at module load
-// makes misconfigured deployments fail fast instead of silently using prod prices.
+// price IDs and potentially charge real customers. Keep validation at billing
+// action time (not module load) so a missing Stripe price never takes down
+// WhatsApp/AI or Railway's healthcheck.
 //
-// Production Railway already has both vars set (see BILLING.md).
 // Local dev must set them in .env (use test-mode price IDs from Stripe dashboard).
-const PRICE_CHAT = process.env.STRIPE_PRICE_CHAT;
-const PRICE_BUNDLE = process.env.STRIPE_PRICE_BUNDLE;
-if (!PRICE_CHAT) throw new Error('STRIPE_PRICE_CHAT env var is required');
-if (!PRICE_BUNDLE) throw new Error('STRIPE_PRICE_BUNDLE env var is required');
+function getRequiredStripePrice(name: 'STRIPE_PRICE_CHAT' | 'STRIPE_PRICE_BUNDLE'): string {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`[billing] ${name} env var is required for billing actions`);
+    throw new Error(`${name}_MISSING`);
+  }
+  return value;
+}
 
 interface PlanCatalogEntry {
   tier: 'chat' | 'bundle';
@@ -70,13 +74,13 @@ function getPlanCatalog(): Record<'chat' | 'bundle', PlanCatalogEntry> {
   return {
     chat: {
       tier: 'chat',
-      priceId: PRICE_CHAT as string,
+      priceId: getRequiredStripePrice('STRIPE_PRICE_CHAT'),
       label: 'ZeloChat Pro',
       priceBRL: PRICING.chat.priceBRL,
     },
     bundle: {
       tier: 'bundle',
-      priceId: PRICE_BUNDLE as string,
+      priceId: getRequiredStripePrice('STRIPE_PRICE_BUNDLE'),
       label: 'ZeloChat + ZeloPDV',
       priceBRL: PRICING.bundle.priceBRL,
     },
@@ -115,6 +119,13 @@ function sendBillingError(res: Response, err: unknown): void {
     res.status(500).json({
       error: 'Stripe não configurado no servidor. Defina STRIPE_SECRET_KEY.',
       code: 'STRIPE_NOT_CONFIGURED',
+    });
+    return;
+  }
+  if (message === 'STRIPE_PRICE_CHAT_MISSING' || message === 'STRIPE_PRICE_BUNDLE_MISSING') {
+    res.status(503).json({
+      error: 'Planos de cobrança não configurados no servidor. Chame o suporte antes de tentar contratar ou trocar de plano.',
+      code: 'STRIPE_PRICE_NOT_CONFIGURED',
     });
     return;
   }
