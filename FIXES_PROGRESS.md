@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 31 hotfix)
+## 📊 Status atual (2026-04-30 Sprint 32 hotfix)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
@@ -116,6 +116,12 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 32 (2026-04-30) — Hotfix horário passado no mesmo dia
+
+- ✅ P0 hotfix — A IA agora rejeita pedido para hoje em horário que já passou, mesmo quando o horário está dentro da janela de atendimento. Cobre mensagem do cliente antes da OpenAI e a trava final do `criar_pedido` antes de criar pedido pendente — `server/ai.ts`
+- Novidades: entrada PT-BR para o bloqueio de horário passado no mesmo dia — `src/data/changelog.ts`
+- Type-check/build verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`, `vite build` (mantém o aviso existente de chunk >500 kB)
 
 ### Sprint 31 (2026-04-30) — Hotfix horário ativo da IA
 

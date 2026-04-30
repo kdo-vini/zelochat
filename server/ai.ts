@@ -579,17 +579,18 @@ interface OperatingWindow {
 interface BusinessHoursIssue {
   date: string;
   timeMinutes?: number;
-  kind: 'before_open' | 'after_close' | 'currently_closed' | 'closed_day';
+  kind: 'before_open' | 'after_close' | 'currently_closed' | 'closed_day' | 'past_time';
   window: OperatingWindow | null;
   dayLabel: string;
+  nowMinutes?: number;
 }
 
 function parseTimeToMinutes(value: unknown): number | null {
   if (typeof value !== 'string') return null;
-  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  const match = value.trim().toLowerCase().match(/^(\d{1,2})(?:(?::|h)(\d{2}))?$/);
   if (!match) return null;
   const hour = Number(match[1]);
-  const minute = Number(match[2]);
+  const minute = match[2] ? Number(match[2]) : 0;
   if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
   if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
   return hour * 60 + minute;
@@ -646,6 +647,10 @@ function isWithinOperatingWindow(minutes: number, window: OperatingWindow): bool
   return minutes >= window.openMinutes || minutes <= window.closeMinutes;
 }
 
+function isPastSameDaySchedule(isoDate: string, timeMinutes: number, now = new Date()): boolean {
+  return isoDate === toIsoBrazil(now) && timeMinutes <= getBrazilTimeParts(now).minutes;
+}
+
 function collectRequestedTimeMinutes(text: string): number[] {
   const times = new Set<number>();
   const addTime = (hourRaw: string | undefined, minuteRaw: string | undefined) => {
@@ -662,6 +667,11 @@ function collectRequestedTimeMinutes(text: string): number[] {
 
   const colonRe = /\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
   while ((match = colonRe.exec(normalized)) !== null) {
+    addTime(match[1], match[2]);
+  }
+
+  const compactHourRe = /\b([01]?\d|2[0-3])h([0-5]\d)\b/g;
+  while ((match = compactHourRe.exec(normalized)) !== null) {
     addTime(match[1], match[2]);
   }
 
@@ -706,6 +716,7 @@ function findBusinessHoursIssueForSchedule(
   empresaId: string,
   pickupDate: string,
   pickupTime?: string,
+  now = new Date(),
 ): BusinessHoursIssue | null {
   const cfg = getConfig(empresaId);
   const dayLabel = getDayLabelFromIso(pickupDate);
@@ -716,6 +727,16 @@ function findBusinessHoursIssueForSchedule(
   const window = getOperatingWindow(empresaId);
   const timeMinutes = parseTimeToMinutes(pickupTime);
   if (!window || timeMinutes === null) return null;
+  if (isPastSameDaySchedule(pickupDate, timeMinutes, now)) {
+    return {
+      date: pickupDate,
+      timeMinutes,
+      kind: 'past_time',
+      window,
+      dayLabel,
+      nowMinutes: getBrazilTimeParts(now).minutes,
+    };
+  }
   if (isWithinOperatingWindow(timeMinutes, window)) return null;
 
   return {
@@ -739,17 +760,27 @@ function findBusinessHoursIssueFromCustomerText(
   const requestedDates = collectRequestedDateIsos(text, now);
   const requestedTimes = collectRequestedTimeMinutes(text);
   const hasIntent = hasOrderIntent(text);
+  const nowBr = getBrazilTimeParts(now);
   if (!hasIntent && requestedTimes.length === 0) return null;
 
   if (requestedTimes.length > 0) {
-    const dates = requestedDates.length > 0 ? requestedDates : [todayIso];
-    for (const date of dates) {
+    for (const date of requestedDates) {
       const dayLabel = getDayLabelFromIso(date);
       if (dayLabel && cfg.closedDays.includes(dayLabel)) {
         return { date, timeMinutes: requestedTimes[0], kind: 'closed_day', window, dayLabel };
       }
       if (!window) continue;
       for (const timeMinutes of requestedTimes) {
+        if (isPastSameDaySchedule(date, timeMinutes, now)) {
+          return {
+            date,
+            timeMinutes,
+            kind: 'past_time',
+            window,
+            dayLabel,
+            nowMinutes: nowBr.minutes,
+          };
+        }
         if (!isWithinOperatingWindow(timeMinutes, window)) {
           return {
             date,
@@ -763,12 +794,14 @@ function findBusinessHoursIssueFromCustomerText(
     }
   }
 
-  if (requestedDates.length === 0 && hasImmediateOrderIntent(text)) {
+  const shouldCheckCurrentMoment =
+    hasImmediateOrderIntent(text) &&
+    (requestedDates.length === 0 || requestedDates.includes(todayIso));
+  if (shouldCheckCurrentMoment) {
     if (cfg.closedDays.includes(todayLabel)) {
       return { date: todayIso, kind: 'closed_day', window, dayLabel: todayLabel };
     }
     if (window) {
-      const nowBr = getBrazilTimeParts(now);
       if (!isWithinOperatingWindow(nowBr.minutes, window)) {
         return {
           date: todayIso,
@@ -800,6 +833,12 @@ function buildBusinessHoursReply(issue: BusinessHoursIssue): string {
   if (issue.kind === 'currently_closed') {
     const timeText = issue.timeMinutes !== undefined ? ` Agora são ${minutesToDisplay(issue.timeMinutes)}.` : '';
     return `Hoje já estamos fora do horário de atendimento.${timeText} ${windowText} Posso te ajudar a agendar para outro horário dentro desse período, escolher outro dia ou chamar um atendente.`;
+  }
+
+  if (issue.kind === 'past_time') {
+    const requestedTime = issue.timeMinutes !== undefined ? minutesToDisplay(issue.timeMinutes) : 'esse horário';
+    const nowText = issue.nowMinutes !== undefined ? ` Agora são ${minutesToDisplay(issue.nowMinutes)}.` : '';
+    return `Esse horário já passou hoje: ${requestedTime}.${nowText} ${windowText} Posso te ajudar a escolher um horário futuro dentro do atendimento, outro dia ou chamar um atendente.`;
   }
 
   const requestedTime = issue.timeMinutes !== undefined ? ` às ${minutesToDisplay(issue.timeMinutes)}` : '';
@@ -1212,7 +1251,8 @@ REGRA OBRIGATÓRIA PARA HORÁRIO DE ATENDIMENTO:
 - Use a data e hora atual acima em TODA resposta sobre pedidos.
 - Se o cliente quiser pedir "agora", "hoje" ou sem deixar claro que é para outro dia/horário e agora estiver fora do horário ${operatingHoursStr}, informe imediatamente que estamos fora do horário e ofereça agendar outro horário, outro dia ou chamar um atendente.
 - Se o cliente pedir retirada/entrega em horário fora de ${operatingHoursStr}, avise imediatamente. NÃO continue coletando produto, nome, pagamento, endereço ou observação.
-- NUNCA chame criar_pedido com pickupTime fora do horário de funcionamento ou pickupDate em dia fechado.
+- Se o cliente pedir para HOJE em um horário que já passou, mesmo que esteja dentro do horário de funcionamento, avise imediatamente que esse horário já passou e ofereça outro horário futuro ou outro dia.
+- NUNCA chame criar_pedido com pickupTime fora do horário de funcionamento, pickupDate em dia fechado ou pickupDate=hoje com pickupTime no passado.
 
 REGRA OBRIGATÓRIA PARA DATAS BLOQUEADAS:
 - Se o cliente pedir, sugerir, confirmar ou perguntar sobre encomenda/pedido para uma data bloqueada, avise IMEDIATAMENTE que não aceitamos encomendas nessa data e diga o motivo cadastrado.
@@ -1625,6 +1665,10 @@ export async function generateAndSendReply(
           const cfg = getConfig(resolvedEmpresaId);
           const normalizedPickupDate = normalizeIsoDateInput(args.pickupDate);
           if (normalizedPickupDate) args.pickupDate = normalizedPickupDate;
+          const normalizedPickupTimeMinutes = parseTimeToMinutes(args.pickupTime);
+          if (normalizedPickupTimeMinutes !== null) {
+            args.pickupTime = minutesToDisplay(normalizedPickupTimeMinutes);
+          }
           const blockedPickupDate = normalizedPickupDate
             ? getBlockedDateByIso(resolvedEmpresaId, normalizedPickupDate)
             : null;
