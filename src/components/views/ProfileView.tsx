@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, ShieldCheck, LogOut, Check, Loader2, X } from 'lucide-react';
+import { ShieldCheck, LogOut, Check, Loader2, X } from 'lucide-react';
 import { ZeloState } from '../../types';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { signOut, updateUserPassword } from '../../services/authService';
@@ -110,9 +110,6 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa }: ProfileVi
             <div className="w-24 h-24 rounded-full overflow-hidden ring-2 ring-[var(--color-line)] shadow-sm">
               <img src={state.profile.avatar} alt="" className="w-full h-full object-cover" />
             </div>
-            <button className="absolute bottom-0 right-0 w-8 h-8 bg-[var(--color-brand)] text-white rounded-full flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 transition-opacity">
-              <Camera className="w-3.5 h-3.5" />
-            </button>
           </div>
           <div>
             <h2 className="text-[22px] font-semibold">{draftName || state.profile.name}</h2>

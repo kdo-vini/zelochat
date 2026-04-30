@@ -815,7 +815,7 @@ export function ChatView({
                       onChange={(e) => setOwnerInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && !isSending && void handleOwnerSend()}
                       disabled={isSending}
-                      placeholder={pendingAttachment ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /macro'}
+                      placeholder={pendingAttachment ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /atalho'}
                       className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-9 disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                     <div className="absolute right-3 top-1/2 -translate-y-1/2">

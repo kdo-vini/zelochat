@@ -342,7 +342,7 @@ export const AIConfigsView = ({
           <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col min-h-[280px]">
             <SectionHeader
               icon={Send}
-              title="Respostas rápidas (macros)"
+              title="Respostas rápidas (atalhos)"
               subtitle="Use /GATILHO no chat para enviar instantaneamente — salvas automaticamente"
               action={
                 <button
@@ -355,7 +355,7 @@ export const AIConfigsView = ({
             />
             <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
               {quickResponses.length === 0 ? (
-                <p className="text-[13px] text-center text-[var(--color-ink-faint)] mt-6">Nenhum macro configurado.</p>
+                <p className="text-[13px] text-center text-[var(--color-ink-faint)] mt-6">Nenhum atalho configurado.</p>
               ) : (
                 quickResponses.map(qr => (
                   <div key={qr.id} className="group bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg overflow-hidden">
@@ -453,13 +453,13 @@ export const AIConfigsView = ({
             <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col min-h-[240px]">
               <SectionHeader
                 icon={Bell}
-                title="Triggers personalizados"
+                title="Gatilhos personalizados"
                 subtitle="Descreva o comportamento em português"
               />
               <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
                 {triggers.length === 0 ? (
                   <p className="text-[12.5px] text-center text-[var(--color-ink-faint)] mt-6 px-4">
-                    Nenhum trigger ainda. Descreva um cenário abaixo — a IA extrai o que precisa.
+                    Nenhum gatilho ainda. Descreva um cenário abaixo — a IA extrai o que precisa.
                   </p>
                 ) : (
                   triggers.map(t => (
@@ -493,7 +493,7 @@ export const AIConfigsView = ({
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm(`Remover o trigger "${t.name}"?`)) {
+                            if (confirm(`Remover o gatilho "${t.name}"?`)) {
                               void deleteTrigger(t.id)
                                 .then(() => toast.success(`Gatilho "${t.name}" removido.`))
                                 .catch(() => toast.error('Não consegui remover o gatilho. Tente novamente.'));
