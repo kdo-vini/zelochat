@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 32 hotfix)
+## 📊 Status atual (2026-04-30 Sprint 33 hotfix)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
@@ -116,6 +116,14 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 33 (2026-04-30) — Hotfix contexto de agenda da IA
+
+- ✅ P0 hotfix — A IA agora revalida o contexto recente da conversa antes de responder: se ela ou o cliente já citaram uma data bloqueada, produto/pagamento solto não continua o pedido; se o contexto é uma data futura livre, a IA não confunde a continuação com pedido imediato fora do horário atual — `server/ai.ts`
+- ✅ Edge cases cobertos — horário sem data cai como hoje quando não há agenda futura; horário futuro dentro da janela não é recusado só porque a loja ainda não abriu; áudio transcrito depois também entra na checagem de data/hora — `server/ai.ts`
+- Novidades: entrada PT-BR para o contexto de agenda preservado — `src/data/changelog.ts`
+- Teste direcionado verde: replay do print de produção, data bloqueada em 01/05, produto/pagamento após agenda futura válida, horário passado no mesmo dia, horário sem data e áudio transcrito depois
+- Type-check/build/boot verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`, `vite build`, healthcheck local `/api/healthz` com webhook WhatsApp desativado (mantém o aviso existente de chunk >500 kB)
 
 ### Sprint 32 (2026-04-30) — Hotfix horário passado no mesmo dia
 

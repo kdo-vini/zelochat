@@ -680,6 +680,17 @@ function collectRequestedTimeMinutes(text: string): number[] {
     addTime(match[1], undefined);
   }
 
+  const dayPeriodRe = /\b(1[0-2]|0?[1-9])\s+(?:da\s+)?(manha|tarde|noite)\b/g;
+  while ((match = dayPeriodRe.exec(normalized)) !== null) {
+    let hour = Number(match[1]);
+    const period = match[2];
+    if (period === 'tarde' && hour < 12) hour += 12;
+    if (period === 'noite' && hour < 12) hour += 12;
+    addTime(String(hour), undefined);
+  }
+
+  if (/\bmeio\s+dia\b/.test(normalized)) addTime('12', undefined);
+
   const prepositionRe = /\b(?:as|a)\s+([01]?\d|2[0-3])(?:[:h]([0-5]\d))?\b/g;
   while ((match = prepositionRe.exec(normalized)) !== null) {
     addTime(match[1], match[2]);
@@ -704,6 +715,15 @@ function hasImmediateOrderIntent(text: string): boolean {
     .trim();
   if (!normalized) return false;
   return /\b(fazer pedido|fazer um pedido|pedido|pedir|pede|encomenda|encomendar|agendar|agenda|reservar|reserva|retirada|retirar|buscar|entrega|entregar|delivery|cento|salgado|salgados|doce|doces|bolo|bolos|kit|kits)\b/u.test(normalized);
+}
+
+function hasScheduleContextIntent(text: string): boolean {
+  const normalized = normalizeDateText(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  return /\b(pedido|pediu|pedir|pede|quero|queria|preciso|encomenda|encomendar|agendar|agenda|agendado|reservar|reserva|retirada|retirar|buscar|entrega|entregar|delivery|para|pra|pro|seria|dia|data|horario|hora|cento|salgado|salgados|doce|doces|bolo|bolos|kit|kits)\b/u.test(normalized);
 }
 
 function getDayLabelFromIso(isoDate: string): string {
@@ -752,6 +772,7 @@ function findBusinessHoursIssueFromCustomerText(
   empresaId: string,
   text: string,
   now = new Date(),
+  options: { checkCurrentMoment?: boolean } = {},
 ): BusinessHoursIssue | null {
   const window = getOperatingWindow(empresaId);
   const cfg = getConfig(empresaId);
@@ -764,7 +785,12 @@ function findBusinessHoursIssueFromCustomerText(
   if (!hasIntent && requestedTimes.length === 0) return null;
 
   if (requestedTimes.length > 0) {
-    for (const date of requestedDates) {
+    const datesForTimeCheck = requestedDates.length > 0
+      ? requestedDates
+      : options.checkCurrentMoment !== false
+        ? [todayIso]
+        : [];
+    for (const date of datesForTimeCheck) {
       const dayLabel = getDayLabelFromIso(date);
       if (dayLabel && cfg.closedDays.includes(dayLabel)) {
         return { date, timeMinutes: requestedTimes[0], kind: 'closed_day', window, dayLabel };
@@ -795,6 +821,8 @@ function findBusinessHoursIssueFromCustomerText(
   }
 
   const shouldCheckCurrentMoment =
+    options.checkCurrentMoment !== false &&
+    requestedTimes.length === 0 &&
     hasImmediateOrderIntent(text) &&
     (requestedDates.length === 0 || requestedDates.includes(todayIso));
   if (shouldCheckCurrentMoment) {
@@ -816,6 +844,117 @@ function findBusinessHoursIssueFromCustomerText(
 
   return null;
 }
+
+type ScheduleContextGuard =
+  | { type: 'blocked_date'; blockedDate: { date: string; reason: string } }
+  | { type: 'business_hours'; issue: BusinessHoursIssue }
+  | { type: 'valid_schedule' };
+
+function evaluateScheduleContextText(
+  empresaId: string,
+  text: string,
+  now = new Date(),
+): ScheduleContextGuard | null {
+  const requestedDates = collectRequestedDateIsos(text, now);
+  const requestedTimes = collectRequestedTimeMinutes(text);
+  if (requestedDates.length === 0) return null;
+
+  const hasContext = hasScheduleContextIntent(text);
+  if (!hasContext && requestedTimes.length === 0) return null;
+
+  let sawUsableSchedule = false;
+  for (const date of requestedDates) {
+    const blockedDate = getBlockedDateByIso(empresaId, date);
+    if (blockedDate) return { type: 'blocked_date', blockedDate };
+
+    if (requestedTimes.length === 0) {
+      const closedIssue = findBusinessHoursIssueForSchedule(empresaId, date, undefined, now);
+      if (closedIssue) return { type: 'business_hours', issue: closedIssue };
+      if (date === toIsoBrazil(now)) {
+        const window = getOperatingWindow(empresaId);
+        const nowBr = getBrazilTimeParts(now);
+        if (window && !isWithinOperatingWindow(nowBr.minutes, window)) {
+          return {
+            type: 'business_hours',
+            issue: {
+              date,
+              timeMinutes: nowBr.minutes,
+              kind: 'currently_closed',
+              window,
+              dayLabel: getDayLabelFromIso(date),
+            },
+          };
+        }
+      }
+      sawUsableSchedule = true;
+      continue;
+    }
+
+    for (const timeMinutes of requestedTimes) {
+      const issue = findBusinessHoursIssueForSchedule(
+        empresaId,
+        date,
+        minutesToDisplay(timeMinutes),
+        now,
+      );
+      if (issue) return { type: 'business_hours', issue };
+      sawUsableSchedule = true;
+    }
+  }
+
+  return sawUsableSchedule ? { type: 'valid_schedule' } : null;
+}
+
+function isScheduleGuardReply(text: string): boolean {
+  const normalized = normalizeDateText(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (
+    normalized.includes('nao estamos aceitando') ||
+    normalized.includes('fora do horario de atendimento') ||
+    normalized.includes('horario ja passou') ||
+    normalized.includes('data esta bloqueada') ||
+    normalized.includes('dia de fechamento')
+  );
+}
+
+function findRecentScheduleContextGuard(
+  empresaId: string,
+  messages: { role: string; content: string | null; preview: string; kind: string; audio_transcript?: string | null; audio_transcript_status?: string | null }[],
+  now = new Date(),
+): ScheduleContextGuard | null {
+  const recent = messages.slice(-12);
+  let start = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const msg = recent[i];
+    if (msg.role !== 'assistant') continue;
+    const text = buildContentForModel(msg as any) || msg.preview || '';
+    if (isScheduleGuardReply(text)) {
+      start = i + 1;
+      break;
+    }
+  }
+
+  for (let i = recent.length - 1; i >= start; i--) {
+    const msg = recent[i];
+    const text = buildContentForModel(msg as any) || msg.preview || '';
+    if (!text) continue;
+    const result = evaluateScheduleContextText(empresaId, text, now);
+    if (result) return result;
+  }
+
+  return null;
+}
+
+export const __aiScheduleGuardsForTests = {
+  collectRequestedDateIsos,
+  collectRequestedTimeMinutes,
+  findBlockedDateFromCustomerText,
+  findBusinessHoursIssueFromCustomerText,
+  findBusinessHoursIssueForSchedule,
+  findRecentScheduleContextGuard,
+};
 
 function buildBusinessHoursReply(issue: BusinessHoursIssue): string {
   const dateLabel = issue.date === toIsoBrazil(new Date())
@@ -1511,8 +1650,25 @@ export async function generateAndSendReply(
     console.log(`[AI] Blocking reply before OpenAI: requested blocked date ${blockedDateFromMessage.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
     return sendBlockedDateReply(jid, resolvedEmpresaId, blockedDateFromMessage);
   }
+  const recentScheduleContext = findRecentScheduleContextGuard(
+    resolvedEmpresaId,
+    session.messages,
+  );
+  if (recentScheduleContext?.type === 'blocked_date') {
+    console.log(`[AI] Blocking reply before OpenAI: recent context has blocked date ${recentScheduleContext.blockedDate.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
+    return sendBlockedDateReply(jid, resolvedEmpresaId, recentScheduleContext.blockedDate);
+  }
+  if (recentScheduleContext?.type === 'business_hours') {
+    console.log(`[AI] Blocking reply before OpenAI: recent context has invalid schedule for empresa=${resolvedEmpresaId} jid=${jid}`);
+    return sendBusinessHoursReply(jid, resolvedEmpresaId, recentScheduleContext.issue);
+  }
   const businessHoursIssueFromMessage = lastUserTextForDate
-    ? findBusinessHoursIssueFromCustomerText(resolvedEmpresaId, lastUserTextForDate)
+    ? findBusinessHoursIssueFromCustomerText(
+        resolvedEmpresaId,
+        lastUserTextForDate,
+        new Date(),
+        { checkCurrentMoment: recentScheduleContext?.type !== 'valid_schedule' },
+      )
     : null;
   if (businessHoursIssueFromMessage) {
     console.log(`[AI] Blocking reply before OpenAI: requested outside business hours for empresa=${resolvedEmpresaId} jid=${jid}`);

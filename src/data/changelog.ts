@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-30',
     category: 'hotfix',
+    title: 'IA mantém o dia combinado do pedido',
+    description: 'Quando o cliente continua um pedido já agendado, a IA agora respeita o dia e horário que já estavam na conversa antes de pedir produto ou pagamento.',
+  },
+  {
+    date: '2026-04-30',
+    category: 'hotfix',
     title: 'IA não aceita horário que já passou',
     description: 'Pedidos para hoje agora precisam estar em um horário futuro; se o cliente pedir um horário que já passou, a IA avisa na hora e oferece outra opção.',
   },
