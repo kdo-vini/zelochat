@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-## 📊 Status atual (2026-04-30 Sprint 33 hotfix)
+## 📊 Status atual (2026-04-30 Sprint 34 hotfix)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
@@ -116,6 +116,14 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 34 (2026-04-30) — Hotfix áudio antes da resposta da IA
+
+- ✅ P0 hotfix — A IA agora aguarda transcrições de áudio pendentes antes de responder, em vez de chamar o modelo com apenas o placeholder `[Áudio]`. Isso evita respostas como “não consigo ouvir áudios” quando a transcrição já está a caminho — `server/ai.ts`, `server/messageHandler.ts`
+- ✅ Modelo de transcrição atualizado — transcrição sai de `whisper-1` para `gpt-4o-mini-transcribe`, com prompt curto de contexto para lanchonete brasileira, horários, datas, Pix e produtos comuns — `server/transcription.ts`
+- ✅ Operação segura — se a transcrição ainda não terminar em até 90s, a IA não inventa resposta em cima de áudio vazio; o timeout é configurável por `AUDIO_TRANSCRIPTION_WAIT_MS` — `server/messageHandler.ts`
+- Novidades: entrada PT-BR para espera de áudio antes da resposta — `src/data/changelog.ts`
+- Type-check/build/boot verde: teste direcionado de espera de áudio, frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`, `vite build`, healthcheck local `/api/healthz` com webhook WhatsApp desativado (mantém o aviso existente de chunk >500 kB)
 
 ### Sprint 33 (2026-04-30) — Hotfix contexto de agenda da IA
 

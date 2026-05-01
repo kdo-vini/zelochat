@@ -3,7 +3,12 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions.js';
 import { OpenAI } from 'openai';
-import { getSession, addAssistantMessage, addToolMessage } from './messageHandler.js';
+import {
+  getSession,
+  addAssistantMessage,
+  addToolMessage,
+  waitForPendingAudioTranscriptions,
+} from './messageHandler.js';
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig, ensureAiSettingsHydrated, type CatalogCategoriaGroup } from './configStore.js';
 import { getServiceSupabase } from './supabase.js';
@@ -20,7 +25,7 @@ import {
 } from './escalation.js';
 import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
 
-const OPENAI_MODEL = 'gpt-4o-mini';
+const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 const PENDING_ORDER_TTL_MIN = 30;
 
 /**
@@ -1596,6 +1601,15 @@ export async function generateAndSendReply(
   if (getConfig(resolvedEmpresaId).aiEnabled !== true) {
     console.log(`[AI] Global AI disabled or not hydrated for empresa ${resolvedEmpresaId} — skipping reply to ${jid}`);
     return null;
+  }
+
+  const audioWait = await waitForPendingAudioTranscriptions(resolvedEmpresaId, jid);
+  if (audioWait.status === 'timeout') {
+    console.warn(`[AI] Skipping auto-reply while audio transcription is still pending for empresa=${resolvedEmpresaId} jid=${jid} pending=${audioWait.pendingMessageIds.join(',')} waited=${audioWait.waitedMs}ms`);
+    return null;
+  }
+  if (audioWait.waitedMs >= 1000) {
+    console.log(`[AI] Waited ${audioWait.waitedMs}ms for audio transcription before replying to empresa=${resolvedEmpresaId} jid=${jid}`);
   }
 
   const session = await getSession(jid, resolvedEmpresaId);

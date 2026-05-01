@@ -155,7 +155,8 @@ export function formatLastMessageTime(value: string | null | undefined): string 
  * Resolves what the AI should "see" for a given message. For audio with a
  * completed Whisper transcript, returns `[Áudio: "<transcript>"]` so the model
  * can reply meaningfully. For pending/failed/missing transcripts, falls back
- * to the structured preview (`[Áudio]`) — the AI is never blocked on Whisper.
+ * to the structured preview (`[Áudio]`). The backend waits before auto-replying
+ * so normal customer audio reaches the model as text instead of a placeholder.
  */
 export function buildContentForModel(message: ChatMessage): string {
   const baseContent = message.content

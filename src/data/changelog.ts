@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-30',
     category: 'hotfix',
+    title: 'IA espera para entender áudios',
+    description: 'Quando o cliente manda áudio, a IA agora aguarda a transcrição antes de responder, evitando pedidos de texto quando o áudio já pode ser entendido.',
+  },
+  {
+    date: '2026-04-30',
+    category: 'hotfix',
     title: 'IA mantém o dia combinado do pedido',
     description: 'Quando o cliente continua um pedido já agendado, a IA agora respeita o dia e horário que já estavam na conversa antes de pedir produto ou pagamento.',
   },

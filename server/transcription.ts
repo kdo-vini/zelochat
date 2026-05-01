@@ -3,6 +3,12 @@ import { broadcast } from './ws.js';
 import { getServiceSupabase } from './supabase.js';
 
 const MAX_AUDIO_BYTES = 5 * 1024 * 1024; // 5 MB cost guard
+const OPENAI_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
+const TRANSCRIPTION_PROMPT = [
+  'Áudio de cliente brasileiro falando com uma lanchonete pelo WhatsApp.',
+  'Preserve números, datas e horários com clareza.',
+  'Termos comuns: cento de salgado, coxinha, empada, pastel, bolo, Pix, retirada, entrega.',
+].join(' ');
 
 let whisperClient: OpenAI | null = null;
 
@@ -112,8 +118,9 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
 
     const result = await getWhisperClient().audio.transcriptions.create({
       file,
-      model: 'whisper-1',
+      model: OPENAI_TRANSCRIPTION_MODEL,
       language: 'pt',
+      prompt: TRANSCRIPTION_PROMPT,
     });
 
     const transcript = (result.text ?? '').trim();

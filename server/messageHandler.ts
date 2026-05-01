@@ -23,9 +23,23 @@ import {
 // migrate to a Redis counter or a Supabase row with row-level locking.
 const TRANSCRIPTION_FAILURE_THRESHOLD = 3;
 const transcriptionFailures = new Map<string, number>();
+const audioTranscriptionJobs = new Map<string, Promise<void>>();
+const AUDIO_TRANSCRIPTION_WAIT_MS = Number(process.env.AUDIO_TRANSCRIPTION_WAIT_MS ?? 90000);
+const AUDIO_TRANSCRIPTION_POLL_MS = 750;
 
 function transcriptionKey(empresaId: string, jid: string): string {
   return `${empresaId}:${jid}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function trackAudioTranscriptionJob(messageId: string, job: Promise<void>): void {
+  audioTranscriptionJobs.set(messageId, job);
+  void job.finally(() => {
+    if (audioTranscriptionJobs.get(messageId) === job) audioTranscriptionJobs.delete(messageId);
+  });
 }
 
 /**
@@ -102,6 +116,63 @@ async function transcribeAudioWithFailureTracking(
 export function resetTranscriptionFailureCounter(empresaId: string, jid: string): void {
   transcriptionFailures.delete(transcriptionKey(empresaId, jid));
 }
+
+type AudioWaitMessage = Pick<ChatMessage, 'id' | 'role' | 'kind' | 'audio_transcript_status'>;
+
+function pendingAudioMessagesForNextReply(messages: AudioWaitMessage[]): AudioWaitMessage[] {
+  const lastAssistantIndex = [...messages].map((m) => m.role).lastIndexOf('assistant');
+  return messages
+    .slice(lastAssistantIndex + 1)
+    .filter((m) => (
+      m.role === 'user' &&
+      m.kind === 'audio' &&
+      m.audio_transcript_status !== 'done' &&
+      m.audio_transcript_status !== 'failed'
+    ));
+}
+
+export async function waitForPendingAudioTranscriptions(
+  empresaId: string,
+  jid: string,
+  timeoutMs = AUDIO_TRANSCRIPTION_WAIT_MS,
+): Promise<{ status: 'ready' | 'timeout'; waitedMs: number; pendingMessageIds: string[] }> {
+  const startedAt = Date.now();
+  const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0;
+  let pendingMessageIds: string[] = [];
+
+  while (true) {
+    const session = await getSession(jid, empresaId);
+    if (!session) {
+      return { status: 'ready', waitedMs: Date.now() - startedAt, pendingMessageIds: [] };
+    }
+
+    const pending = pendingAudioMessagesForNextReply(session.messages);
+    pendingMessageIds = pending.map((m) => m.id);
+    if (pendingMessageIds.length === 0) {
+      return { status: 'ready', waitedMs: Date.now() - startedAt, pendingMessageIds: [] };
+    }
+
+    const elapsed = Date.now() - startedAt;
+    const remaining = maxWaitMs - elapsed;
+    if (remaining <= 0) {
+      return { status: 'timeout', waitedMs: elapsed, pendingMessageIds };
+    }
+
+    const activeJobs = pending
+      .map((m) => audioTranscriptionJobs.get(m.id))
+      .filter((job): job is Promise<void> => !!job);
+    const pollDelay = sleep(Math.min(AUDIO_TRANSCRIPTION_POLL_MS, remaining));
+    if (activeJobs.length > 0) {
+      await Promise.race([Promise.allSettled(activeJobs).then(() => undefined), pollDelay]);
+    } else {
+      await pollDelay;
+    }
+  }
+}
+
+export const __audioTranscriptionWaitForTests = {
+  pendingAudioMessagesForNextReply,
+};
 
 const jidQueues = new Map<string, Promise<void>>();
 
@@ -1031,7 +1102,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // customer receives a PT-BR explanation. Non-audio messages reset the counter
   // (see the else branch below).
   if (attachment?.type === 'audio') {
-    void transcribeAudioWithFailureTracking({
+    const transcriptionJob = transcribeAudioWithFailureTracking({
       empresaId: resolvedEmpresaId,
       jid,
       messageId: storedMsg.id,
@@ -1039,7 +1110,10 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       mimeType: attachment.mimeType,
       fileName: attachment.fileName,
       sizeBytes: attachment.sizeBytes,
+    }).catch((err) => {
+      console.error('[transcription] Unhandled audio transcription job error:', err);
     });
+    trackAudioTranscriptionJob(storedMsg.id, transcriptionJob);
   } else {
     // Non-audio message — reset the transcription failure counter so the customer
     // gets a fresh 3-strike window if they send audio again later.
