@@ -15,7 +15,7 @@ Inline `🚨 CRITICAL` JSDoc-style blocks in the source code mark functions whos
 
 ## Novidades changelog convention
 
-After every meaningful commit, add one entry at the **top** of `src/data/changelog.ts`.
+Changelog entries must be concise, non-technical, and understandable by any restaurant operator. Do **not** add one entry per commit by default. Add entries only for meaningful user-facing changes, and keep a maximum of **4 entries per day** by summarizing related work into broader entries.
 
 ```ts
 {

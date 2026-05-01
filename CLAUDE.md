@@ -20,6 +20,8 @@ If you're an AI agent or new dev opening the repo for the first time: read those
 
 Linguagem: **sempre em português, sem jargão técnico.** Nada de "endpoint", "webhook", "RLS", "deploy", "migration", "schema", "API". Fale como se estivesse explicando pro dono da pizzaria no WhatsApp.
 
+Volume: o changelog deve ser enxuto. Não crie uma entrada para cada commit pequeno. Use no máximo **4 entradas por dia**, consolidando várias melhorias relacionadas em uma entrada clara quando fizer sentido.
+
 Quando for entrada válida, adicione no **topo** de `src/data/changelog.ts`.
 
 ```ts
