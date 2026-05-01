@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-01',
     category: 'hotfix',
+    title: 'IA segue regras importantes com mais firmeza',
+    description: 'As orientações de estilo da loja agora ajudam no tom da resposta, mas não podem mudar regras de preço, entrega, Pix, horário ou confirmação de pedido.',
+  },
+  {
+    date: '2026-05-01',
+    category: 'hotfix',
     title: 'IA recupera dados da loja sozinha',
     description: 'Mesmo depois de uma reinicialização, a IA agora busca cardápio, Pix, entrega e horários direto da loja antes de responder clientes.',
   },

@@ -119,6 +119,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 36 (2026-05-01) - Prompt da IA em camadas seguras
+
+- ✅ P1 novo / roadmap IA - Instruções livres do dono agora entram no prompt como preferências de tom e estilo, sanitizadas e limitadas. Elas não podem sobrescrever regras fixas de confirmação de pedido, preço, taxa de entrega, Pix, datas bloqueadas, horário de atendimento, escalação humana ou comportamento das ferramentas - `server/ai.ts`
+- Novidades: entrada PT-BR para regras importantes da IA ficarem mais firmes - `src/data/changelog.ts`
+- Type-check verde: server `tsc --noEmit -p server/tsconfig.json`
+
 ### Sprint 35 (2026-05-01) - Backend como fonte da verdade da IA
 
 - ✅ P0 novo / roadmap IA - O backend agora hidrata o perfil operacional da loja direto do Supabase antes de responder no WhatsApp: dados da empresa, Pix, telefone do gerente, instruções, entrega, horários, datas bloqueadas e cardápio real do PDV por `user_id`. O perfil é revalidado a cada 5 minutos; se essa hidratação falhar, a IA continua fail-closed e não chama a OpenAI com contexto vazio ou antigo - `server/configStore.ts`

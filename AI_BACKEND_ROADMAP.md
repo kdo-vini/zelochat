@@ -6,6 +6,7 @@ Origem: review tecnico pago sobre riscos atuais e prioridades pos-fechamento dos
 ## Status de execucao
 
 - 2026-05-01: iniciada a Sprint 30. O backend passou a hidratar o perfil operacional da loja direto do Supabase antes da IA responder, incluindo dados da empresa, Pix, gerente, instrucoes, entrega, horarios, datas bloqueadas e cardapio real do PDV por `user_id`. O perfil e revalidado a cada 5 minutos e falha fechado se nao conseguir carregar.
+- 2026-05-01: iniciada a Sprint 31. As instrucoes livres do dono foram rebaixadas para preferencias de tom/estilo, sanitizadas e limitadas, sem poder sobrescrever regras fixas de pedido, preco, entrega, Pix, horarios, datas bloqueadas ou escalacao humana.
 
 ## Objetivo
 
