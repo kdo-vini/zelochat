@@ -45,6 +45,12 @@ export function extractBearerToken(req: Request): string | null {
 }
 
 export async function resolveEmpresaIdFromToken(token: string): Promise<string> {
+  return (await resolveEmpresaAndUserIdFromToken(token)).empresaId;
+}
+
+export async function resolveEmpresaAndUserIdFromToken(
+  token: string,
+): Promise<{ empresaId: string; userId: string }> {
   const supabase = getServiceSupabase();
   const { data: authData, error: authError } = await supabase.auth.getUser(token);
 
@@ -52,10 +58,12 @@ export async function resolveEmpresaIdFromToken(token: string): Promise<string> 
     throw new Error('UNAUTHORIZED');
   }
 
+  const userId = authData.user.id;
+
   const { data: empresa, error: empresaError } = await supabase
     .from('empresa_perfil')
     .select('id')
-    .eq('user_id', authData.user.id)
+    .eq('user_id', userId)
     .maybeSingle();
 
   if (empresaError) {
@@ -66,7 +74,7 @@ export async function resolveEmpresaIdFromToken(token: string): Promise<string> 
     throw new Error('EMPRESA_NOT_FOUND');
   }
 
-  return empresa.id;
+  return { empresaId: empresa.id, userId };
 }
 
 export async function requireEmpresaId(req: Request): Promise<string> {
@@ -76,6 +84,17 @@ export async function requireEmpresaId(req: Request): Promise<string> {
   }
 
   return resolveEmpresaIdFromToken(token);
+}
+
+export async function requireEmpresaAndUserId(
+  req: Request,
+): Promise<{ empresaId: string; userId: string }> {
+  const token = extractBearerToken(req);
+  if (!token) {
+    throw new Error('UNAUTHORIZED');
+  }
+
+  return resolveEmpresaAndUserIdFromToken(token);
 }
 
 /**

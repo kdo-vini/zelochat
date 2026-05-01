@@ -27,8 +27,16 @@ export type ValidatedGenerateInstructionsPayload = {
   hint?: string;
 };
 
+// Per-user limits (the roadmap commits to "limites por empresa e por usuário").
+// Keep these the budget a single operator can spend.
 const COMPLETE_RATE_LIMIT = { max: 40, windowMs: 5 * 60 * 1000 };
 const GENERATE_INSTRUCTIONS_RATE_LIMIT = { max: 12, windowMs: 60 * 60 * 1000 };
+
+// Empresa-wide ceilings — independent backstop so one compromised JWT cannot
+// drain quota only for itself; if the WHOLE empresa burns through these we
+// stop serving the next chamada too. Generous multipliers vs. per-user.
+const COMPLETE_EMPRESA_RATE_LIMIT = { max: 200, windowMs: 5 * 60 * 1000 };
+const GENERATE_INSTRUCTIONS_EMPRESA_RATE_LIMIT = { max: 60, windowMs: 60 * 60 * 1000 };
 
 const MAX_COMPLETE_BODY_BYTES = 64 * 1024;
 const MAX_GENERATE_INSTRUCTIONS_BODY_BYTES = 4 * 1024;
@@ -54,6 +62,10 @@ function getRateLimit(kind: AiRouteKind): { max: number; windowMs: number } {
   return kind === 'complete' ? COMPLETE_RATE_LIMIT : GENERATE_INSTRUCTIONS_RATE_LIMIT;
 }
 
+function getEmpresaRateLimit(kind: AiRouteKind): { max: number; windowMs: number } {
+  return kind === 'complete' ? COMPLETE_EMPRESA_RATE_LIMIT : GENERATE_INSTRUCTIONS_EMPRESA_RATE_LIMIT;
+}
+
 function getBodySizeBytes(body: unknown): number {
   try {
     return Buffer.byteLength(JSON.stringify(body ?? {}), 'utf8');
@@ -66,27 +78,63 @@ function fail(status: GuardFailure['status'], error: string, retryAfterSeconds?:
   return { ok: false, status, error, retryAfterSeconds };
 }
 
-export function checkAiRouteRateLimit(empresaId: string, kind: AiRouteKind): GuardResult<true> {
-  const limit = getRateLimit(kind);
-  const key = `${empresaId}:${kind}`;
-  const now = Date.now();
+function consumeBucket(
+  key: string,
+  limit: { max: number; windowMs: number },
+  now: number,
+): { ok: true } | { ok: false; retryAfterSeconds: number } {
   const entry = aiRouteUsage.get(key);
-
   if (!entry || entry.resetAt <= now) {
     aiRouteUsage.set(key, { count: 1, resetAt: now + limit.windowMs });
-    return { ok: true, value: true };
+    return { ok: true };
   }
-
   if (entry.count >= limit.max) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+    return { ok: false, retryAfterSeconds: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) };
+  }
+  entry.count += 1;
+  return { ok: true };
+}
+
+/**
+ * Two-layered rate limit: a per-user budget AND an empresa-wide ceiling.
+ *
+ * - Per-user prevents one tab in a single browser from draining the empresa's
+ *   quota for co-workers.
+ * - Empresa-wide prevents a compromised JWT from racking up cost across many
+ *   simulated users.
+ *
+ * Both buckets are charged on every accepted call. If either rejects, we surface
+ * 429 with the longer Retry-After. Rolling-window: each bucket resets `windowMs`
+ * after its first hit.
+ *
+ * Single-replica state (Map). When we go multi-node this needs Redis or an
+ * advisory-lock equivalent — flagged in CLAUDE.md as a deploy invariant.
+ */
+export function checkAiRouteRateLimit(
+  empresaId: string,
+  userId: string,
+  kind: AiRouteKind,
+): GuardResult<true> {
+  const now = Date.now();
+
+  const userResult = consumeBucket(`u:${empresaId}:${userId}:${kind}`, getRateLimit(kind), now);
+  if (userResult.ok === false) {
     return fail(
       429,
-      'Limite de uso da IA atingido para esta empresa. Tente novamente em alguns minutos.',
-      retryAfterSeconds,
+      'Limite de uso da IA atingido para este usuário. Tente novamente em alguns minutos.',
+      userResult.retryAfterSeconds,
     );
   }
 
-  entry.count += 1;
+  const empresaResult = consumeBucket(`e:${empresaId}:${kind}`, getEmpresaRateLimit(kind), now);
+  if (empresaResult.ok === false) {
+    return fail(
+      429,
+      'Limite de uso da IA atingido para esta empresa. Tente novamente em alguns minutos.',
+      empresaResult.retryAfterSeconds,
+    );
+  }
+
   return { ok: true, value: true };
 }
 

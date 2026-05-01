@@ -10,6 +10,17 @@ import { apiUrl, apiFetch } from '../config';
 
 type SessionsResponse = { sessions: ChatSession[] };
 type SessionResponse = { session: ChatSession };
+export type AiHealthSummaryStatus = 'ready' | 'disabled' | 'needs_configuration';
+export interface AiHealthReport {
+  catalogLoaded: boolean;
+  operatingHoursConfigured: boolean;
+  deliveryConfigConfigured: boolean;
+  managerPhonePresent: boolean;
+  pixPresent: boolean;
+  aiEnabled: boolean;
+  blockedDatesCount: number;
+  safeSummaryStatus: AiHealthSummaryStatus;
+}
 type SendMessagePayload = {
   message?: string;
   attachment?: ChatAttachment;
@@ -176,6 +187,14 @@ export async function getAiEnabled(token: string): Promise<boolean> {
   });
   const body = await parseResponse<{ enabled: boolean }>(response);
   return body.enabled !== false;
+}
+
+export async function getAiHealth(token: string): Promise<AiHealthReport> {
+  const response = await apiFetch(apiUrl('/api/ai/health'), {
+    headers: authHeaders(token),
+  });
+  const body = await parseResponse<{ health: AiHealthReport }>(response);
+  return body.health;
 }
 
 export async function setAiEnabled(token: string, enabled: boolean): Promise<void> {

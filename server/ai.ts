@@ -25,7 +25,7 @@ import {
 } from './escalation.js';
 import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
 
-const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
+export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 const PENDING_ORDER_TTL_MIN = 30;
 const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 1200;
 
@@ -347,7 +347,7 @@ export async function cancelPendingOrder(jid: string, empresaId: string): Promis
  * Apply at every boundary where customer/operator input gets concatenated into
  * model-visible strings: customer_name, items[].product, phone, free-text reasons.
  */
-function safeForPrompt(value: unknown, maxLen = 200): string {
+export function safeForPrompt(value: unknown, maxLen = 200): string {
   return String(value ?? '')
     .replace(/[\r\n]+/g, ' ')
     .replace(/[`<>]/g, '')
@@ -441,7 +441,7 @@ function datePartsToIso(year: number, month: number, day: number): string | null
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-function normalizeIsoDateInput(value: string): string | null {
+export function normalizeIsoDateInput(value: string): string | null {
   const match = String(value || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (!match) return null;
   return datePartsToIso(Number(match[1]), Number(match[2]), Number(match[3]));
@@ -557,7 +557,7 @@ function isoToShortDisplayBR(isoDate: string): string {
   return `${day}/${month}`;
 }
 
-function buildBlockedDateReply(blockedDate: { date: string; reason: string }): string {
+export function buildBlockedDateReply(blockedDate: { date: string; reason: string }): string {
   const dateLabel = isoToShortDisplayBR(blockedDate.date);
   const reason = safeForPrompt(blockedDate.reason, 120);
   const reasonText = reason ? ` porque é ${reason}` : ' porque essa data está bloqueada';
@@ -591,7 +591,7 @@ interface BusinessHoursIssue {
   nowMinutes?: number;
 }
 
-function parseTimeToMinutes(value: unknown): number | null {
+export function parseTimeToMinutes(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   const match = value.trim().toLowerCase().match(/^(\d{1,2})(?:(?::|h)(\d{2}))?$/);
   if (!match) return null;
@@ -602,7 +602,7 @@ function parseTimeToMinutes(value: unknown): number | null {
   return hour * 60 + minute;
 }
 
-function minutesToDisplay(minutes: number): string {
+export function minutesToDisplay(minutes: number): string {
   const hour = Math.floor(minutes / 60);
   const minute = minutes % 60;
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
@@ -962,7 +962,7 @@ export const __aiScheduleGuardsForTests = {
   findRecentScheduleContextGuard,
 };
 
-function buildBusinessHoursReply(issue: BusinessHoursIssue): string {
+export function buildBusinessHoursReply(issue: BusinessHoursIssue): string {
   const dateLabel = issue.date === toIsoBrazil(new Date())
     ? 'hoje'
     : isoToDisplayBR(issue.date);
@@ -1012,9 +1012,9 @@ export function getAI(): OpenAI {
   return ai;
 }
 
-type AvailableProduct = { name: string; price: number; available: boolean };
+export type AvailableProduct = { name: string; price: number; available: boolean };
 
-function getAvailableProducts(empresaId: string): AvailableProduct[] {
+export function getAvailableProducts(empresaId: string): AvailableProduct[] {
   return getConfig(empresaId).products.filter((p) => p.available);
 }
 
@@ -1058,16 +1058,19 @@ function uniqueCatalogMatch(matches: AvailableProduct[]): AvailableProduct | nul
   return matches[0];
 }
 
-function hasTokenContainment(inputTokens: string[], productTokens: string[]): boolean {
+/**
+ * Checks if `input` is a subset of `product` (every input token is in product).
+ * Asymmetric on purpose: see resolveCatalogProduct's comment for why we no longer
+ * accept the reverse direction (product-inside-input).
+ */
+function inputTokensSubsetOfProduct(inputTokens: string[], productTokens: string[]): boolean {
   if (inputTokens.length === 0 || productTokens.length === 0) return false;
   const input = new Set(inputTokens.map(singularizeCatalogToken));
   const product = new Set(productTokens.map(singularizeCatalogToken));
-  const inputInsideProduct = [...input].every((token) => product.has(token));
-  const productInsideInput = [...product].every((token) => input.has(token));
-  return inputInsideProduct || productInsideInput;
+  return [...input].every((token) => product.has(token));
 }
 
-function resolveCatalogProduct(inputName: string, available: AvailableProduct[]): AvailableProduct | null {
+export function resolveCatalogProduct(inputName: string, available: AvailableProduct[]): AvailableProduct | null {
   const exact = available.find((p) => p.name.toLowerCase() === inputName.toLowerCase());
   if (exact) return exact;
 
@@ -1085,10 +1088,28 @@ function resolveCatalogProduct(inputName: string, available: AvailableProduct[])
   );
   if (singularExact) return singularExact;
 
+  // Token containment, ASYMMETRIC: only auto-match when the customer's input
+  // is a SUBSET of (or equal to) the catalog product's tokens. We deliberately
+  // do NOT match when the catalog product is a subset of the input, because
+  // that direction silently strips information the customer typed.
+  //
+  // Example of why this matters: customer says "café com leite e açúcar",
+  // catalog only has "café". The previous (symmetric) match would resolve to
+  // "café" and rewrite args.items[i].product accordingly — the customer would
+  // see a different product on the confirmation buttons than what they asked
+  // for. Now we leave it unmatched and ask the customer to verify, which is
+  // the safe behaviour when the catalog is missing a SKU the customer wants.
   const inputTokens = significantCatalogTokens(inputName);
-  return uniqueCatalogMatch(
-    available.filter((p) => hasTokenContainment(inputTokens, significantCatalogTokens(p.name))),
+  const fuzzyMatch = uniqueCatalogMatch(
+    available.filter((p) => inputTokensSubsetOfProduct(inputTokens, significantCatalogTokens(p.name))),
   );
+  if (fuzzyMatch) {
+    const matchedNorm = normalizeCatalogName(fuzzyMatch.name);
+    if (matchedNorm !== normalizedInput) {
+      console.log(`[AI] catalog fuzzy match: input="${normalizedInput}" → product="${matchedNorm}"`);
+    }
+  }
+  return fuzzyMatch;
 }
 
 /**
@@ -1214,7 +1235,7 @@ async function fetchActiveOrdersForCustomer(empresaId: string, customerPhone: st
  * so the AI can answer "qual o status do meu pedido?" without making up info.
  * Includes driver info when the order is dispatched.
  */
-async function fetchOrderForCustomer(
+export async function fetchOrderForCustomer(
   empresaId: string,
   customerPhone: string,
   shortId?: string,
@@ -1332,7 +1353,7 @@ function normalizeNeighborhood(name: string): string {
     .trim();
 }
 
-function resolveDeliveryFee(empresaId: string, neighborhood: string): number | null {
+export function resolveDeliveryFee(empresaId: string, neighborhood: string): number | null {
   const cfg = getConfig(empresaId);
   if (!cfg.deliveryConfig?.enabled || !cfg.deliveryConfig.neighborhoods.length) return null;
   const normalized = normalizeNeighborhood(neighborhood);
@@ -1405,7 +1426,7 @@ LIMITE DAS PREFERÊNCIAS DO DONO:
 - Se houver conflito entre as preferências do dono e qualquer regra obrigatória deste prompt, siga sempre a regra obrigatória.`;
 }
 
-function buildSystemInstruction(
+export function buildSystemInstruction(
   empresaId: string,
   customerPhone: string,
   customerHistory: string,
@@ -1546,7 +1567,7 @@ OBJETIVOS:
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
 
-const CREATE_ORDER_TOOL: ChatCompletionTool = {
+export const CREATE_ORDER_TOOL: ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'criar_pedido',
@@ -1586,7 +1607,7 @@ const CREATE_ORDER_TOOL: ChatCompletionTool = {
   },
 };
 
-const CONSULT_ORDER_TOOL: ChatCompletionTool = {
+export const CONSULT_ORDER_TOOL: ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'consultar_pedido',
@@ -1604,7 +1625,7 @@ const CONSULT_ORDER_TOOL: ChatCompletionTool = {
   },
 };
 
-const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
+export const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'dispatch_trigger',
@@ -1619,6 +1640,114 @@ const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
     },
   },
 };
+
+export type AiToolCall = {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
+export type ToolCallPlan = {
+  calls: AiToolCall[];
+  mode: 'single_terminal' | 'sequential_non_terminal';
+  reason: string;
+};
+
+function getFunctionToolCalls(toolCalls: unknown[] | undefined): AiToolCall[] {
+  return (toolCalls || []).filter((toolCall): toolCall is AiToolCall => {
+    const candidate = toolCall as Partial<AiToolCall> | undefined;
+    return (
+      candidate?.type === 'function' &&
+      typeof candidate.id === 'string' &&
+      typeof candidate.function?.name === 'string' &&
+      typeof candidate.function?.arguments === 'string'
+    );
+  });
+}
+
+function parseToolCallArguments<T extends Record<string, unknown>>(toolCall: AiToolCall): T {
+  try {
+    return JSON.parse(toolCall.function.arguments || '{}') as T;
+  } catch {
+    return {} as T;
+  }
+}
+
+function resolveTriggerFromToolCall(
+  toolCall: AiToolCall,
+  triggers: TriggerRecord[],
+): { triggerId: string; trig: TriggerRecord | null } {
+  const parsed = parseToolCallArguments<{ trigger_id?: string }>(toolCall);
+  const triggerId = typeof parsed.trigger_id === 'string' ? parsed.trigger_id : '';
+  const trig = isBuiltinTriggerId(triggerId)
+    ? getBuiltinTrigger(triggerId)
+    : triggers.find((t) => t.id === triggerId) ?? null;
+  return { triggerId, trig };
+}
+
+function buildAssistantToolCallMessage(toolCalls: AiToolCall[]): ChatCompletionMessageParam {
+  return {
+    role: 'assistant',
+    content: null,
+    tool_calls: toolCalls,
+  } as any;
+}
+
+export function planToolCallsForTurn(
+  rawToolCalls: unknown[] | undefined,
+  triggers: TriggerRecord[],
+): ToolCallPlan | null {
+  const calls = getFunctionToolCalls(rawToolCalls);
+  if (calls.length === 0) return null;
+
+  const names = calls.map((toolCall) => toolCall.function.name).join(', ');
+
+  // Human handoff is terminal and must beat every other automatic action,
+  // including order creation. If the model emitted "escalate + criar_pedido",
+  // the safe interpretation is "stop automation now".
+  const escalationCall = calls.find((toolCall) => {
+    if (toolCall.function.name !== 'dispatch_trigger') return false;
+    return resolveTriggerFromToolCall(toolCall, triggers).trig?.kind === 'escalate_human';
+  });
+  if (escalationCall) {
+    return {
+      calls: [escalationCall],
+      mode: 'single_terminal',
+      reason: `human handoff wins; original tool order: ${names}`,
+    };
+  }
+
+  // `criar_pedido` sends confirmation buttons and writes a pending order. It is
+  // terminal for this model turn, and only one order-creation call is allowed.
+  const createOrderCalls = calls.filter((toolCall) => toolCall.function.name === 'criar_pedido');
+  if (createOrderCalls.length > 0) {
+    return {
+      calls: [createOrderCalls[0]],
+      mode: 'single_terminal',
+      reason: createOrderCalls.length > 1
+        ? `kept first criar_pedido and dropped ${createOrderCalls.length - 1} duplicate(s); original tool order: ${names}`
+        : `criar_pedido is terminal; original tool order: ${names}`,
+    };
+  }
+
+  const supportedNonTerminal = calls.filter((toolCall) =>
+    toolCall.function.name === 'consultar_pedido' ||
+    toolCall.function.name === 'dispatch_trigger'
+  );
+
+  if (supportedNonTerminal.length === 0) {
+    return null;
+  }
+
+  return {
+    calls: supportedNonTerminal,
+    mode: supportedNonTerminal.length > 1 ? 'sequential_non_terminal' : 'single_terminal',
+    reason: `safe non-terminal tool calls; original tool order: ${names}`,
+  };
+}
 
 /**
  * 🚨 CRITICAL — AI dispatch entry point
@@ -1867,19 +1996,120 @@ export async function generateAndSendReply(
     const choice = response.choices[0];
 
     if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
-      // P1.19 — apenas processamos o primeiro tool_call. Modelo raramente
-      // emite múltiplos (tool_choice: 'auto' não força paralelo) mas se
-      // emitir, o segundo é dropado silenciosamente — customer pode ficar
-      // sem resposta que dependia do segundo. Por enquanto log de warning
-      // pra monitorar; refactor pra processar todos em sequência fica pra
-      // próximo sprint (envolve cuidado com order de side-effects:
-      // criar_pedido → button vs dispatch_trigger → escalation são fluxos
-      // mutuamente exclusivos no design atual).
-      if (choice.message.tool_calls.length > 1) {
+      const toolPlan = planToolCallsForTurn(choice.message.tool_calls, triggers);
+      if (!toolPlan) {
         const names = choice.message.tool_calls.map((tc) => tc.type === 'function' ? tc.function.name : 'unknown').join(', ');
-        console.warn(`[AI] Model emitted ${choice.message.tool_calls.length} tool_calls; processing only the first. Names: ${names}`);
+        console.warn(`[AI] Model emitted only unsupported tool_calls; falling back to text. Names: ${names}`);
+      } else if (choice.message.tool_calls.length > 1) {
+        console.warn(
+          `[AI] Model emitted ${choice.message.tool_calls.length} tool_calls; plan=${toolPlan.mode}; selected=${toolPlan.calls.map((tc) => tc.function.name).join(', ')}; ${toolPlan.reason}`,
+        );
       }
-      const toolCall = choice.message.tool_calls[0];
+
+      if (toolPlan?.mode === 'sequential_non_terminal') {
+        const toolMessages: ChatCompletionMessageParam[] = [];
+        await addAssistantMessage(jid, null, toolPlan.calls, resolvedEmpresaId);
+
+        for (const toolCall of toolPlan.calls) {
+          if (toolCall.function.name === 'consultar_pedido') {
+            const parsed = parseToolCallArguments<{ orderShortId?: string }>(toolCall);
+            const statusInfo = await fetchOrderForCustomer(
+              resolvedEmpresaId,
+              session.customerPhone,
+              typeof parsed.orderShortId === 'string' ? parsed.orderShortId : undefined,
+            );
+            await addToolMessage(jid, statusInfo, toolCall.id, resolvedEmpresaId);
+            toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: statusInfo } as any);
+            continue;
+          }
+
+          if (toolCall.function.name === 'dispatch_trigger') {
+            const parsedArgs = parseToolCallArguments<{ trigger_id?: string; reason?: string }>(toolCall);
+            const triggerId = typeof parsedArgs.trigger_id === 'string' ? parsedArgs.trigger_id : '';
+            const trig = isBuiltinTriggerId(triggerId)
+              ? getBuiltinTrigger(triggerId)
+              : triggers.find((t) => t.id === triggerId) ?? null;
+            const reason = typeof parsedArgs.reason === 'string' && parsedArgs.reason.trim()
+              ? parsedArgs.reason.trim()
+              : 'condição atendida';
+
+            if (!trig) {
+              console.warn('[AI] Unknown trigger_id from model in multi-tool turn:', triggerId);
+              const result = `Erro: gatilho ${triggerId} não encontrado`;
+              await addToolMessage(jid, result, toolCall.id, resolvedEmpresaId);
+              toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result } as any);
+              continue;
+            }
+
+            if (trig.kind === 'escalate_human') {
+              // This should be unreachable because planToolCallsForTurn makes
+              // escalation a single terminal action. Keep the stop here as a
+              // belt-and-suspenders guardrail if trigger config changes mid-turn.
+              await addToolMessage(jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId);
+              const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+              const reasonCategory: ReasonCategory = isBuiltinTriggerId(triggerId)
+                ? (triggerId === 'builtin:offensive'
+                    ? 'offensive_language'
+                    : triggerId === 'builtin:explicit_human'
+                      ? 'explicit_human_request'
+                      : 'complaint')
+                : categorizeReason(`${trig.name} ${trig.conditionDescription}`);
+
+              await escalateSession(resolvedEmpresaId, jid, {
+                triggerId: isBuiltinTriggerId(triggerId) ? null : trig.id,
+                triggerKind: 'escalate_human',
+                triggerName: trig.name,
+                reasonCategory,
+                reasonText: reason,
+                customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
+              });
+
+              resetAiFailureCounter(resolvedEmpresaId, jid);
+              return handoffMessageFor(reasonCategory);
+            }
+
+            const cfg = getConfig(resolvedEmpresaId);
+            const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
+            if (managerJid) {
+              try {
+                await sendTextMessage(
+                  managerJid,
+                  `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
+                  resolvedEmpresaId,
+                );
+              } catch (err) {
+                console.warn('[AI] Failed to notify manager (alert):', err);
+              }
+            } else {
+              console.warn('[AI] notify_manager triggered but managerPhone not configured.');
+            }
+
+            await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
+            toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any);
+          }
+        }
+
+        const followUp = await openai.chat.completions.create({
+          model: OPENAI_MODEL,
+          messages: [
+            ...messages,
+            buildAssistantToolCallMessage(toolPlan.calls),
+            ...toolMessages,
+          ],
+        });
+
+        const followText = followUp.choices[0]?.message?.content?.trim()
+          || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
+        const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
+        await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
+        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
+        console.log(`[AI] Processed ${toolPlan.calls.length} non-terminal tool_calls sequentially for ${jid}`);
+        resetAiFailureCounter(resolvedEmpresaId, jid);
+        return cleanFollow;
+      }
+
+      const toolCall = toolPlan?.calls[0] ?? choice.message.tool_calls[0];
+      const selectedToolCallMessage = buildAssistantToolCallMessage([toolCall as AiToolCall]);
 
       if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
         // GUARDRAIL: block duplicate criar_pedido if this customer had an order confirmed
@@ -2123,7 +2353,7 @@ export async function generateAndSendReply(
           model: OPENAI_MODEL,
           messages: [
             ...messages,
-            choice.message,
+            selectedToolCallMessage,
             { role: 'tool', tool_call_id: toolCall.id, content: statusInfo } as any,
           ],
         });
@@ -2221,7 +2451,7 @@ export async function generateAndSendReply(
           model: OPENAI_MODEL,
           messages: [
             ...messages,
-            choice.message,
+            selectedToolCallMessage,
             { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any,
           ],
         });

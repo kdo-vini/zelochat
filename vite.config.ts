@@ -21,4 +21,24 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Core React runtime — loaded on every page, keep tight
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          // Animation library — large, only needed after first paint
+          'motion-vendor': ['motion'],
+          // Supabase client — heavy, needed for auth/data but not in the
+          // critical rendering path
+          'supabase-vendor': ['@supabase/supabase-js'],
+          // Icon set — tree-shaken by Rollup but the base module graph is
+          // still sizeable; isolating it keeps the entry chunk clean
+          'icons-vendor': ['lucide-react'],
+          // Drag-and-drop — only used in the Produção (kanban) view
+          'dnd-vendor': ['@hello-pangea/dnd'],
+        },
+      },
+    },
+  },
 });

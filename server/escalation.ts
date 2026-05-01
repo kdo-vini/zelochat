@@ -149,6 +149,16 @@ function phoneToJid(phone: string): string | null {
   return `${digits}@s.whatsapp.net`;
 }
 
+type ManagerPhoneValidation =
+  | { ok: true; jid: string }
+  | { ok: false; reason: 'missing' | 'invalid' };
+
+function validateManagerPhone(phone: string | null | undefined): ManagerPhoneValidation {
+  if (!phone?.trim()) return { ok: false, reason: 'missing' };
+  const jid = phoneToJid(phone);
+  return jid ? { ok: true, jid } : { ok: false, reason: 'invalid' };
+}
+
 async function findSessionByJid(empresaId: string, jid: string) {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
@@ -274,8 +284,8 @@ export async function escalateSession(
   }
 
   const cfg = getConfig(empresaId);
-  const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
-  if (managerJid) {
+  const managerPhone = validateManagerPhone(cfg.managerPhone);
+  if (managerPhone.ok === true) {
     const customerName = safeForLog((session as any).customer_name, 80) || 'Cliente';
     const customerPhone = safeForLog((session as any).customer_phone, 30) || '';
     const reasonLabel = reasonLabelPt(params.reasonCategory);
@@ -289,12 +299,13 @@ export async function escalateSession(
         : '') +
       `\n\nAuto-resposta da IA desativada.`;
     try {
-      await sendTextMessage(managerJid, body, empresaId);
+      await sendTextMessage(managerPhone.jid, body, empresaId);
     } catch (err) {
       console.warn('[Escalation] Failed to notify manager:', err);
     }
   } else {
-    console.warn('[Escalation] managerPhone not configured — manager notification skipped.');
+    const reason = managerPhone.reason === 'missing' ? 'missing' : 'invalid';
+    console.warn(`[Escalation] managerPhone ${reason} for empresa=${empresaId}; manager notification skipped.`);
   }
 
   console.log(

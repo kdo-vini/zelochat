@@ -358,8 +358,30 @@ function firstMeaningfulMessageType(message: any): string {
   return Object.keys(message).find((key) => key !== 'messageContextInfo') ?? 'unknown';
 }
 
-function cleanText(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
+/**
+ * Sanitizes a free-text field arriving from a non-text WhatsApp message
+ * (location name/address, vCard FN/TEL, poll option, reaction emoji, etc.).
+ *
+ * These strings are persisted to `zelochat_messages.content` and broadcast as
+ * `lastMessage` — both surfaces render in the operator UI without escaping,
+ * and the message rows feed back into the OpenAI history on the next turn.
+ * A malicious WhatsApp client (or a buggy one) could ship a multi-line vCard
+ * `FN`, an `&lt;img&gt;`-laden poll option, or a backtick-heavy address that breaks
+ * the chat-list layout or smuggles prompt-injection markers into a later turn.
+ *
+ * Mirrors `safeForPrompt` in ai.ts: collapse whitespace, strip backticks and
+ * angle brackets, drop ASCII control chars, cap length. Length cap is per-field
+ * and chosen large enough that legitimate content survives.
+ */
+function cleanText(value: unknown, maxLen = 200): string {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[`<>]/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .trim()
+    .slice(0, maxLen);
 }
 
 function compactParts(parts: Array<string | null | undefined>, separator = ' '): string {

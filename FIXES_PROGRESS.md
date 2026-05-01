@@ -119,6 +119,26 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 43 (2026-05-01) — Code-review follow-ups + UX polish
+
+Saída do audit Sprint 35-41 (senior code reviewer):
+
+- ✅ P1 cardápio fuzzy match assimétrico — `resolveCatalogProduct` agora só auto-resolve quando os tokens do cliente são **subconjunto** do produto, nunca o contrário. Antes "café com leite e açúcar" virava "café" silenciosamente; agora o pedido fica não-resolvido e a IA pede verificação. Acrescentado log `[AI] catalog fuzzy match: input=… → product=…` para visibilidade em produção — `server/ai.ts`
+- ✅ P1 sanitização de placeholders não-texto — `cleanText` em `messageHandler.ts` agora strips CR/LF/backticks/angle-brackets/control chars e limita 200 chars (configurável). Cobre vCard FN/TEL, nome/endereço de localização, nome/opções de enquete e emoji de reação antes de virarem `last_message` ou row em `zelochat_messages` — `server/messageHandler.ts`
+- ✅ P1 rate limit de IA com chave por usuário + ceiling por empresa — `checkAiRouteRateLimit` agora exige `userId` e cobra dois buckets em paralelo: `u:{empresa}:{user}:{kind}` (40/5min ou 12/1h) e `e:{empresa}:{kind}` (200/5min ou 60/1h). Cumpre o compromisso do roadmap "limites por empresa **e por usuário**". Erro 429 distingue limite de usuário vs limite de empresa. Single-replica state mantido (Map) — `server/aiRouteGuards.ts`, `server/router.ts`, `server/supabase.ts` (novo `requireEmpresaAndUserId`)
+- ✅ UX — Bolinha de não-lidas no menu agora é verde estilo WhatsApp e mostra **número de conversas com não-lidas** (não a soma de mensagens). Cada conversa específica mantém o badge com a contagem de mensagens. Bolinha vira vermelha apenas quando há escalações pendentes — `src/AppShell.tsx`
+- ✅ UX — Painel "Saúde da IA" no Cérebro IA consome o endpoint `/api/ai/health` (Sprint 39) e mostra prontidão operacional (cardápio carregado, horários, entrega, gerente, Pix, IA ligada, datas bloqueadas) com botão de refresh. Antes o endpoint existia sem UI consumidora — `src/components/views/AIConfigsView.tsx`, `src/services/waApi.ts`
+- ✅ Refactor — `validateManagerPhone` em `escalation.ts` distingue `missing` vs `invalid` no log de aviso (em vez de "managerPhone not configured" para tudo). Útil pra triagem quando o dono digitou número inválido — `server/escalation.ts`
+- ✅ Helpers em `server/ai.ts` exportados (`safeForPrompt`, `resolveCatalogProduct`, `buildSystemInstruction`, `planToolCallsForTurn`, `CREATE_ORDER_TOOL`, etc.) — preparação para o simulador de atendimento (P2 do roadmap), que ficou com a UI/rota deferida para a próxima sprint. Não há call site novo, só `export` adicionado — superfície aumentada mas semantics inalteradas
+- Type-check verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`. `vite build` clean (chunk maior 196 kB pós-split)
+
+### Sprint 42 (2026-05-01) — P3 bundle split
+
+- ✅ P3 — Dividir bundle grande (`AI_BACKEND_ROADMAP.md`). Entrada único de 1 095 kB (304 kB gzip) substituída por 18 chunks. Maior chunk agora é `supabase-vendor` com 196 kB (51 kB gzip); chunk de entrada caiu para 406 kB (118 kB gzip) — sem aviso de chunk grande — `vite.config.ts`
+- `manualChunks` isola cinco grupos de fornecedores: `react-vendor` (React + ReactDOM + react-router-dom), `motion-vendor` (framer Motion), `supabase-vendor` (@supabase/supabase-js), `icons-vendor` (lucide-react), `dnd-vendor` (@hello-pangea/dnd)
+- Lazy-loading adicionado a 9 views em `AppShell.tsx` (`DashboardView`, `ProductionView`, `CalendarView`, `AIConfigsView`, `SettingsView`, `ProfileView`, `DriversView`, `CatalogView`, `NovidadesView`). `ChatView` permanece eager (view padrão e mais usada). `Suspense` boundary dentro do gate de paywall — o spinner de fallback aparece apenas no primeiro carregamento de cada view, nunca na carga inicial nem durante resolução de auth/assinatura
+- Type-check verde: frontend `tsc --noEmit`
+
 ### Sprint 41 (2026-05-01) - Mensagens nao-texto mais uteis
 
 - ✅ P2 novo / roadmap WhatsApp - Mensagens de localização, contatos, enquetes, reações, figurinhas, produto/pedido e tipos não suportados agora geram placeholders claros em PT-BR e logs melhores. Reações e votos em enquete são persistidos/broadcast, mas não disparam auto-resposta da IA - `server/messageHandler.ts`

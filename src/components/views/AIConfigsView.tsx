@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
-import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown } from 'lucide-react';
+import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown, Activity, RefreshCw } from 'lucide-react';
 import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
 import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
+import { getAiHealth, type AiHealthReport, type AiHealthSummaryStatus } from '../../services/waApi';
 import { useBuiltinTriggers } from '../../hooks/useBuiltinTriggers';
 import { useToast } from '../../contexts/ToastContext';
 import { ConfirmModal } from '../ConfirmModal';
@@ -25,6 +26,36 @@ const SectionHeader = ({ icon: Icon, title, subtitle, action }: {
       </div>
     </div>
     {action}
+  </div>
+);
+
+type HealthTone = 'ok' | 'warn' | 'neutral';
+
+const HEALTH_TONE_CLASS: Record<HealthTone, string> = {
+  ok: 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]',
+  warn: 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]',
+  neutral: 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]',
+};
+
+function formatAiHealthStatus(status: AiHealthSummaryStatus | undefined): { label: string; tone: HealthTone } {
+  if (status === 'ready') return { label: 'Pronta', tone: 'ok' };
+  if (status === 'disabled') return { label: 'IA desligada', tone: 'warn' };
+  if (status === 'needs_configuration') return { label: 'Ajustar configuração', tone: 'warn' };
+  return { label: 'Verificando...', tone: 'neutral' };
+}
+
+interface ReadinessItemProps {
+  label: string;
+  value: string;
+  tone: HealthTone;
+}
+
+const ReadinessItem: React.FC<ReadinessItemProps> = ({ label, value, tone }) => (
+  <div className="flex items-center justify-between gap-3 py-2 min-w-0">
+    <span className="text-[12px] text-[var(--color-ink-muted)] truncate">{label}</span>
+    <span className={`text-[11.5px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap ${HEALTH_TONE_CLASS[tone]}`}>
+      {value}
+    </span>
   </div>
 );
 
@@ -61,6 +92,9 @@ export const AIConfigsView = ({
 }: AIConfigsViewProps) => {
   const builtinTriggers = useBuiltinTriggers(token);
   const toast = useToast();
+  const [aiHealth, setAiHealth] = useState<AiHealthReport | null>(null);
+  const [aiHealthLoading, setAiHealthLoading] = useState(false);
+  const [aiHealthError, setAiHealthError] = useState<string | null>(null);
   const [deletingTrigger, setDeletingTrigger] = useState<{ id: string; name: string } | null>(null);
   const [managerInput, setManagerInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -85,6 +119,29 @@ export const AIConfigsView = ({
   const qrDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [qrSaveState, setQrSaveState] = useState<Record<string, 'saving' | 'saved'>>({});
   const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadAiHealth = useCallback(async () => {
+    if (!token) {
+      setAiHealth(null);
+      setAiHealthError(null);
+      return;
+    }
+
+    setAiHealthLoading(true);
+    setAiHealthError(null);
+    try {
+      setAiHealth(await getAiHealth(token));
+    } catch (err) {
+      console.error('[AIConfigs] AI health load failed:', err);
+      setAiHealthError('Não foi possível carregar a saúde da IA agora.');
+    } finally {
+      setAiHealthLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void loadAiHealth();
+  }, [loadAiHealth]);
 
   useEffect(() => {
     if (hasPromptDraft) {
@@ -219,6 +276,36 @@ export const AIConfigsView = ({
     }, 400);
   };
 
+  const booleanHealthItem = (
+    label: string,
+    healthValue: boolean | undefined,
+    readyLabel: string,
+    missingLabel = 'Pendente',
+  ): { label: string; value: string; tone: HealthTone } => ({
+    label,
+    value: healthValue === undefined ? 'Verificando...' : healthValue ? readyLabel : missingLabel,
+    tone: healthValue === undefined ? 'neutral' : healthValue ? 'ok' : 'warn',
+  });
+  const aiHealthStatus = formatAiHealthStatus(aiHealth?.safeSummaryStatus);
+  const healthItems: { label: string; value: string; tone: HealthTone }[] = [
+    booleanHealthItem('Cardápio', aiHealth?.catalogLoaded, 'Carregado'),
+    booleanHealthItem('Horários', aiHealth?.operatingHoursConfigured, 'Configurados'),
+    booleanHealthItem('Entrega', aiHealth?.deliveryConfigConfigured, 'Configurada'),
+    booleanHealthItem('Telefone do gerente', aiHealth?.managerPhonePresent, 'Informado'),
+    booleanHealthItem('Pix', aiHealth?.pixPresent, 'Informado'),
+    booleanHealthItem('IA ligada', aiHealth?.aiEnabled, 'Sim', 'Não'),
+    {
+      label: 'Datas bloqueadas',
+      value: aiHealth ? String(aiHealth.blockedDatesCount) : 'Verificando...',
+      tone: 'neutral',
+    },
+    {
+      label: 'Status',
+      value: aiHealthStatus.label,
+      tone: aiHealthStatus.tone,
+    },
+  ];
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
       <div className="max-w-[1100px] mx-auto px-8 py-8 space-y-6">
@@ -226,6 +313,36 @@ export const AIConfigsView = ({
           <h1 className="text-[22px] font-semibold tracking-tight">Cérebro IA</h1>
           <p className="text-[13px] text-[var(--color-ink-muted)]">Configure como a IA responde no WhatsApp e defina regras do negócio.</p>
         </header>
+
+        <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-[var(--color-line)]">
+            <div className="flex items-center gap-2 min-w-0">
+              <Activity className="w-4 h-4 text-[var(--color-ink-muted)] flex-shrink-0" strokeWidth={1.8} />
+              <div className="min-w-0">
+                <p className="text-[13.5px] font-semibold">Saúde da IA</p>
+                <p className="text-[11.5px] text-[var(--color-ink-muted)]">Prontidão operacional do atendimento automático.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadAiHealth()}
+              disabled={aiHealthLoading}
+              className="h-8 w-8 rounded-md bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] flex items-center justify-center hover:bg-[var(--color-line)] disabled:opacity-50 transition-colors"
+              aria-label="Atualizar saúde da IA"
+              title="Atualizar"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${aiHealthLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6 px-4 py-2">
+            {healthItems.map((item) => (
+              <ReadinessItem key={item.label} {...item} />
+            ))}
+          </div>
+          {aiHealthError && (
+            <p className="px-4 pb-3 text-[11.5px] text-[var(--color-alert)]">{aiHealthError}</p>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* Daily Context */}

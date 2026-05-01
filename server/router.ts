@@ -67,7 +67,7 @@ import {
   resolveSession,
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
-import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
 import type { ChatAttachment } from '../src/types.js';
@@ -1436,7 +1436,7 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
  */
 router.post('/api/ai/generate-instructions', async (req: Request, res: Response) => {
   try {
-    const empresaId = await requireEmpresaId(req);
+    const { empresaId, userId } = await requireEmpresaAndUserId(req);
     const payload = validateGenerateInstructionsPayload(req);
     if (payload.ok === false) {
       if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
@@ -1444,7 +1444,7 @@ router.post('/api/ai/generate-instructions', async (req: Request, res: Response)
       return;
     }
 
-    const rateLimit = checkAiRouteRateLimit(empresaId, 'generate-instructions');
+    const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'generate-instructions');
     if (rateLimit.ok === false) {
       if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
       res.status(rateLimit.status).json({ error: rateLimit.error });
@@ -1509,7 +1509,7 @@ Escreva agora as diretrizes operacionais do agente.`;
  */
 router.post('/api/ai/complete', async (req: Request, res: Response) => {
   try {
-    const empresaId = await requireEmpresaId(req);
+    const { empresaId, userId } = await requireEmpresaAndUserId(req);
     const payload = validateAiCompletePayload(req);
     if (payload.ok === false) {
       if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
@@ -1517,7 +1517,7 @@ router.post('/api/ai/complete', async (req: Request, res: Response) => {
       return;
     }
 
-    const rateLimit = checkAiRouteRateLimit(empresaId, 'complete');
+    const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'complete');
     if (rateLimit.ok === false) {
       if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
       res.status(rateLimit.status).json({ error: rateLimit.error });
