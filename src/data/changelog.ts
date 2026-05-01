@@ -18,8 +18,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-01',
     category: 'medium',
-    title: 'WhatsApp entende mais tipos de mensagem',
-    description: 'Localização, contatos, enquetes, reações e figurinhas agora aparecem de forma mais clara na conversa, em vez de ficarem sem contexto.',
+    title: 'Atendimento manual ganhou ajuda de IA',
+    description: 'No modo manual, o atendente agora pode pedir para a IA sugerir uma resposta pronta ou melhorar um texto antes de enviar. E mensagens como localização, contatos, enquetes, reações e figurinhas também aparecem com mais clareza na conversa.',
   },
   {
     date: '2026-05-01',

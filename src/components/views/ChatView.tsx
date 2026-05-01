@@ -19,11 +19,10 @@ import {
   Search,
   Send,
   Trash2,
-  UserCheck,
   X,
 } from 'lucide-react';
 import { formatLastMessageTime, normalizePhoneNumber } from '../../domain/chat';
-import { getOwnerResponse } from '../../services/openaiService';
+import { getManualChatAssistSuggestion, getOwnerResponse } from '../../services/openaiService';
 import type { ChatAttachment, ChatSession, QuickResponse } from '../../types';
 import { MessageBubble } from './MessageBubble';
 import { EscaladoBadge } from '../shared/EscaladoBadge';
@@ -33,6 +32,7 @@ import { useEscalationEvents } from '../../hooks/useEscalationEvents';
 import { ConfirmModal } from '../ConfirmModal';
 import { ContactAvatar } from '../ContactAvatar';
 import { Modal, useModalTitleId } from '../Modal';
+import { getFriendlyErrorMessage } from '../../services/errorMessages';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -132,6 +132,8 @@ export function ChatView({
   const [newChatLoading, setNewChatLoading] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
   const [deleteSessionPending, setDeleteSessionPending] = useState<{ id: string; name: string } | null>(null);
+  const [aiAssistMenuOpen, setAiAssistMenuOpen] = useState(false);
+  const [aiAssistLoading, setAiAssistLoading] = useState<'improve' | 'reply' | null>(null);
   const newChatTitleId = useModalTitleId();
   const chatListRef = useRef<HTMLDivElement>(null);
   const [chatListScrollTop, setChatListScrollTop] = useState(0);
@@ -252,6 +254,7 @@ export function ChatView({
   useEffect(() => {
     setEditingName(false);
     setMobileDetailsOpen(false);
+    setAiAssistMenuOpen(false);
   }, [activeSessionId]);
 
   // Stamp acknowledged_at on the open escalation event the first time the
@@ -405,6 +408,34 @@ export function ChatView({
       setChatActionError(e instanceof Error ? e.message : 'Não foi possível enviar.');
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleAiAssist = async (mode: 'improve' | 'reply') => {
+    if (!activeSession) return;
+    if (activeSession.autoReply) {
+      setChatActionError('Essa ajuda de IA fica disponível quando o atendimento está em modo manual.');
+      return;
+    }
+    if (mode === 'improve' && !ownerInput.trim()) {
+      setChatActionError('Digite uma mensagem primeiro para a IA melhorar o texto.');
+      return;
+    }
+
+    setAiAssistMenuOpen(false);
+    setAiAssistLoading(mode);
+    setChatActionError(null);
+    try {
+      const suggestion = await getManualChatAssistSuggestion(activeSession.messages, {
+        mode,
+        draft: ownerInput,
+        customerName: activeSession.customerName,
+      });
+      setOwnerInput(suggestion.trim());
+    } catch (error) {
+      setChatActionError(getFriendlyErrorMessage(error) || 'Não foi possível gerar a sugestão agora.');
+    } finally {
+      setAiAssistLoading(null);
     }
   };
 
@@ -881,17 +912,81 @@ export function ChatView({
                       value={ownerInput}
                       onChange={(e) => setOwnerInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && !isSending && void handleOwnerSend()}
-                      disabled={isSending}
+                      disabled={isSending || aiAssistLoading !== null}
                       placeholder={pendingAttachment ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /atalho'}
-                      className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-9 disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-12 disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
                       {pendingAttachment ? (
                         <Paperclip className="h-4 w-4 text-[var(--color-brand)]" strokeWidth={1.8} />
-                      ) : ownerInput.startsWith('/') ? (
-                        <Bot className="w-4 h-4 text-[var(--color-brand)]" strokeWidth={1.8} />
                       ) : (
-                        <UserCheck className="w-4 h-4 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (activeSession.autoReply || aiAssistLoading) return;
+                              setAiAssistMenuOpen((open) => !open);
+                            }}
+                            disabled={activeSession.autoReply || aiAssistLoading !== null || isSending}
+                            title={activeSession.autoReply ? 'Disponível no modo manual' : 'Sugestões de IA'}
+                            className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+                              activeSession.autoReply
+                                ? 'cursor-not-allowed text-[var(--color-ink-faint)]'
+                                : 'text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)]'
+                            }`}
+                          >
+                            {aiAssistLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+                            ) : (
+                              <Bot className="h-4 w-4" strokeWidth={1.8} />
+                            )}
+                          </button>
+
+                          <AnimatePresence>
+                            {aiAssistMenuOpen && (
+                              <>
+                                <motion.button
+                                  type="button"
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  className="fixed inset-0 z-40 cursor-default"
+                                  onClick={() => setAiAssistMenuOpen(false)}
+                                />
+                                <motion.div
+                                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                                  className="absolute bottom-full right-0 z-50 mb-3 w-56 overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-pop)]"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleAiAssist('improve')}
+                                    disabled={!ownerInput.trim()}
+                                    className="flex w-full items-start gap-3 border-b border-[var(--color-line)] px-3 py-3 text-left transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    <Pencil className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                                    <span className="block min-w-0">
+                                      <span className="block text-[12.5px] font-semibold text-[var(--color-ink)]">Melhorar mensagem</span>
+                                      <span className="block text-[11.5px] leading-relaxed text-[var(--color-ink-muted)]">Corrige e deixa mais amigável sem perder o tom humano.</span>
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleAiAssist('reply')}
+                                    className="flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                                  >
+                                    <MessageCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                                    <span className="block min-w-0">
+                                      <span className="block text-[12.5px] font-semibold text-[var(--color-ink)]">Gerar resposta</span>
+                                      <span className="block text-[11.5px] leading-relaxed text-[var(--color-ink-muted)]">Lê o contexto do chat e sugere a próxima resposta.</span>
+                                    </span>
+                                  </button>
+                                </motion.div>
+                              </>
+                            )}
+                          </AnimatePresence>
+                        </>
                       )}
                     </div>
                   </div>

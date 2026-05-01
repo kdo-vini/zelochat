@@ -216,3 +216,83 @@ export async function getGeneralManagerResponse(
     return { reply: "Tive um erro ao processar seu comando.", actions: [] };
   }
 }
+
+type ManualChatAssistMode = 'improve' | 'reply';
+
+export async function getManualChatAssistSuggestion(
+  history: ChatMessage[],
+  options: {
+    mode: ManualChatAssistMode;
+    draft?: string;
+    customerName?: string;
+  },
+): Promise<string> {
+  const { mode, draft, customerName } = options;
+  const trimmedDraft = draft?.trim() ?? '';
+  const historyMessages = history
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .filter((message) => !!contentForInternalAi(message).trim())
+    .slice(-20)
+    .map((message) => ({
+      role: message.role === 'user' ? 'user' : 'assistant',
+      content: contentForInternalAi(message),
+    }));
+
+  const nowContext = getBrazilNowContext();
+  const customerLine = customerName?.trim()
+    ? `Nome do cliente no chat: ${customerName.trim()}.`
+    : 'Nome do cliente indisponível.';
+
+  const systemInstruction = mode === 'improve'
+    ? `
+      Você é um assistente de escrita para atendimento manual no WhatsApp de uma lanchonete brasileira.
+      Sua tarefa é MELHORAR a mensagem escrita pelo atendente humano, sem parecer um robô.
+
+      CONTEXTO:
+      - ${nowContext}
+      - ${customerLine}
+
+      REGRAS:
+      - Preserve a intenção da mensagem original.
+      - Corrija erros, melhore clareza e deixe mais simpática.
+      - Mantenha tom humano, natural e curto, típico de WhatsApp.
+      - Não invente informações que não estejam no histórico nem no rascunho.
+      - Não use markdown, aspas, listas, nem explicações sobre o que você fez.
+      - Retorne APENAS a mensagem final pronta para colar e enviar.
+    `
+    : `
+      Você é um assistente de sugestão para atendimento manual no WhatsApp de uma lanchonete brasileira.
+      Sua tarefa é SUGERIR uma resposta para o atendente humano com base no histórico da conversa.
+
+      CONTEXTO:
+      - ${nowContext}
+      - ${customerLine}
+
+      REGRAS:
+      - Considere o histórico inteiro antes de responder.
+      - Escreva uma resposta curta, educada, natural e humana.
+      - Não invente preço, prazo, produto ou regra que não apareça no histórico.
+      - Se faltar contexto para cravar algo, responda pedindo a informação que falta de forma simpática.
+      - Não use markdown, aspas, listas, nem explicações sobre o raciocínio.
+      - Retorne APENAS a mensagem final pronta para colar e enviar.
+    `;
+
+  const messages = [
+    { role: 'system', content: systemInstruction },
+    ...historyMessages,
+  ];
+
+  if (mode === 'improve') {
+    messages.push({
+      role: 'user',
+      content: `Melhore esta mensagem do atendente, mantendo a intenção original:\n${trimmedDraft}`,
+    });
+  } else {
+    messages.push({
+      role: 'user',
+      content: 'Sugira a próxima resposta do atendente para este cliente com base no histórico.',
+    });
+  }
+
+  return callAI(messages, 0.4);
+}
