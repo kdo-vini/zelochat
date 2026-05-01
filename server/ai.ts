@@ -1949,7 +1949,8 @@ export async function generateAndSendReply(
     const HISTORY_CAP = 60;
     const filteredHistory = session.messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .filter((m) => !!m.content); // skip tool-call-only assistant rows (content is null)
+      .filter((m) => !!m.content) // skip tool-call-only assistant rows (content is null)
+      .filter((m) => !/^\[Rea[çc]ão|^\[Voto em enquete/i.test(m.content ?? '')); // skip reactions/polls — no actionable intent
     const trimmedHistory = filteredHistory.length > HISTORY_CAP
       ? filteredHistory.slice(-HISTORY_CAP)
       : filteredHistory;

@@ -250,13 +250,26 @@ const OPERATIONAL_PROFILE_TTL_MS = 5 * 60 * 1000;
  *   - POST /api/bind-empresa (frontend boot)
  *   - ensureAiSettingsHydrated (lazy on first webhook message)
  */
+const LOAD_AI_SETTINGS_TIMEOUT_MS = 3000;
+
 export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   const supabase = getServiceSupabase();
-  const { data, error } = await supabase
-    .from('empresa_perfil')
-    .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento')
-    .eq('id', empresaId)
-    .maybeSingle();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOAD_AI_SETTINGS_TIMEOUT_MS);
+  let data: unknown;
+  let error: unknown;
+  try {
+    const result = await supabase
+      .from('empresa_perfil')
+      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento')
+      .eq('id', empresaId)
+      .abortSignal(controller.signal)
+      .maybeSingle();
+    data = result.data;
+    error = result.error;
+  } finally {
+    clearTimeout(timer);
+  }
   if (error) throw error;
   if (!data) throw new Error(`empresa_perfil not found for ${empresaId}`);
   const row = (data as {

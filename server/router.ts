@@ -43,6 +43,7 @@ import {
   serializeForJid,
 } from './messageHandler.js';
 import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
+import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { redactInstance } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
@@ -1543,6 +1544,66 @@ router.post('/api/ai/complete', async (req: Request, res: Response) => {
     }
     console.error('[AI Proxy] Error:', error);
     res.status(500).json({ error: 'Falha ao processar a solicitação da IA.' });
+  }
+});
+
+/**
+ * POST /api/ai/simulate — Dry-run the AI pipeline without touching the DB or sending WhatsApp messages.
+ * Body: { customerMessage, customerName?, conversationHistory?, configOverride? }
+ */
+router.post('/api/ai/simulate', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+
+    const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'complete');
+    if (rateLimit.ok === false) {
+      if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(rateLimit.status).json({ error: rateLimit.error });
+      return;
+    }
+
+    const body = req.body as Record<string, unknown>;
+    const customerMessage = typeof body.customerMessage === 'string' ? body.customerMessage.trim() : '';
+    if (!customerMessage) {
+      res.status(400).json({ error: 'customerMessage é obrigatório.' });
+      return;
+    }
+    if (customerMessage.length > 2000) {
+      res.status(400).json({ error: 'customerMessage excede 2000 caracteres.' });
+      return;
+    }
+
+    const rawHistory = Array.isArray(body.conversationHistory) ? body.conversationHistory : [];
+    if (rawHistory.length > 20) {
+      res.status(400).json({ error: 'conversationHistory não pode ter mais de 20 mensagens.' });
+      return;
+    }
+
+    const payload: SimulatePayload = {
+      customerMessage,
+      customerName: typeof body.customerName === 'string' ? body.customerName : undefined,
+      conversationHistory: rawHistory
+        .filter((m): m is { role: 'user' | 'assistant'; content: string } =>
+          m !== null &&
+          typeof m === 'object' &&
+          (m.role === 'user' || m.role === 'assistant') &&
+          typeof m.content === 'string',
+        ),
+      configOverride:
+        body.configOverride !== null && typeof body.configOverride === 'object'
+          ? (body.configOverride as SimulatePayload['configOverride'])
+          : undefined,
+    };
+
+    const result = await simulateAtendimento(empresaId, payload);
+    res.json(result);
+  } catch (error: unknown) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    console.error('[AI Simulate] Error:', error);
+    res.status(500).json({ error: 'Falha ao processar a simulação.' });
   }
 });
 
