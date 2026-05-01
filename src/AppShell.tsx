@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import {
   Bike,
@@ -17,16 +17,36 @@ import {
   User as UserIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+// ChatView is eager — it is the default active view and the most-used feature.
+// All other views are lazy so they only add JS when first navigated to.
 import { ChatView } from './components/views/ChatView';
-import { DashboardView } from './components/views/DashboardView';
-import { ProductionView } from './components/views/ProductionView';
-import { CalendarView } from './components/views/CalendarView';
-import { AIConfigsView } from './components/views/AIConfigsView';
-import { SettingsView } from './components/views/SettingsView';
-import { ProfileView } from './components/views/ProfileView';
-import { DriversView } from './components/views/DriversView';
-import { CatalogView } from './components/views/CatalogView';
-import { NovidadesView } from './components/views/NovidadesView';
+const DashboardView = lazy(() =>
+  import('./components/views/DashboardView').then((m) => ({ default: m.DashboardView })),
+);
+const ProductionView = lazy(() =>
+  import('./components/views/ProductionView').then((m) => ({ default: m.ProductionView })),
+);
+const CalendarView = lazy(() =>
+  import('./components/views/CalendarView').then((m) => ({ default: m.CalendarView })),
+);
+const AIConfigsView = lazy(() =>
+  import('./components/views/AIConfigsView').then((m) => ({ default: m.AIConfigsView })),
+);
+const SettingsView = lazy(() =>
+  import('./components/views/SettingsView').then((m) => ({ default: m.SettingsView })),
+);
+const ProfileView = lazy(() =>
+  import('./components/views/ProfileView').then((m) => ({ default: m.ProfileView })),
+);
+const DriversView = lazy(() =>
+  import('./components/views/DriversView').then((m) => ({ default: m.DriversView })),
+);
+const CatalogView = lazy(() =>
+  import('./components/views/CatalogView').then((m) => ({ default: m.CatalogView })),
+);
+const NovidadesView = lazy(() =>
+  import('./components/views/NovidadesView').then((m) => ({ default: m.NovidadesView })),
+);
 import { useDrivers } from './hooks/useDrivers';
 import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
@@ -88,10 +108,11 @@ interface NavButtonProps {
   active: boolean;
   expanded: boolean;
   badge?: number;
+  badgeTone?: 'unread' | 'alert';
   onClick: () => void;
 }
 
-const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badge, onClick }) => {
+const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badge, badgeTone = 'unread', onClick }) => {
   const Icon = item.icon;
   return (
     <button
@@ -118,7 +139,9 @@ const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badg
       )}
 
       {badge != null && badge > 0 && (
-        <span className={`flex-shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-[var(--color-alert)] text-white text-[10px] font-bold ${
+        <span className={`flex-shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-white text-[10px] font-bold ${
+          badgeTone === 'alert' ? 'bg-[var(--color-alert)]' : 'bg-[#25D366]'
+        } ${
           expanded ? '' : 'absolute top-1.5 right-1.5 min-w-[14px] h-[14px] text-[9px]'
         }`}>
           {badge > 99 ? '99+' : badge}
@@ -137,15 +160,10 @@ const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badg
 
 NavButton.displayName = 'NavButton';
 
+// ChatView stays eager and memoised — it is the default route and renders on
+// every page load. Lazy views use their own internal memo; wrapping a lazy
+// component in memo() here is not useful and triggers a TS warning.
 const MemoChatView = memo(ChatView);
-const MemoDashboardView = memo(DashboardView);
-const MemoProductionView = memo(ProductionView);
-const MemoCalendarView = memo(CalendarView);
-const MemoAIConfigsView = memo(AIConfigsView);
-const MemoSettingsView = memo(SettingsView);
-const MemoProfileView = memo(ProfileView);
-const MemoDriversView = memo(DriversView);
-const MemoCatalogView = memo(CatalogView);
 
 /* ─── AppShell ────────────────────────────────────────────────── */
 export default function AppShell() {
@@ -516,8 +534,11 @@ export default function AppShell() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, catalog.categorias, catalog.subcategorias]);
 
-  const totalUnread = useMemo(
-    () => state.sessions.reduce((sum, s) => sum + (s.unreadCount ?? 0), 0),
+  // Count of conversations that have ANY unread message (WhatsApp-style: 1 dot
+  // per chat, not a sum of message counts). The per-conversation badge in
+  // ChatView still shows the per-chat message count.
+  const unreadConversationsCount = useMemo(
+    () => state.sessions.reduce((count, s) => count + ((s.unreadCount ?? 0) > 0 ? 1 : 0), 0),
     [state.sessions],
   );
 
@@ -797,7 +818,8 @@ export default function AppShell() {
                 item={item}
                 active={activeView === item.id}
                 expanded={sidebarExpanded}
-                badge={item.id === 'chat' ? (openEscalationCount > 0 ? openEscalationCount : totalUnread) : undefined}
+                badge={item.id === 'chat' ? (openEscalationCount > 0 ? openEscalationCount : unreadConversationsCount) : undefined}
+                badgeTone={item.id === 'chat' && openEscalationCount > 0 ? 'alert' : 'unread'}
                 onClick={() => setActiveView(item.id)}
               />
             ))}
@@ -925,106 +947,118 @@ export default function AppShell() {
             escalationRefetchKey={lastEscalation?.event.id ?? null}
           />
         ) : (
-          /* ── Other views ────────────────────────────────────────── */
-          <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
-            {activeView === 'dashboard' && (
-              <MemoDashboardView state={dashboardState} setActiveView={setActiveView} />
-            )}
-            {activeView === 'kanban' && (
-              <DragDropContext onDragEnd={onDragEnd}>
-                <MemoProductionView
-                  state={productionState}
-                  onDragEnd={onDragEnd}
-                  setActiveView={setActiveView}
-                  onAddOrder={handleAddOrder}
-                  onEditOrder={handleEditOrder}
-                  onDeleteOrder={handleDeleteOrder}
-                  onUpdateStatus={updateOrderStatus}
-                  isAuthenticated={!!token}
+          /* ── Other views (lazy-loaded) ──────────────────────────── */
+          /* Suspense boundary is placed here, inside the paywall gate,
+             so the fallback spinner only appears while the view chunk is
+             being fetched — never on the initial app load (ChatView is
+             eager) and never during auth/paywall resolution. */
+          <Suspense
+            fallback={
+              <div className="flex flex-1 items-center justify-center bg-[var(--color-canvas)]">
+                <div className="w-6 h-6 rounded-full border-2 border-[var(--color-brand)] border-t-transparent animate-spin" />
+              </div>
+            }
+          >
+            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
+              {activeView === 'dashboard' && (
+                <DashboardView state={dashboardState} setActiveView={setActiveView} />
+              )}
+              {activeView === 'kanban' && (
+                <DragDropContext onDragEnd={onDragEnd}>
+                  <ProductionView
+                    state={productionState}
+                    onDragEnd={onDragEnd}
+                    setActiveView={setActiveView}
+                    onAddOrder={handleAddOrder}
+                    onEditOrder={handleEditOrder}
+                    onDeleteOrder={handleDeleteOrder}
+                    onUpdateStatus={updateOrderStatus}
+                    isAuthenticated={!!token}
+                  />
+                </DragDropContext>
+              )}
+              {activeView === 'calendar' && (
+                <CalendarView
+                  state={calendarState}
+                  setState={setState}
+                  onNavigateToKanban={handleNavigateToKanban}
                 />
-              </DragDropContext>
-            )}
-            {activeView === 'calendar' && (
-              <MemoCalendarView
-                state={calendarState}
-                setState={setState}
-                onNavigateToKanban={handleNavigateToKanban}
-              />
-            )}
-            {activeView === 'catalog' && (
-              <MemoCatalogView
-                isAuthenticated={!!session}
-                authLoading={authLoading}
-                loading={catalog.loading}
-                error={catalog.error}
-                categorias={catalog.categorias}
-                subcategorias={catalog.subcategorias}
-                produtos={catalog.produtos}
-                refresh={catalog.refresh}
-                createCategoria={catalog.createCategoria}
-                updateCategoria={catalog.updateCategoria}
-                deleteCategoria={catalog.deleteCategoria}
-                createSubcategoria={catalog.createSubcategoria}
-                updateSubcategoria={catalog.updateSubcategoria}
-                deleteSubcategoria={catalog.deleteSubcategoria}
-                createProduto={catalog.createProduto}
-                updateProduto={catalog.updateProduto}
-                deleteProduto={catalog.deleteProduto}
-              />
-            )}
-            {activeView === 'ai-configs' && (
-              <MemoAIConfigsView
-                state={aiConfigsState}
-                setState={setState}
-                triggers={triggers}
-                triggersError={triggersError}
-                createTrigger={createTrigger}
-                updateTrigger={updateTriggerRequest}
-                deleteTrigger={deleteTriggerRequest}
-                quickResponses={quickResponses}
-                addQuickResponse={addQuickResponse}
-                updateQuickResponse={updateQuickResponse}
-                deleteQuickResponse={deleteQuickResponse}
-                saveAiInstructions={saveAiInstructions}
-                token={token}
-              />
-            )}
-            {activeView === 'settings' && (
-              <MemoSettingsView
-                state={settingsState}
-                setState={setState}
-                empresa={empresa}
-                saveEmpresa={saveEmpresa}
-                isAuthenticated={!!token}
-                token={token}
-              />
-            )}
-            {activeView === 'profile' && (
-              <MemoProfileView
-                state={profileState}
-                setState={setState}
-                empresa={empresa}
-                saveEmpresa={saveEmpresa}
-              />
-            )}
-            {activeView === 'drivers' && (
-              <MemoDriversView
-                orders={state.orders}
-                drivers={drivers}
-                isAuthenticated={!!token}
-                loading={driversLoading}
-                error={driversError}
-                createDriver={createDriver}
-                updateDriver={updateDriver}
-                deleteDriver={deleteDriver}
-                token={token}
-                onDispatchSuccess={handleDispatchSuccess}
-              />
-            )}
-            {activeView === 'novidades' && (
-              <NovidadesView />
-            )}
-          </div>
+              )}
+              {activeView === 'catalog' && (
+                <CatalogView
+                  isAuthenticated={!!session}
+                  authLoading={authLoading}
+                  loading={catalog.loading}
+                  error={catalog.error}
+                  categorias={catalog.categorias}
+                  subcategorias={catalog.subcategorias}
+                  produtos={catalog.produtos}
+                  refresh={catalog.refresh}
+                  createCategoria={catalog.createCategoria}
+                  updateCategoria={catalog.updateCategoria}
+                  deleteCategoria={catalog.deleteCategoria}
+                  createSubcategoria={catalog.createSubcategoria}
+                  updateSubcategoria={catalog.updateSubcategoria}
+                  deleteSubcategoria={catalog.deleteSubcategoria}
+                  createProduto={catalog.createProduto}
+                  updateProduto={catalog.updateProduto}
+                  deleteProduto={catalog.deleteProduto}
+                />
+              )}
+              {activeView === 'ai-configs' && (
+                <AIConfigsView
+                  state={aiConfigsState}
+                  setState={setState}
+                  triggers={triggers}
+                  triggersError={triggersError}
+                  createTrigger={createTrigger}
+                  updateTrigger={updateTriggerRequest}
+                  deleteTrigger={deleteTriggerRequest}
+                  quickResponses={quickResponses}
+                  addQuickResponse={addQuickResponse}
+                  updateQuickResponse={updateQuickResponse}
+                  deleteQuickResponse={deleteQuickResponse}
+                  saveAiInstructions={saveAiInstructions}
+                  token={token}
+                />
+              )}
+              {activeView === 'settings' && (
+                <SettingsView
+                  state={settingsState}
+                  setState={setState}
+                  empresa={empresa}
+                  saveEmpresa={saveEmpresa}
+                  isAuthenticated={!!token}
+                  token={token}
+                />
+              )}
+              {activeView === 'profile' && (
+                <ProfileView
+                  state={profileState}
+                  setState={setState}
+                  empresa={empresa}
+                  saveEmpresa={saveEmpresa}
+                />
+              )}
+              {activeView === 'drivers' && (
+                <DriversView
+                  orders={state.orders}
+                  drivers={drivers}
+                  isAuthenticated={!!token}
+                  loading={driversLoading}
+                  error={driversError}
+                  createDriver={createDriver}
+                  updateDriver={updateDriver}
+                  deleteDriver={deleteDriver}
+                  token={token}
+                  onDispatchSuccess={handleDispatchSuccess}
+                />
+              )}
+              {activeView === 'novidades' && (
+                <NovidadesView />
+              )}
+            </div>
+          </Suspense>
         )}
       </div>
 
@@ -1033,7 +1067,8 @@ export default function AppShell() {
         {NAV_PRIMARY.map((item) => {
           const Icon = item.icon;
           const active = activeView === item.id;
-          const badge = item.id === 'chat' ? (openEscalationCount > 0 ? openEscalationCount : totalUnread) : 0;
+          const isAlert = item.id === 'chat' && openEscalationCount > 0;
+          const badge = item.id === 'chat' ? (isAlert ? openEscalationCount : unreadConversationsCount) : 0;
           return (
             <button
               key={item.id}
@@ -1045,8 +1080,10 @@ export default function AppShell() {
               <Icon className="h-5 w-5" strokeWidth={active ? 2.2 : 1.8} />
               <span className="text-[10.5px] font-medium leading-none">{item.label}</span>
               {badge > 0 && (
-                <span className="absolute top-1.5 left-1/2 ml-1 rounded-full bg-[var(--color-brand)] min-w-[16px] h-[16px] px-1 flex items-center justify-center text-[9.5px] font-bold text-white">
-                  {badge}
+                <span className={`absolute top-1.5 left-1/2 ml-1 rounded-full min-w-[16px] h-[16px] px-1 flex items-center justify-center text-[9.5px] font-bold text-white ${
+                  isAlert ? 'bg-[var(--color-alert)]' : 'bg-[#25D366]'
+                }`}>
+                  {badge > 99 ? '99+' : badge}
                 </span>
               )}
             </button>
