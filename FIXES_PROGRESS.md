@@ -3,9 +3,9 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-01 Sprint 45):** atendimento manual ganhou ajuda de IA dentro do chat. No modo Manual, o operador pode pedir para melhorar o rascunho atual ou gerar uma resposta a partir do contexto da conversa; a sugestão apenas preenche o campo de texto e nunca envia mensagem automaticamente.
+**Latest execution note (2026-05-01 Sprint 46):** a IA agora consegue usar imagens recebidas no WhatsApp como contexto visual. Fotos de lanche/preparo e comprovantes Pix entram na chamada multimodal da OpenAI; comprovante e tratado como "recebido", sem prometer validacao bancaria.
 
-## 📊 Status atual (2026-05-01 Sprint 45)
+## 📊 Status atual (2026-05-01 Sprint 46)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
@@ -118,6 +118,13 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 46 (2026-05-01) — IA com visão para imagens
+
+- ✅ IA multimodal — imagens recebidas pelo WhatsApp agora entram no contexto da OpenAI como `image_url` quando ha URL/base64 valido. O envio fica limitado as 3 imagens recentes do cliente para controlar custo e latencia — `server/ai.ts`, `src/domain/chat.ts`
+- ✅ Mídia inbound — extração de anexos agora cobre `data.base64`, `message.base64`, `{image,audio,document,video}Message.base64` e URLs publicas allowlisted, mantendo limite de 25 MB antes do decode — `server/messageHandler.ts`
+- ✅ Guardrail Pix/pedido — prompt fixo orienta a agradecer comprovante Pix sem prometer validacao bancaria, interpretar fotos de lanche/preparo e nunca criar pedido apenas por imagem ambigua — `server/ai.ts`
+- ✅ Novidades — entrada do dia consolidada para incluir entendimento de imagens sem passar de 4 cards em 2026-05-01 — `src/data/changelog.ts`
 
 ### Sprint 45 (2026-05-01) — IA assistida no atendimento manual
 

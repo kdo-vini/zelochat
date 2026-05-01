@@ -589,42 +589,91 @@ function isAllowedMediaUrl(raw: string): boolean {
   }
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
+function getInboundBase64Raw(msg: any): string | undefined {
+  const message = msg?.message;
+  return firstString(
+    msg?.base64,
+    message?.base64,
+    message?.imageMessage?.base64,
+    message?.audioMessage?.base64,
+    message?.documentMessage?.base64,
+    message?.videoMessage?.base64,
+  );
+}
+
+function getInboundMediaUrlRaw(msg: any): string | undefined {
+  const message = msg?.message;
+  return firstString(
+    msg?.mediaUrl,
+    message?.mediaUrl,
+    message?.imageMessage?.mediaUrl,
+    message?.audioMessage?.mediaUrl,
+    message?.documentMessage?.mediaUrl,
+    message?.videoMessage?.mediaUrl,
+  );
+}
+
+function normalizeBase64Payload(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed.startsWith('data:') ? trimmed.split(',')[1] ?? '' : trimmed;
+}
+
+function approxBase64Bytes(base64: string): number {
+  return Math.floor(base64.length * 0.75);
+}
+
+export const __mediaExtractionForTests = {
+  MAX_INBOUND_MEDIA_BYTES,
+  approxBase64Bytes,
+  getInboundBase64Raw,
+  getInboundMediaUrlRaw,
+  isAllowedMediaUrl,
+  normalizeBase64Payload,
+};
+
 async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string, empresaId: string): Promise<string | undefined> {
-  // 1. Public mediaUrl — Whatsmiau provides this after uploading to its own Google Cloud storage.
+  // 1. Base64 path — Whatsmiau enviou bytes inline. AQUI precisamos de cap
+  // porque o decode acontece no nosso process. base64 → ~75% bytes reais.
+  // Calculamos o tamanho aproximado ANTES de decodar pra evitar alocar buffer
+  // gigante por nada.
+  const raw = getInboundBase64Raw(msg) ?? '';
+  if (raw) {
+    const pure = normalizeBase64Payload(raw);
+    if (pure) {
+      // base64 length × 0.75 ≈ decoded bytes. Conservador: aceita o limite com folga.
+      const approxBytes = approxBase64Bytes(pure);
+      if (approxBytes > MAX_INBOUND_MEDIA_BYTES) {
+        console.warn(`[Media] inbound payload too large: ~${(approxBytes / 1024 / 1024).toFixed(1)}MB exceeds ${MAX_INBOUND_MEDIA_BYTES / 1024 / 1024}MB cap. Dropping.`);
+      } else {
+        // Upload to Supabase for a persistent public URL
+        try {
+          const buffer = Buffer.from(pure, 'base64');
+          return await uploadReceivedMedia(buffer, fileName, mimeType, empresaId);
+        } catch (err) {
+          console.warn('[Media] Supabase upload failed, using data URI:', err);
+          return `data:${mimeType};base64,${pure}`;
+        }
+      }
+    }
+  }
+
+  // 2. Public mediaUrl — Whatsmiau provides this after uploading to its own Google Cloud storage.
   // Esses URLs públicos não consomem nossa memória (cliente baixa direto), então
   // não precisam de cap. Tamanho declarado vem do msg.message.{type}Message.fileLength
   // quando relevante — checagem feita no caller via skip-attachment.
-  const mediaUrl: string = msg.message?.mediaUrl ?? '';
+  const mediaUrl = getInboundMediaUrlRaw(msg) ?? '';
   if (mediaUrl) {
     if (isAllowedMediaUrl(mediaUrl)) {
       return mediaUrl;
     }
     console.warn('[Media] mediaUrl blocked (not in allowlist):', (() => { try { return new URL(mediaUrl).hostname; } catch { return mediaUrl; } })());
-  }
-
-  // 2. Base64 path — Whatsmiau enviou bytes inline. AQUI precisamos de cap
-  // porque o decode acontece no nosso process. base64 → ~75% bytes reais.
-  // Calculamos o tamanho aproximado ANTES de decodar pra evitar alocar buffer
-  // gigante por nada.
-  const raw: string = msg.message?.base64 ?? '';
-  if (raw) {
-    const pure = raw.startsWith('data:') ? raw.split(',')[1] ?? '' : raw;
-    if (pure) {
-      // base64 length × 0.75 ≈ decoded bytes. Conservador: aceita o limite com folga.
-      const approxBytes = Math.floor(pure.length * 0.75);
-      if (approxBytes > MAX_INBOUND_MEDIA_BYTES) {
-        console.warn(`[Media] inbound payload too large: ~${(approxBytes / 1024 / 1024).toFixed(1)}MB exceeds ${MAX_INBOUND_MEDIA_BYTES / 1024 / 1024}MB cap. Dropping.`);
-        return undefined;
-      }
-      // Upload to Supabase for a persistent public URL
-      try {
-        const buffer = Buffer.from(pure, 'base64');
-        return await uploadReceivedMedia(buffer, fileName, mimeType, empresaId);
-      } catch (err) {
-        console.warn('[Media] Supabase upload failed, using data URI:', err);
-        return `data:${mimeType};base64,${pure}`;
-      }
-    }
   }
 
   // No usable media data

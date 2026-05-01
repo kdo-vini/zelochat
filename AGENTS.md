@@ -206,3 +206,6 @@ Until a hard guard is wired in, treat `dev:server` against the shared `.env` as 
 - `geminiService.ts` is legacy — do not modify or expand
 - All chat state mutations go through `useWhatsAppSessions` hook — never mutate `sessions` directly in `App.tsx`
 - Delete operations must hit the backend first (or optimistic update + rollback on error)
+
+## Workflow
+- For complex tasks, always use subagents for async work and multitasking. Be an orchestrator.

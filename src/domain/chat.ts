@@ -18,6 +18,21 @@ export type ParsedChatContent = {
   attachment?: ChatAttachment;
 };
 
+export type ImageContentForModel = {
+  text: string;
+  imageUrl?: {
+    url: string;
+    detail: 'low';
+  };
+};
+
+const MODEL_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+]);
+
 export function normalizePhoneNumber(value: string): string {
   return value.replace(/\D/g, '');
 }
@@ -179,6 +194,20 @@ export function buildContentForModel(message: ChatMessage): string {
   }
 
   return baseContent;
+}
+
+export function getModelImageUrl(message: ChatMessage): ImageContentForModel['imageUrl'] | undefined {
+  const attachment = message.attachment;
+  if (message.kind !== 'image' || !attachment?.dataUrl) return undefined;
+  const mimeType = attachment.mimeType.split(';')[0]?.trim().toLowerCase() ?? '';
+  if (!MODEL_IMAGE_MIME_TYPES.has(mimeType)) return undefined;
+  return { url: attachment.dataUrl, detail: 'low' };
+}
+
+export function buildImageContentForModel(message: ChatMessage): ImageContentForModel {
+  const text = buildContentForModel(message) || message.preview || '[Imagem]';
+  const imageUrl = getModelImageUrl(message);
+  return imageUrl ? { text, imageUrl } : { text };
 }
 
 export function parseStructuredMessage(content: string): ParsedChatContent {

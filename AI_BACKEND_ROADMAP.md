@@ -17,6 +17,7 @@ Entregas que antes estavam como "proximos passos" e ja foram feitas:
 - Saude da IA por empresa: endpoint e painel com sinais de prontidao operacional.
 - Simulador de atendimento: ferramenta para testar respostas da IA sem tocar no WhatsApp nem no banco de producao.
 - Mensagens nao-texto: localizacao, contatos, enquetes, reacoes, figurinhas e tipos desconhecidos aparecem com placeholders claros.
+- Imagens recebidas: fotos de lanche/preparo e comprovantes Pix entram como contexto visual da IA; Pix e confirmado como recebido, sem validacao bancaria.
 - Atendimento manual assistido por IA: no modo Manual, o operador pode melhorar um rascunho ou gerar uma sugestao de resposta; a IA apenas preenche o campo, sem envio automatico.
 
 ## Proxima prioridade
@@ -76,6 +77,8 @@ Algumas protecoes devem continuar em codigo, nao apenas no prompt:
 - Pedido duplicado.
 - Pedido misturado com reclamacao.
 - Pedido sem confirmacao explicita.
+- Imagem ambigua sem dados minimos de pedido.
+- Comprovante Pix recebido sem validacao bancaria.
 - Solicitacao de humano.
 
 Toda resposta relacionada a pedido deve passar por validacao antes de ir ao WhatsApp. Toda configuracao livre do dono deve ser tratada como preferencia, nao como lei absoluta.

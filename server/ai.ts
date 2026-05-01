@@ -1,4 +1,5 @@
 import type {
+  ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions.js';
@@ -12,7 +13,7 @@ import {
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
 import { getConfig, ensureAiSettingsHydrated, type CatalogCategoriaGroup } from './configStore.js';
 import { getServiceSupabase } from './supabase.js';
-import { buildContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
+import { buildContentForModel, buildImageContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
 import {
@@ -28,6 +29,7 @@ import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 const PENDING_ORDER_TTL_MIN = 30;
 const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 1200;
+const IMAGE_HISTORY_CAP = 3;
 
 /**
  * Fast-path cache (key: `${empresaId}:${jid}`) for "this JID had an order confirmed
@@ -1507,6 +1509,13 @@ INFORMAÇÕES DA LANCHONETE:
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
 - Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}${closedDayWarning}
 
+ENTENDIMENTO DE IMAGENS RECEBIDAS:
+- Quando o cliente enviar imagem, use a imagem junto com a legenda e o historico da conversa.
+- Se a imagem parecer um comprovante Pix, agradeca e confirme apenas que o comprovante foi recebido. NUNCA diga que o pagamento foi validado, compensado ou aprovado pelo banco.
+- Se a imagem parecer um lanche, produto, embalagem, preparo cru ou ponto de preparo, responda com base no que for visivel e no contexto da conversa.
+- Se a imagem estiver ilegivel, cortada, escura ou ambigua, peca para o cliente reenviar ou explicar em uma frase.
+- NUNCA crie pedido apenas por uma imagem ambigua. Para criar pedido, continue exigindo produto, quantidade, modo, data, horario, nome, pagamento e a confirmacao de observacao.
+
 REGRA OBRIGATÓRIA PARA HORÁRIO DE ATENDIMENTO:
 - Use a data e hora atual acima em TODA resposta sobre pedidos.
 - Se o cliente quiser pedir "agora", "hoje" ou sem deixar claro que é para outro dia/horário e agora estiver fora do horário ${operatingHoursStr}, informe imediatamente que estamos fora do horário e ofereça agendar outro horário, outro dia ou chamar um atendente.
@@ -1754,6 +1763,29 @@ export function planToolCallsForTurn(
   };
 }
 
+function buildRuntimeMessageForOpenAI(
+  message: { id: string; role: string; preview: string; kind: string; content: string | null; attachment?: any },
+  imageMessageIds: Set<string>,
+): ChatCompletionMessageParam {
+  const role = message.role === 'user' ? 'user' : 'assistant';
+
+  if (role === 'user' && imageMessageIds.has(message.id)) {
+    const imageContent = buildImageContentForModel(message as any);
+    if (imageContent.imageUrl) {
+      const parts: ChatCompletionContentPart[] = [
+        { type: 'text', text: imageContent.text || '[Imagem recebida]' },
+        { type: 'image_url', image_url: imageContent.imageUrl },
+      ];
+      return { role, content: parts };
+    }
+  }
+
+  return {
+    role,
+    content: buildContentForModel(message as any),
+  };
+}
+
 /**
  * 🚨 CRITICAL — AI dispatch entry point
  *
@@ -1784,11 +1816,12 @@ export function planToolCallsForTurn(
  *      keeps the pending row in place and asks the customer to retry —
  *      the order is finalized only by `confirmPendingOrder`.
  *
- *   5. Conversation history is filtered to TEXT-ONLY user/assistant rows.
- *      Tool messages and tool_calls are dropped because every tool flow
- *      here completes within ONE OpenAI request — never persist-and-replay.
- *      If you ever add a multi-turn tool flow, you MUST stop filtering
- *      here, otherwise OpenAI rejects the next request.
+ *   5. Conversation history is filtered to user/assistant rows, with only
+ *      recent user images attached as multimodal parts. Tool messages and
+ *      tool_calls are dropped because every tool flow here completes within
+ *      ONE OpenAI request — never persist-and-replay. If you ever add a
+ *      multi-turn tool flow, you MUST stop filtering here, otherwise OpenAI
+ *      rejects the next request.
  *
  * BUTTERFLY EFFECT — what cascades if you break this:
  *   • Duplicate orders (the original 2-day bug — hit prod twice already)
@@ -1933,7 +1966,8 @@ export async function generateAndSendReply(
     const openai = getAI();
 
     // INVARIANT (review fix H3):
-    // We forward only role=user / role=assistant TEXT messages to OpenAI from history.
+    // We forward only role=user / role=assistant messages to OpenAI from history.
+    // User images may be attached as multimodal parts, capped below for cost.
     // We deliberately drop:
     //   - role=tool messages
     //   - role=assistant messages with tool_calls (we strip the tool_calls field too)
@@ -1959,13 +1993,16 @@ export async function generateAndSendReply(
     const trimmedHistory = filteredHistory.length > HISTORY_CAP
       ? filteredHistory.slice(-HISTORY_CAP)
       : filteredHistory;
+    const imageMessageIds = new Set(
+      trimmedHistory
+        .filter((m) => m.role === 'user' && !!buildImageContentForModel(m as any).imageUrl)
+        .slice(-IMAGE_HISTORY_CAP)
+        .map((m) => m.id),
+    );
 
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemInstruction },
-      ...trimmedHistory.map((m) => ({
-        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: buildContentForModel(m),
-      })),
+      ...trimmedHistory.map((m) => buildRuntimeMessageForOpenAI(m, imageMessageIds)),
     ];
 
     const response = await openai.chat.completions.create({
