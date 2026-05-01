@@ -2,6 +2,8 @@ import type {
   BuiltinTriggerInfo,
   ChatAttachment,
   ChatSession,
+  DashboardOverview,
+  DashboardRange,
   EscalationEvent,
   Trigger,
   TriggerKind,
@@ -280,6 +282,21 @@ export async function getOpenEscalationCount(token: string): Promise<number> {
   });
   const body = await parseResponse<{ count: number }>(response);
   return body.count ?? 0;
+}
+
+export async function getDashboardOverview(
+  token: string,
+  range: DashboardRange,
+  period?: { startDate?: string; endDate?: string },
+): Promise<DashboardOverview> {
+  const params = new URLSearchParams({ range });
+  if (period?.startDate) params.set('startDate', period.startDate);
+  if (period?.endDate) params.set('endDate', period.endDate);
+  const response = await apiFetch(apiUrl(`/api/dashboard/overview?${params.toString()}`), {
+    headers: authHeaders(token),
+  });
+  const body = await parseResponse<{ overview: DashboardOverview }>(response);
+  return body.overview;
 }
 
 export async function listBuiltinTriggers(token: string): Promise<BuiltinTriggerInfo[]> {

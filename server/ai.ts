@@ -571,7 +571,7 @@ async function sendBlockedDateReply(
 ): Promise<string> {
   const reply = buildBlockedDateReply(blockedDate);
   await sendTextMessage(jid, reply, empresaId);
-  await addAssistantMessage(jid, reply, undefined, empresaId);
+  await addAssistantMessage(jid, reply, undefined, empresaId, undefined, { responseSource: 'ai_auto' });
   return reply;
 }
 
@@ -997,7 +997,7 @@ async function sendBusinessHoursReply(
 ): Promise<string> {
   const reply = buildBusinessHoursReply(issue);
   await sendTextMessage(jid, reply, empresaId);
-  await addAssistantMessage(jid, reply, undefined, empresaId);
+  await addAssistantMessage(jid, reply, undefined, empresaId, undefined, { responseSource: 'ai_auto' });
   return reply;
 }
 
@@ -1867,7 +1867,7 @@ export async function generateAndSendReply(
     await clearPendingOrder(jid, resolvedEmpresaId);
     const editAck = 'Beleza, vamos ajustar! Me conta o que mudou. 😊';
     await sendTextMessage(jid, editAck, resolvedEmpresaId);
-    await addAssistantMessage(jid, editAck, undefined, resolvedEmpresaId);
+    await addAssistantMessage(jid, editAck, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
     return editAck;
   }
 
@@ -2103,7 +2103,7 @@ export async function generateAndSendReply(
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
         await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
-        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
+        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
         console.log(`[AI] Processed ${toolPlan.calls.length} non-terminal tool_calls sequentially for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
@@ -2129,7 +2129,7 @@ export async function generateAndSendReply(
           console.log(`[AI] Blocking duplicate criar_pedido for ${jid} — order was confirmed ${ageLog}`);
           const dupMsg = 'Seu pedido já foi confirmado! 😊 Qualquer dúvida é só chamar.';
           await sendTextMessage(jid, dupMsg, resolvedEmpresaId);
-          await addAssistantMessage(jid, dupMsg, undefined, resolvedEmpresaId);
+          await addAssistantMessage(jid, dupMsg, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
           return dupMsg;
         }
 
@@ -2227,7 +2227,7 @@ export async function generateAndSendReply(
             const names = unmatchedItems.map((i) => i.product).join(', ');
             const notFoundMsg = `Desculpe, não encontrei no cardápio: ${names}. Pode verificar o nome do produto? 😊`;
             await sendTextMessage(jid, notFoundMsg, resolvedEmpresaId);
-            await addAssistantMessage(jid, notFoundMsg, undefined, resolvedEmpresaId);
+            await addAssistantMessage(jid, notFoundMsg, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
             return notFoundMsg;
           }
           args.items = resolvedItems.map((resolved) => ({
@@ -2367,7 +2367,7 @@ export async function generateAndSendReply(
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
         await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
-        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
+        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
         console.log(`[AI] consultar_pedido answered for ${jid}`);
         return cleanFollow;
       }
@@ -2463,7 +2463,7 @@ export async function generateAndSendReply(
           || 'Beleza! Já anotei aqui. 👍';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
         await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
-        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId);
+        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
         console.log(`[AI] Dispatched notify_manager (${trig.name}) for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
@@ -2474,7 +2474,7 @@ export async function generateAndSendReply(
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 
     await sendTextMessage(jid, cleanReply, resolvedEmpresaId);
-    await addAssistantMessage(jid, cleanReply, undefined, resolvedEmpresaId);
+    await addAssistantMessage(jid, cleanReply, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
 
     console.log(`[AI] Replied to ${jid}: ${cleanReply.slice(0, 80)}...`);
     resetAiFailureCounter(resolvedEmpresaId, jid);

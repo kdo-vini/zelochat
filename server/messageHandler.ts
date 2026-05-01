@@ -245,6 +245,17 @@ interface MessageRow {
 
 const MESSAGE_COLUMNS = 'id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status';
 
+type AssistantResponseSource = 'ai_auto' | 'human_manual';
+
+interface AddAssistantMessageOptions {
+  responseSource?: AssistantResponseSource;
+}
+
+interface LatestInboundMessageRow {
+  id: string;
+  sent_at: string;
+}
+
 interface SessionFamily {
   primary: SessionRow;
   latest: SessionRow;
@@ -829,6 +840,59 @@ async function insertMessage(params: {
   return mapMessage(data as MessageRow);
 }
 
+async function recordResponseEventForLatestInbound(params: {
+  empresaId: string;
+  sessionId: string;
+  responseMessageId: string;
+  responseSource: AssistantResponseSource;
+  sentAt: string;
+}): Promise<void> {
+  const supabase = getServiceSupabase();
+
+  const { data: inbound, error: inboundError } = await supabase
+    .from('zelochat_messages')
+    .select('id, sent_at')
+    .eq('empresa_id', params.empresaId)
+    .eq('session_id', params.sessionId)
+    .eq('role', 'user')
+    .lte('sent_at', params.sentAt)
+    .order('sent_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (inboundError) {
+    throw new Error(inboundError.message);
+  }
+
+  const latestInbound = inbound as LatestInboundMessageRow | null;
+  if (!latestInbound?.id) {
+    return;
+  }
+
+  const latencyMs = Math.max(
+    0,
+    new Date(params.sentAt).getTime() - new Date(latestInbound.sent_at).getTime(),
+  );
+  const responderType = params.responseSource === 'ai_auto' ? 'ai' : 'human';
+
+  const { error } = await supabase
+    .from('zelochat_response_events')
+    .insert({
+      empresa_id: params.empresaId,
+      session_id: params.sessionId,
+      incoming_message_id: latestInbound.id,
+      response_message_id: params.responseMessageId,
+      responder_type: responderType,
+      source: params.responseSource,
+      latency_ms: Math.round(latencyMs),
+      sent_at: params.sentAt,
+    });
+
+  if (error && (error as { code?: string }).code !== '23505') {
+    throw new Error(error.message);
+  }
+}
+
 /**
  * P0.14 — idempotent insert for inbound customer messages, keyed on the
  * WhatsApp message id (`data.key.id` from the Whatsmiau webhook payload).
@@ -1312,6 +1376,7 @@ export async function addAssistantMessage(
   toolCalls: any[] | undefined,
   empresaId: string,
   attachment?: ChatAttachment,
+  options: AddAssistantMessageOptions = {},
 ): Promise<void> {
   if (!empresaId) {
     console.warn('[MessageHandler] Ignoring outbound persistence because no empresa is bound yet.');
@@ -1335,14 +1400,31 @@ export async function addAssistantMessage(
     lastMessage: storedContent || '',
   });
 
+  const sentAt = new Date().toISOString();
   const storedMsg = await insertMessage({
     empresaId,
     sessionId: sessionRow.id,
     role: 'assistant',
     content: storedContent,
     tool_calls: toolCalls,
-    sentAt: new Date().toISOString(),
+    sentAt,
   });
+
+  if (options.responseSource && storedContent && !toolCalls?.length) {
+    try {
+      await recordResponseEventForLatestInbound({
+        empresaId,
+        sessionId: sessionRow.id,
+        responseMessageId: storedMsg.id,
+        responseSource: options.responseSource,
+        sentAt,
+      });
+    } catch (err) {
+      // Metrics must never block an actual customer reply. The dashboard will
+      // show "sem amostra ainda" until the migration/table is available.
+      console.warn('[metrics] Failed to record response event:', err);
+    }
+  }
 
   const family = await fetchSessionFamily(empresaId, jid);
   const mappedSession = family ? mapSession(family) : null;

@@ -49,6 +49,72 @@ export interface EscalationEvent {
   resolvedBy: string | null;
 }
 
+export type DashboardRange = 'today' | '7d' | '30d' | 'custom';
+
+export interface DashboardMetricValue {
+  value: number | null;
+  samples?: number;
+}
+
+export interface DashboardAttentionItem {
+  id: string;
+  type: 'waiting_chat' | 'open_escalation' | 'stale_manual' | 'order_risk' | 'ai_config';
+  title: string;
+  description: string;
+  action: 'chat' | 'kanban' | 'calendar' | 'ai-configs';
+  tone: 'neutral' | 'warning' | 'danger';
+}
+
+export interface DashboardUpcomingOrder {
+  id: string;
+  customerName: string;
+  pickupTime: string;
+  status: Order['status'];
+  total: number;
+}
+
+export interface DashboardOverview {
+  range: DashboardRange;
+  generatedAt: string;
+  periodLabel: string;
+  startDate: string;
+  endDate: string;
+  now: {
+    waitingConversations: number;
+    openEscalations: number;
+    manualConversations: number;
+    aiConversations: number;
+    staleManualConversations: number;
+  };
+  speed: {
+    firstResponseMs: DashboardMetricValue;
+    aiResponseMs: DashboardMetricValue;
+    humanResponseMs: DashboardMetricValue;
+    escalationAckMs: DashboardMetricValue;
+    escalationResolveMs: DashboardMetricValue;
+  };
+  orders: {
+    count: number;
+    revenue: number;
+    averageTicket: number | null;
+    pendingCount: number;
+    preparingCount: number;
+    atRiskCount: number;
+    upcoming: DashboardUpcomingOrder[];
+  };
+  aiHealth: {
+    catalogLoaded: boolean;
+    operatingHoursConfigured: boolean;
+    deliveryConfigConfigured: boolean;
+    managerPhonePresent: boolean;
+    pixPresent: boolean;
+    aiEnabled: boolean;
+    blockedDatesCount: number;
+    safeSummaryStatus: 'ready' | 'disabled' | 'needs_configuration';
+  } | null;
+  attentionItems: DashboardAttentionItem[];
+}
+
 export interface BuiltinTriggerInfo {
   id: string;
   kind: TriggerKind;

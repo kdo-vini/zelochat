@@ -60,6 +60,7 @@ import {
   type TriggerKind,
 } from './triggers.js';
 import { BUILTIN_TRIGGERS, isBuiltinTriggerId } from './builtinTriggers.js';
+import { buildDashboardOverview } from './dashboardMetrics.js';
 import {
   acknowledgeSession,
   countOpenEscalations,
@@ -833,7 +834,9 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
       await sendTextMessage(to, trimmedMessage, empresaId);
     }
 
-    await addAssistantMessage(to, trimmedMessage, undefined, empresaId, attachment);
+    await addAssistantMessage(to, trimmedMessage, undefined, empresaId, attachment, {
+      responseSource: 'human_manual',
+    });
     res.json({ ok: true });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
@@ -1353,6 +1356,25 @@ router.get('/api/escalations/open-count', async (req: Request, res: Response) =>
     const empresaId = await requireEmpresaId(req);
     const count = await countOpenEscalations(empresaId);
     res.json({ count });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+router.get('/api/dashboard/overview', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const rawRange = req.query.range;
+    const range = rawRange === '7d' || rawRange === '30d' || rawRange === 'custom'
+      ? rawRange
+      : 'today';
+    const overview = await buildDashboardOverview(
+      empresaId,
+      range,
+      req.query.startDate,
+      req.query.endDate,
+    );
+    res.json({ overview });
   } catch (error) {
     sendAuthError(res, error);
   }

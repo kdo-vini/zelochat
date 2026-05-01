@@ -17,9 +17,9 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-01',
-    category: 'medium',
-    title: 'Atendimento manual ganhou ajuda de IA',
-    description: 'No modo manual, o atendente agora pode pedir para a IA sugerir uma resposta pronta ou melhorar um texto antes de enviar. E mensagens como localização, contatos, enquetes, reações e figurinhas também aparecem com mais clareza na conversa.',
+    category: 'big',
+    title: 'Visão geral virou painel de operação',
+    description: 'A tela inicial agora mostra métricas reais de atendimento e pedidos, com filtros de 24h, 7 dias, 30 dias ou período escolhido no calendário, além da ajuda de IA no atendimento manual.',
   },
   {
     date: '2026-05-01',

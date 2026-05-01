@@ -701,8 +701,8 @@ export default function AppShell() {
   // WS messages replace `state.sessions`; these memoized slices preserve prop
   // identity for views that don't consume conversations.
   const dashboardState = useMemo(
-    () => ({ orders: state.orders, sessions: state.sessions, profile: state.profile }),
-    [state.orders, state.profile, state.sessions],
+    () => ({ profile: state.profile }),
+    [state.profile],
   );
   const productionState = useMemo(() => ({ orders: state.orders }), [state.orders]);
   const calendarState = useMemo(
@@ -961,7 +961,7 @@ export default function AppShell() {
           >
             <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
               {activeView === 'dashboard' && (
-                <DashboardView state={dashboardState} setActiveView={setActiveView} />
+                <DashboardView state={dashboardState} setActiveView={setActiveView} token={token} />
               )}
               {activeView === 'kanban' && (
                 <DragDropContext onDragEnd={onDragEnd}>
