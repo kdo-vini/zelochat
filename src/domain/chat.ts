@@ -88,11 +88,18 @@ export function buildAttachmentPreview(
   return name ? `[Documento] ${name}` : '[Documento]';
 }
 
+export function normalizeWhatsAppTextFormatting(text: string): string {
+  return text
+    .replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, '*$1*')
+    .replace(/__([^_\n](?:[\s\S]*?[^_\n])?)__/g, '_$1_')
+    .replace(/~~([^~\n](?:[\s\S]*?[^~\n])?)~~/g, '~$1~');
+}
+
 export function serializeStructuredMessage(params: {
   text?: string;
   attachment?: ChatAttachment;
 }): string {
-  const text = params.text?.trim() ?? '';
+  const text = normalizeWhatsAppTextFormatting(params.text?.trim() ?? '');
   const attachment = params.attachment;
 
   if (!attachment) {

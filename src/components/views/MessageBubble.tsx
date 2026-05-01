@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { FileAudio, FileText, FileVideo, ImageOff, Pause, Play, X } from 'lucide-react';
 import type { ChatMessage, MessageStatus } from '../../types';
-import { parseStructuredMessage } from '../../domain/chat';
+import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../domain/chat';
 import { Modal, useModalTitleId } from '../Modal';
 
 /* ─── Helpers ─────────────────────────────────────────────────────── */
@@ -250,6 +250,80 @@ function Lightbox({ type, src, alt, onClose }: { type: 'image' | 'video'; src: s
   );
 }
 
+type WhatsAppTextPart =
+  | { type: 'text'; text: string }
+  | { type: 'bold' | 'italic' | 'strike' | 'code'; text: string };
+
+function parseWhatsAppText(text: string): WhatsAppTextPart[] {
+  const normalized = normalizeWhatsAppTextFormatting(text);
+  const parts: WhatsAppTextPart[] = [];
+  let i = 0;
+  let buffer = '';
+
+  const pushText = () => {
+    if (buffer) {
+      parts.push({ type: 'text', text: buffer });
+      buffer = '';
+    }
+  };
+
+  while (i < normalized.length) {
+    if (normalized.startsWith('```', i)) {
+      const end = normalized.indexOf('```', i + 3);
+      if (end !== -1) {
+        pushText();
+        parts.push({ type: 'code', text: normalized.slice(i + 3, end) });
+        i = end + 3;
+        continue;
+      }
+    }
+
+    const marker = normalized[i];
+    const type = marker === '*' ? 'bold' : marker === '_' ? 'italic' : marker === '~' ? 'strike' : null;
+    if (type) {
+      const prev = i === 0 ? '' : normalized[i - 1];
+      const next = normalized[i + 1] ?? '';
+      const canOpen = !/\s/.test(next) && !/[A-Za-z0-9À-ÿ]/.test(prev);
+      if (canOpen) {
+        const end = normalized.indexOf(marker, i + 1);
+        if (end !== -1 && end > i + 1 && !/\s/.test(normalized[end - 1] ?? '')) {
+          pushText();
+          parts.push({ type, text: normalized.slice(i + 1, end) });
+          i = end + 1;
+          continue;
+        }
+      }
+    }
+
+    buffer += normalized[i];
+    i += 1;
+  }
+
+  pushText();
+  return parts;
+}
+
+function WhatsAppText({ text }: { text: string }) {
+  return (
+    <>
+      {parseWhatsAppText(text).map((part, index) => {
+        const key = `${part.type}-${index}`;
+        if (part.type === 'bold') return <strong key={key}>{part.text}</strong>;
+        if (part.type === 'italic') return <em key={key}>{part.text}</em>;
+        if (part.type === 'strike') return <s key={key}>{part.text}</s>;
+        if (part.type === 'code') {
+          return (
+            <code key={key} className="rounded bg-black/5 px-1 py-0.5 font-mono text-[0.95em]">
+              {part.text}
+            </code>
+          );
+        }
+        return <React.Fragment key={key}>{part.text}</React.Fragment>;
+      })}
+    </>
+  );
+}
+
 /* ─── Document icon helper ───────────────────────────────────────── */
 
 function docIcon(mimeType: string) {
@@ -484,7 +558,7 @@ export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerN
                 className="break-words whitespace-pre-wrap"
                 style={{ fontSize: 14.2, lineHeight: 1.35, color: '#111b21' }}
               >
-                {displayText}
+                <WhatsAppText text={displayText} />
               </span>
             )}
             <MetaRow

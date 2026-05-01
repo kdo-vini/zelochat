@@ -1481,6 +1481,11 @@ export function buildSystemInstruction(
   return `Você é o assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
 
+FORMATAÇÃO NO WHATSAPP:
+- Para negrito, use o padrão do WhatsApp com UM asterisco de cada lado: *texto*.
+- Nunca use Markdown de dois asteriscos, como **texto**. No WhatsApp isso aparece errado para o cliente.
+- Para títulos simples de cardápio, prefira *Bebidas*, *Combos*, *Doces e Salgados*.
+
 DATA E HORA ATUAL (use SEMPRE, NUNCA invente datas ou anos):
 - Agora é ${todayLabel}, ${todayBR}, ${currentTimeBR} no horário de Brasília (interno: ${todayISO} ${currentTimeBR})
 - Amanhã é ${tomorrowBR} (interno: ${tomorrowISO})

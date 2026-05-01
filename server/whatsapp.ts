@@ -6,6 +6,7 @@ import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js'
 import { getBoundEmpresaId } from './supabase.js';
 import { sendDisconnectAlert, sendReconnectConfirmation } from './email.js';
 import { redactInstance } from './redact.js';
+import { normalizeWhatsAppTextFormatting } from '../src/domain/chat.js';
 
 /**
  * P0.2 / P1.11 — broadcast a legacy single-tenant lifecycle event (QR, connect,
@@ -343,9 +344,10 @@ export async function sendTextMessage(
   empresaId?: string | null,
 ): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
+  const normalizedText = normalizeWhatsAppTextFormatting(text);
   const res = await axios.post(
     `${BASE_URL}/message/sendText/${instance}`,
-    { number: jid, text },
+    { number: jid, text: normalizedText },
     { headers: apiHeaders() },
   );
   const id = (res.data as any)?.key?.id as string | undefined;
@@ -373,9 +375,9 @@ export async function sendButtonMessage(
     `${BASE_URL}/message/sendButtons/${instance}`,
     {
       number: jid,
-      title,
-      description,
-      footer,
+      title: normalizeWhatsAppTextFormatting(title),
+      description: normalizeWhatsAppTextFormatting(description),
+      footer: normalizeWhatsAppTextFormatting(footer),
       buttons: buttons.map((b) => {
         if (b.type === 'pix' && b.pixData) {
           return { type: 'pix', displayText: b.displayText, id: b.id, ...b.pixData };
@@ -399,9 +401,13 @@ export async function sendMediaMessage(
   empresaId?: string | null,
 ): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
+  const normalizedParams = {
+    ...params,
+    caption: params.caption ? normalizeWhatsAppTextFormatting(params.caption) : undefined,
+  };
   const res = await axios.post(
     `${BASE_URL}/message/sendMedia/${instance}`,
-    { number: jid, ...params },
+    { number: jid, ...normalizedParams },
     { headers: apiHeaders() },
   );
   const id = (res.data as any)?.key?.id as string | undefined;

@@ -19,7 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-05-01',
     category: 'big',
     title: 'Visão geral virou painel de operação',
-    description: 'A tela inicial agora mostra métricas reais de atendimento e pedidos, com filtros de 24h, 7 dias, 30 dias ou período escolhido no calendário, além da ajuda de IA no atendimento manual.',
+    description: 'A tela inicial agora mostra métricas reais de atendimento e pedidos, com filtros por período, ajuda de IA no manual e mensagens formatadas como no WhatsApp.',
   },
   {
     date: '2026-05-01',
