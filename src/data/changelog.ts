@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-01',
     category: 'medium',
+    title: 'WhatsApp entende mais tipos de mensagem',
+    description: 'Localização, contatos, enquetes, reações e figurinhas agora aparecem de forma mais clara na conversa, em vez de ficarem sem contexto.',
+  },
+  {
+    date: '2026-05-01',
+    category: 'medium',
     title: 'IA entende melhor nomes do cardápio',
     description: 'A IA agora reconhece variações simples nos nomes dos produtos, como abreviações, plural e diferenças de acento, antes de pedir para o cliente corrigir.',
   },

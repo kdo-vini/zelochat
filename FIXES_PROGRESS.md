@@ -119,6 +119,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 41 (2026-05-01) - Mensagens nao-texto mais uteis
+
+- ✅ P2 novo / roadmap WhatsApp - Mensagens de localização, contatos, enquetes, reações, figurinhas, produto/pedido e tipos não suportados agora geram placeholders claros em PT-BR e logs melhores. Reações e votos em enquete são persistidos/broadcast, mas não disparam auto-resposta da IA - `server/messageHandler.ts`
+- Novidades: 4ª e última entrada do dia, consolidando tipos de mensagem do WhatsApp - `src/data/changelog.ts`
+- Type-check verde: server `tsc --noEmit -p server/tsconfig.json`
+
 ### Sprint 40 (2026-05-01) - Cardapio inteligente primeira fatia
 
 - ✅ P1 novo / roadmap cardápio - `criar_pedido` agora resolve variações simples de produto com normalização sem acento, caixa, pontuação, plural/singular e contenção de tokens. Quando há um único produto compatível, o backend usa o nome/preço real do catálogo para recalcular total e montar resumo; quando há ambiguidade, mantém o caminho seguro de pedir verificação ao cliente - `server/ai.ts`

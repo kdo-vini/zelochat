@@ -330,30 +330,186 @@ function resolveMessageDate(msg: any): Date {
   return new Date();
 }
 
+const MESSAGE_WRAPPER_KEYS = [
+  'ephemeralMessage',
+  'viewOnceMessage',
+  'viewOnceMessageV2',
+  'viewOnceMessageV2Extension',
+  'documentWithCaptionMessage',
+  'editedMessage',
+];
+
+function unwrapMessage(message: any): any {
+  let current = message;
+
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!current || typeof current !== 'object') return current;
+
+    const wrapperKey = MESSAGE_WRAPPER_KEYS.find((key) => current[key]?.message);
+    if (!wrapperKey) return current;
+    current = current[wrapperKey].message;
+  }
+
+  return current;
+}
+
+function firstMeaningfulMessageType(message: any): string {
+  if (!message || typeof message !== 'object') return 'unknown';
+  return Object.keys(message).find((key) => key !== 'messageContextInfo') ?? 'unknown';
+}
+
+function cleanText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function compactParts(parts: Array<string | null | undefined>, separator = ' '): string {
+  return parts.map((part) => cleanText(part)).filter(Boolean).join(separator);
+}
+
+function formatCoordinates(latitude: unknown, longitude: unknown): string | null {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+}
+
+function extractVCardName(vcard: unknown): string {
+  const raw = cleanText(vcard);
+  const match = raw.match(/^FN(?:;[^:]*)?:(.+)$/im);
+  return cleanText(match?.[1]);
+}
+
+function extractVCardPhone(vcard: unknown): string {
+  const raw = cleanText(vcard);
+  const waid = raw.match(/waid=(\d+)/i)?.[1];
+  if (waid) return formatPhone(waid);
+
+  const tel = raw.match(/^TEL(?:;[^:]*)?:(.+)$/im)?.[1];
+  const digits = tel ? normalizePhoneNumber(tel) : '';
+  return digits ? formatPhone(digits) : '';
+}
+
+function describeContact(contact: any): string {
+  const name = cleanText(contact?.displayName) || extractVCardName(contact?.vcard);
+  const phone = extractVCardPhone(contact?.vcard);
+  const details = compactParts([name, phone], ' - ');
+  return details ? `[Contato recebido] ${details}` : '[Contato recebido]';
+}
+
+function describeLocation(location: any): string {
+  const label = cleanText(location?.name) || cleanText(location?.address);
+  const coordinates = formatCoordinates(location?.degreesLatitude, location?.degreesLongitude);
+  const details = label && coordinates ? `${label} (${coordinates})` : label || coordinates;
+  return details ? `[Localização recebida] ${details}` : '[Localização recebida]';
+}
+
+function describePoll(poll: any): string {
+  const title = cleanText(poll?.name);
+  const options = Array.isArray(poll?.options)
+    ? poll.options
+      .map((option: any) => cleanText(option?.optionName))
+      .filter(Boolean)
+      .slice(0, 4)
+      .join(' / ')
+    : '';
+  const details = compactParts([title, options ? `Opções: ${options}` : null]);
+  return details ? `[Enquete recebida] ${details}` : '[Enquete recebida]';
+}
+
+function describeReaction(reaction: any): string {
+  const emoji = cleanText(reaction?.text);
+  return emoji ? `[Reação recebida] ${emoji}` : '[Reação removida]';
+}
+
+function shouldTriggerAutoReplyForMessage(msg: any): boolean {
+  const message = unwrapMessage(msg.message);
+  if (!message) return false;
+
+  // Reactions and poll votes update context for the operator, but they are not
+  // customer messages with enough intent to safely prompt a new AI reply.
+  if (message.reactionMessage || message.pollUpdateMessage) return false;
+
+  return Boolean(
+    message.conversation ||
+    message.extendedTextMessage?.text ||
+    message.imageMessage ||
+    message.videoMessage ||
+    message.audioMessage ||
+    message.documentMessage ||
+    message.stickerMessage ||
+    message.contactMessage ||
+    message.contactsArrayMessage ||
+    message.locationMessage ||
+    message.liveLocationMessage ||
+    message.pollCreationMessage ||
+    message.pollCreationMessageV2 ||
+    message.pollCreationMessageV3 ||
+    message.interactiveResponseMessage ||
+    message.buttonsResponseMessage ||
+    message.templateButtonReplyMessage ||
+    message.listResponseMessage ||
+    message.productMessage ||
+    message.orderMessage
+  );
+}
+
 function extractText(msg: any): string | null {
-  const message = msg.message;
+  const message = unwrapMessage(msg.message);
   if (!message) return null;
 
   if (message.conversation) return message.conversation;
   if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
-  if (message.imageMessage?.caption) return `[Imagem] ${message.imageMessage.caption}`;
-  if (message.imageMessage) return '[Imagem]';
-  if (message.videoMessage?.caption) return `[Video] ${message.videoMessage.caption}`;
-  if (message.videoMessage) return '[Video]';
-  if (message.audioMessage) return '[Audio]';
-  if (message.documentMessage) return `[Documento ${message.documentMessage.fileName || ''}]`.trim();
-  if (message.stickerMessage) return '[Sticker]';
-  if (message.contactMessage) return '[Contato]';
-  if (message.locationMessage) return '[Localizacao]';
+  if (message.imageMessage?.caption) return `[Imagem recebida] ${message.imageMessage.caption}`;
+  if (message.imageMessage) return '[Imagem recebida]';
+  if (message.videoMessage?.caption) return `[Vídeo recebido] ${message.videoMessage.caption}`;
+  if (message.videoMessage) return '[Vídeo recebido]';
+  if (message.audioMessage) return '[Áudio recebido]';
+  if (message.documentMessage) {
+    const fileName = cleanText(message.documentMessage.fileName);
+    return fileName ? `[Documento recebido] ${fileName}` : '[Documento recebido]';
+  }
+  if (message.stickerMessage) {
+    return message.stickerMessage.isAnimated ? '[Figurinha animada recebida]' : '[Figurinha recebida]';
+  }
+  if (message.contactMessage) return describeContact(message.contactMessage);
+  if (message.contactsArrayMessage?.contacts?.length) {
+    const contacts = message.contactsArrayMessage.contacts
+      .map((contact: any) => describeContact(contact).replace(/^\[Contato recebido\]\s*/, ''))
+      .filter(Boolean);
+    const shown = contacts.slice(0, 3).join(' / ');
+    const extra = contacts.length > 3 ? ` e mais ${contacts.length - 3}` : '';
+    return shown ? `[Contatos recebidos] ${shown}${extra}` : '[Contatos recebidos]';
+  }
+  if (message.locationMessage) return describeLocation(message.locationMessage);
+  if (message.liveLocationMessage) return describeLocation(message.liveLocationMessage);
+  if (message.pollCreationMessage) return describePoll(message.pollCreationMessage);
+  if (message.pollCreationMessageV2) return describePoll(message.pollCreationMessageV2);
+  if (message.pollCreationMessageV3) return describePoll(message.pollCreationMessageV3);
+  if (message.pollUpdateMessage) return '[Voto em enquete recebido]';
+  if (message.reactionMessage) return describeReaction(message.reactionMessage);
+  if (message.listResponseMessage?.title) return message.listResponseMessage.title;
+  if (message.listResponseMessage?.singleSelectReply?.selectedRowId) return message.listResponseMessage.singleSelectReply.selectedRowId;
   if (message.interactiveResponseMessage?.body?.text) return message.interactiveResponseMessage.body.text;
   if (message.buttonsResponseMessage?.selectedDisplayText) return message.buttonsResponseMessage.selectedDisplayText;
   if (message.templateButtonReplyMessage?.selectedDisplayText) return message.templateButtonReplyMessage.selectedDisplayText;
+  if (message.productMessage) return '[Produto recebido]';
+  if (message.orderMessage) return '[Pedido recebido pelo WhatsApp]';
+  if (message.documentWithCaptionMessage) return '[Documento recebido]';
+
+  const messageType = firstMeaningfulMessageType(message);
+  if (messageType !== 'unknown') {
+    const remoteJid: string = msg.key?.remoteJid ?? 'unknown';
+    console.warn('[extractText] unsupported message type stored as placeholder:', messageType, 'from:', remoteJid);
+    return messageType.toLowerCase().includes('message')
+      ? '[Mensagem não suportada recebida]'
+      : '[Mídia recebida não suportada]';
+  }
 
   // P2.17 — log unknown message types so they surface in Railway logs and can be
   // added to the allowlist above when Whatsmiau introduces new payload shapes.
-  const messageType = Object.keys(message)[0] ?? 'unknown';
+  const unknownMessageType = 'unknown';
   const remoteJid: string = msg.key?.remoteJid ?? 'unknown';
-  console.warn('[extractText] unknown message type:', messageType, 'from:', remoteJid);
+  console.warn('[extractText] unknown message type:', unknownMessageType, 'from:', remoteJid);
   return null;
 }
 
@@ -904,10 +1060,10 @@ export async function updateSessionName(
  * could be NULL when count !== 1, or stale otherwise) silently
  * mis-attributed messages.
  *
- * Returns `true` when the message was newly persisted, `false` when it was a
- * duplicate webhook delivery (already persisted by an earlier call) and the
- * caller should SKIP auto-reply scheduling. See `upsertInboundUserMessage`
- * for the dedup contract (P0.14).
+ * Returns `true` when the message was newly persisted and is safe to feed into
+ * auto-reply, `false` when it was a duplicate webhook delivery or an
+ * informational WhatsApp event (reaction/poll vote) that should not prompt the
+ * AI. See `upsertInboundUserMessage` for the dedup contract (P0.14).
  */
 export async function handleIncomingMessage(msg: any, empresaId: string): Promise<boolean> {
   if (!empresaId) {
@@ -928,6 +1084,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   const sentAt = resolveMessageDate(msg);
   const displayTime = formatClock(sentAt);
   const incomingText = extractText(msg);
+  const shouldTriggerAutoReply = shouldTriggerAutoReplyForMessage(msg);
   let attachment: ChatAttachment | undefined;
 
   // Allowed document MIME types — blocks executable/HTML payloads from being stored
@@ -1120,11 +1277,11 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     resetTranscriptionFailureCounter(resolvedEmpresaId, jid);
   }
 
-  // P0.14 — signal "freshly persisted, run downstream side-effects" to the
-  // caller in `index.ts` so the AI auto-reply is scheduled. Returning false
-  // anywhere above this line means a duplicate webhook delivery — caller
-  // MUST skip auto-reply or the dedup is defeated.
-  return true;
+  // P0.14 - signal "freshly persisted and safe for auto-reply" to the caller
+  // in `index.ts`. Duplicate webhook deliveries return false above; reactions
+  // and poll-vote events return false here so the AI does not infer intent from
+  // a placeholder.
+  return shouldTriggerAutoReply;
 }
 
 export async function addAssistantMessage(
