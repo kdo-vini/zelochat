@@ -66,6 +66,7 @@ type MessageUpdatePayload = {
 };
 
 type WsEvent =
+  | { type: 'auth_ok'; data: { empresaId: string } }
   | { type: 'message'; data: SessionEventPayload }
   | { type: 'message_sent'; data: SessionEventPayload }
   | { type: 'message_update'; data: MessageUpdatePayload }
@@ -325,10 +326,7 @@ export function useWhatsAppSessions(token: string | null) {
       return;
     }
 
-    // Pass the JWT in the WS query string so the server can scope every broadcast
-    // to this empresa. Without this, every connected client received every event
-    // regardless of empresa (multi-tenant data leak).
-    const wsUrl = `${WS_URL}${WS_URL.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+    const wsUrl = WS_URL;
     let disposed = false;
     reconnectAttemptRef.current = 0;
     connectedAtRef.current = 0;
@@ -340,8 +338,18 @@ export function useWhatsAppSessions(token: string | null) {
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
+        if (disposed || wsRef.current !== ws) return;
+
         try {
           const parsed = JSON.parse(event.data) as WsEvent;
+
+          if (parsed.type === 'auth_ok') {
+            connectedAtRef.current = Date.now();
+            setWsConnected(true);
+            // Re-bind empresa on every (re)connect so server restarts don't break message routing
+            void bindEmpresa(token);
+            return;
+          }
 
           if (parsed.type === 'escalation_triggered') {
             const data = parsed.data;
@@ -477,10 +485,7 @@ export function useWhatsAppSessions(token: string | null) {
       };
 
       ws.onopen = () => {
-        connectedAtRef.current = Date.now();
-        setWsConnected(true);
-        // Re-bind empresa on every (re)connect so server restarts don't break message routing
-        void bindEmpresa(token);
+        ws.send(JSON.stringify({ type: 'auth', token }));
       };
 
       ws.onclose = () => {

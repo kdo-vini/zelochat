@@ -119,6 +119,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 37 (2026-05-01) - WebSocket sem token na URL
+
+- ✅ P1 novo / roadmap segurança - A conexão em tempo real não envia mais o JWT na query string. O navegador abre `/ws`, autentica com uma mensagem inicial pelo próprio socket e só recebe eventos depois de `auth_ok`; o backend fecha conexões sem autenticação em 10s e não transmite eventos para sockets anônimos - `server/ws.ts`, `src/hooks/useWhatsAppSessions.ts`
+- ⚠️ Compatibilidade de deploy - Frontend e backend precisam subir juntos: frontend antigo ainda tentaria `?token=...`; backend antigo não responderia ao novo handshake `auth_ok`.
+- Type-check verde: `npm run lint`
+
 ### Sprint 36 (2026-05-01) - Prompt da IA em camadas seguras
 
 - ✅ P1 novo / roadmap IA - Instruções livres do dono agora entram no prompt como preferências de tom e estilo, sanitizadas e limitadas. Elas não podem sobrescrever regras fixas de confirmação de pedido, preço, taxa de entrega, Pix, datas bloqueadas, horário de atendimento, escalação humana ou comportamento das ferramentas - `server/ai.ts`
