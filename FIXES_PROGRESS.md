@@ -119,6 +119,11 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 39 (2026-05-01) - Saude da IA por empresa
+
+- ✅ P2 novo / roadmap confiança - Backend ganhou `/api/ai/health`, um resumo autenticado e seguro da prontidão da IA por empresa. Ele informa apenas presença/contagem: cardápio, horários, entrega, telefone do gerente, Pix, IA ligada, datas bloqueadas e status geral - `server/aiHealth.ts`, `server/router.ts`
+- Type-check verde: server `tsc --noEmit -p server/tsconfig.json`
+
 ### Sprint 38 (2026-05-01) - Limites de custo nas rotas internas de IA
 
 - ✅ P1 novo / roadmap custo - Rotas internas de IA agora têm limite por empresa, limite de tamanho de payload e validação rígida antes de chamar o modelo. `/api/ai/complete` aceita no máximo 40 chamadas a cada 5min, 40 mensagens e 32k caracteres; geração de instruções aceita 12 chamadas por hora e hint de até 1k caracteres - `server/aiRouteGuards.ts`, `server/router.ts`

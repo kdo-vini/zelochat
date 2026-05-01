@@ -47,6 +47,7 @@ import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.j
 import { redactInstance } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
+import { buildAiHealthReport } from './aiHealth.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
   createTrigger,
@@ -873,6 +874,19 @@ router.get('/api/ai-enabled', async (req: Request, res: Response) => {
     // the server just rebooted and nobody had bound this empresa yet.
     await ensureAiSettingsHydrated(empresaId);
     res.json({ enabled: getConfig(empresaId).aiEnabled === true });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * GET /api/ai/health — safe per-empresa readiness snapshot for AI operations.
+ */
+router.get('/api/ai/health', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await ensureAiSettingsHydrated(empresaId);
+    res.json({ health: buildAiHealthReport(getConfig(empresaId)) });
   } catch (error) {
     sendAuthError(res, error);
   }
