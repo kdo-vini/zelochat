@@ -1538,7 +1538,7 @@ Escreva agora as diretrizes operacionais do agente.`;
  * POST /api/ai/complete — Proxy for frontend AI calls. Requires auth.
  * Body: { messages: array, temperature?: number, responseFormat?: 'json' }
  */
-router.post('/api/ai/complete', async (req: Request, res: Response) => {
+router.post('/api/ai/complete', express.json({ limit: '512kb' }), async (req: Request, res: Response) => {
   try {
     const { empresaId, userId } = await requireEmpresaAndUserId(req);
     const payload = validateAiCompletePayload(req);

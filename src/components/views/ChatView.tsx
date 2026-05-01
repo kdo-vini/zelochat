@@ -443,10 +443,6 @@ export function ChatView({
 
   const handleAiAssist = async (mode: 'improve' | 'reply') => {
     if (!activeSession) return;
-    if (activeSession.autoReply) {
-      setChatActionError('Essa ajuda de IA fica disponível quando o atendimento está em modo manual.');
-      return;
-    }
     if (mode === 'improve' && !ownerInput.trim()) {
       setChatActionError('Digite uma mensagem primeiro para a IA melhorar o texto.');
       return;
@@ -859,7 +855,7 @@ export function ChatView({
                         .map((r) => (
                           <button
                             key={r.id}
-                            onClick={() => setOwnerInput(`/${r.trigger}`)}
+                            onClick={() => setOwnerInput(r.response)}
                             className="w-full border-b border-[var(--color-line)] px-3 py-2.5 text-left last:border-0 hover:bg-[var(--color-surface-muted)] transition-colors"
                           >
                             <span className="text-[13px] font-semibold text-[var(--color-ink)]">/{r.trigger}</span>
@@ -956,16 +952,12 @@ export function ChatView({
                           <button
                             type="button"
                             onClick={() => {
-                              if (activeSession.autoReply || aiAssistLoading) return;
+                              if (aiAssistLoading) return;
                               setAiAssistMenuOpen((open) => !open);
                             }}
-                            disabled={activeSession.autoReply || aiAssistLoading !== null || isSending}
-                            title={activeSession.autoReply ? 'Disponível no modo manual' : 'Sugestões de IA'}
-                            className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-                              activeSession.autoReply
-                                ? 'cursor-not-allowed text-[var(--color-ink-faint)]'
-                                : 'text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)]'
-                            }`}
+                            disabled={aiAssistLoading !== null || isSending}
+                            title="Sugestões de IA"
+                            className="flex h-7 w-7 items-center justify-center rounded-full transition-colors text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)]"
                           >
                             {aiAssistLoading ? (
                               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
