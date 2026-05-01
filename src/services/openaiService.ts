@@ -125,6 +125,51 @@ export async function generateAgentInstructions(hint?: string): Promise<string> 
 /**
  * Agente 2: Construção do Contexto Diário (Uso Interno)
  */
+/**
+ * Simulador do atendimento automatico, sem WhatsApp e sem escrita no banco.
+ */
+export interface SimulateAtendimentoPayload {
+  customerMessage: string;
+  customerName?: string;
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  configOverride?: {
+    aiInstructions?: string;
+    storeName?: string;
+  };
+}
+
+export interface SimulateAtendimentoResult {
+  reply: string;
+  toolCallsMade: string[];
+  wouldCreateOrder: boolean;
+  simulationNote: string;
+}
+
+export async function simulateAtendimento(
+  payload: SimulateAtendimentoPayload,
+): Promise<SimulateAtendimentoResult> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('AI simulate error: not authenticated');
+
+  const res = await apiFetch(`${API_BASE}/api/ai/simulate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error || `AI simulate error: ${res.status}`);
+  }
+  return await res.json() as SimulateAtendimentoResult;
+}
+
+/**
+ * Agente 2: Construcao do Contexto Diario (Uso Interno)
+ */
 export async function getOwnerResponse(managerInput: string): Promise<string[]> {
   const nowContext = getBrazilNowContext();
   const systemInstruction = `

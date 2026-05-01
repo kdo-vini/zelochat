@@ -1,6 +1,7 @@
 import {
   getAI,
   OPENAI_MODEL,
+  OPENAI_CHAT_TEMPERATURE,
   buildSystemInstruction,
   CREATE_ORDER_TOOL,
   CONSULT_ORDER_TOOL,
@@ -89,6 +90,7 @@ export async function simulateAtendimento(
   const openai = getAI();
   const response = await openai.chat.completions.create({
     model: OPENAI_MODEL,
+    temperature: OPENAI_CHAT_TEMPERATURE,
     messages,
     tools: [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
     tool_choice: 'auto',

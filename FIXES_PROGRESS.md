@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-01 Sprint 47):** o chat agora consegue apagar para todos mensagens enviadas com `wa_message_id`, usando o endpoint real do Whatsmiau. Edicao de mensagem nao foi criada porque a documentacao do Whatsmiau nao expoe edicao real no WhatsApp.
+**Latest execution note (2026-05-01 Sprint 48):** o autoatendimento da IA agora usa temperatura 0.3, aceita instrucoes da loja de ate 10k caracteres e trata essas instrucoes como regras operacionais para tom, respostas fixas, apelidos de produtos e fluxo comercial, sem permitir que sobrescrevam validacoes criticas do sistema.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,14 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 48 (2026-05-01) - IA mais consistente por loja
+
+- Autoatendimento da IA agora chama a OpenAI com `temperature: 0.3` em todos os turnos do atendimento automatico e follow-ups de ferramentas, reduzindo variacao em respostas de cardapio, disponibilidade e fluxo de pedido - `server/ai.ts`
+- Instrucoes do dono deixam de ser tratadas apenas como "tom e estilo": agora entram como regras operacionais da loja para respostas fixas, apelidos de produtos, explicacoes comerciais e fluxo de atendimento, mantendo bloqueio contra sobrescrever preco final, taxa, datas, horarios, Pix, escalacao humana e tool calls - `server/ai.ts`
+- Limite das instrucoes do dono subiu de 1.2k para 10k caracteres, evitando truncar regras longas como as da Casa dos Salgados. O simulador de atendimento usa a mesma temperatura da producao - `server/ai.ts`, `server/aiSimulator.ts`
+- Simulador exposto no Cerebro IA: operador pode testar uma mensagem de cliente usando as instrucoes atuais do campo, sem enviar WhatsApp e sem gravar pedido - `src/components/views/AIConfigsView.tsx`, `src/services/openaiService.ts`
+- Verificacao verde: `npm run lint`, `npm run build`
 
 ### Sprint 47 (2026-05-01) - Apagar mensagem real no WhatsApp
 

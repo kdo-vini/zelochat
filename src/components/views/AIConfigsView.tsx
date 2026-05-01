@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown, Activity, RefreshCw } from 'lucide-react';
 import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
-import { getOwnerResponse, getGeneralManagerResponse, generateAgentInstructions } from '../../services/openaiService';
+import {
+  getOwnerResponse,
+  getGeneralManagerResponse,
+  generateAgentInstructions,
+  simulateAtendimento,
+  type SimulateAtendimentoResult,
+} from '../../services/openaiService';
 import { getAiHealth, type AiHealthReport, type AiHealthSummaryStatus } from '../../services/waApi';
 import { useBuiltinTriggers } from '../../hooks/useBuiltinTriggers';
 import { useToast } from '../../contexts/ToastContext';
@@ -99,6 +105,10 @@ export const AIConfigsView = ({
   const [managerInput, setManagerInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [managerChatInput, setManagerChatInput] = useState('');
+  const [simulateInput, setSimulateInput] = useState('vc pode mandar o cardapio?');
+  const [simulateResult, setSimulateResult] = useState<SimulateAtendimentoResult | null>(null);
+  const [simulateLoading, setSimulateLoading] = useState(false);
+  const [simulateError, setSimulateError] = useState<string | null>(null);
   const [triggerInput, setTriggerInput] = useState('');
   const [triggerKind, setTriggerKind] = useState<TriggerKind>('notify_manager');
   const [kindMenuOpen, setKindMenuOpen] = useState(false);
@@ -213,6 +223,28 @@ export const AIConfigsView = ({
       });
     } catch (e) { console.error(e); }
     finally { setIsProcessing(false); }
+  };
+
+  const handleSimulateAtendimento = async () => {
+    const customerMessage = simulateInput.trim();
+    if (!customerMessage) return;
+    setSimulateLoading(true);
+    setSimulateError(null);
+    setSimulateResult(null);
+    try {
+      const result = await simulateAtendimento({
+        customerMessage,
+        customerName: 'Cliente teste',
+        configOverride: {
+          aiInstructions: promptDraft,
+        },
+      });
+      setSimulateResult(result);
+    } catch (err) {
+      setSimulateError(err instanceof Error ? err.message : 'Falha ao simular atendimento.');
+    } finally {
+      setSimulateLoading(false);
+    }
   };
 
   const handleGeneratePrompt = async () => {
@@ -342,6 +374,73 @@ export const AIConfigsView = ({
           {aiHealthError && (
             <p className="px-4 pb-3 text-[11.5px] text-[var(--color-alert)]">{aiHealthError}</p>
           )}
+        </div>
+
+        <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
+          <SectionHeader
+            icon={Bot}
+            title="Simulador de atendimento"
+            subtitle="Teste a resposta da IA sem enviar mensagem nem gravar pedido"
+          />
+          <div className="p-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)] gap-4">
+            <div className="space-y-2">
+              <textarea
+                value={simulateInput}
+                onChange={(e) => setSimulateInput(e.target.value)}
+                className="w-full min-h-[96px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-3 text-[13px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] resize-y transition-colors"
+                placeholder='Ex: "vc pode mandar o cardapio?"'
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSimulateAtendimento}
+                  disabled={simulateLoading || !simulateInput.trim()}
+                  className="h-9 px-3 rounded-md text-[12.5px] font-semibold flex items-center gap-1.5 bg-[var(--color-ink)] text-white hover:bg-[var(--color-ink-soft)] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+                >
+                  {simulateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  {simulateLoading ? 'Simulando...' : 'Simular'}
+                </button>
+                <p className="text-[11.5px] text-[var(--color-ink-faint)]">
+                  Usa as instruções que estão no campo abaixo, mesmo antes de salvar.
+                </p>
+              </div>
+              {simulateError && (
+                <p className="text-[12px] text-[var(--color-alert)]">{simulateError}</p>
+              )}
+            </div>
+
+            <div className="bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-3 min-h-[120px]">
+              {!simulateResult && !simulateLoading ? (
+                <p className="text-[12.5px] text-[var(--color-ink-faint)]">
+                  O resultado aparece aqui.
+                </p>
+              ) : simulateLoading ? (
+                <div className="h-full min-h-[90px] flex items-center justify-center text-[12.5px] text-[var(--color-ink-faint)]">
+                  Processando simulação...
+                </div>
+              ) : simulateResult ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide font-semibold text-[var(--color-ink-faint)] mb-1">Resposta</p>
+                    <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{simulateResult.reply}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[11.5px]">
+                    <span className={`px-2 py-1 rounded-md font-semibold ${
+                      simulateResult.wouldCreateOrder
+                        ? 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
+                        : 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+                    }`}>
+                      {simulateResult.wouldCreateOrder ? 'Criaria pedido' : 'Não criaria pedido'}
+                    </span>
+                    <span className="px-2 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-line)] text-[var(--color-ink-muted)]">
+                      Ferramentas: {simulateResult.toolCallsMade.length ? simulateResult.toolCallsMade.join(', ') : 'nenhuma'}
+                    </span>
+                  </div>
+                  <p className="text-[11.5px] text-[var(--color-ink-faint)]">{simulateResult.simulationNote}</p>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
