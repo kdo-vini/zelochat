@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { formatLastMessageTime, normalizePhoneNumber } from '../../domain/chat';
 import { getManualChatAssistSuggestion, getOwnerResponse } from '../../services/openaiService';
-import type { ChatAttachment, ChatSession, QuickResponse } from '../../types';
+import type { ChatAttachment, ChatMessage, ChatSession, QuickResponse } from '../../types';
 import { MessageBubble } from './MessageBubble';
 import { EscaladoBadge } from '../shared/EscaladoBadge';
 import { SlaTimer } from '../shared/SlaTimer';
@@ -81,6 +81,7 @@ export interface ChatViewProps {
   profilePics: Record<string, string>;
   send: (jid: string, payload: { text: string; attachment?: ChatAttachment }) => Promise<void>;
   toggleAutoReply: (jid: string, enabled: boolean) => Promise<void>;
+  deleteMessage: (jid: string, message: ChatMessage) => Promise<void>;
   updateSessionName: (jid: string, name: string) => Promise<void>;
   hydrateSession: (jid: string) => Promise<void>;
   onDeleteSession: (id: string) => Promise<void>;
@@ -106,6 +107,7 @@ export function ChatView({
   profilePics,
   send,
   toggleAutoReply,
+  deleteMessage,
   updateSessionName,
   hydrateSession,
   onDeleteSession,
@@ -132,6 +134,8 @@ export function ChatView({
   const [newChatLoading, setNewChatLoading] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
   const [deleteSessionPending, setDeleteSessionPending] = useState<{ id: string; name: string } | null>(null);
+  const [deleteMessagePending, setDeleteMessagePending] = useState<ChatMessage | null>(null);
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [aiAssistMenuOpen, setAiAssistMenuOpen] = useState(false);
   const [aiAssistLoading, setAiAssistLoading] = useState<'improve' | 'reply' | null>(null);
   const newChatTitleId = useModalTitleId();
@@ -255,6 +259,7 @@ export function ChatView({
     setEditingName(false);
     setMobileDetailsOpen(false);
     setAiAssistMenuOpen(false);
+    setDeleteMessagePending(null);
   }, [activeSessionId]);
 
   // Stamp acknowledged_at on the open escalation event the first time the
@@ -408,6 +413,31 @@ export function ChatView({
       setChatActionError(e instanceof Error ? e.message : 'Não foi possível enviar.');
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleDeleteMessage = async (message: ChatMessage) => {
+    if (!message.waMessageId) {
+      setChatActionError('Esta mensagem ainda nao pode ser apagada para todos.');
+      return;
+    }
+    setDeleteMessagePending(message);
+  };
+
+  const handleConfirmDeleteMessage = async () => {
+    const message = deleteMessagePending;
+    if (!activeSession || !message) return;
+    setDeletingMessageId(message.id);
+    setChatActionError(null);
+    try {
+      await deleteMessage(activeSession.id, message);
+      setDeleteMessagePending(null);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Nao foi possivel apagar a mensagem.';
+      setChatActionError(messageText);
+      throw new Error(messageText);
+    } finally {
+      setDeletingMessageId(null);
     }
   };
 
@@ -800,6 +830,8 @@ export function ChatView({
                           isLastInGroup={isLastInGroup}
                           profilePicUrl={profilePics[activeSession.id]}
                           customerName={activeSession.customerName}
+                          onDelete={handleDeleteMessage}
+                          isDeleting={deletingMessageId === message.id}
                         />
                       </motion.div>
                     );
@@ -1276,6 +1308,16 @@ export function ChatView({
               </div>
         </Modal>
       )}
+
+      <ConfirmModal
+        open={deleteMessagePending !== null}
+        title="Apagar mensagem?"
+        message="Essa acao tenta apagar a mensagem para todos no WhatsApp e nao pode ser desfeita."
+        onClose={() => setDeleteMessagePending(null)}
+        onConfirm={handleConfirmDeleteMessage}
+        confirmLabel="Apagar"
+        confirmLoadingLabel="Apagando..."
+      />
 
       <ConfirmModal
         open={deleteSessionPending !== null}

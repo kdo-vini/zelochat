@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-01',
+    category: 'medium',
+    title: 'Mensagens podem ser apagadas',
+    description: 'No atendimento, mensagens enviadas pelo painel agora podem ser apagadas para todos quando o WhatsApp permite. Edicao nao aparece porque o WhatsApp real ainda nao oferece essa acao pela API usada.',
+  },
+  {
+    date: '2026-05-01',
     category: 'big',
     title: 'Visão geral virou painel de operação',
     description: 'A tela inicial agora mostra métricas reais de atendimento e pedidos, com filtros por período, ajuda de IA no manual e mensagens formatadas como no WhatsApp.',

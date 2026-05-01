@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { FileAudio, FileText, FileVideo, ImageOff, Pause, Play, X } from 'lucide-react';
+import { FileAudio, FileText, FileVideo, ImageOff, Loader2, Pause, Play, Trash2, X } from 'lucide-react';
 import type { ChatMessage, MessageStatus } from '../../types';
 import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../domain/chat';
 import { Modal, useModalTitleId } from '../Modal';
@@ -354,9 +354,11 @@ export interface MessageBubbleProps {
   isLastInGroup: boolean;
   profilePicUrl?: string;
   customerName: string;
+  onDelete?: (message: ChatMessage) => void | Promise<void>;
+  isDeleting?: boolean;
 }
 
-export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerName }: MessageBubbleProps) {
+export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerName, onDelete, isDeleting = false }: MessageBubbleProps) {
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
 
@@ -395,9 +397,24 @@ export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerN
         className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}
         style={{ paddingLeft: isOutgoing ? 63 : 0, paddingRight: isOutgoing ? 0 : 63 }}
       >
-        <div style={bubbleStyle} className="relative">
+        <div style={bubbleStyle} className="group/bubble relative">
           {/* Tail */}
           {hasTail && (isOutgoing ? <TailOut /> : <TailIn />)}
+
+          {isOutgoing && message.waMessageId && onDelete && (
+            <button
+              type="button"
+              onClick={() => void onDelete(message)}
+              disabled={isDeleting}
+              title="Apagar para todos"
+              aria-label="Apagar mensagem para todos"
+              className="absolute left-1.5 top-1.5 z-20 flex h-7 w-7 items-center justify-center rounded-md bg-white/90 text-[#667781] opacity-0 shadow-sm transition-all hover:bg-[#fee4e2] hover:text-[#b42318] focus:opacity-100 disabled:cursor-wait disabled:opacity-70 group-hover/bubble:opacity-100"
+            >
+              {isDeleting
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
+                : <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />}
+            </button>
+          )}
 
           {/* ── Image ── */}
           {message.kind === 'image' && (

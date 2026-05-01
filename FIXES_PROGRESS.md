@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-01 Sprint 46):** a IA agora consegue usar imagens recebidas no WhatsApp como contexto visual. Fotos de lanche/preparo e comprovantes Pix entram na chamada multimodal da OpenAI; comprovante e tratado como "recebido", sem prometer validacao bancaria.
+**Latest execution note (2026-05-01 Sprint 47):** o chat agora consegue apagar para todos mensagens enviadas com `wa_message_id`, usando o endpoint real do Whatsmiau. Edicao de mensagem nao foi criada porque a documentacao do Whatsmiau nao expoe edicao real no WhatsApp.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,12 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 47 (2026-05-01) - Apagar mensagem real no WhatsApp
+
+- Delete real - mensagens enviadas pelo painel agora carregam `wa_message_id`, exibem lixeira apenas quando ha ID do WhatsApp e chamam `DELETE /v2/chat/deleteMessageForEveryone/:instance` para apagar para todos - `server/router.ts`, `server/whatsapp.ts`, `src/components/views/MessageBubble.tsx`
+- Persistencia/local state - a mensagem apagada tambem sai de `zelochat_messages` e do estado em tempo real via `message_deleted`, incluindo eventos `messages.delete` vindos do Whatsmiau - `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts`
+- Sem edicao fake - a documentacao publica do Whatsmiau nao mostra endpoint de edicao de mensagem, entao a UI nao oferece editar.
 
 ### Sprint 46 (2026-05-01) — IA com visão para imagens
 

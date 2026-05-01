@@ -226,6 +226,7 @@ export type AudioTranscriptStatus = 'pending' | 'done' | 'failed';
 
 export interface ChatMessage {
   id: string;
+  waMessageId?: string | null;
   role: MessageRole;
   content: string | null;
   preview: string;

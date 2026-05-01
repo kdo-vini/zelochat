@@ -234,6 +234,7 @@ interface SessionRow {
 
 interface MessageRow {
   id: string;
+  wa_message_id: string | null;
   role: string;
   content: string | null;
   tool_calls: any[] | null;
@@ -243,12 +244,13 @@ interface MessageRow {
   audio_transcript_status: AudioTranscriptStatus | null;
 }
 
-const MESSAGE_COLUMNS = 'id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status';
+const MESSAGE_COLUMNS = 'id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status';
 
 type AssistantResponseSource = 'ai_auto' | 'human_manual';
 
 interface AddAssistantMessageOptions {
   responseSource?: AssistantResponseSource;
+  waMessageId?: string | null;
 }
 
 interface LatestInboundMessageRow {
@@ -685,6 +687,7 @@ function mapMessage(row: MessageRow): ChatMessage {
   const parsed = parseStructuredMessage(row.content || '');
   return {
     id: row.id,
+    waMessageId: row.wa_message_id,
     role: row.role as MessageRole,
     content: row.content,
     preview: parsed.preview,
@@ -864,6 +867,7 @@ async function insertMessage(params: {
   role: MessageRole;
   content: string | null;
   sentAt: string;
+  waMessageId?: string | null;
   tool_calls?: any[] | null;
   tool_call_id?: string | null;
 }): Promise<ChatMessage> {
@@ -875,6 +879,7 @@ async function insertMessage(params: {
       session_id: params.sessionId,
       role: params.role,
       content: params.content,
+      wa_message_id: params.waMessageId || null,
       tool_calls: params.tool_calls || null,
       tool_call_id: params.tool_call_id || null,
       sent_at: params.sentAt,
@@ -887,6 +892,56 @@ async function insertMessage(params: {
   }
 
   return mapMessage(data as MessageRow);
+}
+
+export async function deleteMessageByWhatsAppId(params: {
+  empresaId: string;
+  jid: string;
+  waMessageId: string;
+  dbMessageId?: string | null;
+}): Promise<{ deleted: boolean; dbMessageId: string | null }> {
+  if (!params.empresaId || !params.waMessageId) {
+    return { deleted: false, dbMessageId: params.dbMessageId ?? null };
+  }
+
+  const family = await fetchSessionFamily(params.empresaId, params.jid);
+  if (!family) {
+    return { deleted: false, dbMessageId: params.dbMessageId ?? null };
+  }
+
+  const supabase = getServiceSupabase();
+  let query = supabase
+    .from('zelochat_messages')
+    .delete()
+    .eq('empresa_id', params.empresaId)
+    .eq('wa_message_id', params.waMessageId)
+    .in('session_id', family.rows.map((row) => row.id));
+
+  if (params.dbMessageId) {
+    query = query.eq('id', params.dbMessageId);
+  }
+
+  const { data, error } = await query.select('id');
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const deletedId = ((data as Array<{ id: string }> | null) ?? [])[0]?.id ?? params.dbMessageId ?? null;
+
+  broadcast(
+    {
+      type: 'message_deleted',
+      data: {
+        sessionId: family.latest.remote_jid,
+        messageId: params.waMessageId,
+        dbMessageId: deletedId,
+      },
+    },
+    params.empresaId,
+  );
+
+  return { deleted: Boolean(data?.length), dbMessageId: deletedId };
 }
 
 async function recordResponseEventForLatestInbound(params: {
@@ -1456,6 +1511,7 @@ export async function addAssistantMessage(
     role: 'assistant',
     content: storedContent,
     tool_calls: toolCalls,
+    waMessageId: options.waMessageId,
     sentAt,
   });
 

@@ -11,6 +11,7 @@ import { WS_URL } from '../config';
 import {
   acknowledgeSession as acknowledgeSessionApi,
   bindEmpresa,
+  deleteMessage as deleteMessageApi,
   deleteSession as deleteSessionApi,
   escalateSessionManually as escalateSessionManuallyApi,
   fetchProfilePicture as fetchProfilePictureApi,
@@ -65,11 +66,18 @@ type MessageUpdatePayload = {
   };
 };
 
+type MessageDeletedPayload = {
+  sessionId: string;
+  messageId: string;
+  dbMessageId?: string | null;
+};
+
 type WsEvent =
   | { type: 'auth_ok'; data: { empresaId: string } }
   | { type: 'message'; data: SessionEventPayload }
   | { type: 'message_sent'; data: SessionEventPayload }
   | { type: 'message_update'; data: MessageUpdatePayload }
+  | { type: 'message_deleted'; data: MessageDeletedPayload }
   | { type: 'contact_update'; data: { remoteJid: string, pushName: string, profilePicUrl?: string } }
   | { type: 'escalation_triggered'; data: EscalationTriggeredPayload }
   | { type: 'escalation_resolved'; data: EscalationResolvedPayload }
@@ -89,6 +97,27 @@ function upsertMessage(messages: ChatMessage[], next: ChatMessage): ChatMessage[
   }
 
   return [...messages, next];
+}
+
+function removeMessage(messages: ChatMessage[], payload: Pick<MessageDeletedPayload, 'messageId' | 'dbMessageId'>): ChatMessage[] {
+  return messages.filter((message) =>
+    message.id !== payload.dbMessageId &&
+    message.id !== payload.messageId &&
+    message.waMessageId !== payload.messageId,
+  );
+}
+
+function applyDeletedMessage(session: ChatSession, payload: MessageDeletedPayload): ChatSession {
+  const messages = removeMessage(session.messages ?? [], payload);
+  if (messages.length === (session.messages ?? []).length) return session;
+
+  const latest = messages.at(-1);
+  return {
+    ...session,
+    messages,
+    lastMessage: latest?.preview ?? '',
+    lastMessageTime: latest?.timestamp ?? session.lastMessageTime,
+  };
 }
 
 function mergeSessions(previous: ChatSession[], incoming: ChatSession[]): ChatSession[] {
@@ -247,6 +276,38 @@ export function useWhatsAppSessions(token: string | null) {
     await deleteSessionApi(token, jid);
     setSessions((prev) => prev.filter((s) => s.id !== jid));
   }, [token]);
+
+  const deleteMessage = useCallback(async (jid: string, message: ChatMessage) => {
+    if (!token) {
+      throw new Error('Faca login para apagar mensagens.');
+    }
+    if (!message.waMessageId) {
+      throw new Error('Esta mensagem ainda nao tem o ID do WhatsApp para apagar para todos.');
+    }
+
+    const payload: MessageDeletedPayload = {
+      sessionId: jid,
+      messageId: message.waMessageId,
+      dbMessageId: message.id,
+    };
+
+    setSessions((previous) =>
+      previous.map((session) =>
+        session.id === jid ? applyDeletedMessage(session, payload) : session,
+      ),
+    );
+
+    try {
+      await deleteMessageApi(token, message.waMessageId, {
+        remoteJid: jid,
+        fromMe: message.role === 'assistant',
+        dbMessageId: message.id,
+      });
+    } catch (error) {
+      void hydrateSession(jid);
+      throw error;
+    }
+  }, [hydrateSession, token]);
 
   const fetchProfilePicture = useCallback(async (jid: string): Promise<string | null> => {
     if (!token) return null;
@@ -420,6 +481,16 @@ export function useWhatsAppSessions(token: string | null) {
             return;
           }
 
+          if (parsed.type === 'message_deleted') {
+            const data = parsed.data;
+            setSessions((previous) =>
+              previous.map((session) =>
+                session.id === data.sessionId ? applyDeletedMessage(session, data) : session,
+              ),
+            );
+            return;
+          }
+
           if (parsed.type === 'contact_update') {
             setSessions((previous) => previous.map((session) => 
               session.id === (parsed.data as any).remoteJid && (parsed.data as any).profilePicUrl
@@ -527,6 +598,7 @@ export function useWhatsAppSessions(token: string | null) {
     markRead,
     toggleAutoReply,
     deleteSession,
+    deleteMessage,
     fetchProfilePicture,
     updateSessionName,
     lastEscalation,

@@ -127,6 +127,20 @@ function apiHeaders() {
   return { apikey: API_KEY };
 }
 
+function v2Url(path: string): string {
+  return `${BASE_URL}${BASE_URL.endsWith('/v2') ? '' : '/v2'}${path}`;
+}
+
+function extractWhatsmiauMessageId(data: any): string | undefined {
+  return (
+    data?.key?.id ??
+    data?.data?.key?.id ??
+    data?.message?.key?.id ??
+    data?.messageId ??
+    data?.id
+  ) as string | undefined;
+}
+
 const TUNNEL_URL_FILE = resolve('.tunnel-url');
 let lastRegisteredWebhook = '';
 
@@ -350,7 +364,7 @@ export async function sendTextMessage(
     { number: jid, text: normalizedText },
     { headers: apiHeaders() },
   );
-  const id = (res.data as any)?.key?.id as string | undefined;
+  const id = extractWhatsmiauMessageId(res.data);
   trackSent(id);
   return id;
 }
@@ -410,7 +424,7 @@ export async function sendMediaMessage(
     { number: jid, ...normalizedParams },
     { headers: apiHeaders() },
   );
-  const id = (res.data as any)?.key?.id as string | undefined;
+  const id = extractWhatsmiauMessageId(res.data);
   trackSent(id);
   return id;
 }
@@ -427,7 +441,7 @@ export async function sendWhatsAppAudio(
     { number: jid, audio: audioUrl, encoding: true },
     { headers: apiHeaders() },
   );
-  const id = (res.data as any)?.key?.id as string | undefined;
+  const id = extractWhatsmiauMessageId(res.data);
   trackSent(id);
   return id;
 }
@@ -964,7 +978,7 @@ export async function revokeMessage(
   empresaId?: string | null,
 ): Promise<void> {
   const instance = await resolveInstance(empresaId);
-  await axios.delete(`${BASE_URL}/chat/deleteMessageForEveryone/${instance}`, {
+  await axios.delete(v2Url(`/chat/deleteMessageForEveryone/${instance}`), {
     headers: apiHeaders(),
     data: { id: messageId, remoteJid: jid, fromMe },
   });

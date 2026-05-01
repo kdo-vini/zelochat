@@ -201,6 +201,7 @@ export default function AppShell() {
     markRead,
     toggleAutoReply,
     deleteSession,
+    deleteMessage,
     fetchProfilePicture,
     updateSessionName,
     lastEscalation,
@@ -937,6 +938,7 @@ export default function AppShell() {
             profilePics={profilePics}
             send={send}
             toggleAutoReply={toggleAutoReply}
+            deleteMessage={deleteMessage}
             updateSessionName={updateSessionName}
             hydrateSession={hydrateSession}
             onDeleteSession={handleDeleteSession}

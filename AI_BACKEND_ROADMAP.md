@@ -19,6 +19,7 @@ Entregas que antes estavam como "proximos passos" e ja foram feitas:
 - Mensagens nao-texto: localizacao, contatos, enquetes, reacoes, figurinhas e tipos desconhecidos aparecem com placeholders claros.
 - Imagens recebidas: fotos de lanche/preparo e comprovantes Pix entram como contexto visual da IA; Pix e confirmado como recebido, sem validacao bancaria.
 - Atendimento manual assistido por IA: no modo Manual, o operador pode melhorar um rascunho ou gerar uma sugestao de resposta; a IA apenas preenche o campo, sem envio automatico.
+- Mensagens enviadas: o painel pode apagar para todos mensagens com ID real do WhatsApp via Whatsmiau; edicao nao aparece porque nao ha endpoint real documentado.
 
 ## Proxima prioridade
 
@@ -80,6 +81,7 @@ Algumas protecoes devem continuar em codigo, nao apenas no prompt:
 - Imagem ambigua sem dados minimos de pedido.
 - Comprovante Pix recebido sem validacao bancaria.
 - Solicitacao de humano.
+- Edicao de mensagem sem suporte real da API.
 
 Toda resposta relacionada a pedido deve passar por validacao antes de ir ao WhatsApp. Toda configuracao livre do dono deve ser tratada como preferencia, nao como lei absoluta.
 

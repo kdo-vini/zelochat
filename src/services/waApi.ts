@@ -86,6 +86,20 @@ export async function sendMessage(
   await parseResponse(response);
 }
 
+export async function deleteMessage(
+  token: string,
+  messageId: string,
+  payload: { remoteJid: string; fromMe: boolean; dbMessageId?: string },
+): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(messageId)}`), {
+    method: 'DELETE',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+  await parseResponse(response);
+}
+
 export async function markSessionRead(token: string, jid: string): Promise<void> {
   const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/read`), {
     method: 'POST',

@@ -34,6 +34,7 @@ import {
   getAllSessions,
   getSession,
   addAssistantMessage,
+  deleteMessageByWhatsAppId,
   updateSessionProfilePic,
   setAutoReply,
   markSessionAsRead,
@@ -153,7 +154,9 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
         ''
       ).trim();
       if (msgText) {
-        addAssistantMessage(remoteJid, msgText, undefined, empresaId).catch((err) =>
+        addAssistantMessage(remoteJid, msgText, undefined, empresaId, undefined, {
+          waMessageId: msgId || null,
+        }).catch((err) =>
           console.error('[Webhook] fromMe persist failed:', err),
         );
       }
@@ -374,11 +377,14 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
   } else if (event === 'messages.delete') {
     const deletions = Array.isArray(data) ? data : [data];
     for (const d of deletions) {
-      if (!d?.id) continue;
-      broadcast(
-        { type: 'message_deleted', data: { messageId: d.id, remoteJid: d.remoteJid } },
+      const messageId = d?.id ?? d?.key?.id ?? d?.messageId;
+      const remoteJid = d?.remoteJid ?? d?.key?.remoteJid ?? '';
+      if (!messageId || !remoteJid || !remoteJid.endsWith('@s.whatsapp.net')) continue;
+      await deleteMessageByWhatsAppId({
         empresaId,
-      );
+        jid: remoteJid,
+        waMessageId: messageId,
+      });
     }
   } else if (event === 'contacts.upsert') {
     const contacts = Array.isArray(data) ? data : [data];
@@ -807,6 +813,7 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
   try {
     const empresaId = await requireEmpresaId(req);
     const trimmedMessage = message?.trim() ?? '';
+    let waMessageId: string | undefined;
 
     if (attachment?.dataUrl) {
       // Whatsmiau only accepts public URLs — upload to Supabase Storage first.
@@ -820,9 +827,9 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
       );
       if (attachment.type === 'audio') {
         // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)
-        await sendWhatsAppAudio(to, mediaUrl, empresaId);
+        waMessageId = await sendWhatsAppAudio(to, mediaUrl, empresaId);
       } else {
-        await sendMediaMessage(to, {
+        waMessageId = await sendMediaMessage(to, {
           mediatype: attachment.type === 'image' ? 'image' : 'document',
           mimetype: attachment.mimeType,
           media: mediaUrl,
@@ -831,13 +838,14 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
         }, empresaId);
       }
     } else {
-      await sendTextMessage(to, trimmedMessage, empresaId);
+      waMessageId = await sendTextMessage(to, trimmedMessage, empresaId);
     }
 
     await addAssistantMessage(to, trimmedMessage, undefined, empresaId, attachment, {
       responseSource: 'human_manual',
+      waMessageId,
     });
-    res.json({ ok: true });
+    res.json({ ok: true, messageId: waMessageId ?? null });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, error);
@@ -1857,7 +1865,7 @@ router.post('/api/send/poll', async (req: Request, res: Response) => {
 // ─── Revoke message ───────────────────────────────────────────────────────────
 
 router.delete('/api/messages/:id', async (req: Request, res: Response) => {
-  const { remoteJid, fromMe } = req.body ?? {};
+  const { remoteJid, fromMe, dbMessageId } = req.body ?? {};
   if (!remoteJid) {
     res.status(400).json({ error: 'Campo obrigatório: remoteJid.' });
     return;
@@ -1865,7 +1873,13 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     await revokeMessage(remoteJid, req.params.id, fromMe ?? true, empresaId);
-    res.json({ ok: true });
+    const deleted = await deleteMessageByWhatsAppId({
+      empresaId,
+      jid: remoteJid,
+      waMessageId: req.params.id,
+      dbMessageId: typeof dbMessageId === 'string' ? dbMessageId : null,
+    });
+    res.json({ ok: true, ...deleted });
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, error);
