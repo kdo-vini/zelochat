@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { FileAudio, FileText, FileVideo, ImageOff, Loader2, Pause, Play, Trash2, X } from 'lucide-react';
+import { FileAudio, FileText, FileVideo, ImageOff, Loader2, MoreVertical, Pause, Play, Trash2, X } from 'lucide-react';
 import type { ChatMessage, MessageStatus } from '../../types';
 import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../domain/chat';
 import { Modal, useModalTitleId } from '../Modal';
@@ -361,6 +361,7 @@ export interface MessageBubbleProps {
 export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerName, onDelete, isDeleting = false }: MessageBubbleProps) {
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   /* System messages handled elsewhere */
   const isSystem = message.kind === 'text' && (message.content ?? '').includes('[SISTEMA]');
@@ -402,18 +403,48 @@ export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerN
           {hasTail && (isOutgoing ? <TailOut /> : <TailIn />)}
 
           {isOutgoing && message.waMessageId && onDelete && (
-            <button
-              type="button"
-              onClick={() => void onDelete(message)}
-              disabled={isDeleting}
-              title="Apagar para todos"
-              aria-label="Apagar mensagem para todos"
-              className="absolute left-1.5 top-1.5 z-20 flex h-7 w-7 items-center justify-center rounded-md bg-white/90 text-[#667781] opacity-0 shadow-sm transition-all hover:bg-[#fee4e2] hover:text-[#b42318] focus:opacity-100 disabled:cursor-wait disabled:opacity-70 group-hover/bubble:opacity-100"
-            >
-              {isDeleting
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
-                : <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />}
-            </button>
+            <div className="absolute right-1 top-1 z-30">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen((open) => !open);
+                }}
+                disabled={isDeleting}
+                title="OpÃ§Ãµes da mensagem"
+                aria-label="OpÃ§Ãµes da mensagem"
+                className="flex h-6 w-6 items-center justify-center rounded-md bg-[#d9fdd3]/80 text-[#667781] opacity-70 transition-all hover:bg-white/90 hover:text-[#111b21] focus:opacity-100 disabled:cursor-wait disabled:opacity-70 group-hover/bubble:opacity-100"
+              >
+                {isDeleting
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
+                  : <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />}
+              </button>
+
+              {menuOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Fechar menu"
+                    className="fixed inset-0 z-20 cursor-default"
+                    onClick={() => setMenuOpen(false)}
+                  />
+                  <div className="absolute right-0 top-7 z-40 w-56 overflow-hidden rounded-lg border border-black/5 bg-white py-1 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuOpen(false);
+                        void onDelete(message);
+                      }}
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-medium text-[#b42318] transition-colors hover:bg-[#fee4e2]"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
+                      <span>Apagar mensagem para todos</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* ── Image ── */}

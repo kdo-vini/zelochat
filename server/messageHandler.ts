@@ -102,8 +102,8 @@ async function transcribeAudioWithFailureTracking(
       });
 
       const audioEscalationMsg = 'Tive dificuldade em ouvir seus áudios. Um atendente vai te ajudar agora.';
-      await sendTextMessage(jid, audioEscalationMsg, empresaId);
-      await addAssistantMessage(jid, audioEscalationMsg, undefined, empresaId);
+      const waMessageId = await sendTextMessage(jid, audioEscalationMsg, empresaId);
+      await addAssistantMessage(jid, audioEscalationMsg, undefined, empresaId, undefined, { waMessageId });
     } catch (escalateErr) {
       console.error('[transcription] Auto-escalation after Whisper failures threw:', escalateErr);
     }

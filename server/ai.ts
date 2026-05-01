@@ -31,6 +31,21 @@ const PENDING_ORDER_TTL_MIN = 30;
 const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 1200;
 const IMAGE_HISTORY_CAP = 3;
 
+type AssistantPersistOptions = NonNullable<Parameters<typeof addAssistantMessage>[5]>;
+
+async function sendAndPersistText(
+  jid: string,
+  text: string,
+  empresaId: string,
+  options: AssistantPersistOptions = {},
+): Promise<void> {
+  const waMessageId = await sendTextMessage(jid, text, empresaId);
+  await addAssistantMessage(jid, text, undefined, empresaId, undefined, {
+    ...options,
+    waMessageId,
+  });
+}
+
 /**
  * Fast-path cache (key: `${empresaId}:${jid}`) for "this JID had an order confirmed
  * recently". Read+write hot-path optimization; the source of truth is
@@ -276,8 +291,7 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     // confirmPendingOrder de novo (a pending row continua intacta porque
     // FIX H1 só limpa em sucesso).
     const errMsg = 'Desculpe, tive um problema momentâneo. Pode responder *Sim* pra eu tentar confirmar de novo? 🙏';
-    await sendTextMessage(jid, errMsg, pending.empresaId);
-    await addAssistantMessage(jid, errMsg, undefined, pending.empresaId);
+    await sendAndPersistText(jid, errMsg, pending.empresaId);
     return;
   }
 
@@ -306,14 +320,15 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   // já rolou). justConfirmedMap também é setado pra evitar que o próximo
   // "obrigado" do cliente vire criar_pedido novamente.
   let sendOk = true;
+  let waMessageId: string | undefined;
   try {
-    await sendTextMessage(jid, reply, pending.empresaId);
+    waMessageId = await sendTextMessage(jid, reply, pending.empresaId);
   } catch (sendErr) {
     sendOk = false;
     console.error('[AI] confirmPendingOrder: send to customer FAILED — order is in DB but customer was not notified:', sendErr);
   }
   const persistedReply = sendOk ? reply : `[FALHA NO ENVIO — reenviar manualmente]\n${reply}`;
-  await addAssistantMessage(jid, persistedReply, undefined, pending.empresaId);
+  await addAssistantMessage(jid, persistedReply, undefined, pending.empresaId, undefined, { waMessageId });
 
   broadcast(
     { type: 'order_created', data: { orderId, empresaId: pending.empresaId } },
@@ -333,14 +348,15 @@ export async function cancelPendingOrder(jid: string, empresaId: string): Promis
   // de "Tudo bem! Pedido cancelado." invisível. Persistir com marker permite
   // o operador detectar o problema rapidamente.
   let sendOk = true;
+  let waMessageId: string | undefined;
   try {
-    await sendTextMessage(jid, reply, empresaId);
+    waMessageId = await sendTextMessage(jid, reply, empresaId);
   } catch (sendErr) {
     sendOk = false;
     console.error('[AI] cancelPendingOrder: send to customer FAILED:', sendErr);
   }
   const persistedReply = sendOk ? reply : `[FALHA NO ENVIO — reenviar manualmente]\n${reply}`;
-  await addAssistantMessage(jid, persistedReply, undefined, empresaId);
+  await addAssistantMessage(jid, persistedReply, undefined, empresaId, undefined, { waMessageId });
 }
 
 /**
@@ -572,8 +588,7 @@ async function sendBlockedDateReply(
   blockedDate: { date: string; reason: string },
 ): Promise<string> {
   const reply = buildBlockedDateReply(blockedDate);
-  await sendTextMessage(jid, reply, empresaId);
-  await addAssistantMessage(jid, reply, undefined, empresaId, undefined, { responseSource: 'ai_auto' });
+  await sendAndPersistText(jid, reply, empresaId, { responseSource: 'ai_auto' });
   return reply;
 }
 
@@ -998,8 +1013,7 @@ async function sendBusinessHoursReply(
   issue: BusinessHoursIssue,
 ): Promise<string> {
   const reply = buildBusinessHoursReply(issue);
-  await sendTextMessage(jid, reply, empresaId);
-  await addAssistantMessage(jid, reply, undefined, empresaId, undefined, { responseSource: 'ai_auto' });
+  await sendAndPersistText(jid, reply, empresaId, { responseSource: 'ai_auto' });
   return reply;
 }
 
@@ -1904,8 +1918,7 @@ export async function generateAndSendReply(
     console.log(`[AI] Pending order detected as edit-intent for ${jid} — clearing and re-engaging.`);
     await clearPendingOrder(jid, resolvedEmpresaId);
     const editAck = 'Beleza, vamos ajustar! Me conta o que mudou. 😊';
-    await sendTextMessage(jid, editAck, resolvedEmpresaId);
-    await addAssistantMessage(jid, editAck, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
+    await sendAndPersistText(jid, editAck, resolvedEmpresaId, { responseSource: 'ai_auto' });
     return editAck;
   }
 
@@ -2144,8 +2157,7 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
-        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
+        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
         console.log(`[AI] Processed ${toolPlan.calls.length} non-terminal tool_calls sequentially for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
@@ -2170,8 +2182,7 @@ export async function generateAndSendReply(
             : '< 5min (db)';
           console.log(`[AI] Blocking duplicate criar_pedido for ${jid} — order was confirmed ${ageLog}`);
           const dupMsg = 'Seu pedido já foi confirmado! 😊 Qualquer dúvida é só chamar.';
-          await sendTextMessage(jid, dupMsg, resolvedEmpresaId);
-          await addAssistantMessage(jid, dupMsg, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
+          await sendAndPersistText(jid, dupMsg, resolvedEmpresaId, { responseSource: 'ai_auto' });
           return dupMsg;
         }
 
@@ -2268,8 +2279,7 @@ export async function generateAndSendReply(
           if (unmatchedItems.length > 0) {
             const names = unmatchedItems.map((i) => i.product).join(', ');
             const notFoundMsg = `Desculpe, não encontrei no cardápio: ${names}. Pode verificar o nome do produto? 😊`;
-            await sendTextMessage(jid, notFoundMsg, resolvedEmpresaId);
-            await addAssistantMessage(jid, notFoundMsg, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
+            await sendAndPersistText(jid, notFoundMsg, resolvedEmpresaId, { responseSource: 'ai_auto' });
             return notFoundMsg;
           }
           args.items = resolvedItems.map((resolved) => ({
@@ -2357,9 +2367,9 @@ export async function generateAndSendReply(
             // replies "Sim" and the router's soft-confirm path picks it up.
             console.warn('[AI] sendButtonMessage failed; keeping pending row and asking for text confirmation:', btnErr);
             const promptMsg = `Para confirmar, é só responder *Sim* — ou *Não* para cancelar.\n\n${summary}`;
-            await sendTextMessage(jid, promptMsg, resolvedEmpresaId);
+            const promptMsgId = await sendTextMessage(jid, promptMsg, resolvedEmpresaId);
             await addToolMessage(jid, `Aguardando confirmação por texto: ${summary}`, toolCall.id, resolvedEmpresaId);
-            await addAssistantMessage(jid, promptMsg, undefined, resolvedEmpresaId);
+            await addAssistantMessage(jid, promptMsg, undefined, resolvedEmpresaId, undefined, { waMessageId: promptMsgId });
             return promptMsg;
           }
         } catch (err) {
@@ -2377,8 +2387,7 @@ export async function generateAndSendReply(
           );
         }
 
-        await sendTextMessage(jid, replyText, resolvedEmpresaId);
-        await addAssistantMessage(jid, replyText, undefined, resolvedEmpresaId);
+        await sendAndPersistText(jid, replyText, resolvedEmpresaId);
         return replyText;
       }
 
@@ -2408,8 +2417,7 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
-        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
+        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
         console.log(`[AI] consultar_pedido answered for ${jid}`);
         return cleanFollow;
       }
@@ -2436,9 +2444,9 @@ export async function generateAndSendReply(
             || 'Tudo certo! Se precisar de algo mais, é só chamar. 😊';
 
           await addToolMessage(jid, `Erro: gatilho ${triggerId} não encontrado`, toolCall.id, resolvedEmpresaId);
-          await addAssistantMessage(jid, fallback, [toolCall], resolvedEmpresaId);
+          await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
 
-          await sendTextMessage(jid, fallback, resolvedEmpresaId);
+          await sendAndPersistText(jid, fallback, resolvedEmpresaId, { responseSource: 'ai_auto' });
           resetAiFailureCounter(resolvedEmpresaId, jid);
           return fallback;
         }
@@ -2504,8 +2512,7 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Beleza! Já anotei aqui. 👍';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        await sendTextMessage(jid, cleanFollow, resolvedEmpresaId);
-        await addAssistantMessage(jid, cleanFollow, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
+        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
         console.log(`[AI] Dispatched notify_manager (${trig.name}) for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
@@ -2515,8 +2522,7 @@ export async function generateAndSendReply(
     const replyText = choice.message.content || 'Desculpe, deu um erro aqui. Pode repetir?';
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 
-    await sendTextMessage(jid, cleanReply, resolvedEmpresaId);
-    await addAssistantMessage(jid, cleanReply, undefined, resolvedEmpresaId, undefined, { responseSource: 'ai_auto' });
+    await sendAndPersistText(jid, cleanReply, resolvedEmpresaId, { responseSource: 'ai_auto' });
 
     console.log(`[AI] Replied to ${jid}: ${cleanReply.slice(0, 80)}...`);
     resetAiFailureCounter(resolvedEmpresaId, jid);
@@ -2548,8 +2554,7 @@ export async function generateAndSendReply(
     if (!suppressApology) {
       const errMsg = 'Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 🙏';
       try {
-        await sendTextMessage(jid, errMsg, resolvedEmpresaId);
-        await addAssistantMessage(jid, errMsg, undefined, resolvedEmpresaId);
+        await sendAndPersistText(jid, errMsg, resolvedEmpresaId);
       } catch {
         // ignore secondary failure
       }

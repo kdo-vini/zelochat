@@ -278,8 +278,8 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
         if (isHardConfirm) {
           const ack = 'Seu pedido já foi confirmado! ✅ Qualquer dúvida é só chamar 😊';
           try {
-            await sendTextMessage(remoteJid, ack, empresaId);
-            await addAssistantMessage(remoteJid, ack, undefined, empresaId);
+            const waMessageId = await sendTextMessage(remoteJid, ack, empresaId);
+            await addAssistantMessage(remoteJid, ack, undefined, empresaId, undefined, { waMessageId });
           } catch (err) {
             console.error('[Webhook] idempotent confirm reply failed:', err);
           }
@@ -1067,8 +1067,8 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
     const driverPhone = driver.phone.replace(/\D/g, '');
     const jid = `${driverPhone}@s.whatsapp.net`;
 
-    await sendTextMessage(jid, text, empresaId);
-    await addAssistantMessage(jid, text, undefined, empresaId);
+    const waMessageId = await sendTextMessage(jid, text, empresaId);
+    await addAssistantMessage(jid, text, undefined, empresaId, undefined, { waMessageId });
 
     res.json({ ok: true });
   } catch (error) {
@@ -1160,8 +1160,8 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
             const phoneWithDdi = customerPhoneRaw.startsWith('55') ? customerPhoneRaw : `55${customerPhoneRaw}`;
             const jid = `${phoneWithDdi}@s.whatsapp.net`;
 
-            await sendTextMessage(jid, text, empresaId);
-            await addAssistantMessage(jid, text, undefined, empresaId);
+            const waMessageId = await sendTextMessage(jid, text, empresaId);
+            await addAssistantMessage(jid, text, undefined, empresaId, undefined, { waMessageId });
           }
         }
       } catch (err) {

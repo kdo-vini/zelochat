@@ -276,8 +276,8 @@ export async function escalateSession(
   if (!wasAlreadyEscalated && !params.skipCustomerMessage) {
     const handoff = handoffMessageFor(params.reasonCategory);
     try {
-      await sendTextMessage(jid, handoff, empresaId);
-      await addAssistantMessage(jid, handoff, undefined, empresaId);
+      const waMessageId = await sendTextMessage(jid, handoff, empresaId);
+      await addAssistantMessage(jid, handoff, undefined, empresaId, undefined, { waMessageId });
     } catch (err) {
       console.error('[Escalation] Failed to send handoff to customer:', err);
     }
