@@ -3,22 +3,22 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-01 Sprint 35):** backend now hydrates the AI operational store profile directly from Supabase before WhatsApp replies. It loads empresa profile fields, Pix, manager phone, AI instructions, delivery config, blocked dates, operating hours, and the real PDV catalog by `user_id`, so a server restart no longer leaves the AI dependent on the panel opening first.
+**Latest execution note (2026-05-01 Sprint 45):** atendimento manual ganhou ajuda de IA dentro do chat. No modo Manual, o operador pode pedir para melhorar o rascunho atual ou gerar uma resposta a partir do contexto da conversa; a sugestão apenas preenche o campo de texto e nunca envia mensagem automaticamente.
 
-## 📊 Status atual (2026-04-30 Sprint 34 hotfix)
+## 📊 Status atual (2026-05-01 Sprint 45)
 
 | Tier | Total | Closed | Pending | Deferred | % |
 |---|---|---|---|---|---|
 | **P0** | 24 | **24** | 0 | 0 | **100% ✅** |
-| **P1** | 47 | **41** | 0 | 3 | **87% ✅** |
+| **P1** | 47 | **44** | 0 | 3 | **94% ✅** |
 | **P2** | 38 | 24 | 14 | 0 | 63% |
-| **P3** | 24 | 2 | 22 | 0 | 8% |
+| **P3** | 24 | 5 | 19 | 0 | 21% |
 
-**P1 closed = 34 explicit shipped + 7 cross-fix verificados** (P1.1, P1.11, P1.25, P1.26, P1.27, P1.41, P1.42, P1.44 — ver §"P1s closed via cross-fix" abaixo). P1.37 shipped Sprint 19 (paywall flicker).
+**P1 status:** todos os P1 acionáveis estão fechados. Restam apenas 3 deferred para quando sair do single-node Railway: P1.16, P1.17, P1.43.
 
-**P1 deferred (3)**: P1.16, P1.17, P1.43 — multi-replica concerns, NÃO fazer enquanto single-node Railway. CLAUDE.md flag deploy invariant.
+**P2/P3 status:** a maioria dos P2 críticos de UX, segurança, áudio, billing e performance já foi fechada nas Sprints 21-27 e 39-43. Os P3 ainda são polimento/backlog leve.
 
-**P1 actively pending (0)**: todos fechados. 3 deferred (P1.16, P1.17, P1.43) para multi-replica.
+**Próximo trabalho recomendado:** manter o roadmap vivo (`AI_BACKEND_ROADMAP.md`) como fonte de priorização, já sem listar como próximos os blocos entregues nas Sprints 35-45.
 
 Use this doc to know **at a glance** what's safe in production right now and what's still on fire. Each fix has a `Status`, the `Files touched`, and the `Risk` it eliminates. Fixes that need a prod migration are marked `BLOCKED — needs operator approval` until the user signs off on applying.
 
@@ -119,6 +119,19 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 45 (2026-05-01) — IA assistida no atendimento manual
+
+- ✅ UX — Botão de IA no canto direito do campo do chat em modo Manual. O operador pode escolher "Melhorar mensagem" para corrigir e deixar o rascunho mais amigável, ou "Gerar resposta" para sugerir uma resposta com base no contexto da conversa. A IA só preenche o campo; o envio continua 100% manual — `src/components/views/ChatView.tsx`, `src/services/openaiService.ts`
+- ✅ Novidades — entrada consolidada no topo do changelog, substituindo a entrada anterior de mensagens não-texto para manter o limite de 4 entradas por dia — `src/data/changelog.ts`
+- ✅ Docs — `SESSION_HANDOFF.md` removido por estar obsoleto; `FIXES_PROGRESS.md` e `AI_BACKEND_ROADMAP.md` voltaram a ser as fontes úteis para continuidade
+- Verificação verde: `npm run lint`, `npx tsc --noEmit -p server/tsconfig.json`, `npm run build`
+
+### Sprint 44 (2026-05-01) — Simulador de atendimento + P2 fixes
+
+- ✅ Simulador de atendimento — novo dry-run da pipeline da IA, sem escrita no banco e sem envio no WhatsApp. Retorna resposta, ferramentas chamadas e se criaria pedido, para testar instruções antes de publicar — `server/aiSimulator.ts`, `server/router.ts`
+- ✅ Contexto mais limpo para a OpenAI — reações e votos em enquete deixam de entrar no histórico enviado ao modelo, porque não carregam intenção acionável do cliente — `server/ai.ts`
+- ✅ Resiliência — carregamento de configurações da IA no backend ganhou timeout de 3s para não travar webhook durante instabilidade do Supabase — `server/configStore.ts`
+
 ### Sprint 43 (2026-05-01) — Code-review follow-ups + UX polish
 
 Saída do audit Sprint 35-41 (senior code reviewer):
@@ -129,7 +142,7 @@ Saída do audit Sprint 35-41 (senior code reviewer):
 - ✅ UX — Bolinha de não-lidas no menu agora é verde estilo WhatsApp e mostra **número de conversas com não-lidas** (não a soma de mensagens). Cada conversa específica mantém o badge com a contagem de mensagens. Bolinha vira vermelha apenas quando há escalações pendentes — `src/AppShell.tsx`
 - ✅ UX — Painel "Saúde da IA" no Cérebro IA consome o endpoint `/api/ai/health` (Sprint 39) e mostra prontidão operacional (cardápio carregado, horários, entrega, gerente, Pix, IA ligada, datas bloqueadas) com botão de refresh. Antes o endpoint existia sem UI consumidora — `src/components/views/AIConfigsView.tsx`, `src/services/waApi.ts`
 - ✅ Refactor — `validateManagerPhone` em `escalation.ts` distingue `missing` vs `invalid` no log de aviso (em vez de "managerPhone not configured" para tudo). Útil pra triagem quando o dono digitou número inválido — `server/escalation.ts`
-- ✅ Helpers em `server/ai.ts` exportados (`safeForPrompt`, `resolveCatalogProduct`, `buildSystemInstruction`, `planToolCallsForTurn`, `CREATE_ORDER_TOOL`, etc.) — preparação para o simulador de atendimento (P2 do roadmap), que ficou com a UI/rota deferida para a próxima sprint. Não há call site novo, só `export` adicionado — superfície aumentada mas semantics inalteradas
+- ✅ Helpers em `server/ai.ts` exportados (`safeForPrompt`, `resolveCatalogProduct`, `buildSystemInstruction`, `planToolCallsForTurn`, `CREATE_ORDER_TOOL`, etc.) — preparação para o simulador de atendimento, entregue na Sprint 44. Não há call site novo aqui, só `export` adicionado — superfície aumentada mas semantics inalteradas
 - Type-check verde: frontend `tsc --noEmit`, server `tsc --noEmit -p server/tsconfig.json`. `vite build` clean (chunk maior 196 kB pós-split)
 
 ### Sprint 42 (2026-05-01) — P3 bundle split
