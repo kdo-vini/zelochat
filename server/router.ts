@@ -46,6 +46,7 @@ import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, g
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { redactInstance } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
+import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
   createTrigger,
@@ -1422,7 +1423,21 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
 router.post('/api/ai/generate-instructions', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { hint } = (req.body ?? {}) as { hint?: string };
+    const payload = validateGenerateInstructionsPayload(req);
+    if (payload.ok === false) {
+      if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
+      res.status(payload.status).json({ error: payload.error });
+      return;
+    }
+
+    const rateLimit = checkAiRouteRateLimit(empresaId, 'generate-instructions');
+    if (rateLimit.ok === false) {
+      if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(rateLimit.status).json({ error: rateLimit.error });
+      return;
+    }
+
+    const { hint } = payload.value;
     const cfg = getConfig(empresaId);
 
     const openai = getAI();
@@ -1479,15 +1494,23 @@ Escreva agora as diretrizes operacionais do agente.`;
  * Body: { messages: array, temperature?: number, responseFormat?: 'json' }
  */
 router.post('/api/ai/complete', async (req: Request, res: Response) => {
-  const { messages, temperature = 0.7, responseFormat } = req.body;
-
-  if (!messages || !Array.isArray(messages)) {
-    res.status(400).json({ error: 'Campo "messages" é obrigatório e deve ser um array.' });
-    return;
-  }
-
   try {
-    await requireEmpresaId(req);
+    const empresaId = await requireEmpresaId(req);
+    const payload = validateAiCompletePayload(req);
+    if (payload.ok === false) {
+      if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
+      res.status(payload.status).json({ error: payload.error });
+      return;
+    }
+
+    const rateLimit = checkAiRouteRateLimit(empresaId, 'complete');
+    if (rateLimit.ok === false) {
+      if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(rateLimit.status).json({ error: rateLimit.error });
+      return;
+    }
+
+    const { messages, temperature, responseFormat } = payload.value;
     const openai = getAI();
     const params: ChatCompletionCreateParamsNonStreaming = {
       model: 'gpt-4o-mini',
@@ -1505,7 +1528,7 @@ router.post('/api/ai/complete', async (req: Request, res: Response) => {
       return;
     }
     console.error('[AI Proxy] Error:', error);
-    res.status(500).json({ error: 'AI request failed' });
+    res.status(500).json({ error: 'Falha ao processar a solicitação da IA.' });
   }
 });
 

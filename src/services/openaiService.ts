@@ -24,6 +24,10 @@ async function callAI(
   return data.content;
 }
 
+function contentForInternalAi(message: ChatMessage): string {
+  return message.content ?? message.preview ?? '';
+}
+
 function getBrazilNowContext(): string {
   const now = new Date();
   const date = new Intl.DateTimeFormat('pt-BR', {
@@ -86,7 +90,7 @@ export async function getClientResponse(
   try {
     const messages = [
       { role: "system", content: systemInstruction },
-      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: contentForInternalAi(m) })),
       { role: "user", content: userInput }
     ];
 
@@ -195,7 +199,7 @@ export async function getGeneralManagerResponse(
   try {
     const messages = [
       { role: "system", content: systemInstruction },
-      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: contentForInternalAi(m) })),
       { role: "user", content: userInput }
     ];
 

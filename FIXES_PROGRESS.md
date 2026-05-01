@@ -119,6 +119,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 38 (2026-05-01) - Limites de custo nas rotas internas de IA
+
+- ✅ P1 novo / roadmap custo - Rotas internas de IA agora têm limite por empresa, limite de tamanho de payload e validação rígida antes de chamar o modelo. `/api/ai/complete` aceita no máximo 40 chamadas a cada 5min, 40 mensagens e 32k caracteres; geração de instruções aceita 12 chamadas por hora e hint de até 1k caracteres - `server/aiRouteGuards.ts`, `server/router.ts`
+- ✅ Compatibilidade do cliente interno - Históricos internos com mensagem sem conteúdo textual agora viram texto vazio/preview antes de chamar o proxy, evitando rejeição por payload inválido - `src/services/openaiService.ts`
+- Type-check verde: `npm run lint`, server `tsc --noEmit -p server/tsconfig.json`
+
 ### Sprint 37 (2026-05-01) - WebSocket sem token na URL
 
 - ✅ P1 novo / roadmap segurança - A conexão em tempo real não envia mais o JWT na query string. O navegador abre `/ws`, autentica com uma mensagem inicial pelo próprio socket e só recebe eventos depois de `auth_ok`; o backend fecha conexões sem autenticação em 10s e não transmite eventos para sockets anônimos - `server/ws.ts`, `src/hooks/useWhatsAppSessions.ts`
