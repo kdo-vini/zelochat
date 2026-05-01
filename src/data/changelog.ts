@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-01',
+    category: 'hotfix',
+    title: 'IA recupera dados da loja sozinha',
+    description: 'Mesmo depois de uma reinicialização, a IA agora busca cardápio, Pix, entrega e horários direto da loja antes de responder clientes.',
+  },
+  {
     date: '2026-04-30',
     category: 'hotfix',
     title: 'IA espera para entender áudios',

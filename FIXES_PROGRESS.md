@@ -3,6 +3,8 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+**Latest execution note (2026-05-01 Sprint 35):** backend now hydrates the AI operational store profile directly from Supabase before WhatsApp replies. It loads empresa profile fields, Pix, manager phone, AI instructions, delivery config, blocked dates, operating hours, and the real PDV catalog by `user_id`, so a server restart no longer leaves the AI dependent on the panel opening first.
+
 ## 📊 Status atual (2026-04-30 Sprint 34 hotfix)
 
 | Tier | Total | Closed | Pending | Deferred | % |
@@ -116,6 +118,13 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 35 (2026-05-01) - Backend como fonte da verdade da IA
+
+- ✅ P0 novo / roadmap IA - O backend agora hidrata o perfil operacional da loja direto do Supabase antes de responder no WhatsApp: dados da empresa, Pix, telefone do gerente, instruções, entrega, horários, datas bloqueadas e cardápio real do PDV por `user_id`. O perfil é revalidado a cada 5 minutos; se essa hidratação falhar, a IA continua fail-closed e não chama a OpenAI com contexto vazio ou antigo - `server/configStore.ts`
+- ✅ Redução de dependência do painel - `/api/sync-config` continua existindo como espelho em tempo real quando o operador está logado, mas deixou de ser a única fonte para cardápio/entrega/Pix após reinício do servidor - `server/configStore.ts`, `server/router.ts`
+- Novidades: entrada PT-BR para a IA recuperar dados da loja sozinha - `src/data/changelog.ts`
+- Type-check verde: frontend `tsc --noEmit` e server `tsc --noEmit -p server/tsconfig.json`
 
 ### Sprint 34 (2026-04-30) — Hotfix áudio antes da resposta da IA
 

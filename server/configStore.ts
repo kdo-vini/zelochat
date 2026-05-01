@@ -16,6 +16,8 @@ export interface CatalogCategoriaGroup {
 
 import { getServiceSupabase } from './supabase.js';
 
+type CatalogProduct = { name: string; price: number; available: boolean };
+
 export interface BusinessConfig {
   name: string;
   specialty: string;
@@ -110,6 +112,105 @@ function normalizeClosedDays(value: unknown): string[] {
     .filter((day): day is string => typeof day === 'string' && allowed.has(day));
 }
 
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeNumber(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeDeliveryConfig(value: unknown): DeliveryConfig | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as { enabled?: unknown; neighborhoods?: unknown };
+  const neighborhoods = Array.isArray(row.neighborhoods)
+    ? row.neighborhoods
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const n = item as { name?: unknown; fee?: unknown };
+        const name = normalizeText(n.name);
+        const fee = normalizeNumber(n.fee);
+        if (!name || fee < 0) return null;
+        return { name, fee };
+      })
+      .filter((item): item is DeliveryNeighborhood => item !== null)
+    : [];
+  return { enabled: row.enabled === true, neighborhoods };
+}
+
+function normalizeProductRow(row: unknown): (CatalogProduct & {
+  idCategoria: number | null;
+  idSubcategoria: number | null;
+}) | null {
+  if (!row || typeof row !== 'object') return null;
+  const product = row as {
+    nome?: unknown;
+    preco?: unknown;
+    id_categoria?: unknown;
+    id_subcategoria?: unknown;
+    ocultar_no_pdv?: unknown;
+  };
+  const name = normalizeText(product.nome);
+  if (!name) return null;
+  const idCategoria = product.id_categoria == null ? null : normalizeNumber(product.id_categoria);
+  const idSubcategoria = product.id_subcategoria == null ? null : normalizeNumber(product.id_subcategoria);
+  return {
+    name,
+    price: normalizeNumber(product.preco),
+    available: product.ocultar_no_pdv !== true,
+    idCategoria,
+    idSubcategoria,
+  };
+}
+
+function buildCatalogHierarchy(
+  categorias: unknown[],
+  subcategorias: unknown[],
+  produtos: ReturnType<typeof normalizeProductRow>[],
+): CatalogCategoriaGroup[] {
+  const productRows = produtos.filter((item): item is NonNullable<ReturnType<typeof normalizeProductRow>> => item !== null);
+  const subRows = subcategorias
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as { id?: unknown; id_categoria?: unknown; nome?: unknown };
+      const nome = normalizeText(row.nome);
+      if (!nome) return null;
+      return {
+        id: normalizeNumber(row.id),
+        idCategoria: normalizeNumber(row.id_categoria),
+        nome,
+      };
+    })
+    .filter((item): item is { id: number; idCategoria: number; nome: string } => item !== null);
+
+  return categorias
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as { id?: unknown; nome?: unknown };
+      const id = normalizeNumber(row.id);
+      const nome = normalizeText(row.nome);
+      if (!nome) return null;
+      const productsInCategory = productRows.filter((p) => p.idCategoria === id);
+      const subs = subRows
+        .filter((sub) => sub.idCategoria === id)
+        .map((sub) => ({
+          nome: sub.nome,
+          produtos: productsInCategory
+            .filter((p) => p.idSubcategoria === sub.id)
+            .map(({ name, price, available }) => ({ name, price, available })),
+        }));
+      return {
+        nome,
+        subcategorias: subs,
+        produtosDireto: productsInCategory
+          .filter((p) => p.idSubcategoria == null)
+          .map(({ name, price, available }) => ({ name, price, available })),
+      };
+    })
+    .filter((item): item is CatalogCategoriaGroup => item !== null);
+}
+
 export function getConfig(empresaId: string): BusinessConfig {
   return configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
 }
@@ -137,7 +238,8 @@ export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
 // Tracks which empresas had their AI settings successfully hydrated from the DB.
 // On failure we leave the empresa OUT of this set so the next message retries —
 // fail-closed in the meantime (aiEnabled stays undefined → kill-switch treats as off).
-const hydratedAiSettings = new Set<string>();
+const hydratedAiSettings = new Map<string, number>();
+const OPERATIONAL_PROFILE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Reads AI runtime settings from `empresa_perfil` and merges them into the
@@ -149,21 +251,74 @@ const hydratedAiSettings = new Set<string>();
  *   - ensureAiSettingsHydrated (lazy on first webhook message)
  */
 export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
-  const { data, error } = await getServiceSupabase()
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
     .from('empresa_perfil')
-    .select('ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento')
+    .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento')
     .eq('id', empresaId)
     .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error(`empresa_perfil not found for ${empresaId}`);
   const row = (data as {
+    user_id?: string | null;
+    nome_exibicao?: string | null;
+    endereco?: string | null;
+    chave_pix?: string | null;
+    manager_phone?: string | null;
+    ai_instructions?: string | null;
+    delivery_config?: unknown;
     ai_enabled?: boolean;
     ai_can_reengage_pending?: boolean;
     blocked_dates?: unknown;
     horario_abertura?: string | null;
     horario_fechamento?: string | null;
     dias_fechamento?: unknown;
-  } | null);
+  });
+
+  const userId = normalizeText(row.user_id);
+  if (!userId) throw new Error(`empresa_perfil.user_id missing for ${empresaId}`);
+
+  const [categoriasRes, subcategoriasRes, produtosRes] = await Promise.all([
+    supabase
+      .from('categorias')
+      .select('id, nome, ordem')
+      .eq('id_usuario', userId)
+      .order('ordem')
+      .order('nome'),
+    supabase
+      .from('subcategorias')
+      .select('id, id_categoria, nome, ordem')
+      .eq('id_usuario', userId)
+      .order('ordem')
+      .order('nome'),
+    supabase
+      .from('produtos')
+      .select('id, nome, preco, id_categoria, id_subcategoria, ocultar_no_pdv')
+      .eq('id_usuario', userId)
+      .order('nome'),
+  ]);
+  if (categoriasRes.error) throw categoriasRes.error;
+  if (subcategoriasRes.error) throw subcategoriasRes.error;
+  if (produtosRes.error) throw produtosRes.error;
+
+  const productsWithPlacement = (produtosRes.data ?? []).map(normalizeProductRow);
+  const products = productsWithPlacement
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .map(({ name, price, available }) => ({ name, price, available }));
+
   const patch: Partial<BusinessConfig> = {};
+  patch.name = normalizeText(row.nome_exibicao);
+  patch.address = normalizeText(row.endereco);
+  patch.pixKey = normalizeText(row.chave_pix);
+  patch.managerPhone = normalizeText(row.manager_phone);
+  patch.aiInstructions = normalizeText(row.ai_instructions);
+  patch.deliveryConfig = normalizeDeliveryConfig(row.delivery_config);
+  patch.products = products;
+  patch.catalogHierarchy = buildCatalogHierarchy(
+    categoriasRes.data ?? [],
+    subcategoriasRes.data ?? [],
+    productsWithPlacement,
+  );
   if (typeof row?.ai_enabled === 'boolean') patch.aiEnabled = row.ai_enabled;
   if (typeof row?.ai_can_reengage_pending === 'boolean') patch.aiCanReengagePending = row.ai_can_reengage_pending;
   if (row && 'blocked_dates' in row) patch.blockedDates = normalizeBlockedDates(row.blocked_dates);
@@ -173,8 +328,8 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   if (closeTime) patch.closeTime = closeTime;
   if (openTime && closeTime) patch.hours = `${openTime}–${closeTime}`;
   if (row && 'dias_fechamento' in row) patch.closedDays = normalizeClosedDays(row.dias_fechamento);
-  if (Object.keys(patch).length > 0) setConfig(empresaId, patch);
-  hydratedAiSettings.add(empresaId);
+  setConfig(empresaId, patch);
+  hydratedAiSettings.set(empresaId, Date.now());
 }
 
 /**
@@ -185,10 +340,13 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
  * send a reply when the dono asked us to stay quiet.
  */
 export async function ensureAiSettingsHydrated(empresaId: string): Promise<void> {
-  if (hydratedAiSettings.has(empresaId)) return;
+  const hydratedAt = hydratedAiSettings.get(empresaId);
+  if (hydratedAt && Date.now() - hydratedAt < OPERATIONAL_PROFILE_TTL_MS) return;
   try {
     await loadAiSettingsFromDb(empresaId);
   } catch (err) {
+    hydratedAiSettings.delete(empresaId);
+    setConfig(empresaId, { aiEnabled: undefined });
     console.warn(`[configStore] ai settings hydration failed for ${empresaId} — kill-switch stays fail-closed:`, err);
   }
 }
