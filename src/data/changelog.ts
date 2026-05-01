@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-01',
+    category: 'medium',
+    title: 'IA entende melhor nomes do cardápio',
+    description: 'A IA agora reconhece variações simples nos nomes dos produtos, como abreviações, plural e diferenças de acento, antes de pedir para o cliente corrigir.',
+  },
+  {
+    date: '2026-05-01',
     category: 'hotfix',
     title: 'IA segue regras importantes com mais firmeza',
     description: 'As orientações de estilo da loja agora ajudam no tom da resposta, mas não podem mudar regras de preço, entrega, Pix, horário ou confirmação de pedido.',

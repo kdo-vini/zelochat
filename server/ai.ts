@@ -1012,8 +1012,83 @@ export function getAI(): OpenAI {
   return ai;
 }
 
-function getAvailableProducts(empresaId: string): { name: string; price: number; available: boolean }[] {
+type AvailableProduct = { name: string; price: number; available: boolean };
+
+function getAvailableProducts(empresaId: string): AvailableProduct[] {
   return getConfig(empresaId).products.filter((p) => p.available);
+}
+
+function normalizeCatalogName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function singularizeCatalogToken(token: string): string {
+  if (token.length <= 3) return token;
+  if (token.endsWith('oes') && token.length > 4) return `${token.slice(0, -3)}ao`;
+  if (token.endsWith('ais') && token.length > 4) return `${token.slice(0, -3)}al`;
+  if (token.endsWith('eis') && token.length > 4) return `${token.slice(0, -3)}el`;
+  if (token.endsWith('is') && token.length > 4) return `${token.slice(0, -2)}il`;
+  if (token.endsWith('res') && token.length > 5) return token.slice(0, -2);
+  if (token.endsWith('s') && token.length > 3) return token.slice(0, -1);
+  return token;
+}
+
+function catalogTokens(value: string): string[] {
+  return normalizeCatalogName(value).split(' ').filter(Boolean);
+}
+
+const CATALOG_TOKEN_STOPWORDS = new Set(['a', 'as', 'o', 'os', 'de', 'da', 'das', 'do', 'dos', 'e', 'com', 'sem']);
+
+function significantCatalogTokens(value: string): string[] {
+  return catalogTokens(value).filter((token) => !CATALOG_TOKEN_STOPWORDS.has(token));
+}
+
+function singularCatalogKey(value: string): string {
+  return catalogTokens(value).map(singularizeCatalogToken).join(' ');
+}
+
+function uniqueCatalogMatch(matches: AvailableProduct[]): AvailableProduct | null {
+  if (matches.length !== 1) return null;
+  return matches[0];
+}
+
+function hasTokenContainment(inputTokens: string[], productTokens: string[]): boolean {
+  if (inputTokens.length === 0 || productTokens.length === 0) return false;
+  const input = new Set(inputTokens.map(singularizeCatalogToken));
+  const product = new Set(productTokens.map(singularizeCatalogToken));
+  const inputInsideProduct = [...input].every((token) => product.has(token));
+  const productInsideInput = [...product].every((token) => input.has(token));
+  return inputInsideProduct || productInsideInput;
+}
+
+function resolveCatalogProduct(inputName: string, available: AvailableProduct[]): AvailableProduct | null {
+  const exact = available.find((p) => p.name.toLowerCase() === inputName.toLowerCase());
+  if (exact) return exact;
+
+  const normalizedInput = normalizeCatalogName(inputName);
+  if (!normalizedInput) return null;
+
+  const normalizedExact = uniqueCatalogMatch(
+    available.filter((p) => normalizeCatalogName(p.name) === normalizedInput),
+  );
+  if (normalizedExact) return normalizedExact;
+
+  const singularInput = singularCatalogKey(inputName);
+  const singularExact = uniqueCatalogMatch(
+    available.filter((p) => singularCatalogKey(p.name) === singularInput),
+  );
+  if (singularExact) return singularExact;
+
+  const inputTokens = significantCatalogTokens(inputName);
+  return uniqueCatalogMatch(
+    available.filter((p) => hasTokenContainment(inputTokens, significantCatalogTokens(p.name))),
+  );
 }
 
 /**
@@ -1869,13 +1944,14 @@ export async function generateAndSendReply(
           }
 
           const available = getAvailableProducts(resolvedEmpresaId);
+          const resolvedItems = args.items.map((item) => ({
+            item,
+            product: resolveCatalogProduct(item.product, available),
+          }));
 
           // Recalculate products subtotal server-side — never trust the model's arithmetic
-          const recalcSubtotal = args.items.reduce((sum, item) => {
-            const product = available.find(
-              (p) => p.name.toLowerCase() === item.product.toLowerCase(),
-            );
-            return sum + (product ? product.price * item.quantity : 0);
+          const recalcSubtotal = resolvedItems.reduce((sum, resolved) => {
+            return sum + (resolved.product ? resolved.product.price * resolved.item.quantity : 0);
           }, 0);
 
           // For delivery: resolve fee from config, ignore whatever the AI sent
@@ -1913,9 +1989,9 @@ export async function generateAndSendReply(
             args.total = Math.round((recalcSubtotal + (resolvedDeliveryFee ?? 0)) * 100) / 100;
           }
 
-          const unmatchedItems = args.items.filter((item) =>
-            !available.find((p) => p.name.toLowerCase() === item.product.toLowerCase()),
-          );
+          const unmatchedItems = resolvedItems
+            .filter((resolved) => !resolved.product)
+            .map((resolved) => resolved.item);
           if (unmatchedItems.length > 0) {
             const names = unmatchedItems.map((i) => i.product).join(', ');
             const notFoundMsg = `Desculpe, não encontrei no cardápio: ${names}. Pode verificar o nome do produto? 😊`;
@@ -1923,6 +1999,10 @@ export async function generateAndSendReply(
             await addAssistantMessage(jid, notFoundMsg, undefined, resolvedEmpresaId);
             return notFoundMsg;
           }
+          args.items = resolvedItems.map((resolved) => ({
+            ...resolved.item,
+            product: resolved.product!.name,
+          }));
 
           // Sanitize the customer-supplied observation BEFORE interpolating it into the
           // button summary (which is a model-visible string + sent to the customer).

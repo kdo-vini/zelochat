@@ -10,6 +10,7 @@ Origem: review tecnico pago sobre riscos atuais e prioridades pos-fechamento dos
 - 2026-05-01: iniciada a Sprint 33. O WebSocket deixou de receber token pela URL e passou a autenticar por handshake inicial no proprio socket, fechando conexoes anonimas antes de qualquer broadcast.
 - 2026-05-01: iniciada a Sprint 33. Rotas internas de IA ganharam limites por empresa, tamanho maximo de payload e validacao antes de chamar o modelo.
 - 2026-05-01: iniciada a Sprint 34. Backend ganhou endpoint seguro de saude da IA por empresa, com indicadores booleanos e contagens sem expor dados sensiveis.
+- 2026-05-01: iniciada a Sprint 32. Criacao de pedido passou a resolver variacoes simples de nomes do cardapio com matching seguro e sem escolha silenciosa quando houver ambiguidade.
 
 ## Objetivo
 

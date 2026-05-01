@@ -119,6 +119,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 40 (2026-05-01) - Cardapio inteligente primeira fatia
+
+- ✅ P1 novo / roadmap cardápio - `criar_pedido` agora resolve variações simples de produto com normalização sem acento, caixa, pontuação, plural/singular e contenção de tokens. Quando há um único produto compatível, o backend usa o nome/preço real do catálogo para recalcular total e montar resumo; quando há ambiguidade, mantém o caminho seguro de pedir verificação ao cliente - `server/ai.ts`
+- Novidades: entrada PT-BR consolidada para melhor entendimento de nomes do cardápio - `src/data/changelog.ts`
+- Type-check verde: server `tsc --noEmit -p server/tsconfig.json`
+
 ### Sprint 39 (2026-05-01) - Saude da IA por empresa
 
 - ✅ P2 novo / roadmap confiança - Backend ganhou `/api/ai/health`, um resumo autenticado e seguro da prontidão da IA por empresa. Ele informa apenas presença/contagem: cardápio, horários, entrega, telefone do gerente, Pix, IA ligada, datas bloqueadas e status geral - `server/aiHealth.ts`, `server/router.ts`
