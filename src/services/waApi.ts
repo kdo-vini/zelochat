@@ -1,6 +1,7 @@
 import type {
   BuiltinTriggerInfo,
   ChatAttachment,
+  ChatMessage,
   ChatSession,
   DashboardOverview,
   DashboardRange,
@@ -22,6 +23,30 @@ export interface AiHealthReport {
   aiEnabled: boolean;
   blockedDatesCount: number;
   safeSummaryStatus: AiHealthSummaryStatus;
+}
+export interface ManagerAssistantStatePatch {
+  blockedDates?: { date: string; reason: string }[];
+  dailyContext?: { id: string; text: string }[];
+  businessInfo?: {
+    openTime?: string;
+    closeTime?: string;
+    closedDays?: string[];
+  };
+  aiEnabled?: boolean;
+  aiInstructionsDraft?: string;
+  notificationToggles?: {
+    notify_customer_preparing?: boolean;
+    notify_customer_ready?: boolean;
+    notify_customer_out_for_delivery?: boolean;
+  };
+  health?: AiHealthReport;
+}
+export interface ManagerAssistantResult {
+  reply: string;
+  managerHistory: ChatMessage[];
+  statePatch: ManagerAssistantStatePatch;
+  actionsApplied: { type: string; label: string }[];
+  actionsRejected: string[];
 }
 type SendMessagePayload = {
   message?: string;
@@ -211,6 +236,18 @@ export async function getAiHealth(token: string): Promise<AiHealthReport> {
   });
   const body = await parseResponse<{ health: AiHealthReport }>(response);
   return body.health;
+}
+
+export async function sendManagerAssistantMessage(
+  token: string,
+  payload: { message: string; history?: ChatMessage[] },
+): Promise<ManagerAssistantResult> {
+  const response = await apiFetch(apiUrl('/api/ai/manager'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<ManagerAssistantResult>(response);
 }
 
 export async function setAiEnabled(token: string, enabled: boolean): Promise<void> {

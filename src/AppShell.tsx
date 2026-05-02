@@ -191,7 +191,7 @@ export default function AppShell() {
 
   const { session, token, loading: authLoading } = useSupabaseSession();
   const { isActive: subscriptionActive, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
-  const { empresa, save: saveEmpresa } = useEmpresaPerfil(session);
+  const { empresa, save: saveEmpresa, refresh: refreshEmpresa } = useEmpresaPerfil(session);
   const {
     sessions,
     loading: chatLoading,
@@ -1022,6 +1022,7 @@ export default function AppShell() {
                   deleteQuickResponse={deleteQuickResponse}
                   saveAiInstructions={saveAiInstructions}
                   token={token}
+                  refreshEmpresa={refreshEmpresa}
                 />
               )}
               {activeView === 'settings' && (

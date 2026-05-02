@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-02',
+    category: 'medium',
+    title: 'Gestão por conversa mais segura',
+    description: 'O Cérebro IA agora consegue ajustar datas, horários, avisos e preferências da loja pela conversa, com validação antes de salvar.',
+  },
+  {
     date: '2026-05-01',
     category: 'medium',
     title: 'Mensagens podem ser apagadas',

@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions.js';
 
-type AiRouteKind = 'complete' | 'generate-instructions';
+type AiRouteKind = 'complete' | 'generate-instructions' | 'manager';
 
 type GuardFailure = {
   ok: false;
@@ -31,12 +31,14 @@ export type ValidatedGenerateInstructionsPayload = {
 // Keep these the budget a single operator can spend.
 const COMPLETE_RATE_LIMIT = { max: 40, windowMs: 5 * 60 * 1000 };
 const GENERATE_INSTRUCTIONS_RATE_LIMIT = { max: 12, windowMs: 60 * 60 * 1000 };
+const MANAGER_RATE_LIMIT = { max: 30, windowMs: 5 * 60 * 1000 };
 
 // Empresa-wide ceilings — independent backstop so one compromised JWT cannot
 // drain quota only for itself; if the WHOLE empresa burns through these we
 // stop serving the next chamada too. Generous multipliers vs. per-user.
 const COMPLETE_EMPRESA_RATE_LIMIT = { max: 200, windowMs: 5 * 60 * 1000 };
 const GENERATE_INSTRUCTIONS_EMPRESA_RATE_LIMIT = { max: 60, windowMs: 60 * 60 * 1000 };
+const MANAGER_EMPRESA_RATE_LIMIT = { max: 120, windowMs: 5 * 60 * 1000 };
 
 const MAX_COMPLETE_BODY_BYTES = 256 * 1024;
 const MAX_GENERATE_INSTRUCTIONS_BODY_BYTES = 4 * 1024;
@@ -59,11 +61,15 @@ const cleanupTimer = setInterval(() => {
 cleanupTimer.unref?.();
 
 function getRateLimit(kind: AiRouteKind): { max: number; windowMs: number } {
-  return kind === 'complete' ? COMPLETE_RATE_LIMIT : GENERATE_INSTRUCTIONS_RATE_LIMIT;
+  if (kind === 'complete') return COMPLETE_RATE_LIMIT;
+  if (kind === 'manager') return MANAGER_RATE_LIMIT;
+  return GENERATE_INSTRUCTIONS_RATE_LIMIT;
 }
 
 function getEmpresaRateLimit(kind: AiRouteKind): { max: number; windowMs: number } {
-  return kind === 'complete' ? COMPLETE_EMPRESA_RATE_LIMIT : GENERATE_INSTRUCTIONS_EMPRESA_RATE_LIMIT;
+  if (kind === 'complete') return COMPLETE_EMPRESA_RATE_LIMIT;
+  if (kind === 'manager') return MANAGER_EMPRESA_RATE_LIMIT;
+  return GENERATE_INSTRUCTIONS_EMPRESA_RATE_LIMIT;
 }
 
 function getBodySizeBytes(body: unknown): number {

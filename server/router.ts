@@ -50,6 +50,7 @@ import { redactInstance } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
 import { buildAiHealthReport } from './aiHealth.js';
+import { runManagerAssistant, validateManagerRequest } from './managerAssistant.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
   createTrigger,
@@ -901,6 +902,39 @@ router.get('/api/ai/health', async (req: Request, res: Response) => {
     res.json({ health: buildAiHealthReport(getConfig(empresaId)) });
   } catch (error) {
     sendAuthError(res, error);
+  }
+});
+
+/**
+ * POST /api/ai/manager — Backend-owned internal management assistant.
+ * The model may suggest actions, but only validated backend actions mutate state.
+ */
+router.post('/api/ai/manager', express.json({ limit: '128kb' }), async (req: Request, res: Response) => {
+  try {
+    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const payload = validateManagerRequest(req.body);
+    if (payload.ok === false) {
+      res.status(400).json({ error: payload.error });
+      return;
+    }
+
+    const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'manager');
+    if (rateLimit.ok === false) {
+      if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(rateLimit.status).json({ error: rateLimit.error });
+      return;
+    }
+
+    await ensureAiSettingsHydrated(empresaId);
+    const result = await runManagerAssistant(empresaId, payload.value);
+    res.json(result);
+  } catch (error: unknown) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    console.error('[AI Manager] Error:', error);
+    res.status(500).json({ error: 'Falha ao processar a gestao por conversa.' });
   }
 });
 

@@ -4,12 +4,16 @@ import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog,
 import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
 import {
   getOwnerResponse,
-  getGeneralManagerResponse,
   generateAgentInstructions,
   simulateAtendimento,
   type SimulateAtendimentoResult,
 } from '../../services/openaiService';
-import { getAiHealth, type AiHealthReport, type AiHealthSummaryStatus } from '../../services/waApi';
+import {
+  getAiHealth,
+  sendManagerAssistantMessage,
+  type AiHealthReport,
+  type AiHealthSummaryStatus,
+} from '../../services/waApi';
 import { useBuiltinTriggers } from '../../hooks/useBuiltinTriggers';
 import { useToast } from '../../contexts/ToastContext';
 import { ConfirmModal } from '../ConfirmModal';
@@ -79,6 +83,7 @@ interface AIConfigsViewProps {
   deleteQuickResponse: (id: string) => Promise<void>;
   saveAiInstructions: (instructions: string) => Promise<boolean>;
   token: string | null;
+  refreshEmpresa?: () => Promise<void>;
 }
 
 export const AIConfigsView = ({
@@ -95,6 +100,7 @@ export const AIConfigsView = ({
   deleteQuickResponse,
   saveAiInstructions,
   token,
+  refreshEmpresa,
 }: AIConfigsViewProps) => {
   const builtinTriggers = useBuiltinTriggers(token);
   const toast = useToast();
@@ -199,30 +205,57 @@ export const AIConfigsView = ({
   };
 
   const handleGeneralManagerSend = async () => {
-    if (!managerChatInput.trim()) return;
-    const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: managerChatInput, preview: managerChatInput, kind: 'text', timestamp: new Date().toISOString() };
+    if (isProcessing) return;
+    const message = managerChatInput.trim();
+    if (!message) return;
+    if (!token) {
+      toast.error('Sessão expirada. Faça login novamente.');
+      return;
+    }
+    const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: message, preview: message, kind: 'text', timestamp: new Date().toISOString() };
     // P2.22 — cap at 100 entries to prevent unbounded JSONB growth in empresa_perfil
     setState(prev => ({ ...prev, managerHistory: [...(prev.managerHistory || []), userMsg].slice(-100) }));
     setManagerChatInput('');
     setIsProcessing(true);
     try {
-      const currentHistory = [...(state.managerHistory || []), userMsg];
-      const result = await getGeneralManagerResponse(currentHistory, userMsg.content);
-      const botMsg: ChatMessage = { id: Date.now().toString(), role: 'assistant', content: result.reply, preview: result.reply, kind: 'text', timestamp: new Date().toISOString() };
-      setState(prev => {
-        // P2.22 — cap at 100 entries
-        let newState = { ...prev, managerHistory: [...(prev.managerHistory || []), botMsg].slice(-100) };
-        if (result.actions?.length > 0) {
-          result.actions.forEach((action: { type: string; payload: { date: string; reason: string } }) => {
-            if (action.type === 'BLOCK_DATE') {
-              newState.blockedDates = [...newState.blockedDates, action.payload];
-            }
-          });
-        }
-        return newState;
+      const result = await sendManagerAssistantMessage(token, {
+        message,
+        history: state.managerHistory || [],
       });
-    } catch (e) { console.error(e); }
-    finally { setIsProcessing(false); }
+      setState(prev => ({
+        ...prev,
+        managerHistory: result.managerHistory.slice(-100),
+        blockedDates: result.statePatch.blockedDates ?? prev.blockedDates,
+        dailyContext: result.statePatch.dailyContext ?? prev.dailyContext,
+        businessInfo: result.statePatch.businessInfo
+          ? { ...prev.businessInfo, ...result.statePatch.businessInfo }
+          : prev.businessInfo,
+      }));
+      if (result.statePatch.aiInstructionsDraft) {
+        setPromptDraft(result.statePatch.aiInstructionsDraft);
+        setPromptJustSaved(false);
+        toast.info('A IA preparou um rascunho de instruções. Revise e salve se estiver correto.');
+        promptRef.current?.focus();
+      }
+      if (result.statePatch.health) setAiHealth(result.statePatch.health);
+      if (result.actionsApplied.length > 0) {
+        toast.success(result.actionsApplied.map(action => action.label).join(' · '));
+      }
+      if (result.statePatch.notificationToggles || result.statePatch.aiEnabled !== undefined) {
+        await refreshEmpresa?.();
+      }
+      void loadAiHealth();
+    } catch (e) {
+      console.error(e);
+      toast.error(e instanceof Error ? e.message : 'Tive um erro ao processar seu comando.');
+      setManagerChatInput(message);
+      setState(prev => ({
+        ...prev,
+        managerHistory: prev.managerHistory.filter(msg => msg.id !== userMsg.id),
+      }));
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleSimulateAtendimento = async () => {

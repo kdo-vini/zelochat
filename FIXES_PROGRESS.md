@@ -119,6 +119,13 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 49 (2026-05-02) - Gestão por conversa backend
+
+- Gestao por conversa saiu do fluxo frontend-only: `POST /api/ai/manager` agora usa a OpenAI apenas para sugerir acoes e deixa o backend validar e executar cada alteracao - `server/router.ts`, `server/managerAssistant.ts`, `server/aiRouteGuards.ts`
+- A conversa gerencial agora consegue bloquear/liberar datas, ligar/desligar IA, consultar saude, ajustar avisos de hoje, horarios, dias fechados e notificacoes ao cliente; instrucoes da IA entram apenas como rascunho para revisao humana - `server/managerAssistant.ts`, `src/components/views/AIConfigsView.tsx`, `src/services/waApi.ts`
+- UI do Cerebro IA passou a refletir o estado retornado pelo backend e atualizar a prontidao da IA depois das acoes, mantendo historico persistido em `empresa_perfil.manager_history` - `src/components/views/AIConfigsView.tsx`, `src/AppShell.tsx`
+- Verificacao pendente: o shell do sandbox Windows continua falhando antes de iniciar processos (`CreateProcessWithLogonW`), e o workspace nao tem `node_modules`; `npm run lint`, `npm run build`, commit e push precisam rodar quando o ambiente local voltar.
+
 ### Sprint 48 (2026-05-01) - IA mais consistente por loja
 
 - Autoatendimento da IA agora chama a OpenAI com `temperature: 0.3` em todos os turnos do atendimento automatico e follow-ups de ferramentas, reduzindo variacao em respostas de cardapio, disponibilidade e fluxo de pedido - `server/ai.ts`
