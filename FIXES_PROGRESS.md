@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-01 Sprint 48):** o autoatendimento da IA agora usa temperatura 0.3, aceita instrucoes da loja de ate 10k caracteres e trata essas instrucoes como regras operacionais para tom, respostas fixas, apelidos de produtos e fluxo comercial, sem permitir que sobrescrevam validacoes criticas do sistema.
+**Latest execution note (2026-05-04 Sprint 50):** a IA agora processa mais de uma acao segura no mesmo turno: consultas/notificacoes podem acontecer antes de um novo pedido, mas escalacao humana continua vencendo qualquer continuacao automatica.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -18,7 +18,7 @@
 
 **P2/P3 status:** a maioria dos P2 críticos de UX, segurança, áudio, billing e performance já foi fechada nas Sprints 21-27 e 39-43. Os P3 ainda são polimento/backlog leve.
 
-**Próximo trabalho recomendado:** manter o roadmap vivo (`AI_BACKEND_ROADMAP.md`) como fonte de priorização, já sem listar como próximos os blocos entregues nas Sprints 35-45.
+**Próximo trabalho recomendado:** seguir o backlog ativo do `AI_BACKEND_ROADMAP.md`, com a proxima fatia sugerida em metricas simples de consumo de IA por empresa.
 
 Use this doc to know **at a glance** what's safe in production right now and what's still on fire. Each fix has a `Status`, the `Files touched`, and the `Risk` it eliminates. Fixes that need a prod migration are marked `BLOCKED — needs operator approval` until the user signs off on applying.
 
@@ -118,6 +118,12 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 50 (2026-05-04) - Multiplas acoes seguras da IA
+
+- P1 roadmap - A IA agora consegue executar acoes seguras em sequencia no mesmo turno: por exemplo, consultar um pedido anterior e depois abrir o fluxo de confirmacao de um novo pedido - `server/ai.ts`
+- Regra central preservada - escalacao humana vence qualquer outra acao emitida pela IA; se houver pedido de humano, reclamacao ou irritacao durante uma pendencia, o pedido pendente fica preservado e a conversa vai para atendimento humano - `server/ai.ts`
+- Seguranca operacional - depois de consultas/notificacoes intermediarias, o backend revalida `auto_reply` e status da sessao antes de criar pedido ou enviar nova resposta automatica - `server/ai.ts`
 
 ### Sprint 49 (2026-05-02) - Gestão por conversa backend
 

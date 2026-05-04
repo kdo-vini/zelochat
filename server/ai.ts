@@ -118,6 +118,50 @@ const NEGATIVE_INTENTS = new Set<string>([
   'para', 'pare', 'parar',
 ]);
 
+type EscalationIntentFromText =
+  | { category: ReasonCategory; triggerName: string; reasonText: string }
+  | null;
+
+function normalizeIntentText(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/\p{Mn}/gu, '')
+    .replace(/[\s\p{P}\p{S}]+$/u, '');
+}
+
+function detectEscalationIntentFromText(value: string): EscalationIntentFromText {
+  const normalized = normalizeIntentText(value);
+  if (!normalized) return null;
+
+  if (/\b(humano|atendente|gerente|pessoa real|alguem de verdade|falar com alguem|chama alguem|chamar alguem)\b/.test(normalized)) {
+    return {
+      category: 'explicit_human_request',
+      triggerName: 'Cliente pediu atendente humano',
+      reasonText: 'Cliente pediu atendimento humano enquanto havia um fluxo automatico em andamento.',
+    };
+  }
+
+  if (/\b(reclam\w*|insatisfeit\w*|pessim\w*|horrivel|veio errado|veio sem|faltou|demorou demais|atrasou)\b/.test(normalized)) {
+    return {
+      category: 'complaint',
+      triggerName: 'Reclamacao durante atendimento automatico',
+      reasonText: 'Cliente trouxe uma reclamacao junto de outra intencao; automacao interrompida por seguranca.',
+    };
+  }
+
+  if (/\b(ofens\w*|xing\w*|palavr\w*|idiot\w*|burro|merda|porra|caralho|raiva|irritad\w*|nervos\w*)\b/.test(normalized)) {
+    return {
+      category: /raiva|irritad|nervos/.test(normalized) ? 'frustration' : 'offensive_language',
+      triggerName: 'Cliente irritado ou ofensivo',
+      reasonText: 'Cliente demonstrou irritacao ou linguagem ofensiva; automacao interrompida por seguranca.',
+    };
+  }
+
+  return null;
+}
+
 interface PendingOrder {
   empresaId: string;
   jid: string;
@@ -1681,7 +1725,7 @@ export type AiToolCall = {
 
 export type ToolCallPlan = {
   calls: AiToolCall[];
-  mode: 'single_terminal' | 'sequential_non_terminal';
+  mode: 'single_terminal' | 'sequential_non_terminal' | 'sequential_then_terminal';
   reason: string;
 };
 
@@ -1751,14 +1795,23 @@ export function planToolCallsForTurn(
 
   // `criar_pedido` sends confirmation buttons and writes a pending order. It is
   // terminal for this model turn, and only one order-creation call is allowed.
+  // Safe informational actions may run before it so "status + new order" does
+  // not silence the status request, but nothing is allowed after order creation.
   const createOrderCalls = calls.filter((toolCall) => toolCall.function.name === 'criar_pedido');
   if (createOrderCalls.length > 0) {
+    const safePrefixCalls = calls.filter((toolCall) =>
+      toolCall.function.name === 'consultar_pedido' ||
+      (
+        toolCall.function.name === 'dispatch_trigger' &&
+        resolveTriggerFromToolCall(toolCall, triggers).trig?.kind === 'notify_manager'
+      )
+    );
     return {
-      calls: [createOrderCalls[0]],
-      mode: 'single_terminal',
+      calls: [...safePrefixCalls, createOrderCalls[0]],
+      mode: safePrefixCalls.length > 0 ? 'sequential_then_terminal' : 'single_terminal',
       reason: createOrderCalls.length > 1
-        ? `kept first criar_pedido and dropped ${createOrderCalls.length - 1} duplicate(s); original tool order: ${names}`
-        : `criar_pedido is terminal; original tool order: ${names}`,
+        ? `ran ${safePrefixCalls.length} safe prefix call(s), kept first criar_pedido and dropped ${createOrderCalls.length - 1} duplicate(s); original tool order: ${names}`
+        : `ran ${safePrefixCalls.length} safe prefix call(s) before terminal criar_pedido; original tool order: ${names}`,
     };
   }
 
@@ -1799,6 +1852,28 @@ function buildRuntimeMessageForOpenAI(
     role,
     content: buildContentForModel(message as any),
   };
+}
+
+/**
+ * 🚨 CRITICAL — AI dispatch entry point
+ *
+ */
+async function isAutoReplyStillAllowed(
+  empresaId: string,
+  jid: string,
+  context: string,
+): Promise<boolean> {
+  try {
+    const freshSession = await getSession(jid, empresaId);
+    if (freshSession && (!freshSession.autoReply || freshSession.status === 'escalated')) {
+      console.log(`[ai] aborted ${context}: auto_reply off or session escalated for empresa=${empresaId} jid=${jid}`);
+      return false;
+    }
+    return true;
+  } catch (recheckErr) {
+    console.warn(`[AI] ${context} auto_reply re-check failed — aborting as a precaution:`, recheckErr);
+    return false;
+  }
 }
 
 /**
@@ -1893,15 +1968,26 @@ export async function generateAndSendReply(
   if (pendingForEdit) {
     const lastMsg = session.messages.at(-1);
     const lastText = (lastMsg?.content ?? '').toLowerCase().trim();
+    const escalationIntent = detectEscalationIntentFromText(lastText);
+    if (escalationIntent) {
+      console.log(`[AI] Pending order + escalation intent detected for ${jid} — preserving pending row and handing off.`);
+      await escalateSession(resolvedEmpresaId, jid, {
+        triggerId: null,
+        triggerKind: 'escalate_human',
+        triggerName: escalationIntent.triggerName,
+        reasonCategory: escalationIntent.category,
+        reasonText: escalationIntent.reasonText,
+        customerMessageExcerpt: lastText || null,
+      });
+      resetAiFailureCounter(resolvedEmpresaId, jid);
+      return handoffMessageFor(escalationIntent.category);
+    }
     // Whitelist exact-match intent detection. The previous regex `^(certo|isso|...)`
     // matched partial prefixes — "certo, mas troca a coca" auto-confirmed; "não, prefiro
     // de manhã" auto-cancelled. We now normalize (strip accents + trailing punctuation
     // /emoji/whitespace) and check against a set of unambiguous tokens. Anything else
     // falls through to "ambiguous → edit", which is the correct behavior.
-    const normalized = lastText
-      .normalize('NFD')
-      .replace(/\p{Mn}/gu, '')
-      .replace(/[\s\p{P}\p{S}]+$/u, '');
+    const normalized = normalizeIntentText(lastText);
     const isAffirmative = AFFIRMATIVE_INTENTS.has(normalized);
     const isNegative = NEGATIVE_INTENTS.has(normalized);
 
@@ -2160,13 +2246,102 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'sequential tool follow-up'))) {
+          return null;
+        }
         await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
         console.log(`[AI] Processed ${toolPlan.calls.length} non-terminal tool_calls sequentially for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
       }
 
-      const toolCall = toolPlan?.calls[0] ?? choice.message.tool_calls[0];
+      if (toolPlan?.mode === 'sequential_then_terminal') {
+        const prefixCalls = toolPlan.calls.slice(0, -1);
+        await addAssistantMessage(jid, null, prefixCalls, resolvedEmpresaId);
+
+        for (const prefixCall of prefixCalls) {
+          if (prefixCall.function.name === 'consultar_pedido') {
+            const parsed = parseToolCallArguments<{ orderShortId?: string }>(prefixCall);
+            const statusInfo = await fetchOrderForCustomer(
+              resolvedEmpresaId,
+              session.customerPhone,
+              typeof parsed.orderShortId === 'string' ? parsed.orderShortId : undefined,
+            );
+            await addToolMessage(jid, statusInfo, prefixCall.id, resolvedEmpresaId);
+            const customerStatus = statusInfo.startsWith('Pedido #')
+              ? `Sobre o pedido anterior: ${statusInfo.replace(/\s+\|\s+/g, '. ')}.`
+              : statusInfo;
+            await sendAndPersistText(jid, customerStatus, resolvedEmpresaId, { responseSource: 'ai_auto' });
+            continue;
+          }
+
+          if (prefixCall.function.name === 'dispatch_trigger') {
+            const parsedArgs = parseToolCallArguments<{ trigger_id?: string; reason?: string }>(prefixCall);
+            const triggerId = typeof parsedArgs.trigger_id === 'string' ? parsedArgs.trigger_id : '';
+            const trig = isBuiltinTriggerId(triggerId)
+              ? getBuiltinTrigger(triggerId)
+              : triggers.find((t) => t.id === triggerId) ?? null;
+            const reason = typeof parsedArgs.reason === 'string' && parsedArgs.reason.trim()
+              ? parsedArgs.reason.trim()
+              : 'condição atendida';
+
+            if (!trig) {
+              console.warn('[AI] Unknown trigger_id from model before terminal tool:', triggerId);
+              await addToolMessage(jid, `Erro: gatilho ${triggerId} não encontrado`, prefixCall.id, resolvedEmpresaId);
+              continue;
+            }
+
+            if (trig.kind === 'escalate_human') {
+              // planToolCallsForTurn should have made this the only call. Stop here
+              // anyway in case trigger config changed between planning and execution.
+              await addToolMessage(jid, 'Atendimento escalado para humano', prefixCall.id, resolvedEmpresaId);
+              const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+              const reasonCategory: ReasonCategory = isBuiltinTriggerId(triggerId)
+                ? (triggerId === 'builtin:offensive'
+                    ? 'offensive_language'
+                    : triggerId === 'builtin:explicit_human'
+                      ? 'explicit_human_request'
+                      : 'complaint')
+                : categorizeReason(`${trig.name} ${trig.conditionDescription}`);
+              await escalateSession(resolvedEmpresaId, jid, {
+                triggerId: isBuiltinTriggerId(triggerId) ? null : trig.id,
+                triggerKind: 'escalate_human',
+                triggerName: trig.name,
+                reasonCategory,
+                reasonText: reason,
+                customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
+              });
+              resetAiFailureCounter(resolvedEmpresaId, jid);
+              return handoffMessageFor(reasonCategory);
+            }
+
+            const cfg = getConfig(resolvedEmpresaId);
+            const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
+            if (managerJid) {
+              try {
+                await sendTextMessage(
+                  managerJid,
+                  `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
+                  resolvedEmpresaId,
+                );
+              } catch (err) {
+                console.warn('[AI] Failed to notify manager before terminal tool:', err);
+              }
+            } else {
+              console.warn('[AI] notify_manager triggered before terminal tool but managerPhone not configured.');
+            }
+            await addToolMessage(jid, 'Gerente notificado', prefixCall.id, resolvedEmpresaId);
+          }
+        }
+
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'terminal tool after prefix tools'))) {
+          return null;
+        }
+      }
+
+      const toolCall = toolPlan?.mode === 'sequential_then_terminal'
+        ? toolPlan.calls[toolPlan.calls.length - 1]
+        : toolPlan?.calls[0] ?? choice.message.tool_calls[0];
       const selectedToolCallMessage = buildAssistantToolCallMessage([toolCall as AiToolCall]);
 
       if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
@@ -2421,6 +2596,9 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'consultar_pedido follow-up'))) {
+          return null;
+        }
         await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
         console.log(`[AI] consultar_pedido answered for ${jid}`);
         return cleanFollow;
@@ -2517,6 +2695,9 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Beleza! Já anotei aqui. 👍';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'dispatch_trigger follow-up'))) {
+          return null;
+        }
         await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
         console.log(`[AI] Dispatched notify_manager (${trig.name}) for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);

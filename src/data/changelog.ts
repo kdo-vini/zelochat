@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-04',
     category: 'medium',
+    title: 'IA entende pedidos misturados',
+    description: 'Quando o cliente mistura mais de um assunto, como consultar um pedido e fazer outro, a IA consegue tratar as partes importantes sem passar por cima de um pedido de atendente.',
+  },
+  {
+    date: '2026-05-04',
+    category: 'medium',
     title: 'Datas nas conversas',
     description: 'Agora dá pra ver "Hoje", "Ontem" e datas anteriores separando as mensagens dentro de cada chat — fica fácil de saber quando cada coisa foi dita.',
   },

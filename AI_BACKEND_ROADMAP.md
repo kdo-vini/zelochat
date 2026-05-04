@@ -21,9 +21,9 @@ Entregas que antes estavam como "proximos passos" e ja foram feitas:
 - Atendimento manual assistido por IA: no modo Manual, o operador pode melhorar um rascunho ou gerar uma sugestao de resposta; a IA apenas preenche o campo, sem envio automatico.
 - Mensagens enviadas: o painel pode apagar para todos mensagens com ID real do WhatsApp via Whatsmiau; edicao nao aparece porque nao ha endpoint real documentado.
 
-## Proxima prioridade
+## Ultima entrega
 
-### P1 - Processar multiplas acoes da IA com seguranca
+### P1 - Processar multiplas acoes da IA com seguranca (entregue em 2026-05-04)
 
 Permitir que a IA execute mais de uma acao quando fizer sentido, mantendo uma ordem segura.
 
@@ -38,6 +38,17 @@ Casos que devem guiar a implementacao:
 - Cliente mistura alteracao de pedido com confirmacao.
 
 Resultado esperado: a IA nao deve silenciar a segunda intencao importante, mas tambem nao deve criar pedidos, limpar pendencias ou enviar resposta automatica quando a conversa foi escalada.
+
+Implementacao entregue:
+
+- `escalate_human` continua terminal e vence qualquer outra ferramenta emitida pela IA.
+- `criar_pedido` continua terminal, mas agora pode receber antes acoes informativas seguras, como `consultar_pedido` e `notify_manager`, sem executar nada depois da criacao do pedido pendente.
+- Depois de acoes informativas, o backend revalida `auto_reply`/status antes de criar pedido ou enviar nova resposta, para respeitar uma escalacao feita no meio do fluxo.
+- Se existe pedido pendente e o cliente mistura confirmacao/alteracao com pedido de humano, reclamacao ou irritacao, a pendencia e preservada e a conversa escala para humano.
+
+## Proxima prioridade
+
+Usar o bloco "Backlog ativo" abaixo como proxima fila. A proxima fatia recomendada e melhorar metricas simples de consumo de IA por empresa, aproveitando os rate limits ja existentes.
 
 ## Backlog ativo
 
