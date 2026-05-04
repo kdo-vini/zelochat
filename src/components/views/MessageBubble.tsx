@@ -334,11 +334,18 @@ function docIcon(mimeType: string) {
 
 /* ─── Timestamp + Ticks row (reused in every bubble type) ────────── */
 
+function formatClock(value: string): string {
+  if (/^\d{2}:\d{2}$/.test(value)) return value; // legacy bare "HH:MM" — pass through
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+}
+
 function MetaRow({ timestamp, isOutgoing, status }: { timestamp: string; isOutgoing: boolean; status?: MessageStatus }) {
   return (
     <span className="float-right relative ml-2 -mb-1 flex items-center gap-0.5 whitespace-nowrap" style={{ top: 5 }}>
       <span className="text-[11px] leading-none select-none" style={{ color: '#667781' }}>
-        {timestamp}
+        {formatClock(timestamp)}
       </span>
       {isOutgoing && <MessageTicks status={status} />}
     </span>

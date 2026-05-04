@@ -691,7 +691,7 @@ function mapMessage(row: MessageRow): ChatMessage {
     role: row.role as MessageRole,
     content: row.content,
     preview: parsed.preview,
-    timestamp: formatClock(row.sent_at),
+    timestamp: row.sent_at,
     kind: parsed.kind,
     attachment: parsed.attachment,
     tool_calls: row.tool_calls || undefined,
