@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-04 Sprint 50):** a IA agora processa mais de uma acao segura no mesmo turno: consultas/notificacoes podem acontecer antes de um novo pedido, mas escalacao humana continua vencendo qualquer continuacao automatica.
+**Latest execution note (2026-05-04 Sprint 51):** consumo de IA do ZeloChat agora e agregado por empresa para o admin interno, e pedidos com "cento"/"meio cento" usam regra deterministica no backend ou escalam para humano quando houver duvida.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -18,7 +18,7 @@
 
 **P2/P3 status:** a maioria dos P2 críticos de UX, segurança, áudio, billing e performance já foi fechada nas Sprints 21-27 e 39-43. Os P3 ainda são polimento/backlog leve.
 
-**Próximo trabalho recomendado:** seguir o backlog ativo do `AI_BACKEND_ROADMAP.md`, com a proxima fatia sugerida em metricas simples de consumo de IA por empresa.
+**Próximo trabalho recomendado:** seguir o backlog ativo do `AI_BACKEND_ROADMAP.md`, com a proxima fatia sugerida em audio, estados vazios e polimentos P2/P3.
 
 Use this doc to know **at a glance** what's safe in production right now and what's still on fire. Each fix has a `Status`, the `Files touched`, and the `Risk` it eliminates. Fixes that need a prod migration are marked `BLOCKED — needs operator approval` until the user signs off on applying.
 
@@ -118,6 +118,14 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 51 (2026-05-04) - Metricas internas de IA e unidade brasileira
+
+- Metricas internas - chamadas de IA do ZeloChat agora gravam uso agregado por empresa/dia/fonte/modelo, sem armazenar conteudo de cliente, telefone, JID, prompt ou resposta - `server/aiUsage.ts`, `supabase/migrations/018_zelochat_ai_usage_daily.sql`
+- Painel interno - a central de gastos de IA do admin-dashboard passa a somar PDV + ZeloChat por empresa, mantendo a leitura restrita a super admins - `../zeloPDV-Prod/admin-dashboard/src/routes/ai-usage/+page.svelte`
+- Cardapio seguro - o backend usa `eh_item_por_unidade`, apelidos descritos nas instrucoes da empresa e regra nativa brasileira para converter "cento" em 100 e "meio cento" em 50 quando o produto e por unidade - `server/ai.ts`, `server/configStore.ts`
+- Escalacao conservadora - produto inexistente/ambivalente ou quantidade sem unidade clara escala para humano em vez de inventar, limpar pendencia ou responder em loop - `server/ai.ts`
+- Type-check/build: `npx tsc --noEmit -p server/tsconfig.json`, `npm run lint`, `npm run build` e admin-dashboard `npm run build` verdes.
 
 ### Sprint 50 (2026-05-04) - Multiplas acoes seguras da IA
 

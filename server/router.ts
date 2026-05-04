@@ -49,6 +49,7 @@ import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.j
 import { redactInstance } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
+import { recordAiUsage } from './aiUsage.js';
 import { buildAiHealthReport } from './aiHealth.js';
 import { runManagerAssistant, validateManagerRequest } from './managerAssistant.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
@@ -921,6 +922,7 @@ router.post('/api/ai/manager', express.json({ limit: '128kb' }), async (req: Req
     const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'manager');
     if (rateLimit.ok === false) {
       if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      recordAiUsage({ empresaId, feature: 'ai_manager', model: 'gpt-4o-mini', status: 'rate_limited' });
       res.status(rateLimit.status).json({ error: rateLimit.error });
       return;
     }
@@ -1512,6 +1514,7 @@ router.post('/api/ai/generate-instructions', async (req: Request, res: Response)
     const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'generate-instructions');
     if (rateLimit.ok === false) {
       if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      recordAiUsage({ empresaId, feature: 'ai_generate_instructions', model: 'gpt-4o-mini', status: 'rate_limited' });
       res.status(rateLimit.status).json({ error: rateLimit.error });
       return;
     }
@@ -1547,13 +1550,31 @@ ${hint ? `\nPedido extra do dono: ${hint}` : ''}
 
 Escreva agora as diretrizes operacionais do agente.`;
 
-    const response = await openai.chat.completions.create({
+    let response;
+    try {
+      response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        temperature: 0.85,
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: userContext },
+        ],
+      });
+    } catch (error) {
+      recordAiUsage({
+        empresaId,
+        feature: 'ai_generate_instructions',
+        model: 'gpt-4o-mini',
+        status: 'error',
+      });
+      throw error;
+    }
+    recordAiUsage({
+      empresaId,
+      feature: 'ai_generate_instructions',
       model: 'gpt-4o-mini',
-      temperature: 0.85,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: userContext },
-      ],
+      status: 'success',
+      usage: response.usage,
     });
 
     const content = response.choices[0]?.message?.content?.trim() || '';
@@ -1585,6 +1606,7 @@ router.post('/api/ai/complete', express.json({ limit: '512kb' }), async (req: Re
     const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'complete');
     if (rateLimit.ok === false) {
       if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      recordAiUsage({ empresaId, feature: 'ai_manual_reply', model: 'gpt-4o-mini', status: 'rate_limited' });
       res.status(rateLimit.status).json({ error: rateLimit.error });
       return;
     }
@@ -1599,7 +1621,25 @@ router.post('/api/ai/complete', express.json({ limit: '512kb' }), async (req: Re
     if (responseFormat === 'json') {
       params.response_format = { type: 'json_object' };
     }
-    const response = await openai.chat.completions.create(params);
+    let response;
+    try {
+      response = await openai.chat.completions.create(params);
+    } catch (error) {
+      recordAiUsage({
+        empresaId,
+        feature: 'ai_manual_reply',
+        model: params.model,
+        status: 'error',
+      });
+      throw error;
+    }
+    recordAiUsage({
+      empresaId,
+      feature: 'ai_manual_reply',
+      model: params.model,
+      status: 'success',
+      usage: response.usage,
+    });
     res.json({ content: response.choices[0].message.content });
   } catch (error: unknown) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
@@ -1622,6 +1662,7 @@ router.post('/api/ai/simulate', async (req: Request, res: Response) => {
     const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'complete');
     if (rateLimit.ok === false) {
       if (rateLimit.retryAfterSeconds) res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      recordAiUsage({ empresaId, feature: 'ai_simulator', model: 'gpt-4o-mini', status: 'rate_limited' });
       res.status(rateLimit.status).json({ error: rateLimit.error });
       return;
     }

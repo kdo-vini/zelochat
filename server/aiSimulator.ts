@@ -11,6 +11,7 @@ import {
 import { getConfig, ensureAiSettingsHydrated } from './configStore.js';
 import { fetchActiveTriggers } from './triggers.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
+import { recordAiUsage } from './aiUsage.js';
 
 export interface SimulatePayload {
   customerMessage: string;
@@ -88,12 +89,30 @@ export async function simulateAtendimento(
 
   // Call OpenAI — same model, same tools, no side effects.
   const openai = getAI();
-  const response = await openai.chat.completions.create({
+  let response;
+  try {
+    response = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      temperature: OPENAI_CHAT_TEMPERATURE,
+      messages,
+      tools: [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
+      tool_choice: 'auto',
+    });
+  } catch (error) {
+    recordAiUsage({
+      empresaId,
+      feature: 'ai_simulator',
+      model: OPENAI_MODEL,
+      status: 'error',
+    });
+    throw error;
+  }
+  recordAiUsage({
+    empresaId,
+    feature: 'ai_simulator',
     model: OPENAI_MODEL,
-    temperature: OPENAI_CHAT_TEMPERATURE,
-    messages,
-    tools: [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
-    tool_choice: 'auto',
+    status: 'success',
+    usage: response.usage,
   });
 
   const choice = response.choices[0];

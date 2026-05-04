@@ -3,6 +3,7 @@ export interface Product {
   name: string;
   price: number;
   available: boolean;
+  unitBased?: boolean;
   category: 'salgado' | 'doce' | 'bebida';
 }
 

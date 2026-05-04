@@ -1,6 +1,7 @@
 import { OpenAI, toFile } from 'openai';
 import { broadcast } from './ws.js';
 import { getServiceSupabase } from './supabase.js';
+import { recordAiUsage } from './aiUsage.js';
 
 const MAX_AUDIO_BYTES = 5 * 1024 * 1024; // 5 MB cost guard
 const OPENAI_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
@@ -122,6 +123,12 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
       language: 'pt',
       prompt: TRANSCRIPTION_PROMPT,
     });
+    recordAiUsage({
+      empresaId,
+      feature: 'ai_transcription',
+      model: OPENAI_TRANSCRIPTION_MODEL,
+      status: 'success',
+    });
 
     const transcript = (result.text ?? '').trim();
 
@@ -131,6 +138,12 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
     });
   } catch (err) {
     console.error('[Transcription] Whisper call failed for', messageId, err);
+    recordAiUsage({
+      empresaId,
+      feature: 'ai_transcription',
+      model: OPENAI_TRANSCRIPTION_MODEL,
+      status: 'error',
+    });
     await persistAndBroadcast({ empresaId, jid, messageId }, {
       audio_transcript_status: 'failed',
       audio_transcript: null,

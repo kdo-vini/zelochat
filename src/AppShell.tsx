@@ -370,6 +370,7 @@ export default function AppShell() {
       name: p.nome,
       price: p.preco,
       available: !p.ocultar_no_pdv,
+      unitBased: p.eh_item_por_unidade,
       category: inferCategoria(p.nome),
     }));
     setState((prev) => {
@@ -377,7 +378,7 @@ export default function AppShell() {
         prev.products.length === mapped.length &&
         prev.products.every((p, i) => {
           const n = mapped[i];
-          return n && p.id === n.id && p.name === n.name && p.price === n.price && p.available === n.available && p.category === n.category;
+          return n && p.id === n.id && p.name === n.name && p.price === n.price && p.available === n.available && p.unitBased === n.unitBased && p.category === n.category;
         });
       return same ? prev : { ...prev, products: mapped };
     });

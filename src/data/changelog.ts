@@ -24,6 +24,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-04',
     category: 'medium',
+    title: 'IA entende cento e meio cento',
+    description: 'Pedidos de salgados por cento ou meio cento ficam mais naturais, e quando houver dúvida a conversa vai para um atendente em vez de arriscar.',
+  },
+  {
+    date: '2026-05-04',
+    category: 'medium',
     title: 'Datas nas conversas',
     description: 'Agora dá pra ver "Hoje", "Ontem" e datas anteriores separando as mensagens dentro de cada chat — fica fácil de saber quando cada coisa foi dita.',
   },

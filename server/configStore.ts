@@ -10,13 +10,13 @@ export interface DeliveryConfig {
 
 export interface CatalogCategoriaGroup {
   nome: string;
-  subcategorias: { nome: string; produtos: { name: string; price: number; available: boolean }[] }[];
-  produtosDireto: { name: string; price: number; available: boolean }[];
+  subcategorias: { nome: string; produtos: CatalogProduct[] }[];
+  produtosDireto: CatalogProduct[];
 }
 
 import { getServiceSupabase } from './supabase.js';
 
-type CatalogProduct = { name: string; price: number; available: boolean };
+export type CatalogProduct = { name: string; price: number; available: boolean; unitBased?: boolean };
 
 export interface BusinessConfig {
   name: string;
@@ -27,7 +27,7 @@ export interface BusinessConfig {
   closedDays: string[];
   address: string;
   pixKey: string;
-  products: { name: string; price: number; available: boolean }[];
+  products: CatalogProduct[];
   catalogHierarchy: CatalogCategoriaGroup[];
   blockedDates: { date: string; reason: string }[];
   dailyContext: { id: string; text: string }[];
@@ -149,6 +149,7 @@ function normalizeProductRow(row: unknown): (CatalogProduct & {
     preco?: unknown;
     id_categoria?: unknown;
     id_subcategoria?: unknown;
+    eh_item_por_unidade?: unknown;
     ocultar_no_pdv?: unknown;
   };
   const name = normalizeText(product.nome);
@@ -159,6 +160,7 @@ function normalizeProductRow(row: unknown): (CatalogProduct & {
     name,
     price: normalizeNumber(product.preco),
     available: product.ocultar_no_pdv !== true,
+    unitBased: product.eh_item_por_unidade === true,
     idCategoria,
     idSubcategoria,
   };
@@ -185,7 +187,7 @@ function buildCatalogHierarchy(
     .filter((item): item is { id: number; idCategoria: number; nome: string } => item !== null);
 
   return categorias
-    .map((item) => {
+    .map((item): CatalogCategoriaGroup | null => {
       if (!item || typeof item !== 'object') return null;
       const row = item as { id?: unknown; nome?: unknown };
       const id = normalizeNumber(row.id);
@@ -198,14 +200,14 @@ function buildCatalogHierarchy(
           nome: sub.nome,
           produtos: productsInCategory
             .filter((p) => p.idSubcategoria === sub.id)
-            .map(({ name, price, available }) => ({ name, price, available })),
+            .map(({ name, price, available, unitBased }) => ({ name, price, available, unitBased })),
         }));
       return {
         nome,
         subcategorias: subs,
         produtosDireto: productsInCategory
           .filter((p) => p.idSubcategoria == null)
-          .map(({ name, price, available }) => ({ name, price, available })),
+          .map(({ name, price, available, unitBased }) => ({ name, price, available, unitBased })),
       };
     })
     .filter((item): item is CatalogCategoriaGroup => item !== null);
@@ -306,7 +308,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
       .order('nome'),
     supabase
       .from('produtos')
-      .select('id, nome, preco, id_categoria, id_subcategoria, ocultar_no_pdv')
+      .select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv')
       .eq('id_usuario', userId)
       .order('nome'),
   ]);
@@ -317,7 +319,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   const productsWithPlacement = (produtosRes.data ?? []).map(normalizeProductRow);
   const products = productsWithPlacement
     .filter((item): item is NonNullable<typeof item> => item !== null)
-    .map(({ name, price, available }) => ({ name, price, available }));
+    .map(({ name, price, available, unitBased }) => ({ name, price, available, unitBased }));
 
   const patch: Partial<BusinessConfig> = {};
   patch.name = normalizeText(row.nome_exibicao);

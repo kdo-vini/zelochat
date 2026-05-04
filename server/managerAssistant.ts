@@ -4,6 +4,7 @@ import { buildAiHealthReport, type AiHealthReport } from './aiHealth.js';
 import { getConfig, setConfig, type BusinessConfig } from './configStore.js';
 import { getServiceSupabase } from './supabase.js';
 import { broadcast } from './ws.js';
+import { recordAiUsage } from './aiUsage.js';
 
 type ManagerRole = 'user' | 'assistant';
 
@@ -310,11 +311,29 @@ export async function runManagerAssistant(
     })),
   ];
 
-  const response = await getAI().chat.completions.create({
+  let response;
+  try {
+    response = await getAI().chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages,
+    });
+  } catch (error) {
+    recordAiUsage({
+      empresaId,
+      feature: 'ai_manager',
+      model: 'gpt-4o-mini',
+      status: 'error',
+    });
+    throw error;
+  }
+  recordAiUsage({
+    empresaId,
+    feature: 'ai_manager',
     model: 'gpt-4o-mini',
-    temperature: 0,
-    response_format: { type: 'json_object' },
-    messages,
+    status: 'success',
+    usage: response.usage,
   });
 
   const model = parseModelJson(response.choices[0]?.message?.content ?? '{}');

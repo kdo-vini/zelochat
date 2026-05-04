@@ -1,6 +1,6 @@
 # Roadmap Interno - IA, Backend e Proximos Passos
 
-Data: 2026-05-01
+Data: 2026-05-04
 Origem: limpeza pos-Sprint 45. Este arquivo e o norte vivo de IA/backend; `FIXES_PROGRESS.md` continua sendo o tracker historico de auditoria e sprints.
 
 ## Status atual
@@ -16,12 +16,27 @@ Entregas que antes estavam como "proximos passos" e ja foram feitas:
 - WebSocket sem token na URL: autenticacao por handshake inicial no socket.
 - Saude da IA por empresa: endpoint e painel com sinais de prontidao operacional.
 - Simulador de atendimento: ferramenta para testar respostas da IA sem tocar no WhatsApp nem no banco de producao.
+- Metricas internas de consumo de IA: agregadas por empresa/dia/fonte/modelo, sem prompt, telefone, JID ou conteudo de cliente, visiveis no admin interno do ZeloPDV.
+- Cardapio com unidade brasileira: backend entende apelidos declarados nas instrucoes da empresa e converte "cento" e "meio cento" com seguranca quando o produto e por unidade.
 - Mensagens nao-texto: localizacao, contatos, enquetes, reacoes, figurinhas e tipos desconhecidos aparecem com placeholders claros.
 - Imagens recebidas: fotos de lanche/preparo e comprovantes Pix entram como contexto visual da IA; Pix e confirmado como recebido, sem validacao bancaria.
 - Atendimento manual assistido por IA: no modo Manual, o operador pode melhorar um rascunho ou gerar uma sugestao de resposta; a IA apenas preenche o campo, sem envio automatico.
 - Mensagens enviadas: o painel pode apagar para todos mensagens com ID real do WhatsApp via Whatsmiau; edicao nao aparece porque nao ha endpoint real documentado.
 
 ## Ultima entrega
+
+### Metricas internas de IA + cardapio por unidade (entregue em 2026-05-04)
+
+Esta fatia move visibilidade de limites/custos para o painel administrativo interno, nao para o operador da loja.
+
+Implementacao entregue:
+
+- Nova tabela agregada `zelochat_ai_usage_daily`, por empresa/dia/fonte/modelo, sem armazenar prompt, resposta, telefone, JID ou identificador de mensagem.
+- Gravacao fire-and-forget em chamadas de IA do atendimento automatico, follow-ups, respostas manuais, geracao de instrucoes, gestor por conversa, simulador, parser de gatilhos e transcricao.
+- Leitura restrita a super admins no Supabase; operadores nao recebem painel nem policy de leitura direta.
+- Admin dashboard do ZeloPDV mostra consumo por empresa, juntando PDV e ZeloChat na central de gastos de IA.
+- `criar_pedido` passa a usar `eh_item_por_unidade`, apelidos declarados nas instrucoes da empresa e normalizacao deterministica para "cento" = 100 e "meio cento" = 50.
+- Se o produto ou a unidade/quantidade nao ficam seguros, a conversa escala para humano em vez de inventar ou perguntar em loop.
 
 ### P1 - Processar multiplas acoes da IA com seguranca (entregue em 2026-05-04)
 
@@ -48,12 +63,10 @@ Implementacao entregue:
 
 ## Proxima prioridade
 
-Usar o bloco "Backlog ativo" abaixo como proxima fila. A proxima fatia recomendada e melhorar metricas simples de consumo de IA por empresa, aproveitando os rate limits ja existentes.
+Usar o bloco "Backlog ativo" abaixo como proxima fila. A proxima fatia recomendada e revisar duracao/tratamento de audio e pequenos estados vazios da interface.
 
 ## Backlog ativo
 
-- Melhorar metricas simples de consumo de IA por empresa, aproveitando os rate limits ja existentes.
-- Evoluir entendimento de cardapio para apelidos cadastrados/derivados e casos de unidade, cento e meio cento.
 - Revisar duracao/tratamento de audio e pequenos estados vazios da interface.
 - Continuar performance/polimento P3 somente depois de manter estes docs atuais.
 

@@ -1,6 +1,7 @@
 import { getServiceSupabase } from './supabase.js';
 import { getAI } from './ai.js';
 import { mergeWithBuiltins } from './builtinTriggers.js';
+import { recordAiUsage } from './aiUsage.js';
 
 export type TriggerKind = 'notify_manager' | 'escalate_human';
 
@@ -63,6 +64,7 @@ function assertValidKind(kind: string): asserts kind is TriggerKind {
 }
 
 export async function parseTriggerProse(
+  empresaId: string,
   prose: string,
   kindOverride?: TriggerKind,
 ): Promise<{
@@ -74,11 +76,13 @@ export async function parseTriggerProse(
   if (!input) throw new Error('INVALID_TRIGGER_PAYLOAD');
 
   const openai = getAI();
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    temperature: 0,
-    response_format: { type: 'json_object' },
-    messages: [
+  let response;
+  try {
+    response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
       {
         role: 'system',
         content: `Você converte instruções em português de um dono de lanchonete em um gatilho estruturado.
@@ -105,8 +109,24 @@ kind = "notify_manager" APENAS quando é alerta operacional sem interromper o at
 name: rótulo curto até 40 caracteres.
 condition_description: frase imperativa em 1 linha que a IA de atendimento vai usar para decidir se dispara o gatilho. Seja específico.`,
       },
-      { role: 'user', content: input },
-    ],
+        { role: 'user', content: input },
+      ],
+    });
+  } catch (error) {
+    recordAiUsage({
+      empresaId,
+      feature: 'ai_trigger_parse',
+      model: 'gpt-4o-mini',
+      status: 'error',
+    });
+    throw error;
+  }
+  recordAiUsage({
+    empresaId,
+    feature: 'ai_trigger_parse',
+    model: 'gpt-4o-mini',
+    status: 'success',
+    usage: response.usage,
   });
 
   const raw = response.choices[0]?.message?.content ?? '';
@@ -216,7 +236,7 @@ export async function createTrigger(
   const naturalInput = prose.trim();
   if (!naturalInput) throw new Error('INVALID_TRIGGER_PAYLOAD');
 
-  const parsed = await parseTriggerProse(naturalInput, kindOverride);
+  const parsed = await parseTriggerProse(empresaId, naturalInput, kindOverride);
 
   const supabase = getServiceSupabase();
   const { data, error } = await supabase

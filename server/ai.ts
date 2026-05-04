@@ -16,6 +16,7 @@ import { getServiceSupabase } from './supabase.js';
 import { buildContentForModel, buildImageContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
+import { recordAiUsage } from './aiUsage.js';
 import {
   escalateSession,
   recordAiFailure,
@@ -1073,7 +1074,7 @@ export function getAI(): OpenAI {
   return ai;
 }
 
-export type AvailableProduct = { name: string; price: number; available: boolean };
+export type AvailableProduct = { name: string; price: number; available: boolean; unitBased?: boolean };
 
 export function getAvailableProducts(empresaId: string): AvailableProduct[] {
   return getConfig(empresaId).products.filter((p) => p.available);
@@ -1119,6 +1120,83 @@ function uniqueCatalogMatch(matches: AvailableProduct[]): AvailableProduct | nul
   return matches[0];
 }
 
+const CATALOG_PACKAGING_TOKENS = new Set([
+  'cento', 'centos', 'centena', 'centenas',
+  'meio', 'meia', 'metade',
+  'unidade', 'unidades', 'unitario', 'unitaria',
+  'un', 'und', 'unds',
+]);
+
+function stripCatalogPackagingTerms(value: string): string {
+  return significantCatalogTokens(value)
+    .filter((token) => !CATALOG_PACKAGING_TOKENS.has(singularizeCatalogToken(token)))
+    .filter((token) => !/^\d+$/.test(token))
+    .join(' ');
+}
+
+function strictCatalogProductMatch(inputName: string, available: AvailableProduct[]): AvailableProduct | null {
+  const normalizedInput = normalizeCatalogName(inputName);
+  if (!normalizedInput) return null;
+
+  const normalizedExact = uniqueCatalogMatch(
+    available.filter((p) => normalizeCatalogName(p.name) === normalizedInput),
+  );
+  if (normalizedExact) return normalizedExact;
+
+  const singularInput = singularCatalogKey(inputName);
+  return uniqueCatalogMatch(
+    available.filter((p) => singularCatalogKey(p.name) === singularInput),
+  );
+}
+
+function splitAliasTerms(value: string): string[] {
+  return value
+    .split(/[,;/|]+|\bou\b|\be\b/gi)
+    .map((term) => term.replace(/["'`*()[\]{}]/g, ' ').trim())
+    .filter((term) => term.length >= 2 && term.length <= 80);
+}
+
+function resolveInstructionAliasProduct(
+  inputName: string,
+  available: AvailableProduct[],
+  ownerInstructions?: string,
+): AvailableProduct | null {
+  if (!ownerInstructions?.trim()) return null;
+  const inputKey = singularCatalogKey(inputName);
+  if (!inputKey) return null;
+
+  const matches: AvailableProduct[] = [];
+  const lines = ownerInstructions
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /apelid|alias|tamb[eé]m chamad|conhecid|=|->|quer dizer/i.test(line));
+
+  for (const line of lines) {
+    const parts = line.split(/\s*(?:=|->|:|quer dizer|significa)\s*/i).filter(Boolean);
+    if (parts.length < 2) continue;
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      const leftTerms = splitAliasTerms(parts[i]);
+      const rightTerms = splitAliasTerms(parts[i + 1]);
+      const leftProduct = uniqueCatalogMatch(
+        leftTerms.map((term) => strictCatalogProductMatch(term, available)).filter((p): p is AvailableProduct => p !== null),
+      );
+      const rightProduct = uniqueCatalogMatch(
+        rightTerms.map((term) => strictCatalogProductMatch(term, available)).filter((p): p is AvailableProduct => p !== null),
+      );
+
+      const product = leftProduct || rightProduct;
+      if (!product || (leftProduct && rightProduct && leftProduct.name !== rightProduct.name)) continue;
+      const aliasTerms = leftProduct ? rightTerms : leftTerms;
+      if (aliasTerms.some((term) => singularCatalogKey(term) === inputKey)) {
+        matches.push(product);
+      }
+    }
+  }
+
+  return uniqueCatalogMatch(matches);
+}
+
 /**
  * Checks if `input` is a subset of `product` (every input token is in product).
  * Asymmetric on purpose: see resolveCatalogProduct's comment for why we no longer
@@ -1131,7 +1209,29 @@ function inputTokensSubsetOfProduct(inputTokens: string[], productTokens: string
   return [...input].every((token) => product.has(token));
 }
 
-export function resolveCatalogProduct(inputName: string, available: AvailableProduct[]): AvailableProduct | null {
+export function resolveCatalogProduct(
+  inputName: string,
+  available: AvailableProduct[],
+  ownerInstructions?: string,
+): AvailableProduct | null {
+  const candidates = [inputName, stripCatalogPackagingTerms(inputName)]
+    .map((candidate) => candidate.trim())
+    .filter((candidate, index, list) => candidate && list.indexOf(candidate) === index);
+
+  for (const candidate of candidates) {
+    const exact = available.find((p) => p.name.toLowerCase() === candidate.toLowerCase());
+    if (exact) return exact;
+
+    const strict = strictCatalogProductMatch(candidate, available);
+    if (strict) return strict;
+
+    const alias = resolveInstructionAliasProduct(candidate, available, ownerInstructions);
+    if (alias) {
+      console.log(`[AI] catalog alias match: input="${safeForPrompt(candidate, 80)}" -> product="${safeForPrompt(alias.name, 80)}"`);
+      return alias;
+    }
+  }
+
   const exact = available.find((p) => p.name.toLowerCase() === inputName.toLowerCase());
   if (exact) return exact;
 
@@ -1148,6 +1248,17 @@ export function resolveCatalogProduct(inputName: string, available: AvailablePro
     available.filter((p) => singularCatalogKey(p.name) === singularInput),
   );
   if (singularExact) return singularExact;
+
+  for (const candidate of candidates.slice(1)) {
+    const inputTokens = significantCatalogTokens(candidate);
+    const fuzzyMatch = uniqueCatalogMatch(
+      available.filter((p) => inputTokensSubsetOfProduct(inputTokens, significantCatalogTokens(p.name))),
+    );
+    if (fuzzyMatch) {
+      console.log(`[AI] catalog fuzzy match after unit cleanup: input="${normalizeCatalogName(candidate)}" -> product="${normalizeCatalogName(fuzzyMatch.name)}"`);
+      return fuzzyMatch;
+    }
+  }
 
   // Token containment, ASYMMETRIC: only auto-match when the customer's input
   // is a SUBSET of (or equal to) the catalog product's tokens. We deliberately
@@ -1180,6 +1291,86 @@ export function resolveCatalogProduct(inputName: string, available: AvailablePro
  * "manager phone inválido". Antes números como "211999998888" passavam
  * e o gerente nunca recebia a notificação.
  */
+const PORTUGUESE_SMALL_NUMBERS: Record<string, number> = {
+  um: 1,
+  uma: 1,
+  dois: 2,
+  duas: 2,
+  tres: 3,
+  três: 3,
+  quatro: 4,
+  cinco: 5,
+  seis: 6,
+  sete: 7,
+  oito: 8,
+  nove: 9,
+  dez: 10,
+};
+
+type QuantityNormalizationResult =
+  | { ok: true; quantity: number; note?: string }
+  | { ok: false; reason: string };
+
+function detectCentoUnits(value: string): number | null {
+  const normalized = normalizeCatalogName(value);
+  if (!normalized) return null;
+  if (/\b(meio cento|meia centena|metade de um cento|1 2 cento)\b/.test(normalized)) {
+    return 50;
+  }
+
+  const numeric = normalized.match(/\b(\d{1,3})\s*(cento|centos|centena|centenas)\b/);
+  if (numeric) {
+    return Math.max(1, Number(numeric[1])) * 100;
+  }
+
+  const word = normalized.match(/\b(um|uma|dois|duas|tres|três|quatro|cinco|seis|sete|oito|nove|dez)\s+(cento|centos|centena|centenas)\b/);
+  if (word) {
+    return (PORTUGUESE_SMALL_NUMBERS[word[1]] ?? 1) * 100;
+  }
+
+  if (/\b(cento|centena)\b/.test(normalized)) return 100;
+  return null;
+}
+
+function normalizeOrderItemQuantity(
+  item: { product: string; quantity: number },
+  product: AvailableProduct,
+): QuantityNormalizationResult {
+  const rawQuantity = Number(item.quantity);
+  if (!Number.isFinite(rawQuantity) || rawQuantity <= 0) {
+    return { ok: false, reason: `Quantidade invalida para ${item.product}` };
+  }
+
+  const requestedCentoUnits = detectCentoUnits(item.product);
+  if (requestedCentoUnits === null) {
+    if (!Number.isInteger(rawQuantity)) {
+      return { ok: false, reason: `Quantidade fracionada sem unidade clara para ${item.product}` };
+    }
+    return { ok: true, quantity: rawQuantity };
+  }
+
+  const looksUnitPriced = product.unitBased === true || product.price < 10;
+  const looksCentoPriced = product.unitBased !== true && (product.price >= 10 || /\bcento|centena\b/i.test(product.name));
+
+  if (looksCentoPriced && !looksUnitPriced) {
+    return {
+      ok: false,
+      reason: `Produto "${product.name}" parece ter preco por cento, mas o cliente pediu quantidade em cento/meio cento.`,
+    };
+  }
+
+  const normalizedQuantity = rawQuantity >= requestedCentoUnits ? rawQuantity : requestedCentoUnits;
+  if (!Number.isInteger(normalizedQuantity) || normalizedQuantity <= 0) {
+    return { ok: false, reason: `Nao consegui converter a quantidade de ${item.product}` };
+  }
+
+  return {
+    ok: true,
+    quantity: normalizedQuantity,
+    note: `${safeForPrompt(item.product, 80)} convertido para ${normalizedQuantity} unidades`,
+  };
+}
+
 function phoneToJid(phone: string): string | null {
   let digits = normalizePhoneNumber(phone);
   if (!digits) return null;
@@ -1461,12 +1652,12 @@ function buildCatalogHierarchyBlock(hierarchy: CatalogCategoriaGroup[] | undefin
     if (subs.length === 0 && direto.length === 0) continue;
     lines.push(`  • ${cat.nome}`);
     for (const prod of direto) {
-      lines.push(`    - ${prod.name} (R$ ${prod.price.toFixed(2)})`);
+      lines.push(`    - ${prod.name} (R$ ${prod.price.toFixed(2)}${prod.unitBased ? ' por unidade' : ''})`);
     }
     for (const sub of subs) {
       lines.push(`    ◦ ${sub.nome}`);
       for (const prod of sub.produtos.filter((p) => p.available)) {
-        lines.push(`      - ${prod.name} (R$ ${prod.price.toFixed(2)})`);
+        lines.push(`      - ${prod.name} (R$ ${prod.price.toFixed(2)}${prod.unitBased ? ' por unidade' : ''})`);
       }
     }
   }
@@ -1497,7 +1688,7 @@ export function buildSystemInstruction(
   const cfg = getConfig(empresaId);
 
   const availableProducts = getAvailableProducts(empresaId)
-    .map((p) => `${p.name} (R$ ${p.price.toFixed(2)})`).join(', ') || 'Cardápio não configurado';
+    .map((p) => `${p.name} (R$ ${p.price.toFixed(2)}${p.unitBased ? ' por unidade' : ''})`).join(', ') || 'Cardápio não configurado';
 
   const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
   const ownerStylePreferences = buildOwnerStylePreferences(cfg.aiInstructions);
@@ -2112,6 +2303,13 @@ export async function generateAndSendReply(
       tools: [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
       tool_choice: 'auto',
     });
+    recordAiUsage({
+      empresaId: resolvedEmpresaId,
+      feature: 'ai_auto_reply',
+      model: OPENAI_MODEL,
+      status: 'success',
+      usage: response.usage,
+    });
 
     // P2.21 — Escalation race condition: re-fetch auto_reply AFTER the OpenAI
     // round-trip completes. This is the last gate before any sendTextMessage call.
@@ -2241,6 +2439,13 @@ export async function generateAndSendReply(
             buildAssistantToolCallMessage(toolPlan.calls),
             ...toolMessages,
           ],
+        });
+        recordAiUsage({
+          empresaId: resolvedEmpresaId,
+          feature: 'ai_auto_followup',
+          model: OPENAI_MODEL,
+          status: 'success',
+          usage: followUp.usage,
         });
 
         const followText = followUp.choices[0]?.message?.content?.trim()
@@ -2408,10 +2613,63 @@ export async function generateAndSendReply(
           const available = getAvailableProducts(resolvedEmpresaId);
           const resolvedItems = args.items.map((item) => ({
             item,
-            product: resolveCatalogProduct(item.product, available),
+            product: resolveCatalogProduct(item.product, available, cfg.aiInstructions),
           }));
 
           // Recalculate products subtotal server-side — never trust the model's arithmetic
+          {
+          const unmatchedItems = resolvedItems
+            .filter((resolved) => !resolved.product)
+            .map((resolved) => resolved.item);
+          if (unmatchedItems.length > 0) {
+            const names = unmatchedItems.map((i) => i.product).join(', ');
+            console.log(`[AI] Product not safely resolved for order; escalating. empresa=${resolvedEmpresaId} jid=${jid} items=${names}`);
+            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+            await addToolMessage(jid, `Produto não encontrado com segurança: ${names}`, toolCall.id, resolvedEmpresaId);
+            const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+            await escalateSession(resolvedEmpresaId, jid, {
+              triggerId: null,
+              triggerKind: 'escalate_human',
+              triggerName: 'Produto não identificado no pedido',
+              reasonCategory: 'custom',
+              reasonText: `A IA tentou criar pedido com produto não encontrado com segurança no cardápio: ${safeForPrompt(names, 200)}.`,
+              customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
+            });
+            resetAiFailureCounter(resolvedEmpresaId, jid);
+            return handoffMessageFor('custom');
+          }
+
+          const quantityIssues: string[] = [];
+          for (const resolved of resolvedItems) {
+            if (!resolved.product) continue;
+            const normalizedQuantity = normalizeOrderItemQuantity(resolved.item, resolved.product);
+            if (normalizedQuantity.ok === false) {
+              quantityIssues.push(normalizedQuantity.reason);
+              continue;
+            }
+            if (normalizedQuantity.note) {
+              console.log(`[AI] ${normalizedQuantity.note} for empresa=${resolvedEmpresaId} jid=${jid}`);
+            }
+            resolved.item.quantity = normalizedQuantity.quantity;
+          }
+          if (quantityIssues.length > 0) {
+            const reason = quantityIssues.join('; ');
+            console.log(`[AI] Quantity ambiguity for order; escalating. empresa=${resolvedEmpresaId} jid=${jid} reason=${reason}`);
+            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+            await addToolMessage(jid, `Quantidade ambígua: ${reason}`, toolCall.id, resolvedEmpresaId);
+            const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+            await escalateSession(resolvedEmpresaId, jid, {
+              triggerId: null,
+              triggerKind: 'escalate_human',
+              triggerName: 'Quantidade ambígua no pedido',
+              reasonCategory: 'custom',
+              reasonText: `A IA não conseguiu confirmar com segurança a unidade/quantidade do pedido: ${safeForPrompt(reason, 300)}.`,
+              customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
+            });
+            resetAiFailureCounter(resolvedEmpresaId, jid);
+            return handoffMessageFor('custom');
+          }
+
           const recalcSubtotal = resolvedItems.reduce((sum, resolved) => {
             return sum + (resolved.product ? resolved.product.price * resolved.item.quantity : 0);
           }, 0);
@@ -2450,15 +2708,6 @@ export async function generateAndSendReply(
           if (recalcSubtotal > 0) {
             args.total = Math.round((recalcSubtotal + (resolvedDeliveryFee ?? 0)) * 100) / 100;
           }
-
-          const unmatchedItems = resolvedItems
-            .filter((resolved) => !resolved.product)
-            .map((resolved) => resolved.item);
-          if (unmatchedItems.length > 0) {
-            const names = unmatchedItems.map((i) => i.product).join(', ');
-            const notFoundMsg = `Desculpe, não encontrei no cardápio: ${names}. Pode verificar o nome do produto? 😊`;
-            await sendAndPersistText(jid, notFoundMsg, resolvedEmpresaId, { responseSource: 'ai_auto' });
-            return notFoundMsg;
           }
           args.items = resolvedItems.map((resolved) => ({
             ...resolved.item,
@@ -2588,6 +2837,13 @@ export async function generateAndSendReply(
             { role: 'tool', tool_call_id: toolCall.id, content: statusInfo } as any,
           ],
         });
+        recordAiUsage({
+          empresaId: resolvedEmpresaId,
+          feature: 'ai_auto_followup',
+          model: OPENAI_MODEL,
+          status: 'success',
+          usage: followUp.usage,
+        });
 
         // Persist the audit trail. Order matters: assistant(tool_calls) → tool → assistant(text).
         await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
@@ -2689,6 +2945,13 @@ export async function generateAndSendReply(
             { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any,
           ],
         });
+        recordAiUsage({
+          empresaId: resolvedEmpresaId,
+          feature: 'ai_auto_followup',
+          model: OPENAI_MODEL,
+          status: 'success',
+          usage: followUp.usage,
+        });
         
         await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
         await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
@@ -2715,6 +2978,12 @@ export async function generateAndSendReply(
     return cleanReply;
   } catch (error: any) {
     console.error('[AI] Error generating reply:', error);
+    recordAiUsage({
+      empresaId: resolvedEmpresaId,
+      feature: 'ai_auto_reply',
+      model: OPENAI_MODEL,
+      status: 'error',
+    });
     if (error?.response?.data) {
       console.error('[AI] OpenAI Error data:', JSON.stringify(error.response.data));
     }
