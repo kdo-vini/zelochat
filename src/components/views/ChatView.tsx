@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
@@ -21,7 +21,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { formatLastMessageTime, normalizePhoneNumber } from '../../domain/chat';
+import { formatLastMessageTime, formatDateSeparatorLabel, startOfDayKey, normalizePhoneNumber } from '../../domain/chat';
+import { MessageDateSeparator } from './MessageDateSeparator';
 import { getManualChatAssistSuggestion, getOwnerResponse } from '../../services/openaiService';
 import type { ChatAttachment, ChatMessage, ChatSession, QuickResponse } from '../../types';
 import { MessageBubble } from './MessageBubble';
@@ -254,6 +255,100 @@ export function ChatView({
     () => sessions.find((s) => s.id === activeSessionId)?.messages,
     [sessions, activeSessionId],
   );
+
+  /* ─── Date separators ──────────────────────────────────────── */
+
+  type ChatRenderItem =
+    | { kind: 'separator'; key: string; label: string; dayKey: string }
+    | { kind: 'message'; key: string; message: ChatMessage };
+
+  const chatRenderItems = useMemo<ChatRenderItem[]>(() => {
+    const items: ChatRenderItem[] = [];
+    const messages = activeSession?.messages ?? [];
+    let lastDayKey: string | null = null;
+    for (const message of messages) {
+      const dayKey = startOfDayKey(message.timestamp);
+      if (dayKey !== lastDayKey) {
+        items.push({
+          kind: 'separator',
+          key: `sep-${dayKey}`,
+          dayKey,
+          label: formatDateSeparatorLabel(message.timestamp),
+        });
+        lastDayKey = dayKey;
+      }
+      items.push({ kind: 'message', key: message.id, message });
+    }
+    return items;
+  }, [activeSession?.messages]);
+
+  // Sticky date pill state
+  const [stickyLabel, setStickyLabel] = useState<string | null>(null);
+  const [stickyVisible, setStickyVisible] = useState(false);
+  const separatorRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const stickyHideTimerRef = useRef<number | null>(null);
+  const rafPendingRef = useRef(false);
+
+  const registerSeparator = useCallback((key: string, el: HTMLDivElement | null) => {
+    if (el) separatorRefs.current.set(key, el);
+    else separatorRefs.current.delete(key);
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    if (rafPendingRef.current) return;
+    rafPendingRef.current = true;
+    requestAnimationFrame(() => {
+      rafPendingRef.current = false;
+      const container = scrollRef.current;
+      if (!container) return;
+      const containerTop = container.getBoundingClientRect().top;
+      const threshold = containerTop + 16;
+
+      let bestTop = -Infinity;
+      let bestLabel: string | null = null;
+
+      separatorRefs.current.forEach((el) => {
+        const rect = el.getBoundingClientRect();
+        if (rect.top < threshold && rect.top > bestTop) {
+          bestTop = rect.top;
+          bestLabel = el.dataset.label ?? null;
+        }
+      });
+
+      if (bestLabel) {
+        setStickyLabel(bestLabel);
+        setStickyVisible(true);
+        if (stickyHideTimerRef.current !== null) {
+          window.clearTimeout(stickyHideTimerRef.current);
+        }
+        stickyHideTimerRef.current = window.setTimeout(() => {
+          setStickyVisible(false);
+        }, 1500);
+      } else {
+        setStickyVisible(false);
+      }
+    });
+  }, []);
+
+  // Reset sticky state when active session changes
+  useEffect(() => {
+    separatorRefs.current.clear();
+    setStickyLabel(null);
+    setStickyVisible(false);
+    if (stickyHideTimerRef.current !== null) {
+      window.clearTimeout(stickyHideTimerRef.current);
+      stickyHideTimerRef.current = null;
+    }
+  }, [activeSessionId]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (stickyHideTimerRef.current !== null) {
+        window.clearTimeout(stickyHideTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setEditingName(false);
@@ -784,54 +879,97 @@ export function ChatView({
               </div>
 
               {/* Messages */}
-              <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-1">
-                <div className="self-center mb-2">
-                  <span className="text-[11px] font-medium text-[var(--color-ink-faint)] bg-[var(--color-wa-panel)]/60 px-3 py-1 rounded-full">
-                    Criptografia de ponta a ponta
-                  </span>
-                </div>
+              <div className="relative flex-1 min-h-0">
+                <div
+                  ref={scrollRef}
+                  onScroll={handleMessagesScroll}
+                  className="absolute inset-0 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-1"
+                >
+                  <div className="self-center mb-2">
+                    <span className="text-[11px] font-medium text-[var(--color-ink-faint)] bg-[var(--color-wa-panel)]/60 px-3 py-1 rounded-full">
+                      Criptografia de ponta a ponta
+                    </span>
+                  </div>
 
-                <AnimatePresence initial={false}>
-                  {activeSession.messages.map((message, idx, arr) => {
-                    const isSystem = message.kind === 'text' && (message.content ?? '').includes('[SISTEMA]');
-                    const systemText = (message.content ?? '').replace('[SISTEMA]', '').trim();
+                  <AnimatePresence initial={false}>
+                    {chatRenderItems.map((item, i) => {
+                      if (item.kind === 'separator') {
+                        return (
+                          <MessageDateSeparator
+                            key={item.key}
+                            ref={(el) => registerSeparator(item.key, el)}
+                            label={item.label}
+                          />
+                        );
+                      }
 
-                    if (isSystem) {
+                      const { message } = item;
+                      const isSystem = message.kind === 'text' && (message.content ?? '').includes('[SISTEMA]');
+                      const systemText = (message.content ?? '').replace('[SISTEMA]', '').trim();
+
+                      if (isSystem) {
+                        return (
+                          <motion.div
+                            key={item.key}
+                            initial={{ opacity: 0, scale: 0.96 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="self-center my-1"
+                          >
+                            <span className="inline-block text-[11.5px] font-medium bg-[var(--color-warn-soft)] text-[var(--color-warn)] px-3 py-1 rounded-full">
+                              {systemText}
+                            </span>
+                          </motion.div>
+                        );
+                      }
+
+                      // isLastInGroup: look ahead in chatRenderItems, skipping separators.
+                      // A separator between two same-role messages counts as a group break.
+                      const isLastInGroup = (() => {
+                        for (let j = i + 1; j < chatRenderItems.length; j++) {
+                          const next = chatRenderItems[j];
+                          if (next.kind === 'separator') return true;
+                          return next.message.role !== message.role;
+                        }
+                        return true;
+                      })();
+
                       return (
                         <motion.div
-                          key={message.id}
-                          initial={{ opacity: 0, scale: 0.96 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          className="self-center my-1"
+                          key={item.key}
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.15 }}
                         >
-                          <span className="inline-block text-[11.5px] font-medium bg-[var(--color-warn-soft)] text-[var(--color-warn)] px-3 py-1 rounded-full">
-                            {systemText}
-                          </span>
+                          <MessageBubble
+                            message={message}
+                            isLastInGroup={isLastInGroup}
+                            profilePicUrl={profilePics[activeSession.id]}
+                            customerName={activeSession.customerName}
+                            onDelete={handleDeleteMessage}
+                            isDeleting={deletingMessageId === message.id}
+                          />
                         </motion.div>
                       );
-                    }
+                    })}
+                  </AnimatePresence>
+                </div>
 
-                    const isLastInGroup =
-                      idx === arr.length - 1 || arr[idx + 1].role !== message.role;
-
-                    return (
-                      <motion.div
-                        key={message.id}
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <MessageBubble
-                          message={message}
-                          isLastInGroup={isLastInGroup}
-                          profilePicUrl={profilePics[activeSession.id]}
-                          customerName={activeSession.customerName}
-                          onDelete={handleDeleteMessage}
-                          isDeleting={deletingMessageId === message.id}
-                        />
-                      </motion.div>
-                    );
-                  })}
+                {/* Sticky date pill — floats above the scroll area */}
+                <AnimatePresence>
+                  {stickyVisible && stickyLabel && (
+                    <motion.div
+                      key={stickyLabel}
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.18 }}
+                      className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-10"
+                    >
+                      <span className="inline-block rounded-full bg-[var(--color-wa-panel)]/95 backdrop-blur-sm border border-[var(--color-line)] px-3 py-1 text-[11.5px] font-medium text-[var(--color-ink-muted)] shadow-[var(--shadow-card)]">
+                        {stickyLabel}
+                      </span>
+                    </motion.div>
+                  )}
                 </AnimatePresence>
               </div>
 

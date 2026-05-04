@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-04',
+    category: 'medium',
+    title: 'Datas nas conversas',
+    description: 'Agora dá pra ver "Hoje", "Ontem" e datas anteriores separando as mensagens dentro de cada chat — fica fácil de saber quando cada coisa foi dita.',
+  },
+  {
     date: '2026-05-02',
     category: 'medium',
     title: 'Gestão por conversa mais segura',

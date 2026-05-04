@@ -1,3 +1,5 @@
+import { format, isToday, isYesterday, differenceInCalendarDays } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import type { ChatAttachment, ChatMessage } from '../types';
 
 const STRUCTURED_MESSAGE_PREFIX = '__ZELOCHAT_MEDIA__:';
@@ -208,6 +210,70 @@ export function buildImageContentForModel(message: ChatMessage): ImageContentFor
   const text = buildContentForModel(message) || message.preview || '[Imagem]';
   const imageUrl = getModelImageUrl(message);
   return imageUrl ? { text, imageUrl } : { text };
+}
+
+/**
+ * Returns a human-readable pt-BR label for a date separator in the chat view.
+ * Falls back to today's date on invalid/missing input (mirrors formatLastMessageTime convention).
+ */
+export function formatDateSeparatorLabel(value: string | Date | null | undefined): string {
+  let date: Date;
+
+  if (!value) {
+    date = new Date();
+  } else if (value instanceof Date) {
+    date = value;
+  } else if (/^\d{2}:\d{2}$/.test(value)) {
+    // Legacy bare "HH:MM" — treat as today
+    date = new Date();
+  } else {
+    date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      date = new Date();
+    }
+  }
+
+  if (isToday(date)) return 'Hoje';
+  if (isYesterday(date)) return 'Ontem';
+
+  const daysAgo = differenceInCalendarDays(new Date(), date);
+  if (daysAgo < 7) {
+    // e.g. "segunda-feira" → capitalize first letter → "Segunda-feira"
+    const weekday = format(date, 'EEEE', { locale: ptBR });
+    return weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  }
+
+  const now = new Date();
+  if (date.getFullYear() === now.getFullYear()) {
+    // e.g. "2 de maio"
+    return format(date, "d 'de' MMMM", { locale: ptBR });
+  }
+
+  // Different year — "02/05/2025"
+  return format(date, 'dd/MM/yyyy');
+}
+
+/**
+ * Returns a 'YYYY-MM-DD' string (local calendar day) for grouping messages by day.
+ * Falls back to today on invalid/missing input.
+ */
+export function startOfDayKey(value: string | Date | null | undefined): string {
+  let date: Date;
+
+  if (!value) {
+    date = new Date();
+  } else if (value instanceof Date) {
+    date = value;
+  } else if (/^\d{2}:\d{2}$/.test(value)) {
+    date = new Date();
+  } else {
+    date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      date = new Date();
+    }
+  }
+
+  return format(date, 'yyyy-MM-dd');
 }
 
 export function parseStructuredMessage(content: string): ParsedChatContent {
