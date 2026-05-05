@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-05',
+    category: 'medium',
+    title: 'IA agora espera o cliente terminar de digitar',
+    description: 'Quando o cliente manda várias mensagens em sequência, a IA aguarda alguns segundos, marca como lida, mostra "digitando..." e responde uma vez só — igual um atendente humano faria.',
+  },
+  {
     date: '2026-05-04',
     category: 'medium',
     title: 'IA entende pedidos misturados',

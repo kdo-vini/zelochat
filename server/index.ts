@@ -11,6 +11,7 @@ import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscriptio
 import { ensureAiSettingsHydrated, getConfig } from './configStore.js';
 import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
+import { scheduleReply } from './replyDebouncer.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -102,7 +103,8 @@ const httpServer = createServer(app);
 createWsServer(httpServer);
 
 // --- Wire up incoming messages → store + auto-reply ---
-const pendingReplies = new Map<string, ReturnType<typeof setTimeout>>();
+// Per-conversation debounce + 3-stage cadence (read → typing → reply) lives in
+// replyDebouncer.ts. Timer state moved out of this file in 2026-05.
 
 /**
  * Per-contact AI reply rate limiter — in-memory sliding window.
@@ -191,24 +193,40 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   const globalAiEnabled = getConfig(empresaId).aiEnabled === true;
 
   if (session?.autoReply && !isEscalated && globalAiEnabled && process.env.OPENAI_API_KEY) {
-    // Rate limit check: cap AI replies to MAX_AI_REPLIES_PER_WINDOW per contact per window.
-    // checkAutoReplyRateLimit increments the counter when under limit (returns true)
-    // or swallows the trigger when capped (returns false, logs warning).
-    if (!checkAutoReplyRateLimit(empresaId, jid)) return;
+    // messageId is optional — replyDebouncer skips the read receipt step when
+    // it's absent (some payload shapes don't carry a usable key.id) but still
+    // debounces and fires. Customer never gets dropped just because of a
+    // missing id field.
+    const messageId = msg.key?.id;
 
-    const replyKey = `${empresaId}:${jid}`;
-    const existing = pendingReplies.get(replyKey);
-    if (existing) clearTimeout(existing);
+    // Three-stage debounce (read → typing → reply). The fire callback runs
+    // ~10s after the LAST message in the burst (default 3+3+4s). It re-checks
+    // gates because the operator can flip auto_reply / escalate / disable AI
+    // during the wait window — defense against the in-memory state going stale.
+    //
+    // Rate limit moved here from per-message: charge ONE slot per real reply,
+    // not per inbound message. With coalescing, "5 quick msgs in 10s" is one
+    // reply, so it's correct to consume one slot. Strictly looser than before;
+    // no spam regression.
+    scheduleReply({
+      empresaId,
+      jid,
+      messageId,
+      fire: async () => {
+        const freshSession = await getSession(jid, empresaId);
+        if (!freshSession?.autoReply) return;
+        if (freshSession.status === 'escalated') return;
+        if (getConfig(empresaId).aiEnabled !== true) return;
 
-    const timer = setTimeout(async () => {
-      pendingReplies.delete(replyKey);
-      try {
-        await generateAndSendReply(jid, empresaId);
-      } catch (err) {
-        console.error('[AutoReply] Error:', err);
-      }
-    }, 1500);
-    pendingReplies.set(replyKey, timer);
+        if (!checkAutoReplyRateLimit(empresaId, jid)) return;
+
+        try {
+          await generateAndSendReply(jid, empresaId);
+        } catch (err) {
+          console.error('[AutoReply] Error:', err);
+        }
+      },
+    });
   }
 });
 

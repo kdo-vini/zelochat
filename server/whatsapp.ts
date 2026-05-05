@@ -874,12 +874,18 @@ export async function markWhatsAppMessageAsRead(
   messageId: string,
   empresaId?: string | null,
 ): Promise<void> {
-  const instance = await resolveInstance(empresaId);
-  await axios.post(
-    `${BASE_URL}/chat/markMessageAsRead/${instance}`,
-    { readMessages: [{ remoteJid: jid, id: messageId }] },
-    { headers: apiHeaders() },
-  );
+  try {
+    const instance = await resolveInstance(empresaId);
+    await axios.post(
+      `${BASE_URL}/chat/markMessageAsRead/${instance}`,
+      { readMessages: [{ remoteJid: jid, id: messageId }] },
+      { headers: apiHeaders() },
+    );
+  } catch (err) {
+    // Non-fatal — read receipt failure must not block the reply pipeline.
+    // Mirrors sendPresence's posture above.
+    console.warn('[WhatsApp] markMessageAsRead error:', err instanceof Error ? err.message : err);
+  }
 }
 
 // ─── Validate Numbers ─────────────────────────────────────────────────────────

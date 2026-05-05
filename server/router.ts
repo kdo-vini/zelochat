@@ -75,6 +75,7 @@ import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
+import { cancelPendingReply } from './replyDebouncer.js';
 import type { ChatAttachment } from '../src/types.js';
 
 const router = Router();
@@ -287,6 +288,10 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
           }
         }
       });
+      // A definitive button interaction supersedes any pending debounced reply.
+      // Without this, a "oi" arriving 5s before the click would still fire the
+      // AI 5s after — customer sees the order ack AND a redundant greeting.
+      cancelPendingReply(empresaId, remoteJid);
       return;
     }
 
@@ -330,7 +335,12 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
           }
           return true;
         });
-        if (handled) return;
+        if (handled) {
+          // Soft confirm/cancel resolved a real pending order — same logic as
+          // the hard-button branch: kill any debounced reply for this contact.
+          cancelPendingReply(empresaId, remoteJid);
+          return;
+        }
       }
     }
 
