@@ -1611,70 +1611,82 @@ export async function addAssistantMessage(
     return;
   }
 
-  const text = content ?? '';
-  const storedContent =
-    text || attachment ? serializeStructuredMessage({ text, attachment }) : null;
-  const preview = attachment
-    ? buildAttachmentPreview(attachment, text)
-    : text || (toolCalls ? '[Ação interna]' : '');
-  // Do NOT update last_message_time here — that field reflects the *customer's* last
-  // message specifically (so the conversation list shows "Ontem às 23:01" relative to
-  // the customer's send time, not when the operator/AI replied). Sort order in the
-  // list is driven by updated_at, which still bumps via ensureSession.
-  const sessionRow = await ensureSession({
-    empresaId,
-    jid,
-    customerPhone: formatPhone(phoneFromJid(jid)),
-    lastMessage: storedContent || '',
-  });
+  // Serialize per-JID so the escalation handoff `addAssistantMessage` and an
+  // operator reply `addAssistantMessage` (or any two outbound persistences for
+  // the same contact) cannot interleave their non-atomic ensureSession
+  // (read-then-update) and produce a half-applied `updated_at` state. Mirrors
+  // the same guard `handleIncomingMessage` already applies on the inbound side.
+  await serializeForJid(jid, async () => {
+    const text = content ?? '';
+    const storedContent =
+      text || attachment ? serializeStructuredMessage({ text, attachment }) : null;
+    const preview = attachment
+      ? buildAttachmentPreview(attachment, text)
+      : text || (toolCalls ? '[Ação interna]' : '');
+    // Do NOT update last_message_time here — that field reflects the *customer's* last
+    // message specifically (so the conversation list shows "Ontem às 23:01" relative to
+    // the customer's send time, not when the operator/AI replied). Sort order in the
+    // list is driven by updated_at, which still bumps via ensureSession.
+    const sessionRow = await ensureSession({
+      empresaId,
+      jid,
+      customerPhone: formatPhone(phoneFromJid(jid)),
+      lastMessage: storedContent || '',
+    });
 
-  const sentAt = new Date().toISOString();
-  const storedMsg = await insertMessage({
-    empresaId,
-    sessionId: sessionRow.id,
-    role: 'assistant',
-    content: storedContent,
-    tool_calls: toolCalls,
-    waMessageId: options.waMessageId,
-    sentAt,
-  });
+    const sentAt = new Date().toISOString();
+    const storedMsg = await insertMessage({
+      empresaId,
+      sessionId: sessionRow.id,
+      role: 'assistant',
+      content: storedContent,
+      tool_calls: toolCalls,
+      waMessageId: options.waMessageId,
+      sentAt,
+    });
 
-  if (options.responseSource && storedContent && !toolCalls?.length) {
-    try {
-      await recordResponseEventForLatestInbound({
-        empresaId,
-        sessionId: sessionRow.id,
-        responseMessageId: storedMsg.id,
-        responseSource: options.responseSource,
-        sentAt,
-      });
-    } catch (err) {
-      // Metrics must never block an actual customer reply. The dashboard will
-      // show "sem amostra ainda" until the migration/table is available.
-      console.warn('[metrics] Failed to record response event:', err);
+    if (options.responseSource && storedContent && !toolCalls?.length) {
+      try {
+        await recordResponseEventForLatestInbound({
+          empresaId,
+          sessionId: sessionRow.id,
+          responseMessageId: storedMsg.id,
+          responseSource: options.responseSource,
+          sentAt,
+        });
+      } catch (err) {
+        // Metrics must never block an actual customer reply. The dashboard will
+        // show "sem amostra ainda" until the migration/table is available.
+        console.warn('[metrics] Failed to record response event:', err);
+      }
     }
-  }
 
-  const family = await fetchSessionFamily(empresaId, jid);
-  const mappedSession = family ? mapSession(family) : null;
+    const family = await fetchSessionFamily(empresaId, jid);
+    const mappedSession = family ? mapSession(family) : null;
 
-  broadcast(
-    {
-      type: 'message_sent',
-      data: {
-        sessionId: mappedSession?.id || jid,
-        customerName: mappedSession?.customerName,
-        customerPhone: mappedSession?.customerPhone,
-        message: storedMsg,
-        autoReply: mappedSession?.autoReply,
-        lastMessage: preview,
-        // Use the family's stored last_message_time (customer's last send) so the list
-        // doesn't briefly flip to the operator's send time and back on refresh.
-        lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
+    // Route broadcast under the caller-provided JID, not `family.latest.remote_jid`.
+    // The escalation handoff bumps `updated_at` of the row it touches, so for a
+    // multi-JID family `pickLatestSessionRow` may return a different row than the
+    // one the frontend has cached as `session.id`. Routing by `jid` keeps the
+    // event addressed to the row the operator is interacting with.
+    broadcast(
+      {
+        type: 'message_sent',
+        data: {
+          sessionId: jid,
+          customerName: mappedSession?.customerName,
+          customerPhone: mappedSession?.customerPhone,
+          message: storedMsg,
+          autoReply: mappedSession?.autoReply,
+          lastMessage: preview,
+          // Use the family's stored last_message_time (customer's last send) so the list
+          // doesn't briefly flip to the operator's send time and back on refresh.
+          lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
+        },
       },
-    },
-    empresaId,
-  );
+      empresaId,
+    );
+  });
 }
 
 export async function addToolMessage(

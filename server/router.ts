@@ -171,7 +171,10 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
         addAssistantMessage(remoteJid, msgText, undefined, empresaId, undefined, {
           waMessageId: msgId || null,
         }).catch((err) =>
-          console.error('[Webhook] fromMe persist failed:', err),
+          console.error(
+            `[Webhook] fromMe persist failed jid=${remoteJid} msgId=${msgId} empresa=${empresaId}:`,
+            err,
+          ),
         );
       }
       return;
