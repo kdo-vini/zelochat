@@ -199,6 +199,10 @@ export default function AppShell() {
     hydrateSession,
     send,
     markRead,
+    markManyRead,
+    bulkArchive,
+    bulkDelete,
+    togglePin,
     toggleAutoReply,
     deleteSession,
     deleteMessage,
@@ -943,6 +947,10 @@ export default function AppShell() {
             updateSessionName={updateSessionName}
             hydrateSession={hydrateSession}
             onDeleteSession={handleDeleteSession}
+            markManyRead={markManyRead}
+            bulkArchive={bulkArchive}
+            bulkDelete={bulkDelete}
+            togglePin={togglePin}
             onDailyContextUpdate={handleDailyContextUpdate}
             resolveEscalation={handleResolveEscalation}
             escalateManually={escalateManually}

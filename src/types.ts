@@ -23,6 +23,7 @@ export interface ChatSession {
   profilePicUrl?: string;
   escalatedAt?: string | null;
   acknowledgedAt?: string | null;
+  pinned?: boolean;
 }
 
 export type EscalationReasonCategory =

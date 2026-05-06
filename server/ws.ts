@@ -14,6 +14,7 @@ export type WsEventType =
   | 'contact_update'
   | 'ai_enabled'
   | 'session_read'
+  | 'session_pinned'
   | 'escalation_triggered'
   | 'escalation_resolved'
   | 'session_status_changed';

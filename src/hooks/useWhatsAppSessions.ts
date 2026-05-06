@@ -10,7 +10,9 @@ import type {
 import { WS_URL } from '../config';
 import {
   acknowledgeSession as acknowledgeSessionApi,
+  archiveSessions as archiveSessionsApi,
   bindEmpresa,
+  bulkDeleteSessions as bulkDeleteSessionsApi,
   deleteMessage as deleteMessageApi,
   deleteSession as deleteSessionApi,
   escalateSessionManually as escalateSessionManuallyApi,
@@ -18,9 +20,11 @@ import {
   getSession,
   getSessions,
   markSessionRead,
+  markSessionsRead,
   resolveSession as resolveSessionApi,
   sendMessage,
   setSessionAutoReply,
+  setSessionPinned as setSessionPinnedApi,
   updateSessionName as updateSessionNameApi,
 } from '../services/waApi';
 
@@ -82,6 +86,8 @@ type WsEvent =
   | { type: 'escalation_triggered'; data: EscalationTriggeredPayload }
   | { type: 'escalation_resolved'; data: EscalationResolvedPayload }
   | { type: 'session_status_changed'; data: SessionStatusChangedPayload }
+  | { type: 'session_read'; data: { sessionId: string; unreadCount: number } }
+  | { type: 'session_pinned'; data: { sessionId: string; pinned: boolean } }
   | { type: 'qr' | 'connection'; data: unknown };
 
 export interface EscalationNotice {
@@ -375,6 +381,70 @@ export function useWhatsAppSessions(token: string | null) {
     }
   }, [token]);
 
+  const markManyRead = useCallback(async (jids: string[]) => {
+    const targets = jids.filter(Boolean);
+    if (targets.length === 0) return;
+
+    const targetSet = new Set(targets);
+    setSessions((previous) =>
+      previous.map((session) =>
+        targetSet.has(session.id) ? { ...session, unreadCount: 0 } : session,
+      ),
+    );
+
+    if (!token) return;
+    try {
+      await markSessionsRead(token, targets);
+    } catch {
+      // Best-effort; the optimistic state already reflects the intent.
+    }
+  }, [token]);
+
+  const bulkArchive = useCallback(async (jids: string[]) => {
+    const targets = jids.filter(Boolean);
+    if (targets.length === 0 || !token) return;
+    await archiveSessionsApi(token, targets);
+    const targetSet = new Set(targets);
+    setSessions((previous) =>
+      previous.map((session) =>
+        targetSet.has(session.id)
+          ? { ...session, status: 'archived' as SessionStatus, escalatedAt: null }
+          : session,
+      ),
+    );
+  }, [token]);
+
+  const bulkDelete = useCallback(async (jids: string[]) => {
+    const targets = jids.filter(Boolean);
+    if (targets.length === 0 || !token) return;
+    await bulkDeleteSessionsApi(token, targets);
+    const targetSet = new Set(targets);
+    setSessions((previous) => previous.filter((session) => !targetSet.has(session.id)));
+  }, [token]);
+
+  const togglePin = useCallback(async (jid: string) => {
+    if (!jid || !token) return;
+    let nextPinned = false;
+    setSessions((previous) =>
+      previous.map((session) => {
+        if (session.id !== jid) return session;
+        nextPinned = !session.pinned;
+        return { ...session, pinned: nextPinned };
+      }),
+    );
+    try {
+      await setSessionPinnedApi(token, jid, nextPinned);
+    } catch (error) {
+      // Roll back on failure so the UI matches server state.
+      setSessions((previous) =>
+        previous.map((session) =>
+          session.id === jid ? { ...session, pinned: !nextPinned } : session,
+        ),
+      );
+      throw error;
+    }
+  }, [token]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -458,6 +528,30 @@ export function useWhatsAppSessions(token: string | null) {
                       status: data.status,
                       escalatedAt: data.escalatedAt ?? session.escalatedAt,
                     }
+                  : session,
+              ),
+            );
+            return;
+          }
+
+          if (parsed.type === 'session_read') {
+            const data = parsed.data;
+            setSessions((previous) =>
+              previous.map((session) =>
+                session.id === data.sessionId
+                  ? { ...session, unreadCount: data.unreadCount }
+                  : session,
+              ),
+            );
+            return;
+          }
+
+          if (parsed.type === 'session_pinned') {
+            const data = parsed.data;
+            setSessions((previous) =>
+              previous.map((session) =>
+                session.id === data.sessionId
+                  ? { ...session, pinned: data.pinned }
                   : session,
               ),
             );
@@ -596,6 +690,10 @@ export function useWhatsAppSessions(token: string | null) {
     hydrateSession,
     send,
     markRead,
+    markManyRead,
+    bulkArchive,
+    bulkDelete,
+    togglePin,
     toggleAutoReply,
     deleteSession,
     deleteMessage,

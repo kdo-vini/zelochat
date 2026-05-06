@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  Archive,
   ArrowLeft,
   Bot,
   Check,
+  CheckCheck,
+  CheckSquare,
   FileText,
   ImagePlus,
   Info,
@@ -15,9 +18,12 @@ import {
   Paperclip,
   Pencil,
   Phone,
+  Pin,
+  PinOff,
   Plus,
   Search,
   Send,
+  Square,
   Trash2,
   X,
 } from 'lucide-react';
@@ -86,6 +92,10 @@ export interface ChatViewProps {
   updateSessionName: (jid: string, name: string) => Promise<void>;
   hydrateSession: (jid: string) => Promise<void>;
   onDeleteSession: (id: string) => Promise<void>;
+  markManyRead: (jids: string[]) => Promise<void>;
+  bulkArchive: (jids: string[]) => Promise<void>;
+  bulkDelete: (jids: string[]) => Promise<void>;
+  togglePin: (jid: string) => Promise<void>;
   onDailyContextUpdate: (items: { id: string; text: string }[]) => void;
   resolveEscalation: (jid: string) => Promise<void>;
   escalateManually: (jid: string, reason?: string) => Promise<void>;
@@ -112,6 +122,10 @@ export function ChatView({
   updateSessionName,
   hydrateSession,
   onDeleteSession,
+  markManyRead,
+  bulkArchive,
+  bulkDelete,
+  togglePin,
   onDailyContextUpdate,
   resolveEscalation,
   escalateManually,
@@ -121,6 +135,28 @@ export function ChatView({
   const [searchQuery, setSearchQuery] = useState('');
   const [ownerInput, setOwnerInput] = useState('');
   const [chatActionError, setChatActionError] = useState<string | null>(null);
+
+  type ChatListFilter = 'all' | 'unread' | 'active' | 'escalated' | 'resolved' | 'archived';
+  const FILTER_STORAGE_KEY = 'zelochat:chatFilter';
+  const [statusFilter, setStatusFilter] = useState<ChatListFilter>(() => {
+    if (typeof window === 'undefined') return 'all';
+    const stored = window.localStorage.getItem(FILTER_STORAGE_KEY);
+    if (stored === 'unread' || stored === 'active' || stored === 'escalated'
+        || stored === 'resolved' || stored === 'archived' || stored === 'all') {
+      return stored;
+    }
+    return 'all';
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(FILTER_STORAGE_KEY, statusFilter); } catch { /* ignore */ }
+  }, [statusFilter]);
+
+  const [listMenuOpen, setListMenuOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedJids, setSelectedJids] = useState<Set<string>>(new Set());
+  const [bulkActionLoading, setBulkActionLoading] = useState<null | 'read' | 'archive' | 'delete'>(null);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [markAllReadConfirm, setMarkAllReadConfirm] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
@@ -202,9 +238,22 @@ export function ChatView({
 
   const filteredSessions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return sessions;
-    const queryPhone = normalizePhoneNumber(q);
-    return sessions.filter((s) => {
+    const queryPhone = q ? normalizePhoneNumber(q) : '';
+
+    const matched = sessions.filter((s) => {
+      // Status filter — "Arquivadas" is the only view that exposes archived chats.
+      // Every other filter hides them so the operator's main flow stays clean.
+      if (statusFilter === 'archived') {
+        if (s.status !== 'archived') return false;
+      } else {
+        if (s.status === 'archived') return false;
+        if (statusFilter === 'unread' && (s.unreadCount ?? 0) <= 0) return false;
+        if (statusFilter === 'active' && s.status !== 'active') return false;
+        if (statusFilter === 'escalated' && s.status !== 'escalated') return false;
+        if (statusFilter === 'resolved' && s.status !== 'resolved') return false;
+      }
+
+      if (!q) return true;
       const phone = normalizePhoneNumber(s.customerPhone);
       return (
         s.customerName.toLowerCase().includes(q) ||
@@ -212,7 +261,19 @@ export function ChatView({
         (!!queryPhone && phone.includes(queryPhone))
       );
     });
-  }, [sessions, searchQuery]);
+
+    // Pinned chats float to the top while preserving the upstream order
+    // (the hook already keeps escalated rows on top — pinned escalations
+    // remain on top by virtue of stable sort).
+    if (matched.length === 0) return matched;
+    const pinned: ChatSession[] = [];
+    const rest: ChatSession[] = [];
+    for (const s of matched) {
+      if (s.pinned) pinned.push(s);
+      else rest.push(s);
+    }
+    return pinned.length > 0 ? [...pinned, ...rest] : matched;
+  }, [sessions, searchQuery, statusFilter]);
 
   useEffect(() => {
     const el = chatListRef.current;
@@ -227,7 +288,101 @@ export function ChatView({
   useEffect(() => {
     setChatListScrollTop(0);
     chatListRef.current?.scrollTo({ top: 0 });
-  }, [searchQuery]);
+  }, [searchQuery, statusFilter]);
+
+  // Selection helpers
+  const toggleSelectJid = useCallback((jid: string) => {
+    setSelectedJids((previous) => {
+      const next = new Set(previous);
+      if (next.has(jid)) next.delete(jid);
+      else next.add(jid);
+      return next;
+    });
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedJids(new Set());
+  }, []);
+
+  const enterSelectionMode = useCallback((seedJid?: string) => {
+    setSelectionMode(true);
+    setListMenuOpen(false);
+    if (seedJid) setSelectedJids(new Set([seedJid]));
+  }, []);
+
+  // Bulk actions — operate on selected jids and exit selection mode on success.
+  const runBulkRead = useCallback(async () => {
+    const jids: string[] = Array.from(selectedJids.values());
+    if (jids.length === 0) return;
+    setBulkActionLoading('read');
+    setChatActionError(null);
+    try {
+      await markManyRead(jids);
+      exitSelectionMode();
+    } catch (err) {
+      setChatActionError(getFriendlyErrorMessage(err) ?? 'Não foi possível marcar como lidas.');
+    } finally {
+      setBulkActionLoading(null);
+    }
+  }, [selectedJids, markManyRead, exitSelectionMode]);
+
+  const runBulkArchive = useCallback(async () => {
+    const jids: string[] = Array.from(selectedJids.values());
+    if (jids.length === 0) return;
+    setBulkActionLoading('archive');
+    setChatActionError(null);
+    try {
+      await bulkArchive(jids);
+      exitSelectionMode();
+    } catch (err) {
+      setChatActionError(getFriendlyErrorMessage(err) ?? 'Não foi possível arquivar.');
+    } finally {
+      setBulkActionLoading(null);
+    }
+  }, [selectedJids, bulkArchive, exitSelectionMode]);
+
+  const runBulkDelete = useCallback(async () => {
+    const jids: string[] = Array.from(selectedJids.values());
+    if (jids.length === 0) return;
+    setBulkActionLoading('delete');
+    setChatActionError(null);
+    try {
+      await bulkDelete(jids);
+      setBulkDeleteConfirm(false);
+      exitSelectionMode();
+    } catch (err) {
+      setChatActionError(getFriendlyErrorMessage(err) ?? 'Não foi possível excluir.');
+    } finally {
+      setBulkActionLoading(null);
+    }
+  }, [selectedJids, bulkDelete, exitSelectionMode]);
+
+  // "Marcar todas como lidas" — escopo é a lista filtrada/visivel.
+  const visibleUnreadJids = useMemo(
+    () => filteredSessions.filter((s) => (s.unreadCount ?? 0) > 0).map((s) => s.id),
+    [filteredSessions],
+  );
+
+  const runMarkAllVisibleRead = useCallback(async () => {
+    if (visibleUnreadJids.length === 0) return;
+    setListMenuOpen(false);
+    try {
+      await markManyRead(visibleUnreadJids);
+    } catch (err) {
+      setChatActionError(getFriendlyErrorMessage(err) ?? 'Não foi possível marcar como lidas.');
+    } finally {
+      setMarkAllReadConfirm(false);
+    }
+  }, [visibleUnreadJids, markManyRead]);
+
+  const handleTogglePin = useCallback(async (jid: string) => {
+    try {
+      await togglePin(jid);
+    } catch (err) {
+      setChatActionError(getFriendlyErrorMessage(err) ?? 'Não foi possível fixar a conversa.');
+    }
+  }, [togglePin]);
 
   const chatListWindow = useMemo(() => {
     const shouldVirtualize = filteredSessions.length > CHAT_LIST_VIRTUALIZE_AFTER;
@@ -605,13 +760,57 @@ export function ChatView({
         >
           <div className="px-4 py-3.5 border-b border-[var(--color-line)] flex-shrink-0 flex items-center justify-between">
             <h2 className="text-[14px] font-semibold text-[var(--color-ink)]">Lista de Conversas</h2>
-            <button
-              onClick={() => { setShowNewChatModal(true); setNewChatError(null); }}
-              title="Nova conversa"
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-brand)] transition-colors"
-            >
-              <Plus className="w-4 h-4" strokeWidth={2} />
-            </button>
+            <div className="flex items-center gap-1 relative">
+              <button
+                onClick={() => { setShowNewChatModal(true); setNewChatError(null); }}
+                title="Nova conversa"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-brand)] transition-colors"
+              >
+                <Plus className="w-4 h-4" strokeWidth={2} />
+              </button>
+              <button
+                onClick={() => setListMenuOpen((v) => !v)}
+                title="Mais opções"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-brand)] transition-colors"
+              >
+                <MoreVertical className="w-4 h-4" strokeWidth={2} />
+              </button>
+              {listMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setListMenuOpen(false)} aria-hidden="true" />
+                  <div className="absolute right-0 top-9 z-20 min-w-[220px] rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] shadow-lg overflow-hidden">
+                    <button
+                      onClick={() => {
+                        if (visibleUnreadJids.length === 0) { setListMenuOpen(false); return; }
+                        if (visibleUnreadJids.length > 5) {
+                          setMarkAllReadConfirm(true);
+                          setListMenuOpen(false);
+                        } else {
+                          void runMarkAllVisibleRead();
+                        }
+                      }}
+                      disabled={visibleUnreadJids.length === 0}
+                      className="w-full text-left px-3 py-2 text-[13px] text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      <CheckCheck className="w-3.5 h-3.5" strokeWidth={1.8} />
+                      <span className="flex-1">Marcar todas como lidas</span>
+                      {visibleUnreadJids.length > 0 && (
+                        <span className="rounded-full bg-[var(--color-brand)] text-white text-[10px] font-bold px-1.5 py-0.5 min-w-[18px] text-center">
+                          {visibleUnreadJids.length}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => enterSelectionMode()}
+                      className="w-full text-left px-3 py-2 text-[13px] text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)] flex items-center gap-2 border-t border-[var(--color-line)]"
+                    >
+                      <CheckSquare className="w-3.5 h-3.5" strokeWidth={1.8} />
+                      Selecionar conversas
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="px-3 py-2.5 border-b border-[var(--color-line)] flex-shrink-0">
@@ -626,6 +825,73 @@ export function ChatView({
               />
             </div>
           </div>
+
+          <div className="px-3 py-2 border-b border-[var(--color-line)] flex-shrink-0 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+            {([
+              { id: 'all', label: 'Todas' },
+              { id: 'unread', label: 'Não lidas' },
+              { id: 'active', label: 'Ativas' },
+              { id: 'escalated', label: 'Escaladas' },
+              { id: 'resolved', label: 'Resolvidas' },
+              { id: 'archived', label: 'Arquivadas' },
+            ] as { id: ChatListFilter; label: string }[]).map((chip) => (
+              <button
+                key={chip.id}
+                onClick={() => setStatusFilter(chip.id)}
+                className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11.5px] font-medium transition-colors ${
+                  statusFilter === chip.id
+                    ? 'bg-[var(--color-brand)] text-white'
+                    : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                }`}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+
+          {selectionMode && (
+            <div className="px-3 py-2 border-b border-[var(--color-line)] flex-shrink-0 bg-[var(--color-brand-soft)] flex items-center gap-2 flex-wrap">
+              <span className="text-[12px] font-medium text-[var(--color-ink)]">
+                {selectedJids.size} selecionada{selectedJids.size === 1 ? '' : 's'}
+              </span>
+              <div className="flex-1 min-w-0" />
+              <button
+                onClick={() => void runBulkRead()}
+                disabled={selectedJids.size === 0 || bulkActionLoading !== null}
+                title="Marcar como lidas"
+                className="px-2 py-1 rounded-md text-[11.5px] font-medium bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {bulkActionLoading === 'read' ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCheck className="w-3 h-3" />}
+                Lidas
+              </button>
+              <button
+                onClick={() => void runBulkArchive()}
+                disabled={selectedJids.size === 0 || bulkActionLoading !== null}
+                title="Arquivar"
+                className="px-2 py-1 rounded-md text-[11.5px] font-medium bg-[var(--color-surface)] text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {bulkActionLoading === 'archive' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Archive className="w-3 h-3" />}
+                Arquivar
+              </button>
+              <button
+                onClick={() => setBulkDeleteConfirm(true)}
+                disabled={selectedJids.size === 0 || bulkActionLoading !== null}
+                title="Excluir"
+                className="px-2 py-1 rounded-md text-[11.5px] font-medium bg-[var(--color-surface)] text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                <Trash2 className="w-3 h-3" />
+                Excluir
+              </button>
+              <button
+                onClick={exitSelectionMode}
+                disabled={bulkActionLoading !== null}
+                title="Sair do modo seleção"
+                className="px-2 py-1 rounded-md text-[11.5px] font-medium text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]"
+              >
+                Cancelar
+              </button>
+            </div>
+          )}
 
           <div
             ref={chatListRef}
@@ -660,6 +926,8 @@ export function ChatView({
 
             {chatListWindow.sessions.map((s) => {
               const isEscalated = s.status === 'escalated';
+              const isSelected = selectedJids.has(s.id);
+              const isPinned = !!s.pinned;
               return (
               <div
                 key={s.id}
@@ -667,34 +935,52 @@ export function ChatView({
                 className={`relative flex items-center gap-3 px-3 py-3 border-b border-[var(--color-line)] transition-colors group ${
                   isEscalated ? 'border-l-4 border-l-[var(--color-alert)] bg-[var(--color-alert-soft)]' : ''
                 } ${
-                  activeSessionId === s.id
+                  selectionMode && isSelected ? 'bg-[var(--color-brand-soft)]' : ''
+                } ${
+                  !selectionMode && activeSessionId === s.id
                     ? isEscalated
                       ? 'bg-[var(--color-alert-soft)]'
                       : 'bg-[var(--color-brand-soft)]'
-                    : !isEscalated && 'hover:bg-[var(--color-surface-muted)]'
+                    : !isEscalated && !selectionMode && 'hover:bg-[var(--color-surface-muted)]'
                 }`}
                 onMouseEnter={() => setHoveredSessionId(s.id)}
                 onMouseLeave={() => setHoveredSessionId(null)}
               >
                 <button
-                  onClick={() => setActiveSessionId(s.id)}
+                  onClick={() => {
+                    if (selectionMode) toggleSelectJid(s.id);
+                    else setActiveSessionId(s.id);
+                  }}
                   className="flex items-center gap-3 flex-1 min-w-0 text-left"
                 >
-                  <ContactAvatar
-                    url={profilePics[s.id]}
-                    name={s.customerName}
-                    size="md"
-                  />
+                  {selectionMode ? (
+                    <div className="w-10 h-10 flex items-center justify-center flex-shrink-0">
+                      {isSelected ? (
+                        <CheckSquare className="w-5 h-5 text-[var(--color-brand)]" strokeWidth={2} />
+                      ) : (
+                        <Square className="w-5 h-5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+                      )}
+                    </div>
+                  ) : (
+                    <ContactAvatar
+                      url={profilePics[s.id]}
+                      name={s.customerName}
+                      size="md"
+                    />
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
                       <div className="flex items-center gap-1.5 min-w-0">
+                        {isPinned && (
+                          <Pin className="w-3 h-3 text-[var(--color-ink-faint)] flex-shrink-0" strokeWidth={2} />
+                        )}
                         <h3 className="text-[13.5px] font-semibold text-[var(--color-ink)] truncate">{s.customerName}</h3>
                         {isEscalated && <EscaladoBadge />}
                       </div>
                       {isEscalated ? (
                         <SlaTimer escalatedAt={s.escalatedAt} className="flex-shrink-0 ml-1" />
                       ) : (
-                        <span className={`text-[11px] text-[var(--color-ink-faint)] flex-shrink-0 ml-1 transition-opacity ${hoveredSessionId === s.id ? 'opacity-0' : ''}`}>
+                        <span className={`text-[11px] text-[var(--color-ink-faint)] flex-shrink-0 ml-1 transition-opacity ${!selectionMode && hoveredSessionId === s.id ? 'opacity-0' : ''}`}>
                           {formatLastMessageTime(s.lastMessageTime)}
                         </span>
                       )}
@@ -715,17 +1001,29 @@ export function ChatView({
                   </div>
                 </button>
 
-                {hoveredSessionId === s.id && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteSessionPending({ id: s.id, name: s.customerName });
-                    }}
-                    title="Excluir conversa"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-alert-soft)] hover:text-[var(--color-alert)] transition-colors flex-shrink-0"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
-                  </button>
+                {!selectionMode && hoveredSessionId === s.id && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleTogglePin(s.id);
+                      }}
+                      title={isPinned ? 'Desafixar conversa' : 'Fixar conversa'}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-brand)] transition-colors flex-shrink-0"
+                    >
+                      {isPinned ? <PinOff className="w-3.5 h-3.5" strokeWidth={1.8} /> : <Pin className="w-3.5 h-3.5" strokeWidth={1.8} />}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteSessionPending({ id: s.id, name: s.customerName });
+                      }}
+                      title="Excluir conversa"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-alert-soft)] hover:text-[var(--color-alert)] transition-colors flex-shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                    </button>
+                  </div>
                 )}
               </div>
               );
@@ -1457,6 +1755,26 @@ export function ChatView({
         onConfirm={async () => { await onDeleteSession(deleteSessionPending!.id); }}
         confirmLabel="Excluir"
         confirmLoadingLabel="Excluindo..."
+      />
+
+      <ConfirmModal
+        open={bulkDeleteConfirm}
+        title="Excluir conversas?"
+        message={`Excluir ${selectedJids.size} conversa${selectedJids.size === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`}
+        onClose={() => setBulkDeleteConfirm(false)}
+        onConfirm={runBulkDelete}
+        confirmLabel="Excluir"
+        confirmLoadingLabel="Excluindo..."
+      />
+
+      <ConfirmModal
+        open={markAllReadConfirm}
+        title="Marcar todas como lidas?"
+        message={`Zerar o contador de não lidas em ${visibleUnreadJids.length} conversa${visibleUnreadJids.length === 1 ? '' : 's'}.`}
+        onClose={() => setMarkAllReadConfirm(false)}
+        onConfirm={runMarkAllVisibleRead}
+        confirmLabel="Marcar"
+        confirmLoadingLabel="Marcando..."
       />
     </>
   );

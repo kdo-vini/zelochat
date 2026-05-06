@@ -134,6 +134,49 @@ export async function markSessionRead(token: string, jid: string): Promise<void>
   await parseResponse(response);
 }
 
+export async function markSessionsRead(token: string, jids: string[]): Promise<void> {
+  if (jids.length === 0) return;
+  const response = await apiFetch(apiUrl('/api/sessions/bulk/read'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ jids }),
+  });
+  await parseResponse(response);
+}
+
+export async function archiveSessions(token: string, jids: string[]): Promise<void> {
+  if (jids.length === 0) return;
+  const response = await apiFetch(apiUrl('/api/sessions/bulk/archive'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ jids }),
+  });
+  await parseResponse(response);
+}
+
+export async function bulkDeleteSessions(token: string, jids: string[]): Promise<void> {
+  if (jids.length === 0) return;
+  const response = await apiFetch(apiUrl('/api/sessions/bulk/delete'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ jids }),
+  });
+  await parseResponse(response);
+}
+
+export async function setSessionPinned(
+  token: string,
+  jid: string,
+  pinned: boolean,
+): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/pin`), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ pinned }),
+  });
+  await parseResponse(response);
+}
+
 export async function setSessionAutoReply(
   token: string,
   jid: string,

@@ -214,6 +214,7 @@ export interface StoredSession {
   profilePicUrl?: string;
   escalatedAt?: string | null;
   acknowledgedAt?: string | null;
+  pinned?: boolean;
 }
 
 interface SessionRow {
@@ -229,6 +230,7 @@ interface SessionRow {
   profile_pic_url: string | null;
   escalated_at: string | null;
   acknowledged_at: string | null;
+  pinned: boolean | null;
   updated_at: string;
 }
 
@@ -747,6 +749,7 @@ function mapSession(family: SessionFamily, messages: ChatMessage[] = [], latestC
     profilePicUrl: family.primary.profile_pic_url || family.latest.profile_pic_url || undefined,
     escalatedAt,
     acknowledgedAt,
+    pinned: family.rows.some((row) => row.pinned === true),
   };
 }
 
@@ -754,7 +757,7 @@ async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
     .from('zelochat_sessions')
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at')
     .eq('empresa_id', empresaId)
     .order('updated_at', { ascending: false });
 
@@ -826,7 +829,7 @@ export async function ensureSession(params: {
       .from('zelochat_sessions')
       .update(payload)
       .eq('id', existing.id)
-      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, updated_at')
+      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at')
       .single();
 
     if (error) {
@@ -839,7 +842,7 @@ export async function ensureSession(params: {
   const { data, error } = await supabase
     .from('zelochat_sessions')
     .insert(payload)
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at')
     .single();
 
   if (error) {
@@ -1183,6 +1186,127 @@ export async function markSessionAsRead(jid: string, empresaId: string): Promise
     {
       type: 'session_read',
       data: { sessionId: jid, unreadCount: 0 },
+    },
+    empresaId,
+  );
+}
+
+/**
+ * Batch-zero unread_count for many session families in a single UPDATE.
+ * Each jid is resolved to its family rows so multi-row contacts are fully cleared.
+ * Emits one `session_read` WS event per jid so the existing front-end handler
+ * (useWhatsAppSessions.ts) updates each session in place without a custom event type.
+ */
+export async function markSessionsAsRead(jids: string[], empresaId: string): Promise<void> {
+  if (!empresaId || !Array.isArray(jids) || jids.length === 0) return;
+
+  const allRows = await fetchAllSessionRows(empresaId);
+  const targetIds = new Set<string>();
+  const acceptedJids: string[] = [];
+
+  for (const jid of jids) {
+    const targetKey = buildContactKey(phoneFromJid(jid) || jid);
+    const familyRows = allRows.filter(
+      (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey,
+    );
+    if (familyRows.length === 0) continue;
+    acceptedJids.push(jid);
+    for (const row of familyRows) targetIds.add(row.id);
+  }
+
+  if (targetIds.size === 0) return;
+
+  const supabase = getServiceSupabase();
+  const { error } = await supabase
+    .from('zelochat_sessions')
+    .update({ unread_count: 0, updated_at: new Date().toISOString() })
+    .in('id', Array.from(targetIds));
+
+  if (error) throw new Error(error.message);
+
+  for (const jid of acceptedJids) {
+    broadcast(
+      {
+        type: 'session_read',
+        data: { sessionId: jid, unreadCount: 0 },
+      },
+      empresaId,
+    );
+  }
+}
+
+/**
+ * Batch-archive sessions. Sets status='archived' and clears escalated_at so
+ * archived items don't keep ringing the SLA timer. Emits one
+ * `session_status_changed` WS event per jid (existing handler covers it).
+ */
+export async function archiveSessions(jids: string[], empresaId: string): Promise<void> {
+  if (!empresaId || !Array.isArray(jids) || jids.length === 0) return;
+
+  const allRows = await fetchAllSessionRows(empresaId);
+  const targetIds = new Set<string>();
+  const acceptedJids: string[] = [];
+
+  for (const jid of jids) {
+    const targetKey = buildContactKey(phoneFromJid(jid) || jid);
+    const familyRows = allRows.filter(
+      (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey,
+    );
+    if (familyRows.length === 0) continue;
+    acceptedJids.push(jid);
+    for (const row of familyRows) targetIds.add(row.id);
+  }
+
+  if (targetIds.size === 0) return;
+
+  const supabase = getServiceSupabase();
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('zelochat_sessions')
+    .update({ status: 'archived', escalated_at: null, updated_at: now })
+    .eq('empresa_id', empresaId)
+    .in('id', Array.from(targetIds));
+
+  if (error) throw new Error(error.message);
+
+  for (const jid of acceptedJids) {
+    broadcast(
+      {
+        type: 'session_status_changed',
+        data: { sessionId: jid, empresaId, status: 'archived' as SessionStatus, escalatedAt: null },
+      },
+      empresaId,
+    );
+  }
+}
+
+/**
+ * Toggle the pinned flag on every row in the session family for a jid.
+ * Pinned conversations float to the top of the chat list.
+ */
+export async function setSessionPinned(
+  jid: string,
+  pinned: boolean,
+  empresaId: string,
+): Promise<void> {
+  if (!empresaId) return;
+
+  const family = await fetchSessionFamily(empresaId, jid);
+  if (!family) return;
+
+  const supabase = getServiceSupabase();
+  const { error } = await supabase
+    .from('zelochat_sessions')
+    .update({ pinned, updated_at: new Date().toISOString() })
+    .eq('empresa_id', empresaId)
+    .in('id', family.rows.map((row) => row.id));
+
+  if (error) throw new Error(error.message);
+
+  broadcast(
+    {
+      type: 'session_pinned',
+      data: { sessionId: jid, pinned },
     },
     empresaId,
   );

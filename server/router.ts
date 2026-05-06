@@ -38,6 +38,9 @@ import {
   updateSessionProfilePic,
   setAutoReply,
   markSessionAsRead,
+  markSessionsAsRead,
+  archiveSessions,
+  setSessionPinned,
   deleteSession,
   updateSessionName,
   formatPhone,
@@ -790,6 +793,68 @@ router.get('/api/sessions', async (req: Request, res: Response) => {
 });
 
 /**
+ * Bulk routes — registered before `/api/sessions/:jid/...` so the `:jid`
+ * placeholder never swallows the literal "bulk" segment.
+ * Body shape (all three): `{ jids: string[] }`.
+ */
+function parseBulkJids(body: unknown): string[] | null {
+  if (!body || typeof body !== 'object') return null;
+  const raw = (body as { jids?: unknown }).jids;
+  if (!Array.isArray(raw)) return null;
+  const jids = raw.filter((j): j is string => typeof j === 'string' && j.length > 0);
+  if (jids.length === 0) return null;
+  return jids;
+}
+
+router.post('/api/sessions/bulk/read', async (req: Request, res: Response) => {
+  const jids = parseBulkJids(req.body);
+  if (!jids) {
+    res.status(400).json({ error: 'Campo obrigatório: jids (array de JIDs).' });
+    return;
+  }
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await markSessionsAsRead(jids, empresaId);
+    res.json({ ok: true, count: jids.length });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+router.post('/api/sessions/bulk/archive', async (req: Request, res: Response) => {
+  const jids = parseBulkJids(req.body);
+  if (!jids) {
+    res.status(400).json({ error: 'Campo obrigatório: jids (array de JIDs).' });
+    return;
+  }
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await archiveSessions(jids, empresaId);
+    res.json({ ok: true, count: jids.length });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+router.post('/api/sessions/bulk/delete', async (req: Request, res: Response) => {
+  const jids = parseBulkJids(req.body);
+  if (!jids) {
+    res.status(400).json({ error: 'Campo obrigatório: jids (array de JIDs).' });
+    return;
+  }
+  try {
+    const empresaId = await requireEmpresaId(req);
+    // Reuse single-session delete to preserve message-cleanup lifecycle.
+    for (const jid of jids) {
+      await deleteSession(jid, empresaId);
+    }
+    res.json({ ok: true, count: jids.length });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
  * GET /api/sessions/:jid — Returns a specific session with its messages.
  */
 router.get('/api/sessions/:jid', async (req: Request, res: Response) => {
@@ -1475,6 +1540,17 @@ router.post('/api/sessions/:jid/read', async (req: Request, res: Response) => {
     const empresaId = await requireEmpresaId(req);
     await markSessionAsRead(req.params.jid, empresaId);
     res.json({ ok: true });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+router.post('/api/sessions/:jid/pin', async (req: Request, res: Response) => {
+  const pinned = !!(req.body as { pinned?: unknown })?.pinned;
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await setSessionPinned(req.params.jid, pinned, empresaId);
+    res.json({ ok: true, pinned });
   } catch (error) {
     sendAuthError(res, error);
   }
