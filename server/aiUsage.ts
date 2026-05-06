@@ -8,7 +8,8 @@ export type AiUsageFeature =
   | 'ai_manager'
   | 'ai_simulator'
   | 'ai_trigger_parse'
-  | 'ai_transcription';
+  | 'ai_transcription'
+  | 'pix_receipt_validation';
 
 export type AiUsageStatus = 'success' | 'error' | 'rate_limited';
 

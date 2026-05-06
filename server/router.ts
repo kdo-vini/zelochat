@@ -46,7 +46,15 @@ import {
   formatPhone,
   serializeForJid,
 } from './messageHandler.js';
-import { generateAndSendReply, getAI, confirmPendingOrder, cancelPendingOrder, getPendingOrder } from './ai.js';
+import {
+  generateAndSendReply,
+  getAI,
+  confirmPendingOrder,
+  cancelPendingOrder,
+  getPendingOrder,
+  pendingOrderRequiresPixReceipt,
+  sendPixReceiptRequiredMessage,
+} from './ai.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { redactInstance } from './redact.js';
@@ -267,7 +275,11 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
         if (pending) {
           try {
             if (isHardConfirm) {
-              await confirmPendingOrder(remoteJid, empresaId);
+              if (pendingOrderRequiresPixReceipt(pending)) {
+                await sendPixReceiptRequiredMessage(remoteJid, empresaId);
+              } else {
+                await confirmPendingOrder(remoteJid, empresaId);
+              }
             } else {
               await cancelPendingOrder(remoteJid, empresaId);
             }
@@ -326,7 +338,11 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
           recentlyHandled.set(`${empresaId}:${remoteJid}`, Date.now());
           try {
             if (isSoftConfirm) {
-              await confirmPendingOrder(remoteJid, empresaId);
+              if (pendingOrderRequiresPixReceipt(pending)) {
+                await sendPixReceiptRequiredMessage(remoteJid, empresaId);
+              } else {
+                await confirmPendingOrder(remoteJid, empresaId);
+              }
             } else {
               await cancelPendingOrder(remoteJid, empresaId);
             }
@@ -1870,12 +1886,13 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
             products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
-            aiEnabled, aiCanReengagePending, deliveryConfig } = req.body;
+            aiEnabled, aiCanReengagePending, deliveryConfig, pixReceiptConfig } = req.body;
     setConfig(empresaId, { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
                            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
                            ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}),
                            ...(typeof aiCanReengagePending === 'boolean' ? { aiCanReengagePending } : {}),
-                           ...(deliveryConfig !== undefined ? { deliveryConfig } : {}) });
+                           ...(deliveryConfig !== undefined ? { deliveryConfig } : {}),
+                           ...(pixReceiptConfig !== undefined ? { pixReceiptConfig } : {}) });
     if (typeof aiCanReengagePending === 'boolean') {
       try {
         await getServiceSupabase()

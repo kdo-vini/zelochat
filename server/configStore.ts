@@ -15,6 +15,11 @@ export interface CatalogCategoriaGroup {
 }
 
 import { getServiceSupabase } from './supabase.js';
+import {
+  DEFAULT_PIX_RECEIPT_CONFIG,
+  normalizePixReceiptConfig,
+  type PixReceiptConfig,
+} from '../src/domain/pixReceipt.js';
 
 export type CatalogProduct = { name: string; price: number; available: boolean; unitBased?: boolean };
 
@@ -25,6 +30,14 @@ export interface BusinessConfig {
   openTime: string;
   closeTime: string;
   closedDays: string[];
+  /**
+   * IANA timezone for this empresa (e.g. 'America/Sao_Paulo', 'America/Manaus',
+   * 'America/Rio_Branco'). Used by AI date helpers so the prompt's "agora" and
+   * the business-hours checks reflect the empresa's local clock — Brazil spans
+   * UTC-2 to UTC-5 across states. Falls back to 'America/Sao_Paulo' when the DB
+   * value is missing or invalid.
+   */
+  timezone: string;
   address: string;
   pixKey: string;
   products: CatalogProduct[];
@@ -44,7 +57,10 @@ export interface BusinessConfig {
   /** Allow the AI to proactively reference unconfirmed pending orders in conversation. */
   aiCanReengagePending: boolean;
   deliveryConfig: DeliveryConfig | null;
+  pixReceiptConfig: PixReceiptConfig;
 }
+
+export const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
 const DEFAULT_CONFIG: BusinessConfig = {
   name: '',
@@ -53,6 +69,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   openTime: '',
   closeTime: '',
   closedDays: [],
+  timezone: DEFAULT_TIMEZONE,
   address: '',
   pixKey: '',
   products: [],
@@ -66,6 +83,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   // posture for the global kill-switch: until we've read the DB, we don't reply.
   aiCanReengagePending: false,
   deliveryConfig: null,
+  pixReceiptConfig: DEFAULT_PIX_RECEIPT_CONFIG,
 };
 
 // Keyed by empresaId — one config entry per authenticated empresa.
@@ -114,6 +132,25 @@ function normalizeClosedDays(value: unknown): string[] {
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function isValidIanaTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeTimezone(value: unknown): string {
+  const raw = normalizeText(value);
+  if (!raw) return DEFAULT_TIMEZONE;
+  return isValidIanaTimezone(raw) ? raw : DEFAULT_TIMEZONE;
+}
+
+export function getEmpresaTimezone(empresaId: string): string {
+  return getConfig(empresaId).timezone || DEFAULT_TIMEZONE;
 }
 
 function normalizeNumber(value: unknown): number {
@@ -234,6 +271,13 @@ export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
       patch.blockedDates = normalizeBlockedDates(patch.blockedDates);
     }
   }
+  if ('pixReceiptConfig' in patch) {
+    if (patch.pixReceiptConfig === undefined) {
+      delete patch.pixReceiptConfig;
+    } else {
+      patch.pixReceiptConfig = normalizePixReceiptConfig(patch.pixReceiptConfig);
+    }
+  }
   configMap.set(empresaId, { ...existing, ...patch });
 }
 
@@ -261,12 +305,21 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   let data: unknown;
   let error: unknown;
   try {
-    const result = await supabase
+    let result = await supabase
       .from('empresa_perfil')
-      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento')
+      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
       .eq('id', empresaId)
       .abortSignal(controller.signal)
       .maybeSingle();
+    if (result.error?.message?.includes('pix_receipt_config')) {
+      console.warn('[configStore] pix_receipt_config not available yet; hydrating without receipt gate config.');
+      result = await supabase
+        .from('empresa_perfil')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+        .eq('id', empresaId)
+        .abortSignal(controller.signal)
+        .maybeSingle();
+    }
     data = result.data;
     error = result.error;
   } finally {
@@ -282,12 +335,14 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     manager_phone?: string | null;
     ai_instructions?: string | null;
     delivery_config?: unknown;
+    pix_receipt_config?: unknown;
     ai_enabled?: boolean;
     ai_can_reengage_pending?: boolean;
     blocked_dates?: unknown;
     horario_abertura?: string | null;
     horario_fechamento?: string | null;
     dias_fechamento?: unknown;
+    timezone?: string | null;
   });
 
   const userId = normalizeText(row.user_id);
@@ -328,6 +383,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   patch.managerPhone = normalizeText(row.manager_phone);
   patch.aiInstructions = normalizeText(row.ai_instructions);
   patch.deliveryConfig = normalizeDeliveryConfig(row.delivery_config);
+  patch.pixReceiptConfig = normalizePixReceiptConfig(row.pix_receipt_config);
   patch.products = products;
   patch.catalogHierarchy = buildCatalogHierarchy(
     categoriasRes.data ?? [],
@@ -343,6 +399,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   if (closeTime) patch.closeTime = closeTime;
   if (openTime && closeTime) patch.hours = `${openTime}–${closeTime}`;
   if (row && 'dias_fechamento' in row) patch.closedDays = normalizeClosedDays(row.dias_fechamento);
+  patch.timezone = normalizeTimezone(row.timezone);
   setConfig(empresaId, patch);
   hydratedAiSettings.set(empresaId, Date.now());
 }

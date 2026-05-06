@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
-import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown, Activity, RefreshCw } from 'lucide-react';
-import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse } from '../../types';
+import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown, Activity, RefreshCw, ReceiptText } from 'lucide-react';
+import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse, PixReceiptConfig } from '../../types';
+import { normalizePixReceiptConfig } from '../../domain/pixReceipt';
 import {
   getOwnerResponse,
   generateAgentInstructions,
@@ -19,7 +20,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { ConfirmModal } from '../ConfirmModal';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
-type AIConfigsState = Pick<ZeloState, 'aiInstructions' | 'blockedDates' | 'dailyContext' | 'managerHistory'>;
+type AIConfigsState = Pick<ZeloState, 'aiInstructions' | 'blockedDates' | 'dailyContext' | 'managerHistory' | 'pixReceiptConfig'>;
 
 const SectionHeader = ({ icon: Icon, title, subtitle, action }: {
   icon: typeof Clock;
@@ -82,6 +83,7 @@ interface AIConfigsViewProps {
   updateQuickResponse: (id: string, patch: Partial<Pick<QuickResponse, 'trigger' | 'response'>>) => Promise<void>;
   deleteQuickResponse: (id: string) => Promise<void>;
   saveAiInstructions: (instructions: string) => Promise<boolean>;
+  savePixReceiptConfig: (config: PixReceiptConfig) => Promise<boolean>;
   token: string | null;
   refreshEmpresa?: () => Promise<void>;
 }
@@ -99,6 +101,7 @@ export const AIConfigsView = ({
   updateQuickResponse,
   deleteQuickResponse,
   saveAiInstructions,
+  savePixReceiptConfig,
   token,
   refreshEmpresa,
 }: AIConfigsViewProps) => {
@@ -132,6 +135,8 @@ export const AIConfigsView = ({
   const [promptJustSaved, setPromptJustSaved] = useState(false);
   const [promptGenerating, setPromptGenerating] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
+  const [pixReceiptDraft, setPixReceiptDraft] = useState<PixReceiptConfig>(() => normalizePixReceiptConfig(state.pixReceiptConfig));
+  const [pixReceiptSaving, setPixReceiptSaving] = useState(false);
   const qrDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [qrSaveState, setQrSaveState] = useState<Record<string, 'saving' | 'saved'>>({});
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -158,6 +163,10 @@ export const AIConfigsView = ({
   useEffect(() => {
     void loadAiHealth();
   }, [loadAiHealth]);
+
+  useEffect(() => {
+    setPixReceiptDraft(normalizePixReceiptConfig(state.pixReceiptConfig));
+  }, [state.pixReceiptConfig]);
 
   useEffect(() => {
     if (hasPromptDraft) {
@@ -341,6 +350,24 @@ export const AIConfigsView = ({
     }, 400);
   };
 
+  const handleSavePixReceiptConfig = async () => {
+    const normalized = normalizePixReceiptConfig(pixReceiptDraft);
+    setPixReceiptSaving(true);
+    try {
+      const ok = await savePixReceiptConfig(normalized);
+      if (!ok) throw new Error('save failed');
+      setState(prev => ({ ...prev, pixReceiptConfig: normalized }));
+      await refreshEmpresa?.();
+      await loadAiHealth();
+      toast.success('Configuração de comprovante Pix salva.');
+    } catch (err) {
+      console.error('[AIConfigs] pix receipt save failed:', err);
+      toast.error('Não consegui salvar a configuração do comprovante Pix.');
+    } finally {
+      setPixReceiptSaving(false);
+    }
+  };
+
   const booleanHealthItem = (
     label: string,
     healthValue: boolean | undefined,
@@ -359,6 +386,12 @@ export const AIConfigsView = ({
     booleanHealthItem('Telefone do gerente', aiHealth?.managerPhonePresent, 'Informado'),
     booleanHealthItem('Pix', aiHealth?.pixPresent, 'Informado'),
     booleanHealthItem('IA ligada', aiHealth?.aiEnabled, 'Sim', 'Não'),
+    booleanHealthItem(
+      'Comprovante Pix',
+      aiHealth?.pixReceiptConfigured,
+      aiHealth?.pixReceiptEnabled ? 'Ativo' : 'Desligado',
+      'Pendente',
+    ),
     {
       label: 'Datas bloqueadas',
       value: aiHealth ? String(aiHealth.blockedDatesCount) : 'Verificando...',
@@ -408,6 +441,100 @@ export const AIConfigsView = ({
             <p className="px-4 pb-3 text-[11.5px] text-[var(--color-alert)]">{aiHealthError}</p>
           )}
         </div>
+
+        {pixReceiptDraft.available && (
+          <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
+            <SectionHeader
+              icon={ReceiptText}
+              title="Confirmação por comprovante Pix"
+              subtitle="A IA só finaliza pedidos Pix depois de conferir o comprovante enviado pelo cliente"
+              action={
+                <button
+                  type="button"
+                  onClick={() => setPixReceiptDraft(prev => ({ ...prev, enabled: !prev.enabled }))}
+                  className={`w-10 h-5 rounded-full relative transition-colors ${
+                    pixReceiptDraft.enabled ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
+                  }`}
+                  title={pixReceiptDraft.enabled ? 'Desativar' : 'Ativar'}
+                >
+                  <span className={`absolute top-[2px] w-4 h-4 bg-white rounded-full shadow-sm transition-all ${
+                    pixReceiptDraft.enabled ? 'right-[2px]' : 'left-[2px]'
+                  }`} />
+                </button>
+              }
+            />
+            <div className="p-4 space-y-4">
+              <p className="text-[12.5px] text-[var(--color-ink-muted)] leading-relaxed">
+                Leitura automática por imagem ou PDF. O sistema confere beneficiário, valor e data, mas não promete confirmação bancária de dinheiro recebido.
+              </p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <label className="space-y-1.5">
+                  <span className="text-[12px] font-semibold text-[var(--color-ink-muted)]">Nomes aceitos do beneficiário</span>
+                  <textarea
+                    value={pixReceiptDraft.beneficiaryNames.join('\n')}
+                    onChange={(e) => setPixReceiptDraft(prev => normalizePixReceiptConfig({
+                      ...prev,
+                      beneficiaryNames: e.target.value.split('\n'),
+                    }))}
+                    placeholder="Um nome por linha, como aparece no comprovante"
+                    className={`${FIELD} min-h-[92px] resize-y`}
+                  />
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-3">
+                  <label className="space-y-1.5">
+                    <span className="text-[12px] font-semibold text-[var(--color-ink-muted)]">Tolerância de valor (R$)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={pixReceiptDraft.valueTolerance}
+                      onChange={(e) => setPixReceiptDraft(prev => normalizePixReceiptConfig({ ...prev, valueTolerance: Number(e.target.value) }))}
+                      className={FIELD}
+                    />
+                  </label>
+                  <label className="space-y-1.5">
+                    <span className="text-[12px] font-semibold text-[var(--color-ink-muted)]">Validade do comprovante (h)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={168}
+                      value={pixReceiptDraft.maxAgeHours}
+                      onChange={(e) => setPixReceiptDraft(prev => normalizePixReceiptConfig({ ...prev, maxAgeHours: Number(e.target.value) }))}
+                      className={FIELD}
+                    />
+                  </label>
+                  <label className="space-y-1.5">
+                    <span className="text-[12px] font-semibold text-[var(--color-ink-muted)]">Se houver dúvida</span>
+                    <select
+                      value={pixReceiptDraft.fallback}
+                      onChange={(e) => setPixReceiptDraft(prev => normalizePixReceiptConfig({ ...prev, fallback: e.target.value }))}
+                      className={FIELD}
+                    >
+                      <option value="escalate_human">Chamar atendente</option>
+                      <option value="ask_retry">Pedir outro comprovante</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              {pixReceiptDraft.enabled && pixReceiptDraft.beneficiaryNames.length === 0 && (
+                <p className="text-[12px] text-[var(--color-alert)]">
+                  Informe pelo menos um nome de beneficiário para ativar a confirmação automática com segurança.
+                </p>
+              )}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSavePixReceiptConfig}
+                  disabled={pixReceiptSaving || (pixReceiptDraft.enabled && pixReceiptDraft.beneficiaryNames.length === 0)}
+                  className="h-9 px-3 rounded-md text-[12.5px] font-semibold flex items-center gap-1.5 bg-[var(--color-ink)] text-white hover:bg-[var(--color-ink-soft)] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+                >
+                  {pixReceiptSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  Salvar comprovante Pix
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
           <SectionHeader

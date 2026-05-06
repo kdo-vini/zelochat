@@ -60,7 +60,8 @@ ALTER TABLE public.empresa_perfil
   ADD COLUMN IF NOT EXISTS whatsmiau_phone text,
   ADD COLUMN IF NOT EXISTS notify_customer_preparing boolean NOT NULL DEFAULT true,
   ADD COLUMN IF NOT EXISTS notify_customer_ready boolean NOT NULL DEFAULT true,
-  ADD COLUMN IF NOT EXISTS notify_customer_out_for_delivery boolean NOT NULL DEFAULT true;
+  ADD COLUMN IF NOT EXISTS notify_customer_out_for_delivery boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS pix_receipt_config jsonb;
 
 -- whatsmiau_instance: per-tenant Whatsmiau Evolution instance name. UNIQUE
 -- only when not-NULL so empresas without a connected WhatsApp share NULL.
@@ -257,7 +258,9 @@ CREATE TABLE IF NOT EXISTS public.zelochat_orders (
   payment_method text,
   delivery_fee numeric,
   delivery_neighborhood text,
-  observations text CHECK (observations IS NULL OR length(observations) <= 500)
+  observations text CHECK (observations IS NULL OR length(observations) <= 500),
+  pix_receipt_message_id text,
+  pix_receipt_analysis jsonb
 );
 
 CREATE OR REPLACE FUNCTION public.zelochat_orders_set_updated_at()
@@ -328,6 +331,11 @@ CREATE TABLE IF NOT EXISTS public.zelochat_pending_orders (
   delivery_neighborhood text,
   delivery_fee numeric,
   observations text CHECK (observations IS NULL OR length(observations) <= 500),
+  pix_receipt_status text NOT NULL DEFAULT 'not_required'
+    CHECK (pix_receipt_status IN ('not_required', 'required', 'approved', 'rejected')),
+  pix_receipt_message_id text,
+  pix_receipt_analysis jsonb,
+  pix_receipt_rejection_reason text,
   CONSTRAINT zelochat_pending_orders_unique_per_jid UNIQUE (empresa_id, remote_jid)
 );
 

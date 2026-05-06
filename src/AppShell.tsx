@@ -331,6 +331,7 @@ export default function AppShell() {
       },
       aiInstructions: empresa.ai_instructions ?? prev.aiInstructions,
       deliveryConfig: empresa.delivery_config ?? prev.deliveryConfig,
+      pixReceiptConfig: empresa.pix_receipt_config ?? prev.pixReceiptConfig,
       blockedDates:   empresa.blocked_dates   ?? prev.blockedDates,
       managerHistory: empresa.manager_history ?? prev.managerHistory,
     }));
@@ -362,6 +363,10 @@ export default function AppShell() {
 
   const saveAiInstructions = useCallback(async (instructions: string): Promise<boolean> => {
     return saveEmpresa({ ai_instructions: instructions });
+  }, [saveEmpresa, state.pixReceiptConfig]);
+
+  const savePixReceiptConfig = useCallback(async (config: typeof state.pixReceiptConfig): Promise<boolean> => {
+    return saveEmpresa({ pix_receipt_config: config });
   }, [saveEmpresa]);
 
   useEffect(() => {
@@ -499,6 +504,7 @@ export default function AppShell() {
           dailyContext: s.dailyContext,
           aiInstructions: s.aiInstructions,
           deliveryConfig: s.deliveryConfig,
+          pixReceiptConfig: s.pixReceiptConfig,
           managerPhone: s.businessInfo.managerPhone,
         }),
       });
@@ -538,7 +544,7 @@ export default function AppShell() {
     syncConfigTimerRef.current = setTimeout(() => { void syncConfigToServer(state); }, 600);
     return () => { if (syncConfigTimerRef.current) clearTimeout(syncConfigTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, catalog.categorias, catalog.subcategorias]);
+  }, [state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, state.pixReceiptConfig, catalog.categorias, catalog.subcategorias]);
 
   // Count of conversations that have ANY unread message (WhatsApp-style: 1 dot
   // per chat, not a sum of message counts). The per-conversation badge in
@@ -721,8 +727,9 @@ export default function AppShell() {
       blockedDates: state.blockedDates,
       dailyContext: state.dailyContext,
       managerHistory: state.managerHistory,
+      pixReceiptConfig: state.pixReceiptConfig,
     }),
-    [state.aiInstructions, state.blockedDates, state.dailyContext, state.managerHistory],
+    [state.aiInstructions, state.blockedDates, state.dailyContext, state.managerHistory, state.pixReceiptConfig],
   );
   const settingsState = useMemo(
     () => ({
@@ -1030,6 +1037,7 @@ export default function AppShell() {
                   updateQuickResponse={updateQuickResponse}
                   deleteQuickResponse={deleteQuickResponse}
                   saveAiInstructions={saveAiInstructions}
+                  savePixReceiptConfig={savePixReceiptConfig}
                   token={token}
                   refreshEmpresa={refreshEmpresa}
                 />

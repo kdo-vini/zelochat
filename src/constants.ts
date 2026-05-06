@@ -1,4 +1,5 @@
 import type { Order, ZeloState } from "./types";
+import { DEFAULT_PIX_RECEIPT_CONFIG } from "./domain/pixReceipt";
 
 export const INITIAL_STATE: ZeloState = {
   products: [],
@@ -7,6 +8,7 @@ export const INITIAL_STATE: ZeloState = {
   sessions: [],
   aiInstructions: "",
   deliveryConfig: null,
+  pixReceiptConfig: DEFAULT_PIX_RECEIPT_CONFIG,
   quickResponses: [],
   dailyContext: [],
   triggers: [],

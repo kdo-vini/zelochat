@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-06',
+    category: 'big',
+    title: 'IA pode conferir comprovante Pix',
+    description: 'Lojas habilitadas podem exigir comprovante por imagem ou PDF antes da IA confirmar pedidos pagos via Pix.',
+  },
+  {
     date: '2026-05-05',
     category: 'medium',
     title: 'IA agora espera o cliente terminar de digitar',

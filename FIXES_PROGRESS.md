@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-04 Sprint 51):** consumo de IA do ZeloChat agora e agregado por empresa para o admin interno, e pedidos com "cento"/"meio cento" usam regra deterministica no backend ou escalam para humano quando houver duvida.
+**Latest execution note (2026-05-06 Sprint 52):** piloto de comprovante Pix implementado como feature flag por empresa. Pedidos Pix podem ficar pendentes ate imagem/PDF aprovado por validador dedicado, com auditoria em pending/orders e fallback conservador. QA em preview validou Donutopia com PDF/imagem sinteticos e adicionou a migration 021 para alinhar a constraint de AI usage.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,18 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 52 (2026-05-06) - Comprovante Pix como trava de pedido
+
+- Piloto Pix - empresas habilitadas por `pix_receipt_config.available=true` ganham toggle no Cerebro IA para exigir comprovante por imagem/PDF antes de confirmar pedidos Pix - `src/components/views/AIConfigsView.tsx`, `src/AppShell.tsx`, `src/hooks/useEmpresaPerfil.ts`
+- Fluxo seguro - `criar_pedido` salva pedido Pix como pendente e pede comprovante; botao/texto "Confirmar" fica bloqueado ate aprovacao e a confirmacao final continua usando `confirmPendingOrder` - `server/ai.ts`, `server/router.ts`
+- Validador dedicado - OpenAI Responses API le imagem/PDF em servico isolado e o backend compara deterministicamente beneficiario, valor, data e confianca antes de aprovar - `server/pixReceiptValidator.ts`, `src/domain/pixReceipt.ts`, `tests/pixReceipt.test.ts`
+- Continuidade - config Pix agora tambem e normalizada no sync do backend; falha de cliente OpenAI vira rejeicao controlada; e pendencia Pix fica preservada quando o cliente ja recebeu o pedido de comprovante mas a persistencia do historico falhou - `server/configStore.ts`, `server/pixReceiptValidator.ts`, `server/ai.ts`
+- Auditoria e rollout - nova migration `020_pix_receipt_confirmation.sql` adiciona config em `empresa_perfil`, status/snapshot em `zelochat_pending_orders` e snapshot aprovado em `zelochat_orders`; uso de IA entra em `pix_receipt_validation`.
+- QA preview Donutopia - login no preview, card de comprovante Pix visivel em Cerebro IA com IA desligada, toggle/config salvando e validacao de beneficiario vazio bloqueando o submit. API `/api/ai/health` retornou `pixReceiptConfigured=true`, `pixReceiptEnabled=true`, `aiEnabled=false`.
+- QA multimodal - OpenAI Responses aprovou PDF e imagem sinteticos com beneficiario Donutopia, valor R$90,00 e data atual. Achado de QA: constraint de `zelochat_ai_usage_daily.feature` ainda rejeitava `pix_receipt_validation`; corrigido na migration `021_pix_receipt_ai_usage_feature.sql`.
+- QA ao vivo - comprovante real enviado pelo WhatsApp passou pelo webhook local, foi aprovado e confirmou o pedido Pix. Achado de QA: imagem real em base64 era barrada pelo parser global de 100kb antes do router; `/webhook/*` agora usa limite de 40mb e mantém o cap real de mídia no `messageHandler` - `server/index.ts`.
+- Verificacao - `npx tsx tests/pixReceipt.test.ts` (17 casos), `npm run lint`, `npx tsc --noEmit -p server/tsconfig.json`, `npm run build` e `git diff --check` passaram.
 
 ### Sprint 51 (2026-05-04) - Metricas internas de IA e unidade brasileira
 

@@ -1,4 +1,5 @@
 import type { BusinessConfig } from './configStore.js';
+import { isPixReceiptConfigActive } from '../src/domain/pixReceipt.js';
 
 export type AiHealthSummaryStatus = 'ready' | 'disabled' | 'needs_configuration';
 
@@ -8,6 +9,8 @@ export interface AiHealthReport {
   deliveryConfigConfigured: boolean;
   managerPhonePresent: boolean;
   pixPresent: boolean;
+  pixReceiptConfigured: boolean;
+  pixReceiptEnabled: boolean;
   aiEnabled: boolean;
   blockedDatesCount: number;
   safeSummaryStatus: AiHealthSummaryStatus;
@@ -34,6 +37,8 @@ export function buildAiHealthReport(config: BusinessConfig): AiHealthReport {
   const deliveryConfigConfigured = isDeliveryConfigConfigured(config);
   const managerPhonePresent = hasText(config.managerPhone);
   const pixPresent = hasText(config.pixKey);
+  const pixReceiptEnabled = config.pixReceiptConfig.available === true && config.pixReceiptConfig.enabled === true;
+  const pixReceiptConfigured = !pixReceiptEnabled || isPixReceiptConfigActive(config.pixReceiptConfig);
   const aiEnabled = config.aiEnabled === true;
   const blockedDatesCount = config.blockedDates.length;
 
@@ -42,6 +47,7 @@ export function buildAiHealthReport(config: BusinessConfig): AiHealthReport {
     && deliveryConfigConfigured
     && managerPhonePresent
     && pixPresent
+    && pixReceiptConfigured
     && aiEnabled;
 
   return {
@@ -50,6 +56,8 @@ export function buildAiHealthReport(config: BusinessConfig): AiHealthReport {
     deliveryConfigConfigured,
     managerPhonePresent,
     pixPresent,
+    pixReceiptConfigured,
+    pixReceiptEnabled,
     aiEnabled,
     blockedDatesCount,
     safeSummaryStatus: ready ? 'ready' : aiEnabled ? 'needs_configuration' : 'disabled',

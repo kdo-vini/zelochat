@@ -20,6 +20,8 @@ export interface AiHealthReport {
   deliveryConfigConfigured: boolean;
   managerPhonePresent: boolean;
   pixPresent: boolean;
+  pixReceiptConfigured: boolean;
+  pixReceiptEnabled: boolean;
   aiEnabled: boolean;
   blockedDatesCount: number;
   safeSummaryStatus: AiHealthSummaryStatus;

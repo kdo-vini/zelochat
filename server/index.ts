@@ -38,12 +38,18 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-// 100kb global cap protects every endpoint EXCEPT /api/send (6mb for media uploads)
-// and /api/ai/complete (512kb for chat history payloads). Both mount their own
-// parser at the route level. Without this skip, the global parser consumes/rejects
-// the body before the per-route override can run.
+// 100kb global cap protects every endpoint EXCEPT:
+// - /api/send (6mb for operator media uploads)
+// - /api/ai/complete (512kb for chat history payloads)
+// - /webhook/* (Whatsmiau media arrives as base64 JSON; messageHandler enforces
+//   the real decoded-media cap before persistence)
+// Without these skips, the global parser consumes/rejects the body before the
+// per-route override can run.
 app.use((req, res, next) => {
   if (req.path === '/api/send' || req.path === '/api/ai/complete') return next();
+  if (req.path === '/webhook' || req.path.startsWith('/webhook/')) {
+    return express.json({ limit: '40mb' })(req, res, next);
+  }
   return express.json({ limit: '100kb' })(req, res, next);
 });
 

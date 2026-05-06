@@ -3,7 +3,6 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions.js';
-import { OpenAI } from 'openai';
 import {
   getSession,
   addAssistantMessage,
@@ -11,9 +10,20 @@ import {
   waitForPendingAudioTranscriptions,
 } from './messageHandler.js';
 import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
-import { getConfig, ensureAiSettingsHydrated, type CatalogCategoriaGroup } from './configStore.js';
+import {
+  getConfig,
+  ensureAiSettingsHydrated,
+  getEmpresaTimezone,
+  DEFAULT_TIMEZONE,
+  type CatalogCategoriaGroup,
+} from './configStore.js';
 import { getServiceSupabase } from './supabase.js';
 import { buildContentForModel, buildImageContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
+import {
+  isPixPaymentMethod,
+  isPixReceiptConfigActive,
+  type PixReceiptAnalysis,
+} from '../src/domain/pixReceipt.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
 import { broadcast } from './ws.js';
 import { recordAiUsage } from './aiUsage.js';
@@ -26,6 +36,8 @@ import {
   type ReasonCategory,
 } from './escalation.js';
 import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
+import { getOpenAIClient } from './openaiClient.js';
+import { isSupportedPixReceiptAttachment, validatePixReceipt } from './pixReceiptValidator.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -179,6 +191,10 @@ interface PendingOrder {
   deliveryNeighborhood?: string;
   deliveryFee?: number;
   observations?: string;
+  pixReceiptStatus?: 'not_required' | 'required' | 'approved' | 'rejected';
+  pixReceiptMessageId?: string;
+  pixReceiptAnalysis?: PixReceiptAnalysis | null;
+  pixReceiptRejectionReason?: string;
 }
 
 interface PendingOrderRow {
@@ -197,6 +213,10 @@ interface PendingOrderRow {
   delivery_neighborhood: string | null;
   delivery_fee: number | string | null;
   observations: string | null;
+  pix_receipt_status?: string | null;
+  pix_receipt_message_id?: string | null;
+  pix_receipt_analysis?: PixReceiptAnalysis | null;
+  pix_receipt_rejection_reason?: string | null;
 }
 
 function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
@@ -216,6 +236,10 @@ function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
     deliveryNeighborhood: row.delivery_neighborhood || undefined,
     deliveryFee: row.delivery_fee != null ? Number(row.delivery_fee) : undefined,
     observations: row.observations || undefined,
+    pixReceiptStatus: (row.pix_receipt_status || 'not_required') as PendingOrder['pixReceiptStatus'],
+    pixReceiptMessageId: row.pix_receipt_message_id || undefined,
+    pixReceiptAnalysis: row.pix_receipt_analysis || null,
+    pixReceiptRejectionReason: row.pix_receipt_rejection_reason || undefined,
   };
 }
 
@@ -227,7 +251,7 @@ export async function getPendingOrder(jid: string, empresaId: string): Promise<P
   try {
     const { data, error } = await getServiceSupabase()
       .from('zelochat_pending_orders')
-      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id, order_type, delivery_address, delivery_neighborhood, delivery_fee, observations')
+      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id, order_type, delivery_address, delivery_neighborhood, delivery_fee, observations, pix_receipt_status, pix_receipt_message_id, pix_receipt_analysis, pix_receipt_rejection_reason')
       .eq('empresa_id', empresaId)
       .eq('remote_jid', jid)
       .gt('expires_at', new Date().toISOString())
@@ -264,6 +288,10 @@ async function setPendingOrder(order: PendingOrder): Promise<void> {
         delivery_neighborhood: order.deliveryNeighborhood || null,
         delivery_fee: order.deliveryFee ?? null,
         observations: order.observations || null,
+        pix_receipt_status: order.pixReceiptStatus || 'not_required',
+        pix_receipt_message_id: order.pixReceiptMessageId || null,
+        pix_receipt_analysis: order.pixReceiptAnalysis || null,
+        pix_receipt_rejection_reason: order.pixReceiptRejectionReason || null,
         expires_at: expiresAt,
       },
       { onConflict: 'empresa_id,remote_jid' },
@@ -277,6 +305,76 @@ export async function clearPendingOrder(jid: string, empresaId: string): Promise
     .delete()
     .eq('empresa_id', empresaId)
     .eq('remote_jid', jid);
+}
+
+export async function updatePendingOrderPixReceipt(
+  jid: string,
+  empresaId: string,
+  patch: {
+    status: 'required' | 'approved' | 'rejected';
+    messageId?: string;
+    analysis?: PixReceiptAnalysis | null;
+    rejectionReason?: string | null;
+  },
+): Promise<void> {
+  const { error } = await getServiceSupabase()
+    .from('zelochat_pending_orders')
+    .update({
+      pix_receipt_status: patch.status,
+      pix_receipt_message_id: patch.messageId ?? null,
+      pix_receipt_analysis: patch.analysis ?? null,
+      pix_receipt_rejection_reason: patch.rejectionReason ?? null,
+    })
+    .eq('empresa_id', empresaId)
+    .eq('remote_jid', jid);
+  if (error) throw new Error(`Falha ao atualizar comprovante Pix pendente: ${error.message}`);
+}
+
+export function pendingOrderRequiresPixReceipt(pending: PendingOrder): boolean {
+  const cfg = getConfig(pending.empresaId).pixReceiptConfig;
+  return isPixReceiptConfigActive(cfg)
+    && isPixPaymentMethod(pending.paymentMethod)
+    && pending.pixReceiptStatus !== 'approved';
+}
+
+export async function sendPixReceiptRequiredMessage(
+  jid: string,
+  empresaId: string,
+): Promise<void> {
+  const msg = 'Perfeito, para finalizar preciso do comprovante Pix. Pode enviar a imagem ou PDF por aqui. Assim que eu conferir beneficiário, valor e data, eu confirmo o pedido. 😊';
+  await sendAndPersistText(jid, msg, empresaId, { responseSource: 'ai_auto' });
+}
+
+export async function sendPixReceiptRejectedMessage(
+  jid: string,
+  empresaId: string,
+  reason: string,
+  fallback: 'ask_retry' | 'escalate_human',
+): Promise<void> {
+  if (fallback === 'escalate_human') {
+    await escalateSession(empresaId, jid, {
+      triggerId: null,
+      triggerKind: 'escalate_human',
+      triggerName: 'Comprovante Pix precisa de revisão',
+      reasonCategory: 'custom',
+      reasonText: reason,
+      customerMessageExcerpt: 'Comprovante Pix rejeitado automaticamente',
+    });
+    await sendAndPersistText(
+      jid,
+      `Recebi o comprovante, mas não consegui aprovar automaticamente: ${reason}\n\nVou chamar um atendente para conferir com segurança.`,
+      empresaId,
+      { responseSource: 'ai_auto' },
+    );
+    return;
+  }
+
+  await sendAndPersistText(
+    jid,
+    `Recebi o comprovante, mas não consegui aprovar: ${reason}\n\nPode enviar uma nova imagem ou PDF mais legível, por favor?`,
+    empresaId,
+    { responseSource: 'ai_auto' },
+  );
 }
 
 /**
@@ -320,6 +418,11 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   const pending = await getPendingOrder(jid, empresaId);
   if (!pending) {
     console.warn('[AI] confirmPendingOrder: No pending order found for JID:', jid);
+    return;
+  }
+  if (pendingOrderRequiresPixReceipt(pending)) {
+    console.warn('[AI] confirmPendingOrder blocked: Pix receipt is required and not approved for JID:', jid);
+    await sendPixReceiptRequiredMessage(jid, pending.empresaId);
     return;
   }
 
@@ -419,12 +522,15 @@ export function safeForPrompt(value: unknown, maxLen = 200): string {
 }
 
 /**
- * Brazil-timezone date helpers (review fix H5). Hoisted to module scope so any
- * function that needs "today" / "tomorrow" in BRT does not accidentally use UTC.
+ * Date helpers in the empresa's IANA timezone (review fix H5 + per-empresa TZ).
+ * Hoisted to module scope so any function that needs "today" / "tomorrow" does
+ * not accidentally use UTC. The `tz` parameter defaults to America/Sao_Paulo so
+ * callers that haven't been threaded through with empresa config still behave
+ * correctly for the original Brazil-only setup.
  */
-function toIsoBrazil(d: Date): string {
+function toIsoBrazil(d: Date, tz: string = DEFAULT_TIMEZONE): string {
   const parts = new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'America/Sao_Paulo',
+    timeZone: tz,
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).formatToParts(d);
   const y = parts.find((p) => p.type === 'year')?.value ?? '';
@@ -440,9 +546,38 @@ function isoToDisplayBR(isoDate: string): string {
   return `${d}/${m}/${y}`;
 }
 
-function dayLabelBrazil(d: Date): string {
+/**
+ * Friendly Brazilian Portuguese label for an IANA timezone, used in the AI
+ * system prompt so the model can phrase "X horas no horário de Y" naturally.
+ * Falls back to the IANA name itself for zones we haven't mapped — that's still
+ * unambiguous for the model even if it sounds technical.
+ */
+const TIMEZONE_FRIENDLY_LABEL: Record<string, string> = {
+  'America/Sao_Paulo': 'horário de Brasília',
+  'America/Belem': 'horário de Belém',
+  'America/Fortaleza': 'horário de Fortaleza',
+  'America/Recife': 'horário de Recife',
+  'America/Maceio': 'horário de Maceió',
+  'America/Bahia': 'horário da Bahia',
+  'America/Araguaina': 'horário de Araguaína',
+  'America/Cuiaba': 'horário de Cuiabá',
+  'America/Campo_Grande': 'horário de Campo Grande',
+  'America/Manaus': 'horário de Manaus',
+  'America/Boa_Vista': 'horário de Boa Vista',
+  'America/Porto_Velho': 'horário de Porto Velho',
+  'America/Rio_Branco': 'horário do Acre',
+  'America/Eirunepe': 'horário de Eirunepé',
+  'America/Santarem': 'horário de Santarém',
+  'America/Noronha': 'horário de Fernando de Noronha',
+};
+
+function timezoneFriendlyLabel(tz: string): string {
+  return TIMEZONE_FRIENDLY_LABEL[tz] ?? `fuso ${tz}`;
+}
+
+function dayLabelBrazil(d: Date, tz: string = DEFAULT_TIMEZONE): string {
   const dow = new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'America/Sao_Paulo', weekday: 'short',
+    timeZone: tz, weekday: 'short',
   }).format(d).toLowerCase().replace(/\./g, '');
   const map: Record<string, string> = {
     'dom': 'Dom', 'seg': 'Seg', 'ter': 'Ter', 'qua': 'Qua',
@@ -522,13 +657,13 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function collectRequestedDateIsos(text: string, now = new Date()): string[] {
+function collectRequestedDateIsos(text: string, now = new Date(), tz: string = DEFAULT_TIMEZONE): string[] {
   const isos = new Set<string>();
   const addIso = (iso: string | null) => {
     if (iso) isos.add(iso);
   };
 
-  const todayIso = toIsoBrazil(now);
+  const todayIso = toIsoBrazil(now, tz);
   const currentYear = Number(todayIso.slice(0, 4));
   const raw = text.toLowerCase();
 
@@ -560,15 +695,15 @@ function collectRequestedDateIsos(text: string, now = new Date()): string[] {
 
   const hasAfterTomorrow = /\bdepois\s+de\s+amanha\b/.test(normalized);
   if (hasAfterTomorrow) {
-    addIso(toIsoBrazil(new Date(now.getTime() + 2 * 86400000)));
+    addIso(toIsoBrazil(new Date(now.getTime() + 2 * 86400000), tz));
   }
   const withoutAfterTomorrow = normalized.replace(/\bdepois\s+de\s+amanha\b/g, '');
   if (/\bamanha\b/.test(withoutAfterTomorrow)) {
-    addIso(toIsoBrazil(new Date(now.getTime() + 86400000)));
+    addIso(toIsoBrazil(new Date(now.getTime() + 86400000), tz));
   }
 
   const wordText = normalized.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-  const currentWeekday = DAY_LABELS.indexOf(dayLabelBrazil(now));
+  const currentWeekday = DAY_LABELS.indexOf(dayLabelBrazil(now, tz));
   if (currentWeekday >= 0) {
     const targetWeekdays = new Set<number>();
     for (const alias of Object.keys(WEEKDAY_BY_NAME).sort((a, b) => b.length - a.length)) {
@@ -577,7 +712,7 @@ function collectRequestedDateIsos(text: string, now = new Date()): string[] {
     }
     for (const targetWeekday of targetWeekdays) {
       const deltaDays = (targetWeekday - currentWeekday + 7) % 7;
-      addIso(toIsoBrazil(new Date(now.getTime() + deltaDays * 86400000)));
+      addIso(toIsoBrazil(new Date(now.getTime() + deltaDays * 86400000), tz));
     }
   }
 
@@ -603,7 +738,8 @@ function findBlockedDateFromCustomerText(
   empresaId: string,
   text: string,
 ): { date: string; reason: string } | null {
-  const requestedDates = collectRequestedDateIsos(text);
+  const tz = getEmpresaTimezone(empresaId);
+  const requestedDates = collectRequestedDateIsos(text, new Date(), tz);
   if (!hasSchedulingIntentForBlockedDate(text, requestedDates.length)) return null;
   const blockedDates = getBlockedDates(empresaId);
   return requestedDates
@@ -671,9 +807,9 @@ export function minutesToDisplay(minutes: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function getBrazilTimeParts(d: Date): { hour: number; minute: number; label: string; minutes: number } {
+function getBrazilTimeParts(d: Date, tz: string = DEFAULT_TIMEZONE): { hour: number; minute: number; label: string; minutes: number } {
   const parts = new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'America/Sao_Paulo',
+    timeZone: tz,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -716,8 +852,8 @@ function isWithinOperatingWindow(minutes: number, window: OperatingWindow): bool
   return minutes >= window.openMinutes || minutes <= window.closeMinutes;
 }
 
-function isPastSameDaySchedule(isoDate: string, timeMinutes: number, now = new Date()): boolean {
-  return isoDate === toIsoBrazil(now) && timeMinutes <= getBrazilTimeParts(now).minutes;
+function isPastSameDaySchedule(isoDate: string, timeMinutes: number, now = new Date(), tz: string = DEFAULT_TIMEZONE): boolean {
+  return isoDate === toIsoBrazil(now, tz) && timeMinutes <= getBrazilTimeParts(now, tz).minutes;
 }
 
 function collectRequestedTimeMinutes(text: string): number[] {
@@ -795,10 +931,10 @@ function hasScheduleContextIntent(text: string): boolean {
   return /\b(pedido|pediu|pedir|pede|quero|queria|preciso|encomenda|encomendar|agendar|agenda|agendado|reservar|reserva|retirada|retirar|buscar|entrega|entregar|delivery|para|pra|pro|seria|dia|data|horario|hora|cento|salgado|salgados|doce|doces|bolo|bolos|kit|kits)\b/u.test(normalized);
 }
 
-function getDayLabelFromIso(isoDate: string): string {
+function getDayLabelFromIso(isoDate: string, tz: string = DEFAULT_TIMEZONE): string {
   const [year, month, day] = isoDate.split('-').map(Number);
   if (!year || !month || !day) return '';
-  return dayLabelBrazil(new Date(Date.UTC(year, month - 1, day, 12)));
+  return dayLabelBrazil(new Date(Date.UTC(year, month - 1, day, 12)), tz);
 }
 
 function findBusinessHoursIssueForSchedule(
@@ -808,7 +944,8 @@ function findBusinessHoursIssueForSchedule(
   now = new Date(),
 ): BusinessHoursIssue | null {
   const cfg = getConfig(empresaId);
-  const dayLabel = getDayLabelFromIso(pickupDate);
+  const tz = getEmpresaTimezone(empresaId);
+  const dayLabel = getDayLabelFromIso(pickupDate, tz);
   if (dayLabel && cfg.closedDays.includes(dayLabel)) {
     return { date: pickupDate, kind: 'closed_day', window: getOperatingWindow(empresaId), dayLabel };
   }
@@ -816,14 +953,14 @@ function findBusinessHoursIssueForSchedule(
   const window = getOperatingWindow(empresaId);
   const timeMinutes = parseTimeToMinutes(pickupTime);
   if (!window || timeMinutes === null) return null;
-  if (isPastSameDaySchedule(pickupDate, timeMinutes, now)) {
+  if (isPastSameDaySchedule(pickupDate, timeMinutes, now, tz)) {
     return {
       date: pickupDate,
       timeMinutes,
       kind: 'past_time',
       window,
       dayLabel,
-      nowMinutes: getBrazilTimeParts(now).minutes,
+      nowMinutes: getBrazilTimeParts(now, tz).minutes,
     };
   }
   if (isWithinOperatingWindow(timeMinutes, window)) return null;
@@ -845,12 +982,13 @@ function findBusinessHoursIssueFromCustomerText(
 ): BusinessHoursIssue | null {
   const window = getOperatingWindow(empresaId);
   const cfg = getConfig(empresaId);
-  const todayIso = toIsoBrazil(now);
-  const todayLabel = dayLabelBrazil(now);
-  const requestedDates = collectRequestedDateIsos(text, now);
+  const tz = getEmpresaTimezone(empresaId);
+  const todayIso = toIsoBrazil(now, tz);
+  const todayLabel = dayLabelBrazil(now, tz);
+  const requestedDates = collectRequestedDateIsos(text, now, tz);
   const requestedTimes = collectRequestedTimeMinutes(text);
   const hasIntent = hasOrderIntent(text);
-  const nowBr = getBrazilTimeParts(now);
+  const nowBr = getBrazilTimeParts(now, tz);
   if (!hasIntent && requestedTimes.length === 0) return null;
 
   if (requestedTimes.length > 0) {
@@ -860,13 +998,13 @@ function findBusinessHoursIssueFromCustomerText(
         ? [todayIso]
         : [];
     for (const date of datesForTimeCheck) {
-      const dayLabel = getDayLabelFromIso(date);
+      const dayLabel = getDayLabelFromIso(date, tz);
       if (dayLabel && cfg.closedDays.includes(dayLabel)) {
         return { date, timeMinutes: requestedTimes[0], kind: 'closed_day', window, dayLabel };
       }
       if (!window) continue;
       for (const timeMinutes of requestedTimes) {
-        if (isPastSameDaySchedule(date, timeMinutes, now)) {
+        if (isPastSameDaySchedule(date, timeMinutes, now, tz)) {
           return {
             date,
             timeMinutes,
@@ -924,7 +1062,8 @@ function evaluateScheduleContextText(
   text: string,
   now = new Date(),
 ): ScheduleContextGuard | null {
-  const requestedDates = collectRequestedDateIsos(text, now);
+  const tz = getEmpresaTimezone(empresaId);
+  const requestedDates = collectRequestedDateIsos(text, now, tz);
   const requestedTimes = collectRequestedTimeMinutes(text);
   if (requestedDates.length === 0) return null;
 
@@ -939,9 +1078,9 @@ function evaluateScheduleContextText(
     if (requestedTimes.length === 0) {
       const closedIssue = findBusinessHoursIssueForSchedule(empresaId, date, undefined, now);
       if (closedIssue) return { type: 'business_hours', issue: closedIssue };
-      if (date === toIsoBrazil(now)) {
+      if (date === toIsoBrazil(now, tz)) {
         const window = getOperatingWindow(empresaId);
-        const nowBr = getBrazilTimeParts(now);
+        const nowBr = getBrazilTimeParts(now, tz);
         if (window && !isWithinOperatingWindow(nowBr.minutes, window)) {
           return {
             type: 'business_hours',
@@ -950,7 +1089,7 @@ function evaluateScheduleContextText(
               timeMinutes: nowBr.minutes,
               kind: 'currently_closed',
               window,
-              dayLabel: getDayLabelFromIso(date),
+              dayLabel: getDayLabelFromIso(date, tz),
             },
           };
         }
@@ -1025,8 +1164,8 @@ export const __aiScheduleGuardsForTests = {
   findRecentScheduleContextGuard,
 };
 
-export function buildBusinessHoursReply(issue: BusinessHoursIssue): string {
-  const dateLabel = issue.date === toIsoBrazil(new Date())
+export function buildBusinessHoursReply(issue: BusinessHoursIssue, tz: string = DEFAULT_TIMEZONE): string {
+  const dateLabel = issue.date === toIsoBrazil(new Date(), tz)
     ? 'hoje'
     : isoToDisplayBR(issue.date);
   const windowText = issue.window
@@ -1058,21 +1197,12 @@ async function sendBusinessHoursReply(
   empresaId: string,
   issue: BusinessHoursIssue,
 ): Promise<string> {
-  const reply = buildBusinessHoursReply(issue);
+  const reply = buildBusinessHoursReply(issue, getEmpresaTimezone(empresaId));
   await sendAndPersistText(jid, reply, empresaId, { responseSource: 'ai_auto' });
   return reply;
 }
 
-let ai: OpenAI | null = null;
-
-export function getAI(): OpenAI {
-  if (!ai) {
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error('OPENAI_API_KEY not set');
-    ai = new OpenAI({ apiKey: key });
-  }
-  return ai;
-}
+export const getAI = getOpenAIClient;
 
 export type AvailableProduct = { name: string; price: number; available: boolean; unitBased?: boolean };
 
@@ -1383,11 +1513,12 @@ function phoneToJid(phone: string): string | null {
 async function fetchUpcomingOrders(empresaId: string): Promise<string> {
   try {
     const supabase = getServiceSupabase();
-    // FIX H5: Brazil timezone, not UTC — otherwise between 21h–23h59 BRT we'd
+    // FIX H5: empresa timezone, not UTC — otherwise around the day boundary we'd
     // skip today and double-count tomorrow.
+    const tz = getEmpresaTimezone(empresaId);
     const now = new Date();
-    const today = toIsoBrazil(now);
-    const in7Days = toIsoBrazil(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
+    const today = toIsoBrazil(now, tz);
+    const in7Days = toIsoBrazil(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000), tz);
 
     const { data, error } = await supabase
       .from('zelochat_orders')
@@ -1563,6 +1694,8 @@ async function createOrderInDb(
     deliveryNeighborhood?: string;
     deliveryFee?: number;
     observations?: string;
+    pixReceiptMessageId?: string;
+    pixReceiptAnalysis?: PixReceiptAnalysis | null;
   },
 ): Promise<string> {
   console.log('[AI] Creating order in DB for empresa:', empresaId, 'args:', JSON.stringify(args));
@@ -1581,6 +1714,8 @@ async function createOrderInDb(
       delivery_neighborhood: args.deliveryNeighborhood || null,
       delivery_fee: args.deliveryFee ?? null,
       observations: args.observations || null,
+      pix_receipt_message_id: args.pixReceiptMessageId || null,
+      pix_receipt_analysis: args.pixReceiptAnalysis || null,
       driver_id: null,
       status: 'pending',
       total: args.total,
@@ -1702,9 +1837,10 @@ export function buildSystemInstruction(
     ? `\n\nAVISOS DE HOJE:\n${cfg.dailyContext.map((c) => `- ${c.text}`).join('\n')}`
     : '';
 
+  const tz = getEmpresaTimezone(empresaId);
   const now = new Date();
-  const currentTimeBR = getBrazilTimeParts(now).label;
-  const todayLabel = dayLabelBrazil(now);
+  const currentTimeBR = getBrazilTimeParts(now, tz).label;
+  const todayLabel = dayLabelBrazil(now, tz);
   const isClosedToday = cfg.closedDays.includes(todayLabel);
   const operatingWindow = getOperatingWindow(empresaId);
   const operatingHoursStr = operatingWindow
@@ -1714,21 +1850,24 @@ export function buildSystemInstruction(
     ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
     : '';
 
-  const todayISO = toIsoBrazil(now);
-  const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000));
+  const todayISO = toIsoBrazil(now, tz);
+  const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000), tz);
   const todayBR = isoToDisplayBR(todayISO);
   const tomorrowBR = isoToDisplayBR(tomorrowISO);
   const nextDays: string[] = [];
   for (let i = 1; i <= 7; i++) {
     const d = new Date(now.getTime() + i * 86400000);
-    const iso = toIsoBrazil(d);
-    nextDays.push(`${dayLabelBrazil(d)} = ${isoToDisplayBR(iso)} (${iso})`);
+    const iso = toIsoBrazil(d, tz);
+    nextDays.push(`${dayLabelBrazil(d, tz)} = ${isoToDisplayBR(iso)} (${iso})`);
   }
   const nextDaysStr = nextDays.join(', ');
 
   const triggersBlock = triggers.length > 0
     ? triggers.map((t) => `- id=${t.id} [${t.kind}] "${t.name}": ${t.conditionDescription}`).join('\n')
     : '- (nenhum gatilho configurado)';
+  const pixReceiptObjective = isPixReceiptConfigActive(cfg.pixReceiptConfig)
+    ? '7. Se o pagamento for Pix, NÃO peça confirmação manual por texto: chame criar_pedido normalmente. O sistema vai salvar o pedido como pendente e pedir o comprovante Pix antes de confirmar.'
+    : '7. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.';
 
   return `Você é o assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
@@ -1739,7 +1878,7 @@ FORMATAÇÃO NO WHATSAPP:
 - Para títulos simples de cardápio, prefira *Bebidas*, *Combos*, *Doces e Salgados*.
 
 DATA E HORA ATUAL (use SEMPRE, NUNCA invente datas ou anos):
-- Agora é ${todayLabel}, ${todayBR}, ${currentTimeBR} no horário de Brasília (interno: ${todayISO} ${currentTimeBR})
+- Agora é ${todayLabel}, ${todayBR}, ${currentTimeBR} no ${timezoneFriendlyLabel(tz)} (interno: ${todayISO} ${currentTimeBR} ${tz})
 - Amanhã é ${tomorrowBR} (interno: ${tomorrowISO})
 - Próximos 7 dias: ${nextDaysStr}
 - Ao interpretar datas relativas ("sábado", "semana que vem", "amanhã"), calcule SEMPRE a partir da data de hoje acima.
@@ -1826,7 +1965,7 @@ OBJETIVOS:
 4. ANTES de chamar criar_pedido, faça SEMPRE esta pergunta UMA vez: "Gostaria de alterar algo, ou tem alguma observação a fazer? 😊". Isso evita mudanças depois que o pedido for confirmado, já que edição pós-confirmação precisa ser tratada por um humano. Se o cliente disser "não"/"nada"/"tá ok", envie observations: "" na tool. Se mencionar algo (ex: "sem cebola", "ponto da carne", "deixar na portaria", "trocar coca por guaraná"), envie em observations. NUNCA chame criar_pedido sem antes ter feito essa pergunta E recebido a resposta do cliente.
 5. ASSIM QUE tiver TODOS os dados COLETADOS e a observação confirmada, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
 6. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
-7. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.
+${pixReceiptObjective}
 
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
@@ -2159,6 +2298,45 @@ export async function generateAndSendReply(
   if (pendingForEdit) {
     const lastMsg = session.messages.at(-1);
     const lastText = (lastMsg?.content ?? '').toLowerCase().trim();
+    const receiptRequired = pendingOrderRequiresPixReceipt(pendingForEdit);
+    if (
+      receiptRequired &&
+      lastMsg?.role === 'user' &&
+      isSupportedPixReceiptAttachment(lastMsg.attachment)
+    ) {
+      const receiptConfig = getConfig(resolvedEmpresaId).pixReceiptConfig;
+      try {
+        const result = await validatePixReceipt({
+          empresaId: resolvedEmpresaId,
+          attachment: lastMsg.attachment,
+          expectedTotal: pendingForEdit.total,
+          config: receiptConfig,
+        });
+        await updatePendingOrderPixReceipt(jid, resolvedEmpresaId, {
+          status: result.approved ? 'approved' : 'rejected',
+          messageId: lastMsg.waMessageId || lastMsg.id,
+          analysis: result.analysis,
+          rejectionReason: result.approved ? null : result.reason,
+        });
+        if (result.approved) {
+          await confirmPendingOrder(jid, resolvedEmpresaId);
+          return 'confirmed';
+        }
+        await sendPixReceiptRejectedMessage(jid, resolvedEmpresaId, result.reason, receiptConfig.fallback);
+        return 'receipt_rejected';
+      } catch (err) {
+        console.error('[AI] Pix receipt validation failed:', err);
+        const reason = 'não consegui ler o comprovante com segurança agora';
+        await updatePendingOrderPixReceipt(jid, resolvedEmpresaId, {
+          status: 'rejected',
+          messageId: lastMsg.waMessageId || lastMsg.id,
+          analysis: null,
+          rejectionReason: reason,
+        });
+        await sendPixReceiptRejectedMessage(jid, resolvedEmpresaId, reason, receiptConfig.fallback);
+        return 'receipt_rejected';
+      }
+    }
     const escalationIntent = detectEscalationIntentFromText(lastText);
     if (escalationIntent) {
       console.log(`[AI] Pending order + escalation intent detected for ${jid} — preserving pending row and handing off.`);
@@ -2185,12 +2363,16 @@ export async function generateAndSendReply(
     if (isAffirmative) {
       console.log(`[AI] Pending order: affirmative text detected ("${lastText}") — auto-confirming`);
       await confirmPendingOrder(jid, resolvedEmpresaId);
-      return 'confirmed';
+      return receiptRequired ? 'receipt_required' : 'confirmed';
     }
     if (isNegative) {
       console.log(`[AI] Pending order: negative text detected ("${lastText}") — auto-cancelling`);
       await cancelPendingOrder(jid, resolvedEmpresaId);
       return 'cancelled';
+    }
+    if (receiptRequired) {
+      await sendPixReceiptRequiredMessage(jid, resolvedEmpresaId);
+      return 'receipt_required';
     }
     // Ambiguous text → treat as edit intent (clear pending, re-engage AI)
     console.log(`[AI] Pending order detected as edit-intent for ${jid} — clearing and re-engaging.`);
@@ -2731,6 +2913,7 @@ export async function generateAndSendReply(
           const sanitizedPickupTime = safeForPrompt(args.pickupTime, 20);
           const sanitizedPayment = args.paymentMethod ? safeForPrompt(args.paymentMethod, 40) : undefined;
           const sanitizedObs = args.observations ? safeForPrompt(args.observations, 300) : '';
+          const requiresPixReceipt = isPixReceiptConfigActive(cfg.pixReceiptConfig) && isPixPaymentMethod(sanitizedPayment);
 
           // Persist pending order to Supabase (review fix C2 — survives restarts).
           // UPSERT semantics ensure two simultaneous criar_pedido calls don't create
@@ -2751,6 +2934,7 @@ export async function generateAndSendReply(
             deliveryNeighborhood: sanitizedNeighborhood,
             deliveryFee: args.deliveryFee,
             observations: sanitizedObs || undefined,
+            pixReceiptStatus: requiresPixReceipt ? 'required' : 'not_required',
           });
           const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
           const isDelivery = args.orderType === 'delivery';
@@ -2760,6 +2944,19 @@ export async function generateAndSendReply(
             : '';
           const obsLine = sanitizedObs ? `\n📝 Obs: ${sanitizedObs}` : '';
           const summary = `📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}`;
+
+          if (requiresPixReceipt) {
+            const receiptMsg = `Perfeito, separei seu pedido:\n\n${summary}\n\nPara finalizar, preciso do comprovante Pix. Pode enviar a imagem ou PDF por aqui. Assim que eu conferir beneficiário, valor e data, eu confirmo o pedido.`;
+            await addToolMessage(jid, `Aguardando comprovante Pix: ${summary}`, toolCall.id, resolvedEmpresaId);
+            const waMessageId = await sendTextMessage(jid, receiptMsg, resolvedEmpresaId);
+            try {
+              await addAssistantMessage(jid, receiptMsg, undefined, resolvedEmpresaId, undefined, { waMessageId });
+            } catch (persistErr) {
+              console.error('[AI] Failed to persist Pix receipt request after sending; keeping pending row:', persistErr);
+            }
+            console.log(`[AI] Pending Pix order queued awaiting receipt: ${jid}`);
+            return receiptMsg;
+          }
 
           try {
             await sendButtonMessage(

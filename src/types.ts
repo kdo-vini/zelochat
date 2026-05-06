@@ -177,6 +177,18 @@ export interface DeliveryConfig {
   neighborhoods: DeliveryNeighborhood[];
 }
 
+export type PixReceiptFallback = 'ask_retry' | 'escalate_human';
+
+export interface PixReceiptConfig {
+  available: boolean;
+  enabled: boolean;
+  beneficiaryNames: string[];
+  valueTolerance: number;
+  maxAgeHours: number;
+  fallback: PixReceiptFallback;
+  minConfidence: number;
+}
+
 export interface ZeloState {
   products: Product[];
   blockedDates: { date: string, reason: string }[];
@@ -184,6 +196,7 @@ export interface ZeloState {
   sessions: ChatSession[];
   aiInstructions: string;
   deliveryConfig: DeliveryConfig | null;
+  pixReceiptConfig: PixReceiptConfig;
   quickResponses: QuickResponse[];
   dailyContext: { id: string, text: string }[];
   triggers: Trigger[];

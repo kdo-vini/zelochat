@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../services/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, PixReceiptConfig } from '../types';
+import { normalizePixReceiptConfig } from '../domain/pixReceipt';
 
 /** Subset of empresa_perfil columns relevant to ZeloChat */
 export interface EmpresaPerfil {
@@ -25,6 +26,7 @@ export interface EmpresaPerfil {
   manager_history: ChatMessage[] | null;
   /** Added via migration 011_delivery_config.sql — may be null if migration not yet run */
   delivery_config: { enabled: boolean; neighborhoods: { name: string; fee: number }[] } | null;
+  pix_receipt_config: PixReceiptConfig | null;
   /** Customer status notification toggles — added via add_out_for_delivery_status_and_customer_notify_toggles */
   notify_customer_preparing: boolean;
   notify_customer_ready: boolean;
@@ -163,6 +165,18 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] delivery_config not available (run migration 011):', m011Err.message);
     }
 
+    let pixReceiptConfig: PixReceiptConfig | null = null;
+    const { data: pixReceiptData, error: pixReceiptErr } = await supabase
+      .from('empresa_perfil')
+      .select('pix_receipt_config')
+      .eq('id', data.id)
+      .maybeSingle();
+    if (!pixReceiptErr && pixReceiptData) {
+      pixReceiptConfig = normalizePixReceiptConfig((pixReceiptData as { pix_receipt_config?: unknown }).pix_receipt_config);
+    } else if (pixReceiptErr) {
+      console.warn('[useEmpresaPerfil] pix_receipt_config not available (run migration 020):', pixReceiptErr.message);
+    }
+
     let notifyPreparing = true;
     let notifyReady = true;
     let notifyOutForDelivery = true;
@@ -195,6 +209,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       blocked_dates: blockedDates,
       manager_history: managerHistory,
       delivery_config: deliveryConfig,
+      pix_receipt_config: pixReceiptConfig,
       notify_customer_preparing: notifyPreparing,
       notify_customer_ready: notifyReady,
       notify_customer_out_for_delivery: notifyOutForDelivery,
@@ -270,6 +285,17 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         } else if (dbError.message.includes('delivery_config') && patch.delivery_config !== undefined) {
           console.warn('[useEmpresaPerfil] delivery_config column missing — saving without it. Run migration 011.');
           const { delivery_config: _dc, ...patchWithout } = patch as Partial<EmpresaPerfil>;
+          const { error: retryError } = await supabase
+            .from('empresa_perfil')
+            .update({ ...patchWithout, updated_at: new Date().toISOString() })
+            .eq('id', empresa.id);
+          if (retryError) {
+            setError(retryError.message);
+            return false;
+          }
+        } else if (dbError.message.includes('pix_receipt_config') && patch.pix_receipt_config !== undefined) {
+          console.warn('[useEmpresaPerfil] pix_receipt_config column missing - saving without it. Run migration 020.');
+          const { pix_receipt_config: _prc, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })
