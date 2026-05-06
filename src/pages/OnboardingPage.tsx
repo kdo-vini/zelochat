@@ -23,6 +23,33 @@ const BUSINESS_TYPES: BusinessType[] = [
   'Outro',
 ];
 
+/**
+ * Brazilian IANA timezones the AI uses when computing "agora", "hoje" and
+ * checking whether a pickup time has passed. Picked here in onboarding so the
+ * empresa do Acre não vê "horário de Brasília" e os checks de horário usam
+ * o relógio local da loja.
+ */
+const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'America/Sao_Paulo', label: 'Brasília / São Paulo (UTC-3)' },
+  { value: 'America/Bahia', label: 'Salvador / Bahia (UTC-3)' },
+  { value: 'America/Fortaleza', label: 'Fortaleza (UTC-3)' },
+  { value: 'America/Recife', label: 'Recife (UTC-3)' },
+  { value: 'America/Maceio', label: 'Maceió (UTC-3)' },
+  { value: 'America/Belem', label: 'Belém (UTC-3)' },
+  { value: 'America/Araguaina', label: 'Araguaína (UTC-3)' },
+  { value: 'America/Santarem', label: 'Santarém (UTC-3)' },
+  { value: 'America/Cuiaba', label: 'Cuiabá (UTC-4)' },
+  { value: 'America/Campo_Grande', label: 'Campo Grande (UTC-4)' },
+  { value: 'America/Manaus', label: 'Manaus (UTC-4)' },
+  { value: 'America/Boa_Vista', label: 'Boa Vista (UTC-4)' },
+  { value: 'America/Porto_Velho', label: 'Porto Velho (UTC-4)' },
+  { value: 'America/Rio_Branco', label: 'Rio Branco / Acre (UTC-5)' },
+  { value: 'America/Eirunepe', label: 'Eirunepé (UTC-5)' },
+  { value: 'America/Noronha', label: 'Fernando de Noronha (UTC-2)' },
+];
+
+const DEFAULT_TIMEZONE_OPTION = 'America/Sao_Paulo';
+
 export default function OnboardingPage() {
   const navigate = useNavigate();
   const { user, refreshProfile } = useAuth();
@@ -35,6 +62,7 @@ export default function OnboardingPage() {
 
   // Step 2 fields
   const [phone, setPhone] = useState('');
+  const [timezone, setTimezone] = useState<string>(DEFAULT_TIMEZONE_OPTION);
 
   const maskPhone = (value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 11);
@@ -116,6 +144,7 @@ export default function OnboardingPage() {
       nome_exibicao: companyName.trim(),
       contato: phone.replace(/\D/g, ''),
       tipo_negocio: businessType,
+      timezone,
       zelochat_onboarding_done: true,
       updated_at: new Date().toISOString(),
     };
@@ -292,6 +321,31 @@ export default function OnboardingPage() {
                         Apenas celular (ex: (11) 99999-9999). Fixos não funcionam no WhatsApp.
                       </p>
                     )}
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="timezone"
+                      className="block text-sm font-medium text-[#0B1120] mb-1"
+                    >
+                      Fuso horário <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      id="timezone"
+                      required
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                      className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] bg-white"
+                    >
+                      {TIMEZONE_OPTIONS.map((tz) => (
+                        <option key={tz.value} value={tz.value}>
+                          {tz.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1.5 text-xs text-[#64748B]">
+                      A IA usa esse fuso pra saber que horas são e checar horário de funcionamento.
+                    </p>
                   </div>
 
                   <div className="flex gap-3 mt-2">
