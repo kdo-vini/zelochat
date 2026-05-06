@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-06',
     category: 'big',
+    title: 'IA entende fotos e PDFs do cliente',
+    description: 'Agora a IA olha imagens (de produtos, embalagens, comprovantes) e arquivos PDF enviados no chat e responde com base no que viu — sem precisar o cliente descrever em texto.',
+  },
+  {
+    date: '2026-05-06',
+    category: 'big',
     title: 'IA pode conferir comprovante Pix',
     description: 'Lojas habilitadas podem exigir comprovante por imagem ou PDF antes da IA confirmar pedidos pagos via Pix.',
   },
