@@ -67,7 +67,6 @@ src/
     openaiService.ts       # AI proxy calls via /api/ai/complete
     zeloApi.ts             # Zelo PDV product mapping
     statePersistence.ts    # localStorage state save/load
-    geminiService.ts       # LEGACY — do not modify or expand
   components/views/        # One file per nav view (DashboardView, KanbanView, etc.)
 
 server/
@@ -303,6 +302,5 @@ Source: `server/billing.ts`. Front: `SubscriptionPaywall` + `BillingManagementCa
 - `src/domain/` has zero React or AI dependencies — keep it that way
 - Never call AI APIs from React components — always go through `/api/ai/complete`
 - Never import Baileys/server code from the frontend — use REST API or WebSocket
-- `geminiService.ts` is legacy — do not modify or expand
 - All chat state mutations go through `useWhatsAppSessions` hook — never mutate `sessions` directly in `App.tsx`
 - Delete operations must hit the backend first (or optimistic update + rollback on error)
