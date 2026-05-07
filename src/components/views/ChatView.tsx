@@ -205,10 +205,13 @@ export function ChatView({
     isResizingRef.current = true;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+    const startX = e.clientX;
+    const startWidth = listWidth;
 
     const onMove = (ev: MouseEvent) => {
       if (!isResizingRef.current) return;
-      const next = Math.min(LIST_WIDTH_MAX, Math.max(LIST_WIDTH_MIN, ev.clientX));
+      const delta = ev.clientX - startX;
+      const next = Math.min(LIST_WIDTH_MAX, Math.max(LIST_WIDTH_MIN, startWidth + delta));
       setListWidth(next);
     };
     const onUp = () => {

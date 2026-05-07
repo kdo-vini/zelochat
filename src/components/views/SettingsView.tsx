@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import { useToast } from '../../contexts/ToastContext';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Shield, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Lock, Sparkles, ArrowRightLeft } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2 } from 'lucide-react';
 import { ConfirmModal } from '../ConfirmModal';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
@@ -10,333 +10,32 @@ import { maskBrazilianPhone } from '../../domain/chat';
 import { getAiEnabled, setAiEnabled as setAiEnabledApi } from '../../services/waApi';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useSubscription, type ZeloChatSubscription } from '../../hooks/useSubscription';
-import { startCheckout, openPortal, BillingError } from '../../services/billingApi';
 import { PlanChangeModal } from './PlanChangeModal';
-import { PRICING } from '../../data/pricing';
+import { SectionCard } from '../shared/SectionCard';
+import { SubscriptionPaywall } from '../billing/BillingCards';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
 
-const SectionCard = ({ icon: Icon, title, children }: {
-  icon: typeof Clock;
-  title: string;
+/**
+ * Tier header for grouping setting sections by access frequency. Operação
+ * (daily/weekly), Negócio (configured during onboarding, occasionally tweaked).
+ * Account-level concerns (Plano, Conta) live in ProfileView, not here.
+ */
+const TierGroup = ({ label, description, children }: {
+  label: string;
+  description: string;
   children: React.ReactNode;
 }) => (
-  <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
-    <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-line)]">
-      <Icon className="w-4 h-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
-      <h3 className="text-[14px] font-semibold">{title}</h3>
+  <section className="space-y-3">
+    <div>
+      <h2 className="text-[12px] font-bold uppercase tracking-wider text-[var(--color-ink-faint)]">{label}</h2>
+      <p className="text-[12px] text-[var(--color-ink-muted)] mt-0.5">{description}</p>
     </div>
-    <div className="p-5">{children}</div>
-  </div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">{children}</div>
+  </section>
 );
 
-const SubscriptionPaywall = ({
-  subscription,
-  hasPdvOnly,
-  token,
-  onPlanChange,
-}: {
-  subscription: ZeloChatSubscription | null;
-  hasPdvOnly: boolean;
-  token: string | null;
-  onPlanChange: () => void;
-}) => {
-  const status = subscription?.status;
-  const [busy, setBusy] = useState<'checkout' | 'portal' | 'upgrade' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // P1.28/P1.29 — 'trialing' goes to portal to convert trial to paid (not checkout,
-  // which would create a duplicate subscription). 'paused' also goes to portal where
-  // Stripe lets the user resume the subscription.
-  const needsPortal = status === 'past_due' || status === 'unpaid' || status === 'trialing' || status === 'paused';
-
-  // Variante 1: user tem PDV ativo → upsell pro Pacote Gestão + Atendimento (147 = +88 vs 156 separado).
-  // Abre o PlanChangeModal nativo (currentPlan='pdv'), que chama /api/billing/change-plan
-  // pra modificar a subscription Stripe existente — sem redirecionar pro ZeloPDV.
-  if (hasPdvOnly) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-full bg-[var(--color-brand-soft)] flex items-center justify-center flex-shrink-0">
-            <Sparkles className="w-5 h-5 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
-          </div>
-          <div className="flex-1">
-            <p className="text-[14px] font-semibold leading-snug">Você já tem o ZeloPDV. Adicione o Atendimento.</p>
-            <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-1 leading-relaxed">
-              Faça upgrade para o <strong>Pacote Gestão + Atendimento</strong> e tenha PDV completo + IA no WhatsApp por
-              <strong> R$ {PRICING.bundle.priceBRL}/mês</strong> — você economiza <strong>R$ 9/mês</strong> em vez de assinar separado.
-            </p>
-          </div>
-        </div>
-
-        <ul className="space-y-2 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-3">
-          {[
-            'Mantém tudo que você já tem do ZeloPDV',
-            'Adiciona atendimento ilimitado pelo WhatsApp com IA',
-            'Cardápio sincronizado automaticamente',
-            'Cancela quando quiser, sem fidelidade',
-          ].map((item) => (
-            <li key={item} className="flex items-start gap-2 text-[12.5px] text-[var(--color-ink-soft)]">
-              <Check className="w-3.5 h-3.5 text-[var(--color-brand)] mt-0.5 flex-shrink-0" strokeWidth={2.5} />
-              <span>{item}</span>
-            </li>
-          ))}
-        </ul>
-
-        <button
-          type="button"
-          onClick={onPlanChange}
-          className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-60 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
-        >
-          <Sparkles className="w-4 h-4" strokeWidth={2} />
-          Upgrade para Pacote Gestão + Atendimento
-        </button>
-
-        <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
-          R$ {PRICING.bundle.priceBRL}/mês total · proporção do mês atual cobrada · cancele quando quiser
-        </p>
-      </div>
-    );
-  }
-
-  // Variante 2: user sem subscription ativa OU em status problemático → fluxo padrão Stripe Checkout.
-  const headline = (() => {
-    if (!subscription) return 'Ative o ZeloChat para conectar o WhatsApp';
-    if (status === 'past_due' || status === 'unpaid') return 'Sua assinatura está com pagamento pendente';
-    if (status === 'canceled' || status === 'incomplete_expired') return 'Sua assinatura foi encerrada';
-    if (status === 'paused') return 'Sua assinatura está pausada';
-    if (status === 'trialing') return 'Você está em período de avaliação';
-    if (status === 'incomplete') return 'Finalize a ativação da sua assinatura';
-    return 'Ative o ZeloChat para conectar o WhatsApp';
-  })();
-
-  const subline = (() => {
-    if (status === 'past_due' || status === 'unpaid') {
-      return 'Regularize o pagamento para reconectar o WhatsApp e voltar a atender clientes pela IA.';
-    }
-    if (status === 'paused') {
-      return 'Sua assinatura está pausada. Clique abaixo para reativá-la e voltar a atender clientes.';
-    }
-    if (status === 'trialing') {
-      return 'Seu período de avaliação ainda está ativo. Clique abaixo para converter para o plano pago e garantir acesso contínuo.';
-    }
-    if (status === 'canceled' || status === 'incomplete_expired') {
-      return 'Reative seu plano para conectar o WhatsApp e continuar usando a IA do ZeloChat.';
-    }
-    return 'Você pode configurar tudo agora — produtos, horários e a personalidade da IA. Para conectar o WhatsApp e começar a atender, ative o plano ZeloChat Pro.';
-  })();
-
-  const handleClick = async () => {
-    setError(null);
-    if (!token) {
-      setError('Sessão expirada. Faça login novamente.');
-      return;
-    }
-    const target = needsPortal ? 'portal' : 'checkout';
-    setBusy(target);
-    try {
-      const result = target === 'portal'
-        ? await openPortal(token)
-        : await startCheckout(token, 'chat');
-      window.location.href = result.url;
-    } catch (err) {
-      // Backend pode retornar PDV_UPGRADE_AVAILABLE caso detecte sub PDV ativa
-      // entre a hora do hook e a hora do click — abrimos o modal de troca de plano
-      // em vez de redirecionar pra fora do app.
-      if (err instanceof BillingError && err.code === 'PDV_UPGRADE_AVAILABLE') {
-        setBusy(null);
-        onPlanChange();
-        return;
-      }
-      // P1.28 — Status can change between render and click (e.g. trial just converted).
-      // Reload so the UI reflects the current state.
-      if (err instanceof BillingError && err.code === 'TRIALING_USE_PORTAL') {
-        window.location.reload();
-        return;
-      }
-      const msg = err instanceof BillingError
-        ? err.message
-        : 'Não foi possível abrir o pagamento. Tente novamente.';
-      setError(msg);
-      setBusy(null);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-full bg-[var(--color-brand-soft)] flex items-center justify-center flex-shrink-0">
-          <Lock className="w-5 h-5 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
-        </div>
-        <div className="flex-1">
-          <p className="text-[14px] font-semibold leading-snug">{headline}</p>
-          <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-1 leading-relaxed">
-            {subline}
-          </p>
-        </div>
-      </div>
-
-      <ul className="space-y-2 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-3">
-        {[
-          'Atendimento ilimitado pelo WhatsApp com IA',
-          'Kanban de produção e gestão de motoboys',
-          'Cardápio sincronizado com o Zelo PDV',
-          'Sem fidelidade — cancele quando quiser',
-        ].map((item) => (
-          <li key={item} className="flex items-start gap-2 text-[12.5px] text-[var(--color-ink-soft)]">
-            <Check className="w-3.5 h-3.5 text-[var(--color-brand)] mt-0.5 flex-shrink-0" strokeWidth={2.5} />
-            <span>{item}</span>
-          </li>
-        ))}
-      </ul>
-
-      {error && (
-        <div className="bg-[var(--color-alert-soft)] border border-[var(--color-alert)]/20 rounded-lg p-3">
-          <p className="text-[12.5px] text-[var(--color-alert)] font-medium">{error}</p>
-        </div>
-      )}
-
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={busy !== null}
-        className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-60 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
-      >
-        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" strokeWidth={2} />}
-        {busy
-          ? 'Abrindo pagamento…'
-          : status === 'trialing'
-            ? 'Ativar plano pago'
-            : status === 'paused'
-              ? 'Reativar plano'
-              : needsPortal
-                ? 'Regularizar pagamento'
-                : 'Ativar ZeloChat Pro'}
-      </button>
-
-      <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">
-        R$ {PRICING.chat.priceBRL}/mês · Sem fidelidade · Cancele a qualquer momento
-      </p>
-    </div>
-  );
-};
-
-const BillingManagementCard = ({
-  subscription,
-  token,
-  onPlanChange,
-}: {
-  subscription: ZeloChatSubscription | null;
-  token: string | null;
-  onPlanChange: () => void;
-}) => {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!subscription) return null;
-
-  const planLabel = subscription.plan_tier === 'bundle' ? 'Pacote Gestão + Atendimento' : 'ZeloChat Pro';
-  const periodEnd = subscription.manually_extended_until ?? subscription.current_period_end;
-  const periodEndFmt = periodEnd
-    ? new Date(periodEnd).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
-    : null;
-  const willCancel = !!subscription.cancel_at_period_end;
-  const canChangePlan =
-    subscription.status === 'active' &&
-    (subscription.plan_tier === 'chat' || subscription.plan_tier === 'bundle');
-
-  // P1.29 — Dynamic status badge instead of hardcoded "Ativo"
-  const STATUS_LABEL: Record<string, string> = {
-    active: 'Ativo',
-    trialing: 'Em avaliação',
-    paused: 'Pausado',
-    past_due: 'Pagamento pendente',
-    unpaid: 'Pagamento pendente',
-    canceled: 'Cancelado',
-    incomplete: 'Pendente',
-    incomplete_expired: 'Expirado',
-  };
-  const badgeClass = subscription.status === 'active'
-    ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
-    : subscription.status === 'paused' || subscription.status === 'trialing'
-      ? 'bg-amber-50 text-amber-700'
-      : 'bg-red-50 text-red-700';
-
-  const handleOpenPortal = async () => {
-    if (!token) {
-      setError('Sessão expirada. Faça login novamente.');
-      return;
-    }
-    setError(null);
-    setBusy(true);
-    try {
-      const result = await openPortal(token);
-      window.location.href = result.url;
-    } catch (err) {
-      const msg = err instanceof BillingError
-        ? err.message
-        : 'Não foi possível abrir o portal. Tente novamente.';
-      setError(msg);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <SectionCard icon={Sparkles} title="Assinatura">
-      <div className="space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[14px] font-semibold leading-snug">{planLabel}</p>
-            <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-0.5">
-              {willCancel
-                ? `Cancela em ${periodEndFmt ?? 'breve'} — você ainda pode reativar.`
-                : periodEndFmt
-                  ? `Próxima cobrança em ${periodEndFmt}.`
-                  : 'Plano ativo.'}
-            </p>
-          </div>
-          <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2 py-1 rounded-full ${badgeClass}`}>
-            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
-            {STATUS_LABEL[subscription.status] ?? subscription.status}
-          </span>
-        </div>
-
-        {error && (
-          <div className="bg-[var(--color-alert-soft)] border border-[var(--color-alert)]/20 rounded-lg p-3">
-            <p className="text-[12.5px] text-[var(--color-alert)] font-medium">{error}</p>
-          </div>
-        )}
-
-        {canChangePlan && (
-          <button
-            type="button"
-            onClick={onPlanChange}
-            disabled={busy}
-            className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand-soft)] hover:bg-[var(--color-brand-soft)]/80 disabled:opacity-60 text-[var(--color-brand-deep)] py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors border border-[var(--color-brand)]/20"
-          >
-            <ArrowRightLeft className="w-4 h-4" strokeWidth={1.8} />
-            Mudar de plano
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={handleOpenPortal}
-          disabled={busy}
-          className="w-full flex items-center justify-center gap-2 bg-[var(--color-surface-muted)] hover:bg-[var(--color-line)] disabled:opacity-60 text-[var(--color-ink)] py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors border border-[var(--color-line)]"
-        >
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCog className="w-4 h-4" strokeWidth={1.8} />}
-          {busy ? 'Abrindo portal…' : 'Gerenciar pagamento e cancelamento'}
-        </button>
-
-        <p className="text-[11px] text-[var(--color-ink-faint)] text-center">
-          Cartão, faturas e cancelamento ficam no portal seguro do Stripe.
-        </p>
-      </div>
-    </SectionCard>
-  );
-};
 
 interface WhatsAppIntegrationCardProps {
   token: string | null;
@@ -1151,8 +850,88 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
           <p className="text-[13px] text-[var(--color-ink-muted)]">Dados da empresa, horários e preferências do sistema.</p>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div className="space-y-5">
+        <div className="space-y-8">
+          <TierGroup
+            label="Operação"
+            description="Status do sistema e atendimento — muda no dia-a-dia."
+          >
+            <WhatsAppIntegrationCard
+              token={token}
+              subscriptionActive={subscriptionActive}
+              subscriptionLoading={subscriptionLoading}
+              subscription={subscription}
+              hasPdvOnly={hasPdvOnly}
+              onPlanChange={handlePlanChange}
+            />
+
+            <AiGlobalToggleCard token={token} />
+
+            <SectionCard icon={Clock} title="Horários e atendimento">
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <TimeInput
+                    label="Abre às"
+                    value={hoursDraft.openTime}
+                    onChange={v => setHoursDraft(p => ({ ...p, openTime: v }))}
+                  />
+                  <TimeInput
+                    label="Fecha às"
+                    value={hoursDraft.closeTime}
+                    onChange={v => setHoursDraft(p => ({ ...p, closeTime: v }))}
+                  />
+                </div>
+                <div>
+                  <label className={LABEL}>Dias de fechamento</label>
+                  <div className="flex gap-2 flex-wrap mt-2">
+                    {DAYS.map(day => {
+                      const closed = hoursDraft.closedDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          onClick={() => toggleDay(day)}
+                          className={`px-3 py-1.5 rounded-lg text-[12.5px] font-semibold transition-all ${
+                            closed
+                              ? 'bg-[var(--color-alert)] text-white'
+                              : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] hover:bg-[var(--color-line)]'
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[12px] text-[var(--color-ink-faint)] mt-2">
+                    Dias em vermelho = fechados. A IA não aceitará pedidos nesses dias.
+                  </p>
+                </div>
+
+                {isHoursDirty && (
+                  <button
+                    onClick={handleSaveHours}
+                    disabled={hoursSaveState === 'saving' || !isAuthenticated}
+                    className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+                  >
+                    {hoursSaveState === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {hoursSaveState === 'saving' ? 'Salvando…' : 'Salvar horários'}
+                  </button>
+                )}
+                {hoursSaveState === 'saved' && (
+                  <p className="text-[12.5px] text-[var(--color-brand)] text-center font-medium">✓ Salvo com sucesso</p>
+                )}
+                {hoursSaveState === 'error' && (
+                  <p className="text-[12.5px] text-[var(--color-alert)] text-center font-medium">Erro ao salvar. Verifique a conexão.</p>
+                )}
+                {isHoursDirty && !isAuthenticated && (
+                  <p className="text-[12px] text-[var(--color-warn)] text-center">Faça login em Perfil para salvar.</p>
+                )}
+              </div>
+            </SectionCard>
+          </TierGroup>
+
+          <TierGroup
+            label="Negócio"
+            description="Como sua lanchonete aparece pro cliente."
+          >
             <SectionCard icon={Smartphone} title="Dados da empresa">
               <div className="space-y-3">
                 {/* Source badge */}
@@ -1220,83 +999,6 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               </div>
             </SectionCard>
 
-            <SectionCard icon={Clock} title="Horários e atendimento">
-              <div className="space-y-3">
-                <div className="flex gap-3">
-                  <TimeInput
-                    label="Abre às"
-                    value={hoursDraft.openTime}
-                    onChange={v => setHoursDraft(p => ({ ...p, openTime: v }))}
-                  />
-                  <TimeInput
-                    label="Fecha às"
-                    value={hoursDraft.closeTime}
-                    onChange={v => setHoursDraft(p => ({ ...p, closeTime: v }))}
-                  />
-                </div>
-                <div>
-                  <label className={LABEL}>Dias de fechamento</label>
-                  <div className="flex gap-2 flex-wrap mt-2">
-                    {DAYS.map(day => {
-                      const closed = hoursDraft.closedDays.includes(day);
-                      return (
-                        <button
-                          key={day}
-                          onClick={() => toggleDay(day)}
-                          className={`px-3 py-1.5 rounded-lg text-[12.5px] font-semibold transition-all ${
-                            closed
-                              ? 'bg-[var(--color-alert)] text-white'
-                              : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] hover:bg-[var(--color-line)]'
-                          }`}
-                        >
-                          {day}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="text-[12px] text-[var(--color-ink-faint)] mt-2">
-                    Dias em vermelho = fechados. A IA não aceitará pedidos nesses dias.
-                  </p>
-                </div>
-
-                {isHoursDirty && (
-                  <button
-                    onClick={handleSaveHours}
-                    disabled={hoursSaveState === 'saving' || !isAuthenticated}
-                    className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
-                  >
-                    {hoursSaveState === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                    {hoursSaveState === 'saving' ? 'Salvando…' : 'Salvar horários'}
-                  </button>
-                )}
-                {hoursSaveState === 'saved' && (
-                  <p className="text-[12.5px] text-[var(--color-brand)] text-center font-medium">✓ Salvo com sucesso</p>
-                )}
-                {hoursSaveState === 'error' && (
-                  <p className="text-[12.5px] text-[var(--color-alert)] text-center font-medium">Erro ao salvar. Verifique a conexão.</p>
-                )}
-                {isHoursDirty && !isAuthenticated && (
-                  <p className="text-[12px] text-[var(--color-warn)] text-center">Faça login em Perfil para salvar.</p>
-                )}
-              </div>
-            </SectionCard>
-          </div>
-
-          <div className="space-y-5">
-            {subscriptionActive && (
-              <BillingManagementCard subscription={subscription} token={token} onPlanChange={handlePlanChange} />
-            )}
-            <WhatsAppIntegrationCard
-              token={token}
-              subscriptionActive={subscriptionActive}
-              subscriptionLoading={subscriptionLoading}
-              subscription={subscription}
-              hasPdvOnly={hasPdvOnly}
-              onPlanChange={handlePlanChange}
-            />
-
-            <AiGlobalToggleCard token={token} />
-
             <CustomerNotificationsCard empresa={empresa} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
 
             <DeliveryConfigCard state={state} setState={setState} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
@@ -1322,47 +1024,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
                 </div>
               </div>
             </SectionCard>
-
-            <SectionCard icon={Shield} title="Segurança e dados">
-              <div className="space-y-3">
-                <p className="text-[13px] text-[var(--color-ink-muted)]">
-                  Seus dados de faturamento e clientes são armazenados localmente e criptografados em trânsito.
-                </p>
-                <button
-                  onClick={() => {
-                    // P2.9 — LGPD compliance: strip all keys that contain customer PII
-                    // (chat history, orders, sessions) before exporting. Only
-                    // configuration-level keys are included. Chat data remains in
-                    // Supabase and is never written to a local file.
-                    const safeBackup = {
-                      _notice: 'Dados de conversa não incluídos neste backup. Apenas configurações do sistema.',
-                      businessInfo: state.businessInfo,
-                      triggers: state.triggers,
-                      quickResponses: state.quickResponses,
-                      aiInstructions: state.aiInstructions,
-                      drivers: state.drivers,
-                      blockedDates: state.blockedDates,
-                      deliveryConfig: state.deliveryConfig,
-                      // Intentionally excluded: sessions, orders, managerHistory, products
-                      // (products come from ZeloPDV and are not backed up here)
-                    };
-                    const blob = new Blob([JSON.stringify(safeBackup, null, 2)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `zelochat-config-${new Date().toISOString().split('T')[0]}.json`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] text-[var(--color-ink-soft)] py-2.5 rounded-lg text-[13.5px] font-semibold hover:bg-[var(--color-line)] transition-colors"
-                >
-                  Exportar backup de dados
-                </button>
-              </div>
-            </SectionCard>
-          </div>
+          </TierGroup>
         </div>
       </div>
 

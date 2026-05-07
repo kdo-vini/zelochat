@@ -751,7 +751,28 @@ export default function AppShell() {
       state.triggers,
     ],
   );
-  const profileState = useMemo(() => ({ profile: state.profile }), [state.profile]);
+  const profileState = useMemo(
+    () => ({
+      profile: state.profile,
+      aiInstructions: state.aiInstructions,
+      blockedDates: state.blockedDates,
+      businessInfo: state.businessInfo,
+      deliveryConfig: state.deliveryConfig,
+      drivers: state.drivers,
+      quickResponses: state.quickResponses,
+      triggers: state.triggers,
+    }),
+    [
+      state.profile,
+      state.aiInstructions,
+      state.blockedDates,
+      state.businessInfo,
+      state.deliveryConfig,
+      state.drivers,
+      state.quickResponses,
+      state.triggers,
+    ],
+  );
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-canvas)]">
@@ -1058,6 +1079,7 @@ export default function AppShell() {
                   setState={setState}
                   empresa={empresa}
                   saveEmpresa={saveEmpresa}
+                  token={token}
                 />
               )}
               {activeView === 'drivers' && (
