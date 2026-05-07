@@ -219,6 +219,13 @@ router.post('/internal/whatsapp/send-text', async (req: Request, res: Response) 
       return;
     }
 
+    const instance = await getOrCreateOwnInstanceForEmpresa(empresaId);
+    const connectionState = await fetchInstanceConnectionState(instance);
+    if (connectionState !== 'connected') {
+      res.status(409).json({ error: 'TECHNE_WHATSAPP_NOT_CONNECTED' });
+      return;
+    }
+
     const waMessageId = await sendTextMessage(jid, text, empresaId);
     await addAssistantMessage(jid, text, undefined, empresaId, undefined, {
       responseSource: 'human_manual',
@@ -245,6 +252,10 @@ router.post('/internal/whatsapp/send-text', async (req: Request, res: Response) 
     }
     if (message === 'TECHNE_EMPRESA_AMBIGUOUS') {
       res.status(503).json({ error: message });
+      return;
+    }
+    if (message === 'TECHNE_WHATSAPP_NOT_CONNECTED') {
+      res.status(409).json({ error: message });
       return;
     }
     console.error('[Router] Internal WhatsApp send error:', error);
