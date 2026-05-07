@@ -10,10 +10,16 @@ import type {
   TriggerKind,
 } from '../types';
 import { apiUrl, apiFetch } from '../config';
+import type { AiGlobalMode } from '../domain/aiSchedule';
 
 type SessionsResponse = { sessions: ChatSession[] };
 type SessionResponse = { session: ChatSession };
-export type AiHealthSummaryStatus = 'ready' | 'disabled' | 'needs_configuration';
+export type AiHealthSummaryStatus = 'ready' | 'disabled' | 'scheduled_off' | 'needs_configuration';
+export interface AiSettings {
+  mode: AiGlobalMode;
+  scheduleStart: string | null;
+  scheduleEnd: string | null;
+}
 export interface AiHealthReport {
   catalogLoaded: boolean;
   operatingHoursConfigured: boolean;
@@ -23,6 +29,8 @@ export interface AiHealthReport {
   pixReceiptConfigured: boolean;
   pixReceiptEnabled: boolean;
   aiEnabled: boolean;
+  aiMode: AiGlobalMode;
+  aiEffectiveEnabledNow: boolean;
   blockedDatesCount: number;
   safeSummaryStatus: AiHealthSummaryStatus;
 }
@@ -275,6 +283,13 @@ export async function getAiEnabled(token: string): Promise<boolean> {
   return body.enabled !== false;
 }
 
+export async function getAiSettings(token: string): Promise<AiSettings> {
+  const response = await apiFetch(apiUrl('/api/ai-settings'), {
+    headers: authHeaders(token),
+  });
+  return parseResponse<AiSettings>(response);
+}
+
 export async function getAiHealth(token: string): Promise<AiHealthReport> {
   const response = await apiFetch(apiUrl('/api/ai/health'), {
     headers: authHeaders(token),
@@ -302,6 +317,20 @@ export async function setAiEnabled(token: string, enabled: boolean): Promise<voi
     body: JSON.stringify({ enabled }),
   });
   await parseResponse(response);
+}
+
+export async function setAiSettings(token: string, payload: AiSettings): Promise<AiSettings> {
+  const response = await apiFetch(apiUrl('/api/ai-settings'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseResponse<AiSettings & { ok?: boolean }>(response);
+  return {
+    mode: body.mode,
+    scheduleStart: body.scheduleStart,
+    scheduleEnd: body.scheduleEnd,
+  };
 }
 
 export async function dispatchDriver(token: string, driverId: string, orderId: string): Promise<void> {

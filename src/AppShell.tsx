@@ -323,6 +323,7 @@ export default function AppShell() {
         openTime:     empresa.horario_abertura  ?? prev.businessInfo.openTime,
         closeTime:    empresa.horario_fechamento ?? prev.businessInfo.closeTime,
         closedDays:   empresa.dias_fechamento   ?? prev.businessInfo.closedDays,
+        timezone:     empresa.timezone          ?? prev.businessInfo.timezone,
       },
       profile: {
         ...prev.profile,

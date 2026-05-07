@@ -8,7 +8,7 @@ import { handleIncomingMessage, getSession } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
 import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscription } from './supabase.js';
-import { ensureAiSettingsHydrated, getConfig } from './configStore.js';
+import { ensureAiSettingsHydrated, isAiGloballyEnabledNow } from './configStore.js';
 import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
 import { scheduleReply } from './replyDebouncer.js';
@@ -196,7 +196,7 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // we treat aiEnabled as off until the DB confirms otherwise. ai.ts re-checks as
   // a second line of defense; both must agree before we burn an OpenAI call.
   await ensureAiSettingsHydrated(empresaId);
-  const globalAiEnabled = getConfig(empresaId).aiEnabled === true;
+  const globalAiEnabled = isAiGloballyEnabledNow(empresaId);
 
   if (session?.autoReply && !isEscalated && globalAiEnabled && process.env.OPENAI_API_KEY) {
     // messageId is optional — replyDebouncer skips the read receipt step when
@@ -222,7 +222,7 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
         const freshSession = await getSession(jid, empresaId);
         if (!freshSession?.autoReply) return;
         if (freshSession.status === 'escalated') return;
-        if (getConfig(empresaId).aiEnabled !== true) return;
+        if (!isAiGloballyEnabledNow(empresaId)) return;
 
         if (!checkAutoReplyRateLimit(empresaId, jid)) return;
 

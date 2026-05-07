@@ -19,6 +19,7 @@ export const INITIAL_STATE: ZeloState = {
     openTime: "",
     closeTime: "",
     closedDays: [],
+    timezone: "America/Sao_Paulo",
     specialty: "",
     address: "",
     phone: "",

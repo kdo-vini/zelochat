@@ -406,9 +406,11 @@ export async function buildDashboardOverview(
       id: 'ai-health',
       type: 'ai_config',
       title: 'Cérebro IA incompleto',
-      description: aiHealth.aiEnabled
-        ? 'Revise cardápio, horários, Pix ou telefone do gerente.'
-        : 'A IA está desligada para respostas automáticas.',
+      description: aiHealth.safeSummaryStatus === 'disabled'
+        ? 'A IA está desligada para respostas automáticas.'
+        : aiHealth.safeSummaryStatus === 'scheduled_off'
+          ? 'A IA está agendada e ficará ativa na próxima janela automática.'
+          : 'Revise cardápio, horários, Pix ou telefone do gerente.',
       action: 'ai-configs',
       tone: 'neutral',
     }));

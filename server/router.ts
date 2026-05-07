@@ -88,8 +88,29 @@ import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setCon
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
 import { cancelPendingReply } from './replyDebouncer.js';
 import type { ChatAttachment } from '../src/types.js';
+import {
+  DEFAULT_AI_GLOBAL_MODE,
+  normalizeAiGlobalMode,
+  normalizeAiScheduleTime,
+  type AiGlobalMode,
+} from '../src/domain/aiSchedule.js';
 
 const router = Router();
+
+interface AiSettingsPayload {
+  mode: AiGlobalMode;
+  scheduleStart: string | null;
+  scheduleEnd: string | null;
+}
+
+function readAiSettingsFromConfig(empresaId: string): AiSettingsPayload {
+  const config = getConfig(empresaId);
+  return {
+    mode: normalizeAiGlobalMode(config.aiMode) ?? DEFAULT_AI_GLOBAL_MODE,
+    scheduleStart: normalizeAiScheduleTime(config.aiScheduleStart),
+    scheduleEnd: normalizeAiScheduleTime(config.aiScheduleEnd),
+  };
+}
 
 // JIDs that recently had a button action handled — used to suppress duplicate text events
 // that WhatsApp/Whatsmiau sends for the same button click (within 5-second window)
@@ -978,7 +999,8 @@ router.get('/api/ai-enabled', async (req: Request, res: Response) => {
     // frontend could render the toggle as "on" when the DB says "off" simply because
     // the server just rebooted and nobody had bound this empresa yet.
     await ensureAiSettingsHydrated(empresaId);
-    res.json({ enabled: getConfig(empresaId).aiEnabled === true });
+    const settings = readAiSettingsFromConfig(empresaId);
+    res.json({ enabled: settings.mode !== 'always_off' });
   } catch (error) {
     sendAuthError(res, error);
   }
@@ -987,6 +1009,16 @@ router.get('/api/ai-enabled', async (req: Request, res: Response) => {
 /**
  * GET /api/ai/health — safe per-empresa readiness snapshot for AI operations.
  */
+router.get('/api/ai-settings', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await ensureAiSettingsHydrated(empresaId);
+    res.json(readAiSettingsFromConfig(empresaId));
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
 router.get('/api/ai/health', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
@@ -1039,17 +1071,62 @@ router.post('/api/ai-enabled', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const enabled = Boolean(req.body?.enabled);
-    setConfig(empresaId, { aiEnabled: enabled });
+    const mode: AiGlobalMode = enabled ? 'always_on' : 'always_off';
+    setConfig(empresaId, { aiEnabled: enabled, aiMode: mode });
     try {
       await getServiceSupabase()
         .from('empresa_perfil')
-        .update({ ai_enabled: enabled, updated_at: new Date().toISOString() })
+        .update({ ai_enabled: enabled, ai_mode: mode, updated_at: new Date().toISOString() })
         .eq('id', empresaId);
     } catch (err) {
-      console.warn('[Router] ai_enabled persist failed (column missing?):', err);
+      console.warn('[Router] ai_enabled/ai_mode persist failed (column missing?):', err);
     }
     broadcast({ type: 'ai_enabled', data: { enabled } }, empresaId);
     res.json({ ok: true, enabled });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+router.post('/api/ai-settings', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const mode = normalizeAiGlobalMode(req.body?.mode);
+    if (!mode) {
+      res.status(400).json({ error: 'Modo da IA inválido.' });
+      return;
+    }
+
+    const scheduleStart = normalizeAiScheduleTime(req.body?.scheduleStart);
+    const scheduleEnd = normalizeAiScheduleTime(req.body?.scheduleEnd);
+    if (mode === 'scheduled' && (!scheduleStart || !scheduleEnd || scheduleStart === scheduleEnd)) {
+      res.status(400).json({ error: 'Informe horários válidos para a agenda da IA.' });
+      return;
+    }
+
+    const aiEnabled = mode !== 'always_off';
+    setConfig(empresaId, {
+      aiEnabled,
+      aiMode: mode,
+      aiScheduleStart: scheduleStart,
+      aiScheduleEnd: scheduleEnd,
+    });
+    try {
+      await getServiceSupabase()
+        .from('empresa_perfil')
+        .update({
+          ai_enabled: aiEnabled,
+          ai_mode: mode,
+          ai_schedule_start: scheduleStart,
+          ai_schedule_end: scheduleEnd,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', empresaId);
+    } catch (err) {
+      console.warn('[Router] ai settings persist failed (column missing?):', err);
+    }
+    broadcast({ type: 'ai_enabled', data: { enabled: aiEnabled } }, empresaId);
+    res.json({ ok: true, ...readAiSettingsFromConfig(empresaId) });
   } catch (error) {
     sendAuthError(res, error);
   }

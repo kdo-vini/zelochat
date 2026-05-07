@@ -14,6 +14,7 @@ import {
   getConfig,
   ensureAiSettingsHydrated,
   getEmpresaTimezone,
+  isAiGloballyEnabledNow,
   DEFAULT_TIMEZONE,
   type CatalogCategoriaGroup,
 } from './configStore.js';
@@ -2274,7 +2275,7 @@ export async function generateAndSendReply(
   // explicitly `true`. `undefined` (DB query failed or empresa never seen) silences the AI
   // until the next message retries hydration. See configStore.ts for the rationale.
   await ensureAiSettingsHydrated(resolvedEmpresaId);
-  if (getConfig(resolvedEmpresaId).aiEnabled !== true) {
+  if (!isAiGloballyEnabledNow(resolvedEmpresaId)) {
     console.log(`[AI] Global AI disabled or not hydrated for empresa ${resolvedEmpresaId} — skipping reply to ${jid}`);
     return null;
   }

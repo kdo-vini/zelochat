@@ -111,8 +111,10 @@ export interface DashboardOverview {
     managerPhonePresent: boolean;
     pixPresent: boolean;
     aiEnabled: boolean;
+    aiMode: 'always_on' | 'always_off' | 'scheduled';
+    aiEffectiveEnabledNow: boolean;
     blockedDatesCount: number;
-    safeSummaryStatus: 'ready' | 'disabled' | 'needs_configuration';
+    safeSummaryStatus: 'ready' | 'disabled' | 'scheduled_off' | 'needs_configuration';
   } | null;
   attentionItems: DashboardAttentionItem[];
 }
@@ -207,6 +209,7 @@ export interface ZeloState {
     openTime: string;  // HH:MM, e.g. "09:00"
     closeTime: string; // HH:MM, e.g. "18:00"
     closedDays: string[];
+    timezone: string;
     specialty: string;
     address: string;
     phone: string;

@@ -220,6 +220,7 @@ function parseModelJson(content: string): { reply: string; actions: ModelAction[
 function buildSystemPrompt(config: BusinessConfig): string {
   const currentState = {
     aiEnabled: config.aiEnabled === true,
+    aiMode: config.aiMode ?? 'always_on',
     operatingHours: { openTime: config.openTime, closeTime: config.closeTime },
     closedDays: config.closedDays,
     blockedDates: config.blockedDates,
@@ -390,9 +391,11 @@ export async function runManagerAssistant(
         continue;
       }
       const enabled = payloadObj.enabled;
-      applyConfig({ aiEnabled: enabled });
+      const mode = enabled ? 'always_on' : 'always_off';
+      applyConfig({ aiEnabled: enabled, aiMode: mode });
       statePatch.aiEnabled = enabled;
       profilePatch.ai_enabled = enabled;
+      profilePatch.ai_mode = mode;
       broadcast({ type: 'ai_enabled', data: { enabled } }, empresaId);
       actionsApplied.push({ type, label: enabled ? 'IA ligada' : 'IA desligada' });
       continue;

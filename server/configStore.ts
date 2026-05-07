@@ -16,6 +16,14 @@ export interface CatalogCategoriaGroup {
 
 import { getServiceSupabase } from './supabase.js';
 import {
+  DEFAULT_AI_GLOBAL_MODE,
+  evaluateAiSchedule,
+  isAiGloballyEnabledNow as sharedIsAiGloballyEnabledNow,
+  normalizeAiGlobalMode,
+  normalizeAiScheduleTime,
+  type AiGlobalMode,
+} from '../src/domain/aiSchedule.js';
+import {
   DEFAULT_PIX_RECEIPT_CONFIG,
   normalizePixReceiptConfig,
   type PixReceiptConfig,
@@ -54,6 +62,9 @@ export interface BusinessConfig {
    * Always read via `getConfig().aiEnabled === true` to be safe.
    */
   aiEnabled?: boolean;
+  aiMode?: AiGlobalMode;
+  aiScheduleStart: string | null;
+  aiScheduleEnd: string | null;
   /** Allow the AI to proactively reference unconfirmed pending orders in conversation. */
   aiCanReengagePending: boolean;
   deliveryConfig: DeliveryConfig | null;
@@ -78,6 +89,8 @@ const DEFAULT_CONFIG: BusinessConfig = {
   dailyContext: [],
   aiInstructions: '',
   managerPhone: '',
+  aiScheduleStart: null,
+  aiScheduleEnd: null,
   // aiEnabled intentionally omitted — undefined means "not hydrated yet". Hydration
   // happens via loadAiSettingsFromDb / ensureAiSettingsHydrated. This is the fail-closed
   // posture for the global kill-switch: until we've read the DB, we don't reply.
@@ -254,6 +267,14 @@ export function getConfig(empresaId: string): BusinessConfig {
   return configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
 }
 
+export function evaluateGlobalAiState(empresaId: string, now = new Date()) {
+  return evaluateAiSchedule(getConfig(empresaId), now);
+}
+
+export function isAiGloballyEnabledNow(empresaId: string, now = new Date()): boolean {
+  return sharedIsAiGloballyEnabledNow(getConfig(empresaId), now);
+}
+
 export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
   const existing = configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
   const patch: Partial<BusinessConfig> = { ...c };
@@ -264,6 +285,21 @@ export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
   if ('closeTime' in patch) patch.closeTime = normalizeTime(patch.closeTime);
   if (patch.openTime && patch.closeTime) patch.hours = `${patch.openTime}–${patch.closeTime}`;
   if ('closedDays' in patch) patch.closedDays = normalizeClosedDays(patch.closedDays);
+  if ('aiMode' in patch) {
+    patch.aiMode = patch.aiMode === undefined ? undefined : normalizeAiGlobalMode(patch.aiMode) ?? DEFAULT_AI_GLOBAL_MODE;
+    if (patch.aiMode === 'always_off') patch.aiEnabled = false;
+    if (patch.aiMode === 'always_on' || patch.aiMode === 'scheduled') patch.aiEnabled = true;
+  }
+  if ('aiScheduleStart' in patch) {
+    patch.aiScheduleStart = patch.aiScheduleStart === undefined
+      ? existing.aiScheduleStart
+      : normalizeAiScheduleTime(patch.aiScheduleStart);
+  }
+  if ('aiScheduleEnd' in patch) {
+    patch.aiScheduleEnd = patch.aiScheduleEnd === undefined
+      ? existing.aiScheduleEnd
+      : normalizeAiScheduleTime(patch.aiScheduleEnd);
+  }
   if ('blockedDates' in patch) {
     if (patch.blockedDates === undefined) {
       delete patch.blockedDates;
@@ -307,12 +343,17 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   try {
     let result = await supabase
       .from('empresa_perfil')
-      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
       .eq('id', empresaId)
       .abortSignal(controller.signal)
       .maybeSingle();
-    if (result.error?.message?.includes('pix_receipt_config')) {
-      console.warn('[configStore] pix_receipt_config not available yet; hydrating without receipt gate config.');
+    if (
+      result.error?.message?.includes('pix_receipt_config')
+      || result.error?.message?.includes('ai_mode')
+      || result.error?.message?.includes('ai_schedule_start')
+      || result.error?.message?.includes('ai_schedule_end')
+    ) {
+      console.warn('[configStore] some optional AI settings columns are not available yet; hydrating with legacy fallback.');
       result = await supabase
         .from('empresa_perfil')
         .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
@@ -337,6 +378,9 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     delivery_config?: unknown;
     pix_receipt_config?: unknown;
     ai_enabled?: boolean;
+    ai_mode?: string | null;
+    ai_schedule_start?: string | null;
+    ai_schedule_end?: string | null;
     ai_can_reengage_pending?: boolean;
     blocked_dates?: unknown;
     horario_abertura?: string | null;
@@ -390,7 +434,14 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     subcategoriasRes.data ?? [],
     productsWithPlacement,
   );
-  if (typeof row?.ai_enabled === 'boolean') patch.aiEnabled = row.ai_enabled;
+  patch.aiMode = normalizeAiGlobalMode(row?.ai_mode) ?? DEFAULT_AI_GLOBAL_MODE;
+  patch.aiScheduleStart = normalizeAiScheduleTime(row?.ai_schedule_start);
+  patch.aiScheduleEnd = normalizeAiScheduleTime(row?.ai_schedule_end);
+  if (typeof row?.ai_enabled === 'boolean') {
+    patch.aiEnabled = row.ai_enabled;
+  } else {
+    patch.aiEnabled = patch.aiMode !== 'always_off';
+  }
   if (typeof row?.ai_can_reengage_pending === 'boolean') patch.aiCanReengagePending = row.ai_can_reengage_pending;
   if (row && 'blocked_dates' in row) patch.blockedDates = normalizeBlockedDates(row.blocked_dates);
   const openTime = normalizeTime(row?.horario_abertura);
@@ -418,7 +469,7 @@ export async function ensureAiSettingsHydrated(empresaId: string): Promise<void>
     await loadAiSettingsFromDb(empresaId);
   } catch (err) {
     hydratedAiSettings.delete(empresaId);
-    setConfig(empresaId, { aiEnabled: undefined });
+    setConfig(empresaId, { aiEnabled: undefined, aiMode: undefined });
     console.warn(`[configStore] ai settings hydration failed for ${empresaId} — kill-switch stays fail-closed:`, err);
   }
 }

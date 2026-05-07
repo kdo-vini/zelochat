@@ -7,7 +7,14 @@ import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../..
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
 import { maskBrazilianPhone } from '../../domain/chat';
-import { getAiEnabled, setAiEnabled as setAiEnabledApi } from '../../services/waApi';
+import { evaluateAiSchedule, type AiGlobalMode } from '../../domain/aiSchedule';
+import {
+  getAiEnabled,
+  getAiSettings,
+  setAiEnabled as setAiEnabledApi,
+  setAiSettings as setAiSettingsApi,
+  type AiSettings,
+} from '../../services/waApi';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useSubscription, type ZeloChatSubscription } from '../../hooks/useSubscription';
 import { PlanChangeModal } from './PlanChangeModal';
@@ -437,6 +444,224 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
 
 const DAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 
+interface AiGlobalScheduleCardProps {
+  token: string | null;
+  timezone: string;
+}
+
+const AI_MODE_OPTIONS: { value: AiGlobalMode; title: string; description: string }[] = [
+  {
+    value: 'always_on',
+    title: 'Sempre ligada',
+    description: 'A IA responde automaticamente sempre que o chat estiver em modo automático.',
+  },
+  {
+    value: 'always_off',
+    title: 'Sempre desligada',
+    description: 'As mensagens continuam chegando em tempo real, mas o atendimento fica manual em todos os chats.',
+  },
+  {
+    value: 'scheduled',
+    title: 'Agendada',
+    description: 'A IA responde apenas dentro da janela programada, todos os dias.',
+  },
+];
+
+function describeAiScheduleState(settings: AiSettings | null, timezone: string): {
+  headline: string;
+  badge: string;
+  badgeTone: string;
+} {
+  if (!settings) {
+    return {
+      headline: 'Carregando configuração da IA...',
+      badge: 'Verificando...',
+      badgeTone: 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]',
+    };
+  }
+
+  const evaluation = evaluateAiSchedule({
+    aiEnabled: settings.mode !== 'always_off',
+    aiMode: settings.mode,
+    aiScheduleStart: settings.scheduleStart,
+    aiScheduleEnd: settings.scheduleEnd,
+    timezone,
+  });
+
+  if (settings.mode === 'always_on') {
+    return {
+      headline: 'IA respondendo automaticamente',
+      badge: 'Ativada globalmente',
+      badgeTone: 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]',
+    };
+  }
+  if (settings.mode === 'always_off') {
+    return {
+      headline: 'IA desativada - atendimento manual',
+      badge: 'Desativada globalmente',
+      badgeTone: 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]',
+    };
+  }
+  return {
+    headline: evaluation.effectiveEnabledNow ? 'IA agendada e ativa agora' : 'IA agendada e fora da janela agora',
+    badge: evaluation.effectiveEnabledNow ? 'Ativa agora' : 'Fora da janela agora',
+    badgeTone: evaluation.effectiveEnabledNow
+      ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+      : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]',
+  };
+}
+
+export const AiGlobalScheduleCard = ({ token, timezone }: AiGlobalScheduleCardProps) => {
+  const [settings, setSettings] = useState<AiSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) { setSettings(null); return; }
+    let cancelled = false;
+    getAiSettings(token)
+      .then((value) => { if (!cancelled) setSettings(value); })
+      .catch(() => {
+        if (!cancelled) {
+          setSettings({ mode: 'always_on', scheduleStart: null, scheduleEnd: null });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const saveSettings = async (next: AiSettings) => {
+    if (!token || saving) return;
+    const previous = settings;
+    setSaving(true);
+    setError(null);
+    setSettings(next);
+    try {
+      const saved = await setAiSettingsApi(token, next);
+      setSettings(saved);
+    } catch (err) {
+      setSettings(previous);
+      setError(err instanceof WaServerOfflineError ? err.message : 'Não foi possível salvar. Tente novamente.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateMode = async (mode: AiGlobalMode) => {
+    if (!settings) return;
+    if (mode === 'scheduled') {
+      setError(null);
+      setSettings((prev) => prev ? { ...prev, mode } : prev);
+      return;
+    }
+    await saveSettings({
+      mode,
+      scheduleStart: settings.scheduleStart,
+      scheduleEnd: settings.scheduleEnd,
+    });
+  };
+
+  const updateScheduleField = (field: 'scheduleStart' | 'scheduleEnd', value: string) => {
+    setSettings((prev) => prev ? { ...prev, [field]: value } : prev);
+  };
+
+  const saveSchedule = async () => {
+    if (!settings) return;
+    if (!settings.scheduleStart || !settings.scheduleEnd || settings.scheduleStart === settings.scheduleEnd) {
+      setError('Informe horários válidos para a agenda da IA.');
+      return;
+    }
+    await saveSettings(settings);
+  };
+
+  const status = describeAiScheduleState(settings, timezone);
+  const mode = settings?.mode ?? 'always_on';
+  const StatusIcon = mode === 'always_off' ? BotOff : Bot;
+
+  return (
+    <SectionCard icon={Bot} title="Assistente de IA">
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <p className="text-[13.5px] font-semibold">{status.headline}</p>
+          <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-0.5">
+            A agenda global da IA só libera respostas automáticas quando o chat também estiver em modo automático.
+          </p>
+        </div>
+
+        <div className={`flex items-center gap-2 text-[12px] px-3 py-2 rounded-lg ${status.badgeTone}`}>
+          <StatusIcon className="w-3.5 h-3.5" strokeWidth={2} />
+          <span>{status.badge}</span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2">
+          {AI_MODE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => void updateMode(option.value)}
+              disabled={!token || !settings || saving}
+              className={`text-left rounded-xl border px-3 py-3 transition-colors ${
+                mode === option.value
+                  ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)]/50'
+                  : 'border-[var(--color-line)] bg-[var(--color-surface-muted)] hover:bg-[var(--color-surface)]'
+              } disabled:opacity-50`}
+            >
+              <p className="text-[13px] font-semibold">{option.title}</p>
+              <p className="text-[12px] text-[var(--color-ink-muted)] mt-1">{option.description}</p>
+            </button>
+          ))}
+        </div>
+
+        {mode === 'scheduled' && settings && (
+          <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label>
+                <span className={LABEL}>Liga às</span>
+                <input
+                  type="time"
+                  value={settings.scheduleStart ?? ''}
+                  onChange={(e) => updateScheduleField('scheduleStart', e.target.value)}
+                  className={FIELD}
+                />
+              </label>
+              <label>
+                <span className={LABEL}>Desliga às</span>
+                <input
+                  type="time"
+                  value={settings.scheduleEnd ?? ''}
+                  onChange={(e) => updateScheduleField('scheduleEnd', e.target.value)}
+                  className={FIELD}
+                />
+              </label>
+            </div>
+            <p className="text-[12px] text-[var(--color-ink-muted)]">
+              Todos os dias, no fuso da empresa. Horários que cruzam a madrugada funcionam normalmente.
+            </p>
+            <p className="text-[12px] text-[var(--color-ink-muted)]">
+              Preencha os horarios e salve para ativar a agenda.
+            </p>
+            <button
+              type="button"
+              onClick={() => void saveSchedule()}
+              disabled={!token || saving}
+              className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              {saving ? 'Salvando...' : 'Salvar agenda'}
+            </button>
+          </div>
+        )}
+
+        {!token && (
+          <p className="text-[12px] text-[var(--color-warn)]">Faça login para controlar a IA.</p>
+        )}
+        {error && (
+          <p className="text-[12px] text-[var(--color-alert)]">{error}</p>
+        )}
+      </div>
+    </SectionCard>
+  );
+};
+
 type SettingsState = Pick<
   ZeloState,
   'aiInstructions' | 'blockedDates' | 'businessInfo' | 'deliveryConfig' | 'drivers' | 'quickResponses' | 'triggers'
@@ -864,7 +1089,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               onPlanChange={handlePlanChange}
             />
 
-            <AiGlobalToggleCard token={token} />
+            <AiGlobalScheduleCard token={token} timezone={state.businessInfo.timezone} />
 
             <SectionCard icon={Clock} title="Horários e atendimento">
               <div className="space-y-3">

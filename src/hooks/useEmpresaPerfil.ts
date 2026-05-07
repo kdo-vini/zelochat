@@ -3,6 +3,7 @@ import { supabase } from '../services/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import type { ChatMessage, PixReceiptConfig } from '../types';
 import { normalizePixReceiptConfig } from '../domain/pixReceipt';
+import type { AiGlobalMode } from '../domain/aiSchedule';
 
 /** Subset of empresa_perfil columns relevant to ZeloChat */
 export interface EmpresaPerfil {
@@ -11,6 +12,7 @@ export interface EmpresaPerfil {
   endereco: string | null;
   contato: string | null;
   logo_url: string | null;
+  timezone: string | null;
   /** Added via migration 001_empresa_perfil_chave_pix.sql — may be null if migration not yet run */
   chave_pix: string | null;
   /** Added via migration 003_triggers_and_manager_phone.sql — may be null if migration not yet run */
@@ -27,6 +29,9 @@ export interface EmpresaPerfil {
   /** Added via migration 011_delivery_config.sql — may be null if migration not yet run */
   delivery_config: { enabled: boolean; neighborhoods: { name: string; fee: number }[] } | null;
   pix_receipt_config: PixReceiptConfig | null;
+  ai_mode: AiGlobalMode | null;
+  ai_schedule_start: string | null;
+  ai_schedule_end: string | null;
   /** Customer status notification toggles — added via add_out_for_delivery_status_and_customer_notify_toggles */
   notify_customer_preparing: boolean;
   notify_customer_ready: boolean;
@@ -59,7 +64,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
     // Step 1: fetch the guaranteed columns (no chave_pix — may not exist yet)
     const { data, error: dbError } = await supabase
       .from('empresa_perfil')
-      .select('id, nome_exibicao, endereco, contato, logo_url')
+      .select('id, nome_exibicao, endereco, contato, logo_url, timezone')
       .eq('user_id', session.user.id)
       .maybeSingle();
 
@@ -177,6 +182,29 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] pix_receipt_config not available (run migration 020):', pixReceiptErr.message);
     }
 
+    let aiMode: AiGlobalMode | null = null;
+    let aiScheduleStart: string | null = null;
+    let aiScheduleEnd: string | null = null;
+    const { data: aiScheduleData, error: aiScheduleErr } = await supabase
+      .from('empresa_perfil')
+      .select('ai_mode, ai_schedule_start, ai_schedule_end')
+      .eq('id', data.id)
+      .maybeSingle();
+    if (!aiScheduleErr && aiScheduleData) {
+      const row = aiScheduleData as {
+        ai_mode?: string | null;
+        ai_schedule_start?: string | null;
+        ai_schedule_end?: string | null;
+      };
+      aiMode = row.ai_mode === 'always_on' || row.ai_mode === 'always_off' || row.ai_mode === 'scheduled'
+        ? row.ai_mode
+        : null;
+      aiScheduleStart = row.ai_schedule_start ?? null;
+      aiScheduleEnd = row.ai_schedule_end ?? null;
+    } else if (aiScheduleErr) {
+      console.warn('[useEmpresaPerfil] ai_mode/ai_schedule_* not available:', aiScheduleErr.message);
+    }
+
     let notifyPreparing = true;
     let notifyReady = true;
     let notifyOutForDelivery = true;
@@ -210,6 +238,9 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       manager_history: managerHistory,
       delivery_config: deliveryConfig,
       pix_receipt_config: pixReceiptConfig,
+      ai_mode: aiMode,
+      ai_schedule_start: aiScheduleStart,
+      ai_schedule_end: aiScheduleEnd,
       notify_customer_preparing: notifyPreparing,
       notify_customer_ready: notifyReady,
       notify_customer_out_for_delivery: notifyOutForDelivery,

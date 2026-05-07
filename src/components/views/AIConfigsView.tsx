@@ -51,8 +51,16 @@ const HEALTH_TONE_CLASS: Record<HealthTone, string> = {
 function formatAiHealthStatus(status: AiHealthSummaryStatus | undefined): { label: string; tone: HealthTone } {
   if (status === 'ready') return { label: 'Pronta', tone: 'ok' };
   if (status === 'disabled') return { label: 'IA desligada', tone: 'warn' };
+  if (status === 'scheduled_off') return { label: 'Agendada - fora da janela', tone: 'neutral' };
   if (status === 'needs_configuration') return { label: 'Ajustar configuração', tone: 'warn' };
   return { label: 'Verificando...', tone: 'neutral' };
+}
+
+function formatAiModeLabel(mode: AiHealthReport['aiMode'] | undefined): string {
+  if (mode === 'always_on') return 'Sempre ligada';
+  if (mode === 'always_off') return 'Sempre desligada';
+  if (mode === 'scheduled') return 'Agendada';
+  return 'Verificando...';
 }
 
 interface ReadinessItemProps {
@@ -385,7 +393,16 @@ export const AIConfigsView = ({
     booleanHealthItem('Entrega', aiHealth?.deliveryConfigConfigured, 'Configurada'),
     booleanHealthItem('Telefone do gerente', aiHealth?.managerPhonePresent, 'Informado'),
     booleanHealthItem('Pix', aiHealth?.pixPresent, 'Informado'),
-    booleanHealthItem('IA ligada', aiHealth?.aiEnabled, 'Sim', 'Não'),
+    {
+      label: 'Modo da IA',
+      value: formatAiModeLabel(aiHealth?.aiMode),
+      tone: aiHealth?.aiMode === 'always_off' ? 'warn' : aiHealth?.aiMode ? 'ok' : 'neutral',
+    },
+    {
+      label: 'Ativa agora',
+      value: aiHealth === null ? 'Verificando...' : aiHealth.aiEffectiveEnabledNow ? 'Sim' : 'NÃ£o',
+      tone: aiHealth === null ? 'neutral' : aiHealth.aiEffectiveEnabledNow ? 'ok' : 'neutral',
+    },
     booleanHealthItem(
       'Comprovante Pix',
       aiHealth?.pixReceiptConfigured,

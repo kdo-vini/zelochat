@@ -432,6 +432,8 @@ export const DashboardView = ({
                           ? 'Configuração pronta para atender.'
                           : overview.aiHealth?.safeSummaryStatus === 'disabled'
                             ? 'IA desligada no momento.'
+                            : overview.aiHealth?.safeSummaryStatus === 'scheduled_off'
+                              ? 'IA agendada, fora da janela neste momento.'
                             : 'Há ajustes que podem melhorar as respostas.'}
                       </p>
                     </div>
