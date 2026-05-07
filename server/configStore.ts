@@ -28,6 +28,11 @@ import {
   normalizePixReceiptConfig,
   type PixReceiptConfig,
 } from '../src/domain/pixReceipt.js';
+import {
+  DEFAULT_ZELOCHAT_MODE,
+  normalizeZeloChatMode,
+  type ZeloChatMode,
+} from '../src/domain/zelochatMode.js';
 
 export type CatalogProduct = { name: string; price: number; available: boolean; unitBased?: boolean };
 
@@ -69,6 +74,7 @@ export interface BusinessConfig {
   aiCanReengagePending: boolean;
   deliveryConfig: DeliveryConfig | null;
   pixReceiptConfig: PixReceiptConfig;
+  zelochatMode: ZeloChatMode;
 }
 
 export const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
@@ -97,6 +103,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   aiCanReengagePending: false,
   deliveryConfig: null,
   pixReceiptConfig: DEFAULT_PIX_RECEIPT_CONFIG,
+  zelochatMode: DEFAULT_ZELOCHAT_MODE,
 };
 
 // Keyed by empresaId — one config entry per authenticated empresa.
@@ -314,6 +321,9 @@ export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
       patch.pixReceiptConfig = normalizePixReceiptConfig(patch.pixReceiptConfig);
     }
   }
+  if ('zelochatMode' in patch) {
+    patch.zelochatMode = normalizeZeloChatMode(patch.zelochatMode);
+  }
   configMap.set(empresaId, { ...existing, ...patch });
 }
 
@@ -343,11 +353,21 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   try {
     let result = await supabase
       .from('empresa_perfil')
-      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
       .eq('id', empresaId)
       .abortSignal(controller.signal)
       .maybeSingle();
     if (
+      result.error?.message?.includes('zelochat_mode')
+    ) {
+      console.warn('[configStore] zelochat_mode column is not available yet; hydrating with legacy fallback.');
+      result = await supabase
+        .from('empresa_perfil')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+        .eq('id', empresaId)
+        .abortSignal(controller.signal)
+        .maybeSingle();
+    } else if (
       result.error?.message?.includes('pix_receipt_config')
       || result.error?.message?.includes('ai_mode')
       || result.error?.message?.includes('ai_schedule_start')
@@ -356,7 +376,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
       console.warn('[configStore] some optional AI settings columns are not available yet; hydrating with legacy fallback.');
       result = await supabase
         .from('empresa_perfil')
-        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
         .eq('id', empresaId)
         .abortSignal(controller.signal)
         .maybeSingle();
@@ -387,6 +407,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     horario_fechamento?: string | null;
     dias_fechamento?: unknown;
     timezone?: string | null;
+    zelochat_mode?: string | null;
   });
 
   const userId = normalizeText(row.user_id);
@@ -428,6 +449,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   patch.aiInstructions = normalizeText(row.ai_instructions);
   patch.deliveryConfig = normalizeDeliveryConfig(row.delivery_config);
   patch.pixReceiptConfig = normalizePixReceiptConfig(row.pix_receipt_config);
+  patch.zelochatMode = normalizeZeloChatMode(row.zelochat_mode);
   patch.products = products;
   patch.catalogHierarchy = buildCatalogHierarchy(
     categoriasRes.data ?? [],

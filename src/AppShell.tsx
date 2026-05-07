@@ -68,6 +68,7 @@ import { inferCategoria } from './services/zeloApi';
 import { loadInitialState, saveInitialState } from './services/statePersistence';
 import type { Order, ZeloState } from './types';
 import { PRICING } from './data/pricing';
+import { normalizeZeloChatMode } from './domain/zelochatMode';
 
 type View =
   | 'dashboard'
@@ -101,6 +102,9 @@ const NAV_SECONDARY: NavItem[] = [
   { id: 'catalog',    icon: ShoppingBag,  label: 'Cardápio',   description: 'Produtos e preços' },
   { id: 'ai-configs', icon: Bot,          label: 'Cérebro IA', description: 'Configurar assistente' },
 ];
+
+const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile']);
+const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers', 'catalog', 'novidades']);
 
 /* ─── NavButton component ─────────────────────────────────────── */
 interface NavButtonProps {
@@ -192,6 +196,25 @@ export default function AppShell() {
   const { session, token, loading: authLoading } = useSupabaseSession();
   const { isActive: subscriptionActive, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
   const { empresa, save: saveEmpresa, refresh: refreshEmpresa } = useEmpresaPerfil(session);
+  const zelochatMode = normalizeZeloChatMode(empresa?.zelochat_mode);
+  const isGeneralMode = zelochatMode === 'general';
+  const primaryNavItems = useMemo(
+    () => NAV_PRIMARY.filter((item) => !isGeneralMode || !RESTAURANT_ONLY_VIEWS.has(item.id)),
+    [isGeneralMode],
+  );
+  const secondaryNavItems = useMemo(
+    () => NAV_SECONDARY.filter((item) => !isGeneralMode || !RESTAURANT_ONLY_VIEWS.has(item.id)),
+    [isGeneralMode],
+  );
+  const bottomSheetItems = useMemo(
+    () => [
+      ...secondaryNavItems,
+      ...(isGeneralMode ? [] : [{ id: 'novidades' as View, icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }]),
+      { id: 'settings' as View, icon: Settings, label: 'Configurações', description: 'Empresa e integrações' },
+      { id: 'profile' as View, icon: UserIcon, label: 'Perfil', description: 'Sua conta' },
+    ],
+    [isGeneralMode, secondaryNavItems],
+  );
   const {
     sessions,
     loading: chatLoading,
@@ -266,6 +289,13 @@ export default function AppShell() {
   useEffect(() => {
     try { localStorage.setItem('zelochat_sidebar_expanded', String(sidebarExpanded)); } catch {}
   }, [sidebarExpanded]);
+
+  useEffect(() => {
+    if (isGeneralMode && !GENERAL_ALLOWED_VIEWS.has(activeView)) {
+      setActiveView('chat');
+      setMoreSheetOpen(false);
+    }
+  }, [activeView, isGeneralMode]);
 
   // Stripe Checkout return: when the browser comes back with ?billing=success
   // we force a sync from Stripe (in case the webhook is still racing) and
@@ -847,7 +877,7 @@ export default function AppShell() {
             </p>
           )}
           <nav className="flex flex-col gap-0.5">
-            {NAV_PRIMARY.map((item) => (
+            {primaryNavItems.map((item) => (
               <NavButton
                 key={item.id}
                 item={item}
@@ -868,7 +898,7 @@ export default function AppShell() {
             </p>
           )}
           <nav className="flex flex-col gap-0.5">
-            {NAV_SECONDARY.map((item) => (
+            {secondaryNavItems.map((item) => (
               <NavButton
                 key={item.id}
                 item={item}
@@ -882,23 +912,27 @@ export default function AppShell() {
 
         {/* Bottom: novidades + settings + printer + profile */}
         <div className="mt-auto px-2 flex flex-col gap-0.5 flex-shrink-0 pt-2 border-t border-[var(--color-line)]">
-          <NavButton
-            item={{ id: 'novidades', icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }}
-            active={activeView === 'novidades'}
-            expanded={sidebarExpanded}
-            onClick={() => setActiveView('novidades')}
-          />
+          {!isGeneralMode && (
+            <NavButton
+              item={{ id: 'novidades', icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }}
+              active={activeView === 'novidades'}
+              expanded={sidebarExpanded}
+              onClick={() => setActiveView('novidades')}
+            />
+          )}
           <NavButton
             item={{ id: 'settings', icon: Settings, label: 'Configurações', description: 'Empresa e integrações' }}
             active={activeView === 'settings'}
             expanded={sidebarExpanded}
             onClick={() => setActiveView('settings')}
           />
-          <PrinterButton
-            printer={printer}
-            expanded={sidebarExpanded}
-            testOrder={state.orders[0]}
-          />
+          {!isGeneralMode && (
+            <PrinterButton
+              printer={printer}
+              expanded={sidebarExpanded}
+              testOrder={state.orders[0]}
+            />
+          )}
 
           <button
             onClick={() => setActiveView('profile')}
@@ -949,7 +983,9 @@ export default function AppShell() {
                 Ative seu plano para usar o ZeloChat
               </h2>
               <p className="text-[14px] text-[var(--color-ink-muted)] leading-relaxed mb-6">
-                A IA, o WhatsApp, o kanban e o catálogo ficam disponíveis assim que sua assinatura estiver ativa. R${PRICING.chat.priceBRL}/mês, cancela quando quiser.
+                {isGeneralMode
+                  ? `A IA e o WhatsApp ficam disponíveis assim que sua assinatura estiver ativa. R$${PRICING.chat.priceBRL}/mês, cancela quando quiser.`
+                  : `A IA, o WhatsApp, o kanban e o catálogo ficam disponíveis assim que sua assinatura estiver ativa. R$${PRICING.chat.priceBRL}/mês, cancela quando quiser.`}
               </p>
               <button
                 onClick={() => setActiveView('settings')}
@@ -1000,10 +1036,10 @@ export default function AppShell() {
             }
           >
             <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
-              {activeView === 'dashboard' && (
+              {activeView === 'dashboard' && !isGeneralMode && (
                 <DashboardView state={dashboardState} setActiveView={setActiveView} token={token} />
               )}
-              {activeView === 'kanban' && (
+              {activeView === 'kanban' && !isGeneralMode && (
                 <DragDropContext onDragEnd={onDragEnd}>
                   <ProductionView
                     state={productionState}
@@ -1017,14 +1053,14 @@ export default function AppShell() {
                   />
                 </DragDropContext>
               )}
-              {activeView === 'calendar' && (
+              {activeView === 'calendar' && !isGeneralMode && (
                 <CalendarView
                   state={calendarState}
                   setState={setState}
                   onNavigateToKanban={handleNavigateToKanban}
                 />
               )}
-              {activeView === 'catalog' && (
+              {activeView === 'catalog' && !isGeneralMode && (
                 <CatalogView
                   isAuthenticated={!!session}
                   authLoading={authLoading}
@@ -1072,6 +1108,7 @@ export default function AppShell() {
                   saveEmpresa={saveEmpresa}
                   isAuthenticated={!!token}
                   token={token}
+                  zelochatMode={zelochatMode}
                 />
               )}
               {activeView === 'profile' && (
@@ -1083,7 +1120,7 @@ export default function AppShell() {
                   token={token}
                 />
               )}
-              {activeView === 'drivers' && (
+              {activeView === 'drivers' && !isGeneralMode && (
                 <DriversView
                   orders={state.orders}
                   drivers={drivers}
@@ -1097,7 +1134,7 @@ export default function AppShell() {
                   onDispatchSuccess={handleDispatchSuccess}
                 />
               )}
-              {activeView === 'novidades' && (
+              {activeView === 'novidades' && !isGeneralMode && (
                 <NovidadesView />
               )}
             </div>
@@ -1107,7 +1144,7 @@ export default function AppShell() {
 
       {/* ── Bottom tab bar (mobile only) ──────────────────────────── */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden h-[64px] items-stretch border-t border-[var(--color-line)] bg-[var(--color-surface)]">
-        {NAV_PRIMARY.map((item) => {
+        {primaryNavItems.map((item) => {
           const Icon = item.icon;
           const active = activeView === item.id;
           const isAlert = item.id === 'chat' && openEscalationCount > 0;
@@ -1153,11 +1190,7 @@ export default function AppShell() {
           <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] pb-6">
             <div className="mx-auto mt-2 mb-2 h-1 w-10 rounded-full bg-[var(--color-line)]" />
             <div className="px-2 py-1">
-              {[...NAV_SECONDARY,
-                { id: 'novidades' as View, icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' },
-                { id: 'settings' as View, icon: Settings, label: 'Configurações', description: 'Empresa e integrações' },
-                { id: 'profile' as View, icon: UserIcon, label: 'Perfil', description: 'Sua conta' },
-              ].map((item) => {
+              {bottomSheetItems.map((item) => {
                 const Icon = item.icon;
                 const active = activeView === item.id;
                 return (

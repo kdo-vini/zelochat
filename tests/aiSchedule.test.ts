@@ -1,4 +1,5 @@
 import { DEFAULT_PIX_RECEIPT_CONFIG } from '../src/domain/pixReceipt.js';
+import { DEFAULT_ZELOCHAT_MODE } from '../src/domain/zelochatMode.js';
 import {
   evaluateAiSchedule,
   isAiGloballyEnabledNow,
@@ -70,6 +71,7 @@ function makeConfig(overrides: Partial<BusinessConfig> = {}): BusinessConfig {
     aiCanReengagePending: false,
     deliveryConfig: { enabled: false, neighborhoods: [] },
     pixReceiptConfig: { ...DEFAULT_PIX_RECEIPT_CONFIG },
+    zelochatMode: DEFAULT_ZELOCHAT_MODE,
     ...overrides,
   };
 }

@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import type { ChatMessage, PixReceiptConfig } from '../types';
 import { normalizePixReceiptConfig } from '../domain/pixReceipt';
 import type { AiGlobalMode } from '../domain/aiSchedule';
+import { DEFAULT_ZELOCHAT_MODE, normalizeZeloChatMode, type ZeloChatMode } from '../domain/zelochatMode';
 
 /** Subset of empresa_perfil columns relevant to ZeloChat */
 export interface EmpresaPerfil {
@@ -32,6 +33,7 @@ export interface EmpresaPerfil {
   ai_mode: AiGlobalMode | null;
   ai_schedule_start: string | null;
   ai_schedule_end: string | null;
+  zelochat_mode: ZeloChatMode;
   /** Customer status notification toggles — added via add_out_for_delivery_status_and_customer_notify_toggles */
   notify_customer_preparing: boolean;
   notify_customer_ready: boolean;
@@ -205,6 +207,18 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       console.warn('[useEmpresaPerfil] ai_mode/ai_schedule_* not available:', aiScheduleErr.message);
     }
 
+    let zelochatMode: ZeloChatMode = DEFAULT_ZELOCHAT_MODE;
+    const { data: modeData, error: modeErr } = await supabase
+      .from('empresa_perfil')
+      .select('zelochat_mode')
+      .eq('id', data.id)
+      .maybeSingle();
+    if (!modeErr && modeData) {
+      zelochatMode = normalizeZeloChatMode((modeData as { zelochat_mode?: unknown }).zelochat_mode);
+    } else if (modeErr) {
+      console.warn('[useEmpresaPerfil] zelochat_mode not available (run migration 023):', modeErr.message);
+    }
+
     let notifyPreparing = true;
     let notifyReady = true;
     let notifyOutForDelivery = true;
@@ -241,6 +255,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       ai_mode: aiMode,
       ai_schedule_start: aiScheduleStart,
       ai_schedule_end: aiScheduleEnd,
+      zelochat_mode: zelochatMode,
       notify_customer_preparing: notifyPreparing,
       notify_customer_ready: notifyReady,
       notify_customer_out_for_delivery: notifyOutForDelivery,
@@ -327,6 +342,17 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         } else if (dbError.message.includes('pix_receipt_config') && patch.pix_receipt_config !== undefined) {
           console.warn('[useEmpresaPerfil] pix_receipt_config column missing - saving without it. Run migration 020.');
           const { pix_receipt_config: _prc, ...patchWithout } = patch as Partial<EmpresaPerfil>;
+          const { error: retryError } = await supabase
+            .from('empresa_perfil')
+            .update({ ...patchWithout, updated_at: new Date().toISOString() })
+            .eq('id', empresa.id);
+          if (retryError) {
+            setError(retryError.message);
+            return false;
+          }
+        } else if (dbError.message.includes('zelochat_mode') && patch.zelochat_mode !== undefined) {
+          console.warn('[useEmpresaPerfil] zelochat_mode column missing - saving without it. Run migration 023.');
+          const { zelochat_mode: _mode, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })

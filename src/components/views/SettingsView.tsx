@@ -5,6 +5,7 @@ import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, 
 import { ConfirmModal } from '../ConfirmModal';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
+import { normalizeZeloChatMode, type ZeloChatMode } from '../../domain/zelochatMode';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
 import { maskBrazilianPhone } from '../../domain/chat';
 import { evaluateAiSchedule, type AiGlobalMode } from '../../domain/aiSchedule';
@@ -674,6 +675,7 @@ interface SettingsViewProps {
   saveEmpresa: (patch: Partial<Omit<EmpresaPerfil, 'id'>>) => Promise<boolean>;
   isAuthenticated: boolean;
   token: string | null;
+  zelochatMode?: ZeloChatMode;
 }
 
 type CustomerNotifyKey = 'notify_customer_preparing' | 'notify_customer_ready' | 'notify_customer_out_for_delivery';
@@ -950,9 +952,10 @@ function TimeInput({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
-export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenticated, token }: SettingsViewProps) => {
+export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenticated, token, zelochatMode }: SettingsViewProps) => {
   const { session } = useSupabaseSession();
   const { subscription, isActive: subscriptionActive, hasPdvOnly, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
+  const isGeneralMode = normalizeZeloChatMode(zelochatMode ?? empresa?.zelochat_mode) === 'general';
   const [planChangeOpen, setPlanChangeOpen] = useState(false);
   const handlePlanChange = () => {
     if (!subscription) return;
@@ -1224,9 +1227,12 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               </div>
             </SectionCard>
 
-            <CustomerNotificationsCard empresa={empresa} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
-
-            <DeliveryConfigCard state={state} setState={setState} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
+            {!isGeneralMode && (
+              <>
+                <CustomerNotificationsCard empresa={empresa} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
+                <DeliveryConfigCard state={state} setState={setState} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
+              </>
+            )}
 
             <SectionCard icon={UserCog} title="Gerente">
               <div className="space-y-3">

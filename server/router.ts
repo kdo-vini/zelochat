@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import express from 'express';
 import axios from 'axios';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions.js';
 import { broadcast } from './ws.js';
 import {
@@ -112,6 +113,80 @@ function readAiSettingsFromConfig(empresaId: string): AiSettingsPayload {
   };
 }
 
+function getInternalApiKeyFromRequest(req: Request): string {
+  const headerKey = req.header('x-zelochat-internal-key')?.trim();
+  if (headerKey) return headerKey;
+  const auth = extractBearerToken(req);
+  return auth?.trim() ?? '';
+}
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function safeEqualString(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+function normalizeInternalWhatsAppJid(to: unknown): string {
+  if (typeof to !== 'string') throw new Error('INVALID_TO');
+  const value = to.trim();
+  if (/^\d+@s\.whatsapp\.net$/i.test(value)) return value.toLowerCase();
+  const digits = value.replace(/\D/g, '');
+  if (!digits) throw new Error('INVALID_TO');
+  const withCountry = digits.startsWith('55') ? digits : `55${digits}`;
+  if (withCountry.length < 12 || withCountry.length > 13) throw new Error('INVALID_TO');
+  return `${withCountry}@s.whatsapp.net`;
+}
+
+async function resolveTechneEmpresaProfile(): Promise<{ id: string; internalKeyHash: string | null }> {
+  const fromEnv = (process.env.TECHNE_EMPRESA_ID || '').trim();
+  if (fromEnv) {
+    const { data, error } = await getServiceSupabase()
+      .from('empresa_perfil')
+      .select('id, zelochat_internal_send_key_hash')
+      .eq('id', fromEnv)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { id?: string; zelochat_internal_send_key_hash?: string | null } | null;
+    if (!row?.id) throw new Error('TECHNE_EMPRESA_NOT_FOUND');
+    return { id: row.id, internalKeyHash: row.zelochat_internal_send_key_hash ?? null };
+  }
+
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from('empresa_perfil')
+    .select('id, zelochat_internal_send_key_hash')
+    .eq('zelochat_mode', 'general')
+    .limit(2);
+
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  if (rows.length > 1) throw new Error('TECHNE_EMPRESA_AMBIGUOUS');
+  const row = rows[0] as { id?: string; zelochat_internal_send_key_hash?: string | null } | undefined;
+  if (!row?.id) throw new Error('TECHNE_EMPRESA_NOT_FOUND');
+  return { id: row.id, internalKeyHash: row.zelochat_internal_send_key_hash ?? null };
+}
+
+async function requireInternalApiKey(req: Request): Promise<string> {
+  const received = getInternalApiKeyFromRequest(req);
+  if (!received) throw new Error('UNAUTHORIZED');
+
+  const profile = await resolveTechneEmpresaProfile();
+  const configured = (process.env.ZELOCHAT_INTERNAL_API_KEY || process.env.TECHNE_INTERNAL_API_KEY || '').trim();
+  if (configured && safeEqualString(received, configured)) return profile.id;
+
+  if (profile.internalKeyHash && safeEqualString(sha256Hex(received), profile.internalKeyHash)) {
+    return profile.id;
+  }
+
+  if (!configured && !profile.internalKeyHash) throw new Error('INTERNAL_API_NOT_CONFIGURED');
+  throw new Error('UNAUTHORIZED');
+}
+
 // JIDs that recently had a button action handled — used to suppress duplicate text events
 // that WhatsApp/Whatsmiau sends for the same button click (within 5-second window)
 const recentlyHandled = new Map<string, number>();
@@ -122,6 +197,60 @@ setInterval(() => {
     if (ts < cutoff) recentlyHandled.delete(jid);
   }
 }, 30_000);
+
+/**
+ * POST /internal/whatsapp/send-text
+ * Server-to-server endpoint for Techne systems to send a simple WhatsApp text
+ * through the Techne ZeloChat instance. Auth uses ZELOCHAT_INTERNAL_API_KEY
+ * (or legacy TECHNE_INTERNAL_API_KEY), not a user JWT.
+ */
+router.post('/internal/whatsapp/send-text', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireInternalApiKey(req);
+    const { to, message } = req.body as { to?: unknown; message?: unknown };
+    const jid = normalizeInternalWhatsAppJid(to);
+    const text = typeof message === 'string' ? message.trim() : '';
+    if (!text) {
+      res.status(400).json({ error: 'MESSAGE_REQUIRED' });
+      return;
+    }
+    if (text.length > 4000) {
+      res.status(400).json({ error: 'MESSAGE_TOO_LONG' });
+      return;
+    }
+
+    const waMessageId = await sendTextMessage(jid, text, empresaId);
+    await addAssistantMessage(jid, text, undefined, empresaId, undefined, {
+      responseSource: 'human_manual',
+      waMessageId,
+    });
+    res.json({ ok: true, empresaId, to: jid, messageId: waMessageId ?? null });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : 'UNKNOWN';
+    if (message === 'UNAUTHORIZED') {
+      res.status(401).json({ error: 'UNAUTHORIZED' });
+      return;
+    }
+    if (message === 'INTERNAL_API_NOT_CONFIGURED') {
+      res.status(503).json({ error: 'INTERNAL_API_NOT_CONFIGURED' });
+      return;
+    }
+    if (message === 'INVALID_TO' || message === 'MESSAGE_REQUIRED' || message === 'MESSAGE_TOO_LONG') {
+      res.status(400).json({ error: message });
+      return;
+    }
+    if (message === 'TECHNE_EMPRESA_NOT_FOUND') {
+      res.status(404).json({ error: 'TECHNE_EMPRESA_NOT_FOUND' });
+      return;
+    }
+    if (message === 'TECHNE_EMPRESA_AMBIGUOUS') {
+      res.status(503).json({ error: message });
+      return;
+    }
+    console.error('[Router] Internal WhatsApp send error:', error);
+    res.status(500).json({ error: 'INTERNAL_WHATSAPP_SEND_FAILED' });
+  }
+});
 
 function safeJsonParse<T = any>(value: string): T | null {
   try { return JSON.parse(value) as T; } catch { return null; }

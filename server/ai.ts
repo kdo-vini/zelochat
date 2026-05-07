@@ -1866,6 +1866,58 @@ export function buildSystemInstruction(
   const triggersBlock = triggers.length > 0
     ? triggers.map((t) => `- id=${t.id} [${t.kind}] "${t.name}": ${t.conditionDescription}`).join('\n')
     : '- (nenhum gatilho configurado)';
+
+  if (cfg.zelochatMode === 'general') {
+    return `Você é o assistente virtual da Téchne, atendendo pelo WhatsApp.
+Linguagem: português brasileiro, conversa curta, clara e humana, estilo WhatsApp profissional.
+
+FORMATAÇÃO NO WHATSAPP:
+- Para negrito, use UM asterisco de cada lado: *texto*.
+- Nunca use Markdown com dois asteriscos.
+- Responda em blocos curtos e fáceis de ler no celular.
+
+DATA E HORA ATUAL:
+- Agora é ${todayLabel}, ${todayBR}, ${currentTimeBR} no ${timezoneFriendlyLabel(tz)}.
+- Use essa data ao falar de prazos, retornos, onboarding ou follow-up.
+
+ESCOPO DO ATENDIMENTO TÉCHNE:
+- Ajude com suporte, vendas, relacionamento, onboarding e dúvidas simples sobre Téchne, ZeloPDV e ZeloChat.
+- Explique de forma simples: o que é o ZeloPDV, o que é o ZeloChat, como conectar WhatsApp, como funciona atendimento com IA, planos, próximos passos e dúvidas técnicas básicas.
+- Quando a pessoa parecer lead, colete com naturalidade: nome, negócio/empresa, principal dor, produto de interesse e melhor horário de retorno.
+- Quando for cliente atual, tente entender o problema e colete detalhes objetivos: produto, tela/funcionalidade, mensagem de erro, urgência e melhor contato.
+- Se o assunto exigir acesso à conta, cobrança sensível, cancelamento, alteração de plano, bug técnico com dados do cliente ou decisão comercial específica, acione atendimento humano via dispatch_trigger se houver gatilho adequado.
+
+REGRAS FIXAS DO MODO GERAL:
+- Não conduza fluxo de restaurante.
+- Não fale de cardápio, criação de pedido, cozinha, retirada, entrega, delivery, motoboy, taxa de entrega ou produção, a menos que o cliente esteja perguntando conceitualmente sobre um recurso do produto. Mesmo nesses casos, responda como suporte/vendas, sem tentar criar pedido.
+- Não prometa alteração, reembolso, desconto, prazo definitivo ou intervenção técnica sem humano confirmar.
+- Não peça senha, código de autenticação ou dados sensíveis.
+- Se não tiver certeza, seja transparente e encaminhe para humano.
+
+INFORMAÇÕES DA EMPRESA:
+- Nome: ${cfg.name || 'Téchne'}
+- Especialidade: ${cfg.specialty || 'software, atendimento e automação para pequenos negócios'}
+- Contato: ${cfg.managerPhone || cfg.address || 'use este WhatsApp para continuar o atendimento'}${dailyContextStr}
+
+GATILHOS ATIVOS (chame dispatch_trigger se a condição ocorrer):
+${triggersBlock}
+
+INSTRUÇÕES DE GATILHO:
+- Chame dispatch_trigger NO MÁXIMO UMA VEZ por condição que ocorrer na conversa.
+- Se for escalate_human, você NÃO escreve mais nada; o sistema cuida do handoff.
+- Se for notify_manager, continue a conversa normalmente após a notificação.
+
+${ownerStylePreferences}
+
+OBJETIVOS:
+1. Resolver dúvidas simples com clareza.
+2. Identificar se é suporte, vendas, onboarding ou relacionamento.
+3. Coletar contexto suficiente para um humano continuar quando necessário.
+4. Manter tom prestativo e objetivo.
+
+IMPORTANTE: não use ferramentas de pedido. A única ferramenta permitida neste modo é dispatch_trigger.`.trim();
+  }
+
   const pixReceiptObjective = isPixReceiptConfigActive(cfg.pixReceiptConfig)
     ? '7. Se o pagamento for Pix, NÃO peça confirmação manual por texto: chame criar_pedido normalmente. O sistema vai salvar o pedido como pendente e pedir o comprovante Pix antes de confirmar.'
     : '7. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.';
@@ -2291,11 +2343,13 @@ export async function generateAndSendReply(
 
   const session = await getSession(jid, resolvedEmpresaId);
   if (!session) return null;
+  const aiConfig = getConfig(resolvedEmpresaId);
+  const isGeneralMode = aiConfig.zelochatMode === 'general';
 
   // GUARDRAIL: if a pending order exists and the customer sent text (not a button click),
   // route affirmatives → confirm directly, negatives → cancel directly, ambiguous → edit.
   // This prevents the AI from being re-invoked and creating a duplicate pending order.
-  const pendingForEdit = await getPendingOrder(jid, resolvedEmpresaId);
+  const pendingForEdit = isGeneralMode ? null : await getPendingOrder(jid, resolvedEmpresaId);
   if (pendingForEdit) {
     const lastMsg = session.messages.at(-1);
     const lastText = (lastMsg?.content ?? '').toLowerCase().trim();
@@ -2388,6 +2442,7 @@ export async function generateAndSendReply(
     ? (buildContentForModel(lastUserMsgForDate) || lastUserMsgForDate.preview || '')
     : '';
   const blockedDateFromMessage = lastUserTextForDate
+    && !isGeneralMode
     ? findBlockedDateFromCustomerText(resolvedEmpresaId, lastUserTextForDate)
     : null;
   if (blockedDateFromMessage) {
@@ -2396,7 +2451,7 @@ export async function generateAndSendReply(
   }
   const recentScheduleContext = findRecentScheduleContextGuard(
     resolvedEmpresaId,
-    session.messages,
+    isGeneralMode ? [] : session.messages,
   );
   if (recentScheduleContext?.type === 'blocked_date') {
     console.log(`[AI] Blocking reply before OpenAI: recent context has blocked date ${recentScheduleContext.blockedDate.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
@@ -2407,6 +2462,7 @@ export async function generateAndSendReply(
     return sendBusinessHoursReply(jid, resolvedEmpresaId, recentScheduleContext.issue);
   }
   const businessHoursIssueFromMessage = lastUserTextForDate
+    && !isGeneralMode
     ? findBusinessHoursIssueFromCustomerText(
         resolvedEmpresaId,
         lastUserTextForDate,
@@ -2420,9 +2476,9 @@ export async function generateAndSendReply(
   }
 
   const [customerHistory, triggers, activeOrdersBlock] = await Promise.all([
-    fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
+    isGeneralMode ? Promise.resolve('Modo geral: sem histórico de pedidos.') : fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
     fetchActiveTriggers(resolvedEmpresaId),
-    fetchActiveOrdersForCustomer(resolvedEmpresaId, session.customerPhone),
+    isGeneralMode ? Promise.resolve('Modo geral: sem consulta de pedidos ativos.') : fetchActiveOrdersForCustomer(resolvedEmpresaId, session.customerPhone),
   ]);
 
   const systemInstruction = buildSystemInstruction(
@@ -2483,7 +2539,9 @@ export async function generateAndSendReply(
       model: OPENAI_MODEL,
       temperature: OPENAI_CHAT_TEMPERATURE,
       messages,
-      tools: [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
+      tools: isGeneralMode
+        ? [DISPATCH_TRIGGER_TOOL]
+        : [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
       tool_choice: 'auto',
     });
     recordAiUsage({

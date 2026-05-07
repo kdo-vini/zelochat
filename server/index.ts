@@ -36,7 +36,7 @@ app.use(cors({
     return cb(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-ZeloChat-Internal-Key'],
 }));
 // 100kb global cap protects every endpoint EXCEPT:
 // - /api/send (6mb for operator media uploads)
