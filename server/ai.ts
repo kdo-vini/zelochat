@@ -1445,20 +1445,30 @@ type QuantityNormalizationResult =
 function detectCentoUnits(value: string): number | null {
   const normalized = normalizeCatalogName(value);
   if (!normalized) return null;
+
+  // "um quarto de cento" / "1/4 de cento" = 25
+  if (/\b(um quarto de (um )?cento|1 4 de (um )?cento|quarto de cento)\b/.test(normalized)) {
+    return 25;
+  }
+
+  // "meio cento" / "meia centena" = 50
   if (/\b(meio cento|meia centena|metade de um cento|1 2 cento)\b/.test(normalized)) {
     return 50;
   }
 
+  // "2 centos", "3 centos" = N × 100
   const numeric = normalized.match(/\b(\d{1,3})\s*(cento|centos|centena|centenas)\b/);
   if (numeric) {
     return Math.max(1, Number(numeric[1])) * 100;
   }
 
+  // "dois centos", "três centos" = N × 100
   const word = normalized.match(/\b(um|uma|dois|duas|tres|três|quatro|cinco|seis|sete|oito|nove|dez)\s+(cento|centos|centena|centenas)\b/);
   if (word) {
     return (PORTUGUESE_SMALL_NUMBERS[word[1]] ?? 1) * 100;
   }
 
+  // standalone "cento" / "centena" = 100
   if (/\b(cento|centena)\b/.test(normalized)) return 100;
   return null;
 }
@@ -1472,7 +1482,12 @@ function normalizeOrderItemQuantity(
     return { ok: false, reason: `Quantidade invalida para ${item.product}` };
   }
 
-  const requestedCentoUnits = detectCentoUnits(item.product);
+  // When the AI sends the catalog product name (e.g. "Cento Tradicionais Sortidos"),
+  // "cento" in the name is part of the product identity — NOT a quantity modifier
+  // from the customer. Skip cento detection so we don't force quantity to 100
+  // when the customer asked for 50 ("meio cento" / "50 mini").
+  const aiSentCatalogName = normalizeCatalogName(item.product) === normalizeCatalogName(product.name);
+  const requestedCentoUnits = aiSentCatalogName ? null : detectCentoUnits(item.product);
   if (requestedCentoUnits === null) {
     if (!Number.isInteger(rawQuantity)) {
       return { ok: false, reason: `Quantidade fracionada sem unidade clara para ${item.product}` };
@@ -1973,10 +1988,18 @@ REGRA OBRIGATÓRIA PARA DATAS BLOQUEADAS:
 - Ofereça saídas claras: escolher outro dia, antecipar para antes, deixar para depois ou chamar um atendente.
 - NUNCA chame criar_pedido com pickupDate em uma data bloqueada.
 
-REGRAS DE CÁLCULO PARA "CENTOS" (MUITO IMPORTANTE):
-- Produtos como "mini salgados" ou que tenham "Cento" no nome frequentemente têm o preço cadastrado por UNIDADE (ex: R$ 0.80 ou R$ 0.90).
-- Se o cliente pedir um "Cento" (100 unidades), "Meio Cento" (50 unidades) ou múltiplos, você DEVE calcular o total multiplicando a quantidade REAL de salgados pelo valor da unidade no cardápio. (Ex: 1 cento = 100 x R$ 0.90 = R$ 90,00).
-- Na tool criar_pedido, envie a quantidade TOTAL de unidades em "quantity" (ex: 100) e o valor total calculado corretamente em "total" (ex: 90.00). NUNCA cobre apenas R$ 0.90 por um cento inteiro.
+REGRAS DE CÁLCULO PARA PRODUTOS POR UNIDADE — "CENTOS" (MUITO IMPORTANTE):
+- Produtos como "mini salgados" ou que tenham "Cento" no nome têm o preço cadastrado por UNIDADE (ex: R$ 0.80).
+- O cálculo é SEMPRE: quantity = número de unidades, total = quantity × preço unitário. Simples assim.
+- Qualquer número que o cliente pedir É a quantidade de unidades: 8, 15, 20, 50, 100, 267 — tudo válido.
+  Exemplos: "quero 20 mini" → quantity=20. "quero 267 salgadinhos" → quantity=267. "quero 8 coxinhas" → quantity=8.
+- "Cento" e "meio cento" são apenas termos populares para quantidades:
+  • "meio cento" / "meia centena" = 50 unidades
+  • "um cento" / "1 cento" = 100 unidades
+  • "um quarto de cento" = 25 unidades
+  • "2 centos" = 200 unidades
+- REGRA CRÍTICA: Se o cliente pedir um NÚMERO EXATO ("50 mini", "30 salgadinhos"), use EXATAMENTE esse número como quantity. "50 mini" = quantity 50, NÃO 100. NUNCA arredonde para cento.
+- Na tool criar_pedido, envie a quantidade de unidades em "quantity" e o total = quantity × preço unitário. NUNCA cobre apenas R$ 0.80 por um cento inteiro (100 × R$ 0.80 = R$ 80.00).
 
 HISTÓRICO DESTE CLIENTE (uso interno — NÃO revelar ao cliente):
 ${customerHistory}
