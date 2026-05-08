@@ -498,7 +498,12 @@ export async function fetchInstanceConnectionState(instanceName: string): Promis
   if (!instanceName) return 'disconnected';
   try {
     const list = await fetchInstancesList();
-    const match = list.find((i) => (i.whatsmiau_instance_id ?? i.name ?? '') === instanceName);
+    // Whatsmiau appends _{userId} to whatsmiau_instance_id (e.g. "zelo-abc_d3c6ca80")
+    // but we store only the base name. Accept exact match or base-name prefix match.
+    const match = list.find((i) => {
+      const id: string = i.whatsmiau_instance_id ?? i.name ?? '';
+      return id === instanceName || id.startsWith(`${instanceName}_`);
+    });
     const status: string = match?.status ?? '';
     if (status === 'CONNECTED' || status === 'open') return 'connected';
     if (status === 'connecting') return 'connecting';
