@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, LogOut, Check, Loader2, X, Sparkles, Shield, UserCircle2, Database } from 'lucide-react';
+import { ShieldCheck, LogOut, Check, Loader2, X, Sparkles, Shield, UserCircle2, Database, Phone, MapPin, Camera, FileText } from 'lucide-react';
+import { supabase } from '../../services/supabaseClient';
 import { ZeloState } from '../../types';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useSubscription } from '../../hooks/useSubscription';
@@ -51,8 +52,15 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
     setPlanChangeOpen(true);
   };
 
-  // Profile draft synced from empresa_perfil
-  const [draftName, setDraftName] = useState(state.profile.name);
+  // Profile drafts synced from empresa_perfil
+  const [draftName, setDraftName] = useState(empresa?.nome_exibicao ?? state.profile.name);
+  const [draftContato, setDraftContato] = useState(empresa?.contato ?? '');
+  const [draftEndereco, setDraftEndereco] = useState(empresa?.endereco ?? '');
+  const [draftDocumento, setDraftDocumento] = useState(empresa?.documento ?? '');
+  const [draftLogoUrl, setDraftLogoUrl] = useState(empresa?.logo_url ?? state.profile.avatar ?? '');
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [pendingLogoUrl, setPendingLogoUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [profileSave, setProfileSave] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   // Password change state
@@ -67,19 +75,75 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
   const [confirmLogout, setConfirmLogout] = useState(false);
 
   useEffect(() => {
-    if (empresa?.nome_exibicao) setDraftName(empresa.nome_exibicao);
-  }, [empresa?.nome_exibicao]);
+    if (!empresa) return;
+    setDraftName(empresa.nome_exibicao ?? '');
+    setDraftContato(empresa.contato ?? '');
+    setDraftEndereco(empresa.endereco ?? '');
+    setDraftDocumento(empresa.documento ?? '');
+    setDraftLogoUrl(empresa.logo_url ?? state.profile.avatar ?? '');
+  }, [empresa?.nome_exibicao, empresa?.contato, empresa?.endereco, empresa?.documento, empresa?.logo_url]);
 
-  const isNameDirty = draftName !== (empresa?.nome_exibicao ?? state.profile.name);
+  // Revoke object URL when component unmounts or file changes
+  useEffect(() => {
+    return () => { if (pendingLogoUrl) URL.revokeObjectURL(pendingLogoUrl); };
+  }, [pendingLogoUrl]);
 
-  const handleSaveName = async () => {
+  const isProfileDirty =
+    draftName !== (empresa?.nome_exibicao ?? state.profile.name) ||
+    draftContato !== (empresa?.contato ?? '') ||
+    draftEndereco !== (empresa?.endereco ?? '') ||
+    draftDocumento !== (empresa?.documento ?? '') ||
+    logoFile !== null;
+
+  const handleLogoFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > 1.5 * 1024 * 1024) {
+      alert('Imagem muito grande. Use PNG ou JPG de até 1,5 MB.');
+      return;
+    }
+    if (pendingLogoUrl) URL.revokeObjectURL(pendingLogoUrl);
+    setLogoFile(file);
+    setPendingLogoUrl(URL.createObjectURL(file));
+  }, [pendingLogoUrl]);
+
+  const handleSaveProfile = async () => {
     setProfileSave('saving');
-    const ok = await saveEmpresa({ nome_exibicao: draftName });
-    if (ok) {
-      setState(prev => ({ ...prev, profile: { ...prev.profile, name: draftName } }));
-      setProfileSave('saved');
-      setTimeout(() => setProfileSave('idle'), 2500);
-    } else {
+    try {
+      let finalLogoUrl = draftLogoUrl || null;
+      if (logoFile && session?.user?.id) {
+        const fileName = `${session.user.id}.png`;
+        const { error: upErr } = await supabase.storage
+          .from('logos')
+          .upload(fileName, logoFile, { upsert: true });
+        if (upErr) throw upErr;
+        const { data: { publicUrl } } = supabase.storage
+          .from('logos')
+          .getPublicUrl(fileName);
+        finalLogoUrl = `${publicUrl}?t=${Date.now()}`;
+      }
+
+      const ok = await saveEmpresa({
+        nome_exibicao: draftName,
+        contato: draftContato || null,
+        endereco: draftEndereco || null,
+        documento: draftDocumento || null,
+        logo_url: finalLogoUrl,
+      });
+
+      if (ok) {
+        if (finalLogoUrl) setDraftLogoUrl(finalLogoUrl);
+        setLogoFile(null);
+        setPendingLogoUrl(null);
+        setState(prev => ({ ...prev, profile: { ...prev.profile, name: draftName, avatar: finalLogoUrl || prev.profile.avatar } }));
+        setProfileSave('saved');
+        setTimeout(() => setProfileSave('idle'), 2500);
+      } else {
+        setProfileSave('error');
+        setTimeout(() => setProfileSave('idle'), 3000);
+      }
+    } catch {
       setProfileSave('error');
       setTimeout(() => setProfileSave('idle'), 3000);
     }
@@ -164,12 +228,41 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
       <div className="max-w-[700px] mx-auto px-8 py-8 space-y-6">
 
         {/* Avatar header */}
-        <header className="flex flex-col items-center text-center gap-4">
+        <header className="flex flex-col items-center text-center gap-3">
           <div className="relative group">
-            <div className="w-24 h-24 rounded-full overflow-hidden ring-2 ring-[var(--color-line)] shadow-sm">
-              <img src={state.profile.avatar} alt="" className="w-full h-full object-cover" />
-            </div>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-24 h-24 rounded-full overflow-hidden ring-2 ring-[var(--color-line)] shadow-sm bg-[var(--color-surface-muted)] block focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
+              title="Alterar logo"
+            >
+              {(pendingLogoUrl || draftLogoUrl || state.profile.avatar) ? (
+                <img src={pendingLogoUrl || draftLogoUrl || state.profile.avatar} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <UserCircle2 className="w-12 h-12 text-[var(--color-ink-faint)]" strokeWidth={1.2} />
+                </div>
+              )}
+              <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <Camera className="w-6 h-6 text-white" strokeWidth={1.8} />
+              </div>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={handleLogoFileChange}
+            />
           </div>
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1.5 text-[11.5px] text-[var(--color-ink-muted)] hover:text-[var(--color-brand)] transition-colors"
+          >
+            <Camera className="w-3 h-3" />
+            {pendingLogoUrl ? 'Imagem selecionada — salve para confirmar' : 'Alterar logo'}
+          </button>
+
           <div>
             <h2 className="text-[22px] font-semibold">{draftName || state.profile.name}</h2>
             <p className="text-[13px] text-[var(--color-ink-muted)] flex items-center justify-center gap-1.5 mt-0.5">
@@ -182,25 +275,51 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
           </div>
         </header>
 
-        {/* 1. Identidade — empresa_perfil */}
-        <SectionCard icon={UserCircle2} title="Dados do perfil">
+        {/* 1. Dados do negócio — empresa_perfil */}
+        <SectionCard icon={UserCircle2} title="Dados do negócio">
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              {empresa && (
-                <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--color-brand-deep)] bg-[var(--color-brand-soft)] px-2 py-0.5 rounded-full">
-                  <Check className="w-3 h-3" strokeWidth={2.5} />
-                  Sincronizado · Zelo PDV
-                </span>
-              )}
-            </div>
+            {empresa && (
+              <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--color-brand-deep)] bg-[var(--color-brand-soft)] px-2 py-0.5 rounded-full">
+                <Check className="w-3 h-3" strokeWidth={2.5} />
+                Sincronizado · Zelo PDV
+              </span>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className={LABEL}>Nome da empresa</label>
+                <label className={LABEL}>Nome de exibição</label>
                 <input
                   type="text"
                   value={draftName}
                   onChange={e => setDraftName(e.target.value)}
+                  placeholder="Nome do seu negócio"
+                  className={FIELD}
+                />
+              </div>
+              <div>
+                <label className={LABEL}>
+                  <span className="flex items-center gap-1"><Phone className="w-3 h-3" />Telefone</span>
+                </label>
+                <input
+                  type="tel"
+                  value={draftContato}
+                  onChange={e => setDraftContato(e.target.value)}
+                  placeholder="(XX) XXXXX-XXXX"
+                  className={FIELD}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className={LABEL}>
+                  <span className="flex items-center gap-1"><FileText className="w-3 h-3" />CNPJ / CPF</span>
+                </label>
+                <input
+                  type="text"
+                  value={draftDocumento}
+                  onChange={e => setDraftDocumento(e.target.value)}
+                  placeholder="00.000.000/0001-00"
                   className={FIELD}
                 />
               </div>
@@ -215,20 +334,33 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
               </div>
             </div>
 
-            {isNameDirty && (
+            <div>
+              <label className={LABEL}>
+                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />Endereço</span>
+              </label>
+              <input
+                type="text"
+                value={draftEndereco}
+                onChange={e => setDraftEndereco(e.target.value)}
+                placeholder="Rua, número, bairro, cidade - UF"
+                className={FIELD}
+              />
+            </div>
+
+            {isProfileDirty && (
               <button
-                onClick={handleSaveName}
+                onClick={handleSaveProfile}
                 disabled={profileSave === 'saving'}
                 className="flex items-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white px-4 py-2 rounded-lg text-[13.5px] font-semibold transition-colors disabled:opacity-50"
               >
                 {profileSave === 'saving'
                   ? <Loader2 className="w-4 h-4 animate-spin" />
                   : <Check className="w-4 h-4" />}
-                {profileSave === 'saving' ? 'Salvando…' : 'Salvar nome'}
+                {profileSave === 'saving' ? 'Salvando…' : 'Salvar dados'}
               </button>
             )}
             {profileSave === 'saved' && (
-              <p className="text-[12.5px] text-[var(--color-brand)] font-medium">✓ Nome atualizado no Zelo PDV</p>
+              <p className="text-[12.5px] text-[var(--color-brand)] font-medium">✓ Dados atualizados · visíveis no Zelo PDV</p>
             )}
             {profileSave === 'error' && (
               <p className="text-[12.5px] text-[var(--color-alert)] font-medium">Erro ao salvar. Tente novamente.</p>

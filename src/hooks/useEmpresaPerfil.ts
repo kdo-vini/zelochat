@@ -14,6 +14,8 @@ export interface EmpresaPerfil {
   contato: string | null;
   logo_url: string | null;
   timezone: string | null;
+  /** PDV-owned column — safe to read/write, must never ALTER via migration from this repo */
+  documento: string | null;
   /** Added via migration 001_empresa_perfil_chave_pix.sql — may be null if migration not yet run */
   chave_pix: string | null;
   /** Added via migration 003_triggers_and_manager_phone.sql — may be null if migration not yet run */
@@ -66,7 +68,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
     // Step 1: fetch the guaranteed columns (no chave_pix — may not exist yet)
     const { data, error: dbError } = await supabase
       .from('empresa_perfil')
-      .select('id, nome_exibicao, endereco, contato, logo_url, timezone')
+      .select('id, nome_exibicao, endereco, contato, logo_url, timezone, documento')
       .eq('user_id', session.user.id)
       .maybeSingle();
 

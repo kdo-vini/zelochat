@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getFriendlyErrorMessage } from '../services/errorMessages';
 import { signOut } from '../services/authService';
 import { supabase } from '../services/supabaseClient';
+import { apiUrl } from '../config';
 import { ZeloChatLogo } from '../components/auth/AuthCard';
 import OnboardingStep from '../components/onboarding/OnboardingStep';
 
@@ -139,6 +140,7 @@ export default function OnboardingPage() {
     setLoading(true);
 
     // Attempt with tipo_negocio — fallback without it if column doesn't exist
+    const nowIso = new Date().toISOString();
     const payload: Record<string, unknown> = {
       user_id: user.id,
       nome_exibicao: companyName.trim(),
@@ -146,7 +148,10 @@ export default function OnboardingPage() {
       tipo_negocio: businessType,
       timezone,
       zelochat_onboarding_done: true,
-      updated_at: new Date().toISOString(),
+      // Anchor estável pro cálculo de "dia N" do follow-up sequence (server/onboardingFollowup.ts).
+      // updated_at muda em qualquer edição posterior do perfil; este campo só é setado aqui.
+      zelochat_onboarding_done_at: nowIso,
+      updated_at: nowIso,
     };
 
     const { error } = await supabase
@@ -176,6 +181,28 @@ export default function OnboardingPage() {
     }
 
     await refreshProfile();
+
+    // Fire-and-forget: dispara o pacote de boas-vindas (Day 0 WhatsApp + Email).
+    // Erro aqui não bloqueia o usuário de entrar no app — Resend ou Whatsmiau
+    // podem estar fora; o cron diário pega o caso na próxima rodada se for o caso
+    // (mas Day 0 não tem retry — aceitamos a perda).
+    void (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) return;
+        await fetch(apiUrl('/api/onboarding/welcome'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      } catch (err) {
+        console.warn('[OnboardingPage] welcome dispatch failed (silently ignored):', err);
+      }
+    })();
+
     navigate('/app');
   };
 

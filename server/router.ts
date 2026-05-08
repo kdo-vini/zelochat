@@ -85,6 +85,7 @@ import {
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
 import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
 import { cancelPendingReply } from './replyDebouncer.js';
@@ -2281,6 +2282,53 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
       return;
     }
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Onboarding follow-up ─────────────────────────────────────────────────────
+//
+// `/api/onboarding/welcome` — JWT-auth, disparada pelo frontend logo após o
+// upsert que marca `zelochat_onboarding_done=true`. Manda WhatsApp + Email
+// Day 0. Fire-and-forget no cliente: erro aqui não trava entrada no app.
+//
+// `/api/cron/onboarding-followup` — Bearer CRON_SECRET, gatilho manual da
+// rotina diária (Day 3, 7, 14, 21, 28). O loop in-process já roda automático
+// via startOnboardingFollowupLoop(); essa rota existe pra debugging e pra
+// permitir cron externo se um dia trocarmos de Railway pra outra plataforma.
+
+router.post('/api/onboarding/welcome', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await requireEmpresaAndUserId(req);
+    const result = await sendWelcomePack(userId);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    console.error('[onboarding/welcome] error:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
+router.post('/api/cron/onboarding-followup', async (req: Request, res: Response) => {
+  const expected = (process.env.CRON_SECRET || '').trim();
+  if (!expected) {
+    res.status(503).json({ error: 'CRON_SECRET_NOT_CONFIGURED' });
+    return;
+  }
+  const received = extractBearerToken(req)?.trim() ?? '';
+  if (!received || !safeEqualString(received, expected)) {
+    res.status(401).json({ error: 'UNAUTHORIZED' });
+    return;
+  }
+
+  try {
+    const result = await runDailyOnboardingFollowup();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error('[cron/onboarding-followup] error:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
   }
 });
 

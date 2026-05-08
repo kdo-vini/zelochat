@@ -11,6 +11,7 @@ import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscriptio
 import { ensureAiSettingsHydrated, isAiGloballyEnabledNow } from './configStore.js';
 import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
+import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { scheduleReply } from './replyDebouncer.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
@@ -76,6 +77,12 @@ const PAYWALL_EXEMPT_EXACT = new Set<string>([
   '/api/healthz',
   '/api/bind-empresa',
   '/api/status',
+  // Onboarding welcome roda ANTES do usuário ter qualquer assinatura — não tem
+  // trial no ZeloChat, então quem termina o setup pode estar sem subscription
+  // ativa. Sem essa exceção, o paywall 402 trava o disparo do email + WA Day 0.
+  '/api/onboarding/welcome',
+  // Cron interno autenticado por CRON_SECRET, não usa JWT de empresa.
+  '/api/cron/onboarding-followup',
 ]);
 const PAYWALL_EXEMPT_PREFIXES = ['/api/billing/'];
 
@@ -301,4 +308,9 @@ httpServer.listen(PORT, () => {
   // then every 24h. Deletes rows where expires_at < NOW() - 7 days. Non-critical:
   // errors are swallowed and never crash the process.
   startPendingOrderSweeper();
+
+  // Onboarding follow-up — Day 3, 7, 14, 21, 28 nutrition + conversion sequence
+  // (Day 0 fires synchronously via /api/onboarding/welcome). Idempotent: re-run
+  // is no-op via UNIQUE(user_id, day) on the log tables.
+  startOnboardingFollowupLoop();
 });
