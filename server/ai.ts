@@ -39,6 +39,16 @@ import {
 import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
 import { getOpenAIClient } from './openaiClient.js';
 import { isSupportedPixReceiptAttachment, validatePixReceipt } from './pixReceiptValidator.js';
+import {
+  classifyConfirmationIntent,
+  isLikelyPaymentProofMessage,
+  textMentionsPaymentProof,
+  pickActiveOrder,
+  resolveProductBySemantic,
+  shouldFinalizeAfterObservationAck,
+  type ActiveOrderRow,
+  type SemanticResolution,
+} from '../src/domain/conversationState.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -113,14 +123,16 @@ const AFFIRMATIVE_INTENTS = new Set<string>([
   'confirmar', 'confirma', 'confirmo', 'confirmado',
   'beleza', 'blz', 'bele',
   'fechado', 'fechou',
-  'isso', 'isso ai', 'isso ae',
-  'perfeito', 'otimo', 'exato', 'exatamente',
-  'certo', 'tudo certo', 'ta certo',
-  'pode', 'pode ser', 'pode mandar', 'pode confirmar',
+  'isso', 'isso ai', 'isso ae', 'isso mesmo',
+  'perfeito', 'perfeitinho',
+  'otimo', 'exato', 'exatamente',
+  'certo', 'certinho', 'certim', 'tudo certo', 'ta certo',
+  'pode', 'pode ser', 'pode mandar', 'pode confirmar', 'pode crer',
   'manda', 'manda ai', 'manda ae', 'manda ver',
   'vai sim',
   'claro',
-  'show', 'dale',
+  'show', 'dale', 'dahora', 'demorou',
+  'combinado', 'tranquilo', 'suave', 'massa', 'top', 'firmeza',
 ]);
 
 const NEGATIVE_INTENTS = new Set<string>([
@@ -2141,6 +2153,14 @@ OBJETIVOS:
 6. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
 ${pixReceiptObjective}
 
+REGRAS DE ESTADO E SEGURANÇA (CRÍTICAS — não ignorar):
+- Se o cliente está perguntando sobre, comentando ou enviando comprovante de um pedido que já está em "PEDIDOS ATIVOS DESTE CLIENTE", NÃO recomece o fluxo desse pedido. Não pergunte produto, horário ou pagamento de novo daquele pedido. Você AINDA PODE atender se ele pedir um pedido NOVO/ADICIONAL claramente diferente — nesse caso siga o fluxo normal pra esse pedido novo.
+- Se o cliente enviar imagem, PDF ou disser "mandei o comprovante/pix", "paguei", "segue o pix" e existir pedido ativo, trate como comprovante daquele pedido: agradeça pelo recebimento e diga que vai conferir. NUNCA recalcule o valor. NUNCA confirme que o pagamento "caiu" ou foi compensado.
+- Apenas perguntas como "qual o pix?", "tem pix?", "qual a chave?" NÃO são comprovante — só responda com a chave.
+- Se a última pergunta sua foi "Gostaria de alterar algo?" e o cliente respondeu "não", "certinho", "ok", "obrigado", "boa noite", "👍", "🙏" ou similar — interprete como sem alteração. NÃO repita a pergunta. Avance pra criar_pedido.
+- Para produtos informais como "salgados fritos", "fritinhos", "mini fritos", "assados", "sortidos", "o que tiver": esses são CATEGORIAS, não produtos. Mapear para os produtos do cardápio que se encaixam (ex: "Cento Tradicionais Sortidos" para "salgados fritos sortidos"). Se houver mais de um candidato razoável, pergunte qual o cliente quer antes de chamar criar_pedido. Use o conhecimento do dono nas REGRAS OPERACIONAIS pra resolver dúvidas (ex: "fritos = não-assados", "cento = 100 mini").
+- Em caso de dúvida razoável sobre intenção, pergunte UMA vez antes de escalar.
+
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
 }
 
@@ -2381,6 +2401,173 @@ async function isAutoReplyStillAllowed(
 }
 
 /**
+ * Finds the customer's active (non-final) order on `zelochat_orders` for
+ * receipt-acknowledgement purposes. Used by the reactivation guardrail —
+ * see the comment block in generateAndSendReply.
+ *
+ * Phone matching uses suffix-equality on normalized digits (same convention
+ * as fetchCustomerHistory) so a customer who messaged from a different
+ * device but the same WhatsApp number still matches.
+ */
+async function findActiveOrderForCustomerPhone(
+  empresaId: string,
+  customerPhone: string,
+): Promise<ActiveOrderRow | null> {
+  const digits = normalizePhoneNumber(customerPhone || '');
+  if (!digits) return null;
+  try {
+    const supabase = getServiceSupabase();
+    // Pull a wider window than pickActiveOrder needs so our suffix-phone
+    // filter has rows to work with after the empresa filter narrows.
+    const { data, error } = await supabase
+      .from('zelochat_orders')
+      .select('id, customer_phone, status, total, payment_method, created_at')
+      .eq('empresa_id', empresaId)
+      .neq('status', 'delivered')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) {
+      console.error('[AI] findActiveOrderForCustomerPhone query error:', error);
+      return null;
+    }
+    const rows = (data ?? [])
+      .filter((row: any) => {
+        const rowDigits = normalizePhoneNumber(String(row.customer_phone ?? ''));
+        return rowDigits && (rowDigits.endsWith(digits) || digits.endsWith(rowDigits));
+      })
+      .map((row: any): ActiveOrderRow => ({
+        id: String(row.id),
+        status: row.status,
+        total: Number(row.total) || 0,
+        paymentMethod: row.payment_method ?? null,
+        createdAt: row.created_at,
+      }));
+    return pickActiveOrder(rows);
+  } catch (err) {
+    console.error('[AI] findActiveOrderForCustomerPhone threw:', err);
+    return null;
+  }
+}
+
+/**
+ * Dispatches a customer message that arrived after an order was already
+ * confirmed (without a pending row in `zelochat_pending_orders`). The
+ * message is most likely a Pix receipt drop, but it COULD also be a food
+ * photo, a screenshot, or unrelated chatter — so we discriminate carefully:
+ *
+ *   1. If the empresa enabled Pix-receipt validation AND the attachment is
+ *      a supported image/PDF AND the active order has a Pix payment method,
+ *      run validation.
+ *      • Validator says "is a receipt and matches" → ack approved.
+ *      • Validator says "is a receipt but mismatched" → escalate + ack.
+ *      • Validator says "NOT a receipt" → return null → caller falls through
+ *        to normal AI handling. This avoids hijacking food-photo / screenshot
+ *        / unrelated-image conversations.
+ *   2. Without Pix config OR for non-Pix orders, we only ack+escalate when
+ *      the customer's TEXT explicitly mentions a payment proof
+ *      ("mandei o pix", "segue o comprovante"). Attachment alone is not
+ *      enough — too many false positives (food photos, ID cards, etc.).
+ *      When text proof is missing, return null → fall through to AI.
+ *
+ * In every branch we never recalculate the order total or restart the
+ * collection flow — that was the production bug.
+ *
+ * Returns `null` to signal "false alarm — let AI handle normally"; otherwise
+ * returns the ack string that was sent.
+ */
+async function handleReceiptForActiveOrder(
+  jid: string,
+  empresaId: string,
+  order: ActiveOrderRow,
+  lastMsg: { id: string; waMessageId?: string | null; attachment?: any; content?: string | null; preview?: string | null },
+  lastText: string,
+): Promise<string | null> {
+  const cfg = getConfig(empresaId);
+  const shortId = order.id.slice(0, 8).toUpperCase();
+  const orderIsPix = isPixPaymentMethod(order.paymentMethod);
+  const attachment = lastMsg?.attachment;
+  const attachmentSupported = isSupportedPixReceiptAttachment(attachment);
+  const config = cfg.pixReceiptConfig;
+  const textIndicatesProof = textMentionsPaymentProof(lastText || '');
+
+  // Branch 1: configured Pix validation + a real attachment + Pix order.
+  // Always run the validator first — the model's `isReceipt`/`isPix` flags
+  // are how we distinguish a real receipt from a food photo or screenshot.
+  if (orderIsPix && attachmentSupported && isPixReceiptConfigActive(config)) {
+    try {
+      const result = await validatePixReceipt({
+        empresaId,
+        attachment,
+        expectedTotal: order.total,
+        config,
+      });
+      // FALSE-ALARM EXIT: the image isn't a receipt. Don't hijack the
+      // conversation. Return null so the caller continues to OpenAI, which
+      // will respond appropriately (likely conversationally about the food
+      // photo / unrelated image) under the new "active order" prompt rules.
+      if (!result.analysis.isReceipt || !result.analysis.isPix) {
+        console.log(`[AI] handleReceiptForActiveOrder: validator says not a receipt (isReceipt=${result.analysis.isReceipt}, isPix=${result.analysis.isPix}) — falling through to AI`);
+        return null;
+      }
+      if (result.approved) {
+        const ack = `Recebi seu comprovante do pedido *#${shortId}* — beneficiário, valor e data conferem. Obrigado! 🙏\n\nQualquer dúvida, é só chamar.`;
+        await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });
+        return ack;
+      }
+      // Mismatch: never auto-confirm money. Escalate with the parsed reason
+      // so the operator sees what was wrong (low confidence, wrong beneficiary,
+      // amount lower than expected, etc.). Do NOT change the order total.
+      // skipCustomerMessage=true because we send our own context-rich ack
+      // below — without this, escalateSession would also send the generic
+      // "Vou chamar um atendente humano" handoff and the customer gets two
+      // back-to-back replies for the same event.
+      await escalateSession(empresaId, jid, {
+        triggerId: null,
+        triggerKind: 'escalate_human',
+        triggerName: 'Comprovante Pix divergente em pedido confirmado',
+        reasonCategory: 'custom',
+        reasonText: `Cliente enviou comprovante para o pedido #${shortId} (total R$ ${order.total.toFixed(2)}), mas a leitura automática rejeitou: ${safeForPrompt(result.reason, 200)}.`,
+        customerMessageExcerpt: 'Comprovante Pix em pedido já confirmado',
+        skipCustomerMessage: true,
+      });
+      const ack = `Recebi o comprovante do pedido *#${shortId}*, mas vou pedir pra um atendente conferir com calma antes de te confirmar. Já te chamo. 🙏`;
+      await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });
+      return ack;
+    } catch (err) {
+      console.error('[AI] handleReceiptForActiveOrder validation failed:', err);
+      // fall through to the safe acknowledge-only path
+    }
+  }
+
+  // Branch 2: no validator path available (no Pix config, or non-Pix order,
+  // or unsupported attachment type). Without a validator we can't tell a
+  // food photo from a receipt — so we require explicit text proof
+  // ("mandei o pix", "segue o comprovante") before acting. Otherwise
+  // return null and let the AI handle conversationally.
+  if (!textIndicatesProof) {
+    console.log('[AI] handleReceiptForActiveOrder: no Pix validator path and no proof text — falling through to AI');
+    return null;
+  }
+
+  // Acknowledge receipt, never claim bank settlement,
+  // escalate for human eyes since we cannot validate.
+  // skipCustomerMessage=true — same reason as Branch 1: we send our own
+  // contextual ack below; escalateSession's generic handoff would duplicate.
+  await escalateSession(empresaId, jid, {
+    triggerId: null,
+    triggerKind: 'escalate_human',
+    triggerName: 'Comprovante recebido em pedido já confirmado',
+    reasonCategory: 'custom',
+    reasonText: `Cliente enviou ${attachment?.type === 'document' ? 'PDF' : attachment?.type === 'image' ? 'imagem' : 'mensagem'} parecendo comprovante para o pedido #${shortId} (total R$ ${order.total.toFixed(2)}, pagamento ${safeForPrompt(order.paymentMethod ?? 'não informado', 40)}). Não há validação automática configurada — confirme manualmente o valor e o beneficiário antes de tratar como pago.`,
+    customerMessageExcerpt: 'Comprovante em pedido já confirmado',
+    skipCustomerMessage: true,
+  });
+  const ack = `Recebi seu comprovante do pedido *#${shortId}*. Vou pedir pra um atendente conferir com você antes de eu confirmar como pago. Já te chamo. 🙏`;
+  await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });
+  return ack;
+}
+
+/**
  * 🚨 CRITICAL — AI dispatch entry point
  *
  * The single ingress for all auto-replies. Every customer message that the
@@ -2536,13 +2723,28 @@ export async function generateAndSendReply(
     const isAffirmative = AFFIRMATIVE_INTENTS.has(normalized);
     const isNegative = NEGATIVE_INTENTS.has(normalized);
 
-    if (isAffirmative) {
-      console.log(`[AI] Pending order: affirmative text detected ("${lastText}") — auto-confirming`);
+    // Layered classifier (P0 — informal Brazilian replies). The token sets above
+    // are conservative and miss things like "👍", "boa noite e até amanhã",
+    // "ok obrigado" — production sees these constantly after the AI sends the
+    // order summary and asks "deseja alterar algo?". The pure classifier in
+    // src/domain/conversationState picks them up; we only consult it when the
+    // narrow whitelist is silent so the existing safe paths stay primary.
+    const richIntent = classifyConfirmationIntent(lastText, {
+      lastAiQuestion: 'pending_button_confirm',
+    });
+    const richIsAffirmative =
+      richIntent === 'affirmative_confirm' ||
+      richIntent === 'farewell_or_thanks_confirm' ||
+      richIntent === 'emoji_only_confirm';
+    const richIsNegative = richIntent === 'negative_cancel';
+
+    if (isAffirmative || richIsAffirmative) {
+      console.log(`[AI] Pending order: affirmative text detected ("${lastText}", classifier=${richIntent}) — auto-confirming`);
       await confirmPendingOrder(jid, resolvedEmpresaId);
       return receiptRequired ? 'receipt_required' : 'confirmed';
     }
-    if (isNegative) {
-      console.log(`[AI] Pending order: negative text detected ("${lastText}") — auto-cancelling`);
+    if (isNegative || richIsNegative) {
+      console.log(`[AI] Pending order: negative text detected ("${lastText}", classifier=${richIntent}) — auto-cancelling`);
       await cancelPendingOrder(jid, resolvedEmpresaId);
       return 'cancelled';
     }
@@ -2556,6 +2758,59 @@ export async function generateAndSendReply(
     const editAck = 'Beleza, vamos ajustar! Me conta o que mudou. 😊';
     await sendAndPersistText(jid, editAck, resolvedEmpresaId, { responseSource: 'ai_auto' });
     return editAck;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // STATE GUARD — receipt drop while an order is already confirmed (P0).
+  //
+  // Production incident: AI was on schedule-off / manual mode, the operator
+  // confirmed the customer's order by hand, the order landed in
+  // `zelochat_orders` (not `zelochat_pending_orders`). The AI auto-reactivated
+  // by schedule. Customer's NEXT message was a Pix receipt PDF. Without this
+  // guard, the AI sees an empty pending row and a fresh-looking conversation,
+  // re-runs the order flow, recalculates with current prices and asks for
+  // re-confirmation — total ends up R$25 above what the customer already
+  // paid. Customer is confused and angry, operator has to clean up by hand.
+  //
+  // Fix: if the customer's last message is an attachment (image/PDF) and
+  // there's a recent active order on `zelochat_orders` for this phone, treat
+  // the message as a payment-proof acknowledgement. Don't recalculate.
+  // Don't reconfirm. Just thank the customer and (when configured) escalate
+  // for human verification of the actual amount/beneficiary.
+  // ──────────────────────────────────────────────────────────────────────────
+  if (!isGeneralMode) {
+    const lastMsg = session.messages.at(-1);
+    const lastIsUser = lastMsg?.role === 'user';
+    const attachmentKind: 'image' | 'document' | 'audio' | 'video' | 'none' =
+      (lastMsg?.attachment?.type as any) ?? 'none';
+    const lastTextForProof = lastIsUser
+      ? (buildContentForModel(lastMsg as any) || lastMsg?.preview || lastMsg?.content || '')
+      : '';
+    const isProofMessage =
+      lastIsUser &&
+      (
+        isLikelyPaymentProofMessage({ attachmentKind, caption: lastTextForProof })
+        || textMentionsPaymentProof(lastTextForProof)
+      );
+    if (isProofMessage) {
+      const activeOrder = await findActiveOrderForCustomerPhone(
+        resolvedEmpresaId,
+        session.customerPhone,
+      );
+      if (activeOrder) {
+        const ack = await handleReceiptForActiveOrder(
+          jid,
+          resolvedEmpresaId,
+          activeOrder,
+          lastMsg as any,
+          lastTextForProof,
+        );
+        // Null return means "false alarm — let AI handle". Otherwise
+        // we already sent the ack and (when needed) escalated; exit early
+        // so the OpenAI dispatch below does not run.
+        if (ack !== null) return ack;
+      }
+    }
   }
 
   const lastUserMsgForDate = [...session.messages].reverse().find((m) => m.role === 'user');
@@ -2609,8 +2864,21 @@ export async function generateAndSendReply(
     triggers,
     activeOrdersBlock,
   );
+  // Two-layer detection: the legacy `shouldForceCreateOrderAfterObservationPrompt`
+  // requires the AI summary message to contain product/payment tokens, which
+  // is fragile for short observation prompts. `shouldFinalizeAfterObservationAck`
+  // (pure module) only needs the observation question itself + every following
+  // customer message classified as affirmative/farewell/emoji-positive. Either
+  // detector firing is enough — they should agree on the strict path and
+  // disagree only when the new path catches an informal-confirmation case the
+  // old path missed.
   const forceCreateOrderFromObservationAck = !isGeneralMode
-    && shouldForceCreateOrderAfterObservationPrompt(session.messages);
+    && (
+      shouldForceCreateOrderAfterObservationPrompt(session.messages)
+      || shouldFinalizeAfterObservationAck(
+        session.messages.map((m) => ({ role: m.role, content: m.content })),
+      )
+    );
 
   // Signal "typing" while we wait for the AI — non-blocking, ignore failures
   void sendPresence(jid, 'composing', 0, resolvedEmpresaId);
@@ -2981,10 +3249,33 @@ export async function generateAndSendReply(
           }
 
           const available = getAvailableProducts(resolvedEmpresaId);
-          const resolvedItems = args.items.map((item) => ({
-            item,
-            product: resolveCatalogProduct(item.product, available, cfg.aiInstructions),
-          }));
+          // Two-pass resolution. The strict resolver handles exact / fuzzy /
+          // alias matches. When it fails, the semantic resolver maps Brazilian
+          // informal salgado terms ("salgados fritos", "fritinhos", "sortidos
+          // misturados") to a category and either picks a single catalog
+          // product (when only one fits) or surfaces the candidate list to
+          // the operator on escalation. We do NOT auto-pick from multiple
+          // candidates — that's a human decision.
+          const resolvedItems = args.items.map((item) => {
+            const strict = resolveCatalogProduct(item.product, available, cfg.aiInstructions);
+            if (strict) {
+              return { item, product: strict, semantic: null as SemanticResolution | null };
+            }
+            const semantic = resolveProductBySemantic(item.product, available);
+            if (semantic.kind === 'unique_match') {
+              console.log(`[AI] catalog semantic match: input="${safeForPrompt(item.product, 80)}" -> product="${safeForPrompt(semantic.product.name, 80)}" reason="${safeForPrompt(semantic.reason, 120)}"`);
+              return {
+                item,
+                // SAFETY: semantic.product was selected from the catalog list,
+                // so it must be the exact AvailableProduct row — re-find it
+                // by name to keep type integrity (price/availability fields).
+                product:
+                  available.find((p) => p.name === semantic.product.name) ?? null,
+                semantic,
+              };
+            }
+            return { item, product: null, semantic };
+          });
 
           // Recalculate products subtotal server-side — never trust the model's arithmetic
           {
@@ -2993,17 +3284,45 @@ export async function generateAndSendReply(
             .map((resolved) => resolved.item);
           if (unmatchedItems.length > 0) {
             const names = unmatchedItems.map((i) => i.product).join(', ');
-            console.log(`[AI] Product not safely resolved for order; escalating. empresa=${resolvedEmpresaId} jid=${jid} items=${names}`);
-            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-            await addToolMessage(jid, `Produto não encontrado com segurança: ${names}`, toolCall.id, resolvedEmpresaId);
+            // Build an operator-facing breakdown of what the semantic matcher
+            // saw — this is what was missing in production: the operator only
+            // saw "Produto não encontrado com segurança: Salgados fritos" with
+            // no hint of the cliente's intent or candidate products to suggest.
+            const semanticDetails = resolvedItems
+              .filter((r) => !r.product)
+              .map((r) => {
+                if (!r.semantic) return `• "${safeForPrompt(r.item.product, 80)}" — sem mapeamento semântico`;
+                if (r.semantic.kind === 'multiple_candidates') {
+                  const list = r.semantic.candidates
+                    .slice(0, 6)
+                    .map((c) => safeForPrompt(c.name, 60))
+                    .join(', ');
+                  return `• "${safeForPrompt(r.item.product, 80)}" → ${safeForPrompt(r.semantic.reason, 120)}\n   Candidatos do cardápio: ${list}`;
+                }
+                return `• "${safeForPrompt(r.item.product, 80)}" → ${safeForPrompt(r.semantic.reason, 200)}`;
+              })
+              .join('\n');
             const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+            const lastUserText = lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview || '') : '';
+            console.log(`[AI] Product not safely resolved for order; escalating. empresa=${resolvedEmpresaId} jid=${jid} items=${names} semantic=${semanticDetails.replace(/\n/g, ' | ')}`);
+            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+            await addToolMessage(
+              jid,
+              `Produto não encontrado com segurança: ${names}\n${semanticDetails}`,
+              toolCall.id,
+              resolvedEmpresaId,
+            );
             await escalateSession(resolvedEmpresaId, jid, {
               triggerId: null,
               triggerKind: 'escalate_human',
               triggerName: 'Produto não identificado no pedido',
               reasonCategory: 'custom',
-              reasonText: `A IA tentou criar pedido com produto não encontrado com segurança no cardápio: ${safeForPrompt(names, 200)}.`,
-              customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
+              reasonText:
+                `A IA não conseguiu mapear com segurança os produtos pedidos: ${safeForPrompt(names, 200)}.\n` +
+                `Frase do cliente: "${safeForPrompt(lastUserText, 240)}"\n` +
+                `Análise:\n${safeForPrompt(semanticDetails, 700)}\n` +
+                `Sugestão: confirme com o cliente qual produto cabe na intenção (ex: ofereça os candidatos listados) antes de fechar o pedido. Não modifique valor sem confirmar.`,
+              customerMessageExcerpt: lastUserText || null,
             });
             resetAiFailureCounter(resolvedEmpresaId, jid);
             return handoffMessageFor('custom');
