@@ -49,16 +49,23 @@ type CatalogState = {
 
 const EMPTY: CatalogState = { categorias: [], subcategorias: [], produtos: [] };
 
-export function useCatalog(session: Session | null) {
+type UseCatalogOptions = {
+  enabled?: boolean;
+};
+
+export function useCatalog(session: Session | null, options: UseCatalogOptions = {}) {
   const [data, setData] = useState<CatalogState>(EMPTY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const userId = session?.user?.id ?? null;
+  const enabled = options.enabled ?? true;
 
   const refresh = useCallback(async () => {
     if (!userId) {
       setData(EMPTY);
+      setHasLoaded(false);
       return;
     }
     setLoading(true);
@@ -75,7 +82,7 @@ export function useCatalog(session: Session | null) {
       if (catsRes.error) throw catsRes.error;
       if (subsRes.error) throw subsRes.error;
       if (prodsRes.error) throw prodsRes.error;
-      setData({
+      const nextData: CatalogState = {
         categorias: (catsRes.data ?? []) as Categoria[],
         subcategorias: (subsRes.data ?? []).map((r: any) => ({
           id: Number(r.id),
@@ -94,17 +101,21 @@ export function useCatalog(session: Session | null) {
           eh_item_por_unidade: !!r.eh_item_por_unidade,
           ocultar_no_pdv: !!r.ocultar_no_pdv,
         })),
-      });
+      };
+      setData(nextData);
+      setHasLoaded(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível carregar o catálogo.');
+      setHasLoaded(false);
     } finally {
       setLoading(false);
     }
   }, [userId]);
 
   useEffect(() => {
+    if (!enabled) return;
     void refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   // Categoria CRUD
   const createCategoria = useCallback(async (input: CategoriaInput): Promise<Categoria> => {
@@ -257,6 +268,7 @@ export function useCatalog(session: Session | null) {
     createProduto,
     updateProduto,
     deleteProduto,
+    hasLoaded,
   };
 }
 

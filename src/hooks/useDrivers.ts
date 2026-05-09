@@ -11,10 +11,11 @@ function sortDrivers(drivers: DeliveryDriver[]): DeliveryDriver[] {
   return [...drivers].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 }
 
-export function useDrivers(token: string | null) {
+export function useDrivers(token: string | null, options: { enabled?: boolean } = {}) {
   const [drivers, setDrivers] = useState<DeliveryDriver[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options.enabled ?? true;
 
   const refresh = useCallback(async () => {
     if (!token) {
@@ -37,8 +38,9 @@ export function useDrivers(token: string | null) {
   }, [token]);
 
   useEffect(() => {
+    if (!enabled) return;
     void refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   const createDriver = useCallback(async (payload: Pick<DeliveryDriver, 'name' | 'phone' | 'status'>) => {
     if (!token) {

@@ -105,6 +105,30 @@ const NAV_SECONDARY: NavItem[] = [
 
 const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile']);
 const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers', 'catalog', 'novidades']);
+const ACTIVE_SESSION_STORAGE_KEY = 'zelochat_active_session_id';
+const BOOT_MARK_PREFIX = 'zelochat:boot';
+
+function readStoredActiveSessionId(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredActiveSessionId(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
+    else localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable in private windows; selection still works in memory.
+  }
+}
+
+function markBootStep(name: string): void {
+  if (typeof performance === 'undefined' || typeof performance.mark !== 'function') return;
+  performance.mark(`${BOOT_MARK_PREFIX}:${name}`);
+}
 
 /* ─── NavButton component ─────────────────────────────────────── */
 interface NavButtonProps {
@@ -173,7 +197,7 @@ const MemoChatView = memo(ChatView);
 export default function AppShell() {
   const [activeView, setActiveView] = useState<View>('chat');
   const [state, setState] = useState<ZeloState>(() => loadInitialState());
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionIdState] = useState<string | null>(() => readStoredActiveSessionId());
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(() => {
     try {
       return localStorage.getItem('zelochat_sidebar_expanded') !== 'false';
@@ -181,8 +205,11 @@ export default function AppShell() {
   });
   const [profilePics, setProfilePics] = useState<Record<string, string>>({});
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
+  const [deferredDataReady, setDeferredDataReady] = useState(false);
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncedConfigRef = useRef<string | null>(null);
+  const hasSeenConfigSnapshotRef = useRef(false);
   // P1.34 — track consecutive sync failures to surface a SINGLE toast after
   // sustained failure (not on every debounced 600ms attempt). A short blip
   // is fine to swallow; hours of failed sync needs operator awareness so
@@ -191,13 +218,50 @@ export default function AppShell() {
   const syncConfigToastShownRef = useRef<boolean>(false);
   const SYNC_CONFIG_FAIL_THRESHOLD = 5; // ~3s of consecutive failures (5 × 600ms)
   const empresaHydratedRef = useRef(false);
+  const skipNextProfilePersistRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bootStartMarkedRef = useRef(false);
+
+  const setActiveSessionId = useCallback((value: string | null | ((prev: string | null) => string | null)) => {
+    setActiveSessionIdState((previous) => {
+      const next = typeof value === 'function' ? value(previous) : value;
+      writeStoredActiveSessionId(next);
+      return next;
+    });
+  }, []);
 
   const { session, token, loading: authLoading } = useSupabaseSession();
   const { isActive: subscriptionActive, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
   const { empresa, save: saveEmpresa, refresh: refreshEmpresa } = useEmpresaPerfil(session);
   const zelochatMode = normalizeZeloChatMode(empresa?.zelochat_mode);
   const isGeneralMode = zelochatMode === 'general';
+  const shouldLoadCatalog = !!session && !isGeneralMode && (
+    deferredDataReady ||
+    activeView === 'catalog' ||
+    activeView === 'ai-configs'
+  );
+  const shouldLoadOrders = !!session && !isGeneralMode && (
+    activeView === 'dashboard' ||
+    activeView === 'kanban' ||
+    activeView === 'calendar' ||
+    activeView === 'drivers'
+  );
+  const shouldLoadDrivers = !!token && !isGeneralMode && (
+    activeView === 'drivers' ||
+    activeView === 'settings' ||
+    activeView === 'profile'
+  );
+  const shouldLoadTriggers = !!token && (
+    activeView === 'ai-configs' ||
+    activeView === 'settings' ||
+    activeView === 'profile'
+  );
+  const shouldLoadQuickResponses = !!session && (
+    deferredDataReady ||
+    activeView === 'ai-configs' ||
+    activeView === 'settings' ||
+    activeView === 'profile'
+  );
   const primaryNavItems = useMemo(
     () => NAV_PRIMARY.filter((item) => !isGeneralMode || !RESTAURANT_ONLY_VIEWS.has(item.id)),
     [isGeneralMode],
@@ -229,7 +293,6 @@ export default function AppShell() {
     toggleAutoReply,
     deleteSession,
     deleteMessage,
-    fetchProfilePicture,
     updateSessionName,
     lastEscalation,
     dismissEscalation,
@@ -246,7 +309,7 @@ export default function AppShell() {
   const sound = useNotificationSound();
   const { permission: notificationPermission, isVisible: tabVisible, requestPermission: requestNotificationPermission, notify } = useNotifications();
   const toast = useToast();
-  const catalog = useCatalog(session);
+  const catalog = useCatalog(session, { enabled: shouldLoadCatalog });
   const {
     drivers,
     loading: driversLoading,
@@ -254,14 +317,14 @@ export default function AppShell() {
     createDriver,
     updateDriver,
     deleteDriver,
-  } = useDrivers(token);
+  } = useDrivers(token, { enabled: shouldLoadDrivers });
   const {
     triggers,
     error: triggersError,
     createTrigger,
     updateTrigger: updateTriggerRequest,
     deleteTrigger: deleteTriggerRequest,
-  } = useTriggers(token);
+  } = useTriggers(token, { enabled: shouldLoadTriggers });
   const printer = usePrinter();
 
   const {
@@ -276,19 +339,65 @@ export default function AppShell() {
       console.error('[printer] auto-print falhou para pedido', order.id, err);
       toast.error('Não consegui imprimir o pedido automaticamente. Verifique a impressora.');
     });
-  });
+  }, { enabled: shouldLoadOrders });
   const {
     items: quickResponses,
     add: addQuickResponse,
     update: updateQuickResponse,
     remove: deleteQuickResponse,
-  } = useQuickResponses(session);
+  } = useQuickResponses(session, { enabled: shouldLoadQuickResponses });
+  const catalogReadyForConfigSync = isGeneralMode || catalog.hasLoaded;
 
   useEffect(() => { saveInitialState(state); }, [state]);
 
   useEffect(() => {
     try { localStorage.setItem('zelochat_sidebar_expanded', String(sidebarExpanded)); } catch {}
   }, [sidebarExpanded]);
+
+  useEffect(() => {
+    if (!bootStartMarkedRef.current) {
+      bootStartMarkedRef.current = true;
+      markBootStep('start');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authLoading && token) markBootStep('auth-ready');
+  }, [authLoading, token]);
+
+  useEffect(() => {
+    if (empresa) markBootStep('profile-ready');
+  }, [empresa]);
+
+  useEffect(() => {
+    if (token && !chatLoading && sessions.length > 0) {
+      window.requestAnimationFrame(() => markBootStep('chat-list-painted'));
+    }
+  }, [chatLoading, sessions.length, token]);
+
+  useEffect(() => {
+    if (!token) {
+      setDeferredDataReady(false);
+      return;
+    }
+
+    const win = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const markReady = () => {
+      setDeferredDataReady(true);
+      markBootStep('deferred-data-ready');
+    };
+
+    if (win.requestIdleCallback) {
+      const handle = win.requestIdleCallback(markReady, { timeout: 1500 });
+      return () => win.cancelIdleCallback?.(handle);
+    }
+
+    const timer = window.setTimeout(markReady, 1200);
+    return () => window.clearTimeout(timer);
+  }, [token]);
 
   useEffect(() => {
     if (isGeneralMode && !GENERAL_ALLOWED_VIEWS.has(activeView)) {
@@ -341,6 +450,7 @@ export default function AppShell() {
   useEffect(() => {
     if (!empresa) return;
     empresaHydratedRef.current = true;
+    skipNextProfilePersistRef.current = true;
     setState((prev) => ({
       ...prev,
       businessInfo: {
@@ -371,6 +481,10 @@ export default function AppShell() {
   // Persist blockedDates and managerHistory to Supabase (debounced, only after initial hydration)
   useEffect(() => {
     if (!empresaHydratedRef.current) return;
+    if (skipNextProfilePersistRef.current) {
+      skipNextProfilePersistRef.current = false;
+      return;
+    }
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
       void saveEmpresa({ blocked_dates: state.blockedDates, manager_history: state.managerHistory });
@@ -463,18 +577,27 @@ export default function AppShell() {
 
   useEffect(() => {
     if (state.sessions.length === 0) { setActiveSessionId(null); return; }
-    setActiveSessionId((cur) =>
-      cur && state.sessions.some((s) => s.id === cur) ? cur : state.sessions[0].id,
-    );
-  }, [state.sessions]);
+    if (activeSessionId && !state.sessions.some((s) => s.id === activeSessionId)) {
+      setActiveSessionId(null);
+    }
+  }, [activeSessionId, setActiveSessionId, state.sessions]);
 
   useEffect(() => {
     if (!activeSessionId) return;
     void hydrateSession(activeSessionId);
     void markRead(activeSessionId);
+    markBootStep('active-chat-hydrating');
   }, [activeSessionId, hydrateSession, markRead]);
 
-  // Carrega fotos de perfil que já vieram populadas no objeto da sessão, ou consulta via API como fallback
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const active = state.sessions.find((s) => s.id === activeSessionId);
+    if (!active?.messages?.length) return;
+    window.requestAnimationFrame(() => markBootStep('active-chat-hydrated'));
+  }, [activeSessionId, state.sessions]);
+
+  // Use only profile pictures already persisted on the session row. Fetching a
+  // WhatsApp picture per chat on every reload creates a noisy, slow request fan-out.
   useEffect(() => {
     if (!token || sessions.length === 0) return;
     const missing = sessions.filter((s) => !(s.id in profilePics));
@@ -485,20 +608,11 @@ export default function AppShell() {
       updates[s.id] = s.profilePicUrl || '';
     });
     setProfilePics((prev) => ({ ...prev, ...updates }));
-    
-    // Fallback: se não tiver no banco, tenta buscar (embora saibamos que no Whatsmiau V2 não retorna)
-    missing.forEach((s) => {
-      if (!s.profilePicUrl) {
-        void fetchProfilePicture(s.id).then((url) => {
-          if (url) setProfilePics((prev) => ({ ...prev, [s.id]: url }));
-        });
-      }
-    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, token]);
 
 
-  const syncConfigToServer = async (s: ZeloState) => {
+  const syncConfigToServer = async (s: ZeloState, fingerprint: string) => {
     if (!token) return;
     try {
       const catalogHierarchy = catalog.categorias.map((cat) => {
@@ -540,6 +654,7 @@ export default function AppShell() {
         }),
       });
       if (!res.ok) throw new Error(`sync-config returned ${res.status}`);
+      lastSyncedConfigRef.current = fingerprint;
       // P1.34 — sucesso reseta o contador. Se o operador via o toast
       // anteriormente, mostramos um "voltou ao normal" pra fechar o ciclo.
       if (syncConfigToastShownRef.current) {
@@ -565,17 +680,43 @@ export default function AppShell() {
     }
   };
 
-  // Sync inicial — dispara assim que o token estiver disponível
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (token) void syncConfigToServer(state); }, [token]);
-
   // Sync debounced — aguarda 600ms sem mudanças antes de enviar ao servidor
   useEffect(() => {
+    hasSeenConfigSnapshotRef.current = false;
+    lastSyncedConfigRef.current = null;
+    syncConfigFailCountRef.current = 0;
+    syncConfigToastShownRef.current = false;
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (!catalogReadyForConfigSync) return;
+
+    const fingerprint = JSON.stringify({
+      businessInfo: state.businessInfo,
+      products: state.products,
+      blockedDates: state.blockedDates,
+      dailyContext: state.dailyContext,
+      aiInstructions: state.aiInstructions,
+      deliveryConfig: state.deliveryConfig,
+      pixReceiptConfig: state.pixReceiptConfig,
+      catalogCategorias: catalog.categorias,
+      catalogSubcategorias: catalog.subcategorias,
+    });
+
+    if (!hasSeenConfigSnapshotRef.current) {
+      hasSeenConfigSnapshotRef.current = true;
+      lastSyncedConfigRef.current = fingerprint;
+      return;
+    }
+
+    if (lastSyncedConfigRef.current === fingerprint) return;
+
     if (syncConfigTimerRef.current) clearTimeout(syncConfigTimerRef.current);
-    syncConfigTimerRef.current = setTimeout(() => { void syncConfigToServer(state); }, 600);
+    syncConfigTimerRef.current = setTimeout(() => { void syncConfigToServer(state, fingerprint); }, 600);
     return () => { if (syncConfigTimerRef.current) clearTimeout(syncConfigTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, state.pixReceiptConfig, catalog.categorias, catalog.subcategorias]);
+  }, [token, catalogReadyForConfigSync, state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, state.pixReceiptConfig, catalog.categorias, catalog.subcategorias]);
 
   // Count of conversations that have ANY unread message (WhatsApp-style: 1 dot
   // per chat, not a sum of message counts). The per-conversation badge in

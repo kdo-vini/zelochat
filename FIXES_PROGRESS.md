@@ -119,6 +119,16 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 55 (2026-05-09) - Reload do painel mais leve
+
+- Chat-first incremental - catálogo e respostas rápidas entram após idle; pedidos, motoboys e gatilhos carregam sob demanda por view; a última conversa aberta é restaurada sem escolher a primeira automaticamente - `src/AppShell.tsx`, `src/hooks/useCatalog.ts`, `src/hooks/useOrders.ts`, `src/hooks/useDrivers.ts`, `src/hooks/useTriggers.ts`, `src/hooks/useQuickResponses.ts`
+
+- Performance boot - perfil da empresa agora carrega em uma única leitura de `empresa_perfil` no ambiente atualizado, mantendo fallback compacto para bases antigas sem disparar uma query por coluna - `src/hooks/useEmpresaPerfil.ts`
+- Conversas - reload deixou de buscar foto de perfil pelo Whatsmiau para cada chat sem imagem salva; usa apenas a URL já persistida na sessão e evita dezenas de chamadas `/profile-picture` - `src/AppShell.tsx`
+- Sync inicial - removido disparo imediato redundante de `/api/sync-config` no token e bloqueado o primeiro PATCH de `blocked_dates/manager_history` causado só pela hidratação inicial - `src/AppShell.tsx`
+- Novidades - entrada curta para operador sobre o painel abrir mais rápido - `src/data/changelog.ts`
+- Verificação - `npm run lint`, `npx tsc --noEmit -p server/tsconfig.json`, `npm run build` e `git diff --check` passaram.
+
 ### Sprint 54 (2026-05-09) - Conversas fixadas sem trocar histórico
 
 - Hotfix chat - fixar/desafixar conversa não altera mais a recência técnica de todas as linhas da família do contato, evitando troca de JID canônico e abertura de um chat aparentemente sem histórico - `server/messageHandler.ts`

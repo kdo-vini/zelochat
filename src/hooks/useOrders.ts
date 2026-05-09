@@ -26,10 +26,15 @@ function rowToOrder(row: Record<string, unknown>): Order {
   };
 }
 
-export function useOrders(session: Session | null, onNewOrder?: (order: Order) => void) {
+export function useOrders(
+  session: Session | null,
+  onNewOrder?: (order: Order) => void,
+  options: { enabled?: boolean } = {},
+) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options.enabled ?? true;
   // Cached per user — cleared when session.user.id changes to prevent stale cross-account inserts.
   const empresaIdRef = useRef<string | null>(null);
   const lastUserIdRef = useRef<string | null>(null);
@@ -102,6 +107,7 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
       setOrders([]);
       return;
     }
+    if (!enabled) return;
 
     void refresh();
 
@@ -153,7 +159,7 @@ export function useOrders(session: Session | null, onNewOrder?: (order: Order) =
       if (channelSubscribed && cleanup) cleanup();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id]);
+  }, [session?.user?.id, enabled]);
 
   const addOrder = useCallback(async (payload: NewOrder): Promise<Order> => {
     if (!session?.user?.id) throw new Error('Faça login para adicionar pedidos.');

@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-09',
     category: 'hotfix',
+    title: 'Painel abre mais rápido',
+    description: 'Ao recarregar o sistema, o atendimento aparece primeiro e o restante do painel entra sem travar a lista de conversas.',
+  },
+  {
+    date: '2026-05-09',
+    category: 'hotfix',
     title: 'Conversas fixadas abrem sem trocar o histórico',
     description: 'Ao fixar uma conversa e abrir depois, o painel mantém o chat certo e mostra todas as mensagens daquele cliente.',
   },

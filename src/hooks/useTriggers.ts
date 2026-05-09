@@ -11,10 +11,11 @@ function sortTriggers(items: Trigger[]): Trigger[] {
   return [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export function useTriggers(token: string | null) {
+export function useTriggers(token: string | null, options: { enabled?: boolean } = {}) {
   const [triggers, setTriggers] = useState<Trigger[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options.enabled ?? true;
 
   const refresh = useCallback(async () => {
     if (!token) {
@@ -35,8 +36,9 @@ export function useTriggers(token: string | null) {
   }, [token]);
 
   useEffect(() => {
+    if (!enabled) return;
     void refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   const createTrigger = useCallback(async (naturalInput: string, kind: TriggerKind) => {
     if (!token) throw new Error('Faça login para criar gatilhos.');

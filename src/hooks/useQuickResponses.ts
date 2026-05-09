@@ -11,12 +11,13 @@ function rowToQR(row: Record<string, unknown>): QuickResponse {
   };
 }
 
-export function useQuickResponses(session: Session | null) {
+export function useQuickResponses(session: Session | null, options: { enabled?: boolean } = {}) {
   const [items, setItems] = useState<QuickResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const empresaIdRef = useRef<string | null>(null);
   const lastUserIdRef = useRef<string | null>(null);
+  const enabled = options.enabled ?? true;
 
   const fetchEmpresaId = useCallback(async (userId: string): Promise<string | null> => {
     const { data } = await supabase
@@ -58,8 +59,9 @@ export function useQuickResponses(session: Session | null) {
       setItems([]);
       return;
     }
+    if (!enabled) return;
     void refresh();
-  }, [session?.user?.id, refresh]);
+  }, [session?.user?.id, enabled, refresh]);
 
   const ensureEmpresaId = useCallback(async (): Promise<string> => {
     if (empresaIdRef.current) return empresaIdRef.current;
