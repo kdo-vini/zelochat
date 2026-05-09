@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-09',
+    category: 'medium',
+    title: 'Pedido manual agora pode nascer da conversa',
+    description: 'No atendimento manual, o botão da IA agora monta um pedido já preenchido com base no chat para você revisar e salvar. A IA também ficou mais esperta para não repetir resumo quando o cliente já encerrou a conferência do pedido.',
+  },
+  {
     date: '2026-05-06',
     category: 'hotfix',
     title: 'Mensagens enviadas pelo celular voltam a aparecer no painel',

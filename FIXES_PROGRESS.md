@@ -119,6 +119,13 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 53 (2026-05-09) - Pedido manual assistido no chat
+
+- Atendimento manual - menu da IA no chat ganhou a ação `Criar pedido`, que lê a conversa, pré-preenche um card de pedido e deixa o operador revisar/salvar sem sair da thread - `src/components/views/ChatView.tsx`, `src/services/openaiService.ts`, `src/AppShell.tsx`
+- Fluxo de pedido - a IA automática agora recebe uma instrução extra quando já perguntou sobre observações e o cliente só agradece ou se despede, para chamar `criar_pedido` em vez de repetir resumo ou encerrar sem abrir a confirmação - `server/ai.ts`
+- Novidades - changelog consolidado com uma entrada só, em linguagem de operador, para a melhoria do pedido manual assistido e da confirmação mais esperta - `src/data/changelog.ts`
+- Verificação - `npm run lint`, `npx tsc --noEmit -p server/tsconfig.json` e `npm run build` passaram.
+
 ### Sprint 52 (2026-05-06) - Comprovante Pix como trava de pedido
 
 - Piloto Pix - empresas habilitadas por `pix_receipt_config.available=true` ganham toggle no Cerebro IA para exigir comprovante por imagem/PDF antes de confirmar pedidos Pix - `src/components/views/AIConfigsView.tsx`, `src/AppShell.tsx`, `src/hooks/useEmpresaPerfil.ts`

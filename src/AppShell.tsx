@@ -1017,6 +1017,7 @@ export default function AppShell() {
             bulkDelete={bulkDelete}
             togglePin={togglePin}
             onDailyContextUpdate={handleDailyContextUpdate}
+            onCreateManualOrder={handleAddOrder}
             resolveEscalation={handleResolveEscalation}
             escalateManually={escalateManually}
             acknowledgeEscalation={acknowledgeEscalation}

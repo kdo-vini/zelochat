@@ -4,13 +4,16 @@ import {
   Archive,
   ArrowLeft,
   Bot,
+  Calendar,
   Check,
   CheckCheck,
   CheckSquare,
+  CreditCard,
   FileText,
   ImagePlus,
   Info,
   Loader2,
+  MapPin,
   MessageCircle,
   Mic,
   MicOff,
@@ -23,14 +26,28 @@ import {
   Plus,
   Search,
   Send,
+  ShoppingBag,
   Square,
+  StickyNote,
   Trash2,
   X,
 } from 'lucide-react';
-import { formatLastMessageTime, formatDateSeparatorLabel, startOfDayKey, normalizePhoneNumber } from '../../domain/chat';
+import {
+  formatLastMessageTime,
+  formatDateSeparatorLabel,
+  startOfDayKey,
+  normalizePhoneNumber,
+  maskBrazilianPhone,
+  maskTime24h,
+} from '../../domain/chat';
 import { MessageDateSeparator } from './MessageDateSeparator';
-import { getManualChatAssistSuggestion, getOwnerResponse } from '../../services/openaiService';
-import type { ChatAttachment, ChatMessage, ChatSession, QuickResponse } from '../../types';
+import {
+  getManualChatAssistSuggestion,
+  getManualOrderDraftSuggestion,
+  getOwnerResponse,
+  type ManualOrderDraftSuggestion,
+} from '../../services/openaiService';
+import type { ChatAttachment, ChatMessage, ChatSession, Order, QuickResponse } from '../../types';
 import { MessageBubble } from './MessageBubble';
 import { EscaladoBadge } from '../shared/EscaladoBadge';
 import { SlaTimer } from '../shared/SlaTimer';
@@ -74,6 +91,347 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+type ManualOrderFormData = {
+  customerName: string;
+  customerPhone: string;
+  pickupDate: string;
+  pickupTime: string;
+  deliveryAddress: string;
+  paymentMethod: string;
+  observations: string;
+  items: { product: string; quantity: number }[];
+  total: string;
+};
+
+const MANUAL_ORDER_PAYMENT_OPTIONS = ['Pix', 'Dinheiro', 'Cartão'] as const;
+
+function getBrasiliaDateISO(): string {
+  const [day, month, year] = new Date()
+    .toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    .split('/');
+  return `${year}-${month}-${day}`;
+}
+
+function getBrasiliaTimeHHMM(): string {
+  return new Date().toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatIsoToBR(iso: string): string {
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+function toPhoneInputValue(phone: string): string {
+  const digits = normalizePhoneNumber(phone);
+  const local = digits.startsWith('55') && (digits.length === 12 || digits.length === 13)
+    ? digits.slice(2)
+    : digits;
+  return maskBrazilianPhone(local);
+}
+
+function toTotalInputValue(total: ManualOrderDraftSuggestion['total']): string {
+  if (typeof total === 'number' && Number.isFinite(total) && total > 0) {
+    return total.toFixed(2).replace('.', ',');
+  }
+  if (typeof total === 'string') {
+    return total.trim();
+  }
+  return '';
+}
+
+function buildManualOrderFormDraft(
+  draft: ManualOrderDraftSuggestion,
+  session: ChatSession,
+): ManualOrderFormData {
+  const normalizedItems = Array.isArray(draft.items) && draft.items.length > 0
+    ? draft.items.map((item) => ({
+        product: item.product?.trim() || '',
+        quantity: Number.isFinite(item.quantity) && (item.quantity as number) > 0
+          ? Math.round(item.quantity as number)
+          : 1,
+      }))
+    : [{ product: '', quantity: 1 }];
+
+  const pickupDate = /^\d{4}-\d{2}-\d{2}$/.test(draft.pickupDate ?? '')
+    ? (draft.pickupDate as string)
+    : getBrasiliaDateISO();
+  const pickupTime = /^\d{2}:\d{2}$/.test(draft.pickupTime ?? '')
+    ? (draft.pickupTime as string)
+    : getBrasiliaTimeHHMM();
+
+  return {
+    customerName: draft.customerName?.trim() || session.customerName || '',
+    customerPhone: toPhoneInputValue(draft.customerPhone?.trim() || session.customerPhone || ''),
+    pickupDate,
+    pickupTime,
+    deliveryAddress: draft.deliveryAddress?.trim() || '',
+    paymentMethod: draft.paymentMethod?.trim() || '',
+    observations: draft.observations?.trim() || '',
+    items: normalizedItems,
+    total: toTotalInputValue(draft.total),
+  };
+}
+
+function ManualOrderDraftCard({
+  draft,
+  dateDisplay,
+  saving,
+  error,
+  onClose,
+  onSave,
+  onFieldChange,
+  onDateDisplayChange,
+  onItemChange,
+  onAddItem,
+  onRemoveItem,
+}: {
+  draft: ManualOrderFormData;
+  dateDisplay: string;
+  saving: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSave: () => void;
+  onFieldChange: <K extends keyof ManualOrderFormData>(field: K, value: ManualOrderFormData[K]) => void;
+  onDateDisplayChange: (value: string) => void;
+  onItemChange: (index: number, field: 'product' | 'quantity', value: string | number) => void;
+  onAddItem: () => void;
+  onRemoveItem: (index: number) => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.98 }}
+      className="mb-3 overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]/95 shadow-[var(--shadow-pop)]"
+    >
+      <div className="flex items-start justify-between gap-3 border-b border-[var(--color-line)] px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+              <ShoppingBag className="h-4 w-4" strokeWidth={1.8} />
+            </div>
+            <div>
+              <p className="text-[13px] font-semibold text-[var(--color-ink)]">Pedido sugerido pela IA</p>
+              <p className="text-[11.5px] text-[var(--color-ink-muted)]">Revise e salve manualmente antes de lançar.</p>
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          className="rounded-lg p-1.5 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] disabled:opacity-40"
+          title="Fechar rascunho"
+        >
+          <X className="h-4 w-4" strokeWidth={1.8} />
+        </button>
+      </div>
+
+      <div className="max-h-[55vh] space-y-4 overflow-y-auto px-4 py-4 custom-scrollbar">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="block">
+            <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Nome do cliente</span>
+            <input
+              type="text"
+              value={draft.customerName}
+              onChange={(e) => onFieldChange('customerName', e.target.value)}
+              placeholder="Nome completo"
+              className="w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Telefone</span>
+            <div className="relative">
+              <Phone className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+              <input
+                type="tel"
+                value={draft.customerPhone}
+                onChange={(e) => onFieldChange('customerPhone', maskBrazilianPhone(e.target.value))}
+                placeholder="(XX) XXXXX-XXXX"
+                className="w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] py-2 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+              />
+            </div>
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Data</span>
+            <div className="relative">
+              <Calendar className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+              <input
+                type="text"
+                inputMode="numeric"
+                value={dateDisplay}
+                onChange={(e) => onDateDisplayChange(e.target.value)}
+                placeholder="DD/MM/AAAA"
+                className="w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] py-2 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+              />
+            </div>
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Hora</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={draft.pickupTime}
+              onChange={(e) => onFieldChange('pickupTime', maskTime24h(e.target.value))}
+              placeholder="HH:MM"
+              maxLength={5}
+              className="w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+            />
+          </label>
+        </div>
+
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Itens</span>
+            <button
+              type="button"
+              onClick={onAddItem}
+              className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-[var(--color-brand)] hover:underline"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+              Adicionar item
+            </button>
+          </div>
+          <div className="space-y-2">
+            {draft.items.map((item, index) => (
+              <div key={`${index}-${item.product}`} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={item.product}
+                  onChange={(e) => onItemChange(index, 'product', e.target.value)}
+                  placeholder="Produto"
+                  className="flex-1 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+                />
+                <input
+                  type="number"
+                  min={1}
+                  value={item.quantity}
+                  onChange={(e) => onItemChange(index, 'quantity', Number.parseInt(e.target.value, 10) || 1)}
+                  className="w-16 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-2 py-2 text-center text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+                />
+                {draft.items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveItem(index)}
+                    className="rounded-lg p-1.5 text-[var(--color-ink-faint)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-red-500"
+                    title="Remover item"
+                  >
+                    <X className="h-4 w-4" strokeWidth={1.8} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <label className="block">
+          <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Endereço de entrega</span>
+          <div className="relative">
+            <MapPin className="pointer-events-none absolute left-3 top-3 h-3.5 w-3.5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+            <input
+              type="text"
+              value={draft.deliveryAddress}
+              onChange={(e) => onFieldChange('deliveryAddress', e.target.value)}
+              placeholder="Rua, número, bairro"
+              className="w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] py-2 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+            />
+          </div>
+        </label>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_130px]">
+          <div>
+            <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Pagamento</span>
+            <div className="flex flex-wrap gap-1.5">
+              {MANUAL_ORDER_PAYMENT_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => onFieldChange('paymentMethod', draft.paymentMethod === option ? '' : option)}
+                  className={`rounded-lg border px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                    draft.paymentMethod === option
+                      ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-white'
+                      : 'border-[var(--color-line)] bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] hover:border-[var(--color-brand)]/40'
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+              <div className="relative min-w-[120px] flex-1">
+                <CreditCard className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+                <input
+                  type="text"
+                  value={MANUAL_ORDER_PAYMENT_OPTIONS.includes(draft.paymentMethod as typeof MANUAL_ORDER_PAYMENT_OPTIONS[number]) ? '' : draft.paymentMethod}
+                  onChange={(e) => onFieldChange('paymentMethod', e.target.value)}
+                  placeholder="Outro..."
+                  className="w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] py-2 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+                />
+              </div>
+            </div>
+          </div>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Total (R$)</span>
+            <input
+              type="text"
+              value={draft.total}
+              onChange={(e) => onFieldChange('total', e.target.value)}
+              placeholder="0,00"
+              className="w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+            />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="mb-1.5 block text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Observações</span>
+          <div className="relative">
+            <StickyNote className="pointer-events-none absolute left-3 top-3 h-3.5 w-3.5 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+            <textarea
+              value={draft.observations}
+              onChange={(e) => onFieldChange('observations', e.target.value.slice(0, 500))}
+              rows={3}
+              maxLength={500}
+              placeholder="Ex: sem cebola, deixar na portaria..."
+              className="w-full resize-none rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] py-2 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-[var(--color-brand)]"
+            />
+          </div>
+        </label>
+
+        {error && (
+          <p className="text-[12.5px] font-medium text-red-500">{error}</p>
+        )}
+      </div>
+
+      <div className="flex gap-2 border-t border-[var(--color-line)] px-4 py-3">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          className="flex-1 rounded-xl bg-[var(--color-surface-muted)] px-3 py-2.5 text-[13px] font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-line)] disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          className="flex-1 rounded-xl bg-[var(--color-brand)] px-3 py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? 'Salvando...' : 'Salvar pedido'}
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
 /* ─── Props ───────────────────────────────────────────────────── */
 
 export interface ChatViewProps {
@@ -97,6 +455,7 @@ export interface ChatViewProps {
   bulkDelete: (jids: string[]) => Promise<void>;
   togglePin: (jid: string) => Promise<void>;
   onDailyContextUpdate: (items: { id: string; text: string }[]) => void;
+  onCreateManualOrder: (payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   resolveEscalation: (jid: string) => Promise<void>;
   escalateManually: (jid: string, reason?: string) => Promise<void>;
   acknowledgeEscalation: (jid: string) => Promise<void>;
@@ -127,6 +486,7 @@ export function ChatView({
   bulkDelete,
   togglePin,
   onDailyContextUpdate,
+  onCreateManualOrder,
   resolveEscalation,
   escalateManually,
   acknowledgeEscalation,
@@ -174,7 +534,11 @@ export function ChatView({
   const [deleteMessagePending, setDeleteMessagePending] = useState<ChatMessage | null>(null);
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [aiAssistMenuOpen, setAiAssistMenuOpen] = useState(false);
-  const [aiAssistLoading, setAiAssistLoading] = useState<'improve' | 'reply' | null>(null);
+  const [aiAssistLoading, setAiAssistLoading] = useState<'improve' | 'reply' | 'order' | null>(null);
+  const [manualOrderDraft, setManualOrderDraft] = useState<ManualOrderFormData | null>(null);
+  const [manualOrderDateDisplay, setManualOrderDateDisplay] = useState('');
+  const [manualOrderSaving, setManualOrderSaving] = useState(false);
+  const [manualOrderError, setManualOrderError] = useState<string | null>(null);
   const newChatTitleId = useModalTitleId();
   const chatListRef = useRef<HTMLDivElement>(null);
   const [chatListScrollTop, setChatListScrollTop] = useState(0);
@@ -513,6 +877,10 @@ export function ChatView({
     setMobileDetailsOpen(false);
     setAiAssistMenuOpen(false);
     setDeleteMessagePending(null);
+    setManualOrderDraft(null);
+    setManualOrderDateDisplay('');
+    setManualOrderSaving(false);
+    setManualOrderError(null);
   }, [activeSessionId]);
 
   // Stamp acknowledged_at on the open escalation event the first time the
@@ -715,6 +1083,121 @@ export function ChatView({
       setChatActionError(getFriendlyErrorMessage(error) || 'Não foi possível gerar a sugestão agora.');
     } finally {
       setAiAssistLoading(null);
+    }
+  };
+
+  const handleManualOrderFieldChange = useCallback(<K extends keyof ManualOrderFormData>(field: K, value: ManualOrderFormData[K]) => {
+    setManualOrderDraft((current) => current ? { ...current, [field]: value } : current);
+    setManualOrderError(null);
+  }, []);
+
+  const handleManualOrderDateDisplayChange = useCallback((value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 8);
+    let display = digits;
+    if (digits.length > 4) display = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    else if (digits.length > 2) display = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    setManualOrderDateDisplay(display);
+    setManualOrderDraft((current) => {
+      if (!current) return current;
+      if (digits.length !== 8) return current;
+      const [day, month, year] = [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 8)];
+      return { ...current, pickupDate: `${year}-${month}-${day}` };
+    });
+    setManualOrderError(null);
+  }, []);
+
+  const handleManualOrderItemChange = useCallback((index: number, field: 'product' | 'quantity', value: string | number) => {
+    setManualOrderDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        items: current.items.map((item, itemIndex) => (
+          itemIndex === index
+            ? {
+                ...item,
+                [field]: field === 'quantity'
+                  ? Math.max(1, Number.isFinite(value) ? Number(value) : 1)
+                  : String(value),
+              }
+            : item
+        )),
+      };
+    });
+    setManualOrderError(null);
+  }, []);
+
+  const handleAddManualOrderItem = useCallback(() => {
+    setManualOrderDraft((current) => current ? { ...current, items: [...current.items, { product: '', quantity: 1 }] } : current);
+    setManualOrderError(null);
+  }, []);
+
+  const handleRemoveManualOrderItem = useCallback((index: number) => {
+    setManualOrderDraft((current) => {
+      if (!current) return current;
+      const nextItems = current.items.filter((_, itemIndex) => itemIndex !== index);
+      return { ...current, items: nextItems.length > 0 ? nextItems : [{ product: '', quantity: 1 }] };
+    });
+    setManualOrderError(null);
+  }, []);
+
+  const handleAiOrderDraft = async () => {
+    if (!activeSession) return;
+    setAiAssistMenuOpen(false);
+    setAiAssistLoading('order');
+    setChatActionError(null);
+    setManualOrderError(null);
+    try {
+      const draft = await getManualOrderDraftSuggestion(activeSession.messages, {
+        customerName: activeSession.customerName,
+        customerPhone: activeSession.customerPhone,
+      });
+      const nextDraft = buildManualOrderFormDraft(draft, activeSession);
+      setManualOrderDraft(nextDraft);
+      setManualOrderDateDisplay(formatIsoToBR(nextDraft.pickupDate));
+    } catch (error) {
+      setChatActionError(getFriendlyErrorMessage(error) || 'Não foi possível montar o pedido agora.');
+    } finally {
+      setAiAssistLoading(null);
+    }
+  };
+
+  const handleSaveManualOrder = async () => {
+    if (!manualOrderDraft) return;
+    const validItems = manualOrderDraft.items.filter((item) => item.product.trim());
+    if (!manualOrderDraft.customerName.trim()) {
+      setManualOrderError('Nome do cliente obrigatório.');
+      return;
+    }
+    if (!manualOrderDraft.pickupDate || !manualOrderDraft.pickupTime || manualOrderDraft.pickupTime.length < 4) {
+      setManualOrderError('Data e hora obrigatórias.');
+      return;
+    }
+    if (validItems.length === 0) {
+      setManualOrderError('Adicione ao menos um item.');
+      return;
+    }
+
+    setManualOrderSaving(true);
+    setManualOrderError(null);
+    try {
+      await onCreateManualOrder({
+        customerName: manualOrderDraft.customerName.trim(),
+        customerPhone: manualOrderDraft.customerPhone.trim(),
+        items: validItems.map((item) => ({ product: item.product.trim(), quantity: item.quantity })),
+        pickupDate: manualOrderDraft.pickupDate,
+        pickupTime: manualOrderDraft.pickupTime,
+        deliveryAddress: manualOrderDraft.deliveryAddress.trim() || undefined,
+        paymentMethod: manualOrderDraft.paymentMethod.trim() || undefined,
+        observations: manualOrderDraft.observations.trim() || undefined,
+        status: 'pending',
+        total: Number.parseFloat(manualOrderDraft.total.replace(',', '.')) || 0,
+      });
+      setManualOrderDraft(null);
+      setManualOrderDateDisplay('');
+    } catch (error) {
+      setManualOrderError(getFriendlyErrorMessage(error) || 'Não foi possível salvar o pedido.');
+    } finally {
+      setManualOrderSaving(false);
     }
   };
 
@@ -1342,6 +1825,29 @@ export function ChatView({
                   </div>
                 )}
 
+                <AnimatePresence>
+                  {manualOrderDraft && (
+                    <ManualOrderDraftCard
+                      draft={manualOrderDraft}
+                      dateDisplay={manualOrderDateDisplay}
+                      saving={manualOrderSaving}
+                      error={manualOrderError}
+                      onClose={() => {
+                        if (manualOrderSaving) return;
+                        setManualOrderDraft(null);
+                        setManualOrderDateDisplay('');
+                        setManualOrderError(null);
+                      }}
+                      onSave={() => void handleSaveManualOrder()}
+                      onFieldChange={handleManualOrderFieldChange}
+                      onDateDisplayChange={handleManualOrderDateDisplayChange}
+                      onItemChange={handleManualOrderItemChange}
+                      onAddItem={handleAddManualOrderItem}
+                      onRemoveItem={handleRemoveManualOrderItem}
+                    />
+                  )}
+                </AnimatePresence>
+
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1">
                     <button
@@ -1437,12 +1943,23 @@ export function ChatView({
                                   <button
                                     type="button"
                                     onClick={() => void handleAiAssist('reply')}
-                                    className="flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                                    className="flex w-full items-start gap-3 border-b border-[var(--color-line)] px-3 py-3 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
                                   >
                                     <MessageCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
                                     <span className="block min-w-0">
                                       <span className="block text-[12.5px] font-semibold text-[var(--color-ink)]">Gerar resposta</span>
                                       <span className="block text-[11.5px] leading-relaxed text-[var(--color-ink-muted)]">Lê o contexto do chat e sugere a próxima resposta.</span>
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleAiOrderDraft()}
+                                    className="flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                                  >
+                                    <ShoppingBag className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                                    <span className="block min-w-0">
+                                      <span className="block text-[12.5px] font-semibold text-[var(--color-ink)]">Criar pedido</span>
+                                      <span className="block text-[11.5px] leading-relaxed text-[var(--color-ink-muted)]">Monta um pedido manual com base na conversa para você revisar.</span>
                                     </span>
                                   </button>
                                 </motion.div>

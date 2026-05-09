@@ -176,6 +176,102 @@ function detectEscalationIntentFromText(value: string): EscalationIntentFromText
   return null;
 }
 
+const ORDER_OBSERVATION_ACK_INTENTS = new Set<string>([
+  'ok',
+  'okay',
+  'okk',
+  'oki',
+  'obrigado',
+  'obrigada',
+  'obg',
+  'obgd',
+  'valeu',
+  'gratidao',
+  'grato',
+  'grata',
+  'boa noite',
+  'bom dia',
+  'boa tarde',
+  'ate amanha',
+  'ate mais',
+  'ate logo',
+  'falou',
+  'fechado',
+  'tudo certo',
+  'ta certo',
+  'perfeito',
+  'show',
+  'beleza',
+]);
+
+function normalizeLooseIntentText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Mn}/gu, '')
+    .replace(/[\p{S}\p{P}\s]+/gu, ' ')
+    .trim();
+}
+
+function looksLikeObservationPrompt(value: string): boolean {
+  const normalized = normalizeLooseIntentText(value);
+  return normalized.includes('gostaria de alterar algo')
+    || normalized.includes('alguma observacao a fazer')
+    || normalized.includes('tem alguma observacao a fazer');
+}
+
+function looksLikeOrderSummaryBeforeObservation(value: string): boolean {
+  const normalized = normalizeLooseIntentText(value);
+  const hasObservationPrompt = looksLikeObservationPrompt(value);
+  const hasSummaryHints = (
+    normalized.includes('produto')
+    || normalized.includes('pagamento')
+    || normalized.includes('retirada')
+    || normalized.includes('entrega')
+    || normalized.includes('data')
+    || normalized.includes('horario')
+    || normalized.includes('hora')
+    || normalized.includes('total')
+  );
+  return hasObservationPrompt && hasSummaryHints;
+}
+
+function isImplicitNoObservationReply(value: string): boolean {
+  const normalized = normalizeLooseIntentText(value);
+  if (!normalized) return false;
+  return AFFIRMATIVE_INTENTS.has(normalized) || ORDER_OBSERVATION_ACK_INTENTS.has(normalized);
+}
+
+function shouldForceCreateOrderAfterObservationPrompt(
+  messages: Array<{ role: string; content: string | null; preview?: string | null }>,
+): boolean {
+  const recent = messages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .slice(-8);
+  if (recent.length < 2) return false;
+
+  let promptIndex = -1;
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const message = recent[i];
+    if (message.role !== 'assistant') continue;
+    const content = (message.content ?? message.preview ?? '').trim();
+    if (looksLikeOrderSummaryBeforeObservation(content)) {
+      promptIndex = i;
+      break;
+    }
+  }
+  if (promptIndex === -1) return false;
+
+  const afterPrompt = recent.slice(promptIndex + 1);
+  if (afterPrompt.length === 0) return false;
+  if (afterPrompt.some((message) => message.role !== 'user')) return false;
+
+  return afterPrompt.every((message) => {
+    const content = (message.content ?? message.preview ?? '').trim();
+    return isImplicitNoObservationReply(content);
+  });
+}
+
 interface PendingOrder {
   empresaId: string;
   jid: string;
@@ -2040,8 +2136,8 @@ OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
 2. Para pedidos, coletar: produto, quantidade, modo (retirada ou entrega), data, horário, nome do cliente E forma de pagamento. Para entrega: também endereço completo com bairro.
 3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde a resposta antes de prosseguir.
-4. ANTES de chamar criar_pedido, faça SEMPRE esta pergunta UMA vez: "Gostaria de alterar algo, ou tem alguma observação a fazer? 😊". Isso evita mudanças depois que o pedido for confirmado, já que edição pós-confirmação precisa ser tratada por um humano. Se o cliente disser "não"/"nada"/"tá ok", envie observations: "" na tool. Se mencionar algo (ex: "sem cebola", "ponto da carne", "deixar na portaria", "trocar coca por guaraná"), envie em observations. NUNCA chame criar_pedido sem antes ter feito essa pergunta E recebido a resposta do cliente.
-5. ASSIM QUE tiver TODOS os dados COLETADOS e a observação confirmada, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO.
+4. ANTES de chamar criar_pedido, faça SEMPRE esta pergunta UMA vez: "Gostaria de alterar algo, ou tem alguma observação a fazer? 😊". Isso evita mudanças depois que o pedido for confirmado, já que edição pós-confirmação precisa ser tratada por um humano. Se o cliente disser "não"/"nada"/"tá ok", envie observations: "" na tool. Se mencionar algo (ex: "sem cebola", "ponto da carne", "deixar na portaria", "trocar coca por guaraná"), envie em observations. Se o cliente apenas agradecer, se despedir ou encerrar a conversa sem pedir mudança nova, interprete como sem observação e envie observations: "". NUNCA chame criar_pedido sem antes ter feito essa pergunta E recebido a resposta do cliente.
+5. ASSIM QUE tiver TODOS os dados COLETADOS e a observação confirmada, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO. NÃO repita o resumo do pedido nem faça a mesma pergunta de observação duas vezes seguidas.
 6. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
 ${pixReceiptObjective}
 
@@ -2513,6 +2609,8 @@ export async function generateAndSendReply(
     triggers,
     activeOrdersBlock,
   );
+  const forceCreateOrderFromObservationAck = !isGeneralMode
+    && shouldForceCreateOrderAfterObservationPrompt(session.messages);
 
   // Signal "typing" while we wait for the AI — non-blocking, ignore failures
   void sendPresence(jid, 'composing', 0, resolvedEmpresaId);
@@ -2557,6 +2655,12 @@ export async function generateAndSendReply(
 
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemInstruction },
+      ...(forceCreateOrderFromObservationAck
+        ? [{
+            role: 'system' as const,
+            content: 'ATENÇÃO DE FLUXO: você já perguntou sobre alterações/observações e o cliente respondeu apenas com agradecimento ou despedida, sem pedir nenhuma mudança nova. Interprete isso como observations: "". NÃO repita o resumo. CHAME criar_pedido AGORA e fique em silêncio.',
+          }]
+        : []),
       ...trimmedHistory.map((m) => buildRuntimeMessageForOpenAI(m, imageMessageIds)),
     ];
 

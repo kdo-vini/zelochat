@@ -264,6 +264,18 @@ export async function getGeneralManagerResponse(
 
 type ManualChatAssistMode = 'improve' | 'reply';
 
+export interface ManualOrderDraftSuggestion {
+  customerName?: string;
+  customerPhone?: string;
+  pickupDate?: string;
+  pickupTime?: string;
+  deliveryAddress?: string;
+  paymentMethod?: string;
+  observations?: string;
+  items?: Array<{ product?: string; quantity?: number }>;
+  total?: number | string;
+}
+
 export async function getManualChatAssistSuggestion(
   history: ChatMessage[],
   options: {
@@ -340,4 +352,93 @@ export async function getManualChatAssistSuggestion(
   }
 
   return callAI(messages, 0.4);
+}
+
+export async function getManualOrderDraftSuggestion(
+  history: ChatMessage[],
+  options: {
+    customerName?: string;
+    customerPhone?: string;
+  } = {},
+): Promise<ManualOrderDraftSuggestion> {
+  const historyMessages = history
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .filter((message) => !!contentForInternalAi(message).trim())
+    .slice(-30)
+    .map((message) => ({
+      role: message.role === 'user' ? 'user' : 'assistant',
+      content: contentForInternalAi(message),
+    }));
+
+  const nowContext = getBrazilNowContext();
+  const customerName = options.customerName?.trim() || '';
+  const customerPhone = options.customerPhone?.trim() || '';
+
+  const systemInstruction = `
+    Voce ajuda um atendente humano a montar um pedido manual com base na conversa do WhatsApp.
+
+    CONTEXTO:
+    - ${nowContext}
+    - Nome atual do cliente no painel: ${customerName || 'nao informado'}
+    - Telefone atual do cliente no painel: ${customerPhone || 'nao informado'}
+
+    REGRAS:
+    - Retorne APENAS um objeto JSON valido.
+    - Extraia somente dados explicitamente ditos pelo cliente ou ja resumidos com alta confianca no historico.
+    - Nao invente produto, quantidade, total, endereco, data, horario ou forma de pagamento.
+    - Se faltar alguma informacao, devolva string vazia "" ou array vazio.
+    - Se o cliente apenas agradecer, se despedir ou encerrar a conversa depois de um resumo do pedido, considere que nao houve nova observacao.
+    - pickupDate deve sair em YYYY-MM-DD.
+    - pickupTime deve sair em HH:MM.
+    - total deve sair como numero em reais. Se nao der para confiar, use 0.
+    - observations deve conter somente a observacao do pedido. Se o cliente nao tiver observacao, use "".
+    - Em items, mantenha apenas itens com product preenchido e quantity > 0.
+
+    FORMATO OBRIGATORIO:
+    {
+      "customerName": "",
+      "customerPhone": "",
+      "pickupDate": "",
+      "pickupTime": "",
+      "deliveryAddress": "",
+      "paymentMethod": "",
+      "observations": "",
+      "items": [{ "product": "", "quantity": 1 }],
+      "total": 0
+    }
+  `;
+
+  const content = await callAI(
+    [
+      { role: 'system', content: systemInstruction },
+      ...historyMessages,
+      {
+        role: 'user',
+        content: 'Monte um rascunho de pedido manual com base nesta conversa.',
+      },
+    ],
+    0.2,
+    'json',
+  );
+
+  const cleaned = content.replace(/```json/gi, '').replace(/```/g, '').trim();
+  const parsed = JSON.parse(cleaned) as ManualOrderDraftSuggestion;
+  return {
+    customerName: typeof parsed.customerName === 'string' ? parsed.customerName.trim() : '',
+    customerPhone: typeof parsed.customerPhone === 'string' ? parsed.customerPhone.trim() : '',
+    pickupDate: typeof parsed.pickupDate === 'string' ? parsed.pickupDate.trim() : '',
+    pickupTime: typeof parsed.pickupTime === 'string' ? parsed.pickupTime.trim() : '',
+    deliveryAddress: typeof parsed.deliveryAddress === 'string' ? parsed.deliveryAddress.trim() : '',
+    paymentMethod: typeof parsed.paymentMethod === 'string' ? parsed.paymentMethod.trim() : '',
+    observations: typeof parsed.observations === 'string' ? parsed.observations.trim() : '',
+    items: Array.isArray(parsed.items)
+      ? parsed.items
+          .map((item) => ({
+            product: typeof item?.product === 'string' ? item.product.trim() : '',
+            quantity: typeof item?.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : 0,
+          }))
+          .filter((item) => item.product && item.quantity > 0)
+      : [],
+    total: typeof parsed.total === 'number' || typeof parsed.total === 'string' ? parsed.total : 0,
+  };
 }
