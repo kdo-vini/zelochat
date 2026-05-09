@@ -299,10 +299,30 @@ function pickPrimarySessionRow(rows: SessionRow[]): SessionRow {
   })[0];
 }
 
+function parseSessionTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function sessionActivityTime(row: SessionRow): number {
+  return parseSessionTimestamp(row.last_message_time) || parseSessionTimestamp(row.updated_at);
+}
+
+function familyUpdatedTime(rows: SessionRow[]): number {
+  return Math.max(...rows.map((row) => parseSessionTimestamp(row.updated_at)));
+}
+
 function pickLatestSessionRow(rows: SessionRow[]): SessionRow {
-  return [...rows].sort(
-    (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
-  )[0];
+  return [...rows].sort((left, right) => {
+    const activityDiff = sessionActivityTime(right) - sessionActivityTime(left);
+    if (activityDiff !== 0) return activityDiff;
+
+    const updatedDiff = parseSessionTimestamp(right.updated_at) - parseSessionTimestamp(left.updated_at);
+    if (updatedDiff !== 0) return updatedDiff;
+
+    return right.remote_jid.localeCompare(left.remote_jid);
+  })[0];
 }
 
 function resolveCustomerName(rows: SessionRow[], fallback: string): string {
@@ -1140,8 +1160,7 @@ export async function getAllSessions(empresaId: string): Promise<StoredSession[]
 
   return [...families.values()]
     .sort((a, b) =>
-      new Date(pickLatestSessionRow(b).updated_at).getTime() -
-      new Date(pickLatestSessionRow(a).updated_at).getTime(),
+      familyUpdatedTime(b) - familyUpdatedTime(a),
     )
     .map((rowsForContact) => {
       const family: SessionFamily = {
@@ -1297,7 +1316,9 @@ export async function setSessionPinned(
   const supabase = getServiceSupabase();
   const { error } = await supabase
     .from('zelochat_sessions')
-    .update({ pinned, updated_at: new Date().toISOString() })
+    // Do not bump updated_at here: a contact family can have multiple JIDs, and
+    // touching every row at once makes the canonical row ambiguous on the next open.
+    .update({ pinned })
     .eq('empresa_id', empresaId)
     .in('id', family.rows.map((row) => row.id));
 

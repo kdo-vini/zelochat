@@ -226,11 +226,29 @@ export function useWhatsAppSessions(token: string | null) {
     try {
       const session = await getSession(token, jid);
       setSessions((previous) => {
-        const exists = previous.some((item) => item.id === session.id);
-        const next = exists
-          ? previous.map((item) => (item.id === session.id ? { ...item, ...session } : item))
-          : [session, ...previous];
-        return next;
+        const seen = new Set<string>();
+        let replaced = false;
+
+        const next = previous.reduce((acc: ChatSession[], item) => {
+          if (item.id !== session.id && item.id !== jid) {
+            acc.push(item);
+            return acc;
+          }
+
+          if (!seen.has(session.id)) {
+            acc.push({
+              ...item,
+              ...session,
+              messages: session.messages ?? item.messages ?? [],
+              alerts: item.alerts ?? session.alerts,
+            });
+            seen.add(session.id);
+            replaced = true;
+          }
+          return acc;
+        }, []);
+
+        return replaced ? next : [session, ...previous];
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível abrir a conversa.');

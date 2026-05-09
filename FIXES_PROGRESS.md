@@ -119,6 +119,13 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 54 (2026-05-09) - Conversas fixadas sem trocar histórico
+
+- Hotfix chat - fixar/desafixar conversa não altera mais a recência técnica de todas as linhas da família do contato, evitando troca de JID canônico e abertura de um chat aparentemente sem histórico - `server/messageHandler.ts`
+- Continuidade frontend - ao abrir uma conversa, se o backend devolver o mesmo contato com outro JID canônico, o hook substitui a linha antiga em vez de criar uma segunda conversa parcial - `src/hooks/useWhatsAppSessions.ts`
+- Novidades - entrada curta para operador explicando que conversas fixadas agora abrem mantendo o histórico correto - `src/data/changelog.ts`
+- Verificação - `npm run lint`, `npx tsc --noEmit -p server/tsconfig.json`, `npm run build` e `git diff --check` passaram.
+
 ### Sprint 53 (2026-05-09) - Pedido manual assistido no chat
 
 - Atendimento manual - menu da IA no chat ganhou a ação `Criar pedido`, que lê a conversa, pré-preenche um card de pedido e deixa o operador revisar/salvar sem sair da thread - `src/components/views/ChatView.tsx`, `src/services/openaiService.ts`, `src/AppShell.tsx`
