@@ -629,9 +629,7 @@ export function ChatView({
       );
     });
 
-    // Pinned chats float to the top while preserving the upstream order
-    // (the hook already keeps escalated rows on top — pinned escalations
-    // remain on top by virtue of stable sort).
+    // Pinned chats float to the top while preserving the upstream recency order.
     if (matched.length === 0) return matched;
     const pinned: ChatSession[] = [];
     const rest: ChatSession[] = [];

@@ -119,6 +119,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 56 (2026-05-09) - Ordem real da lista de conversas
+
+- Hotfix chat - lista de conversas agora usa a mensagem visivel mais recente para ordenar, com conversas fixadas no topo; mudancas de leitura/status/perfil nao puxam mais chats antigos para "recentes" - `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts`, `src/components/views/ChatView.tsx`
+- Continuidade multi-JID - quando um contato tem mais de uma linha tecnica, a conversa canonica acompanha a linha da mensagem mais recente para manter historico e recencia consistentes - `server/messageHandler.ts`
+- Verificacao - `npm run lint` passou.
+
 ### Sprint 55 (2026-05-09) - Reload do painel mais leve
 
 - Chat-first incremental - catálogo e respostas rápidas entram após idle; pedidos, motoboys e gatilhos carregam sob demanda por view; a última conversa aberta é restaurada sem escolher a primeira automaticamente - `src/AppShell.tsx`, `src/hooks/useCatalog.ts`, `src/hooks/useOrders.ts`, `src/hooks/useDrivers.ts`, `src/hooks/useTriggers.ts`, `src/hooks/useQuickResponses.ts`

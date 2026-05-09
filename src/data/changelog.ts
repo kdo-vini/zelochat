@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-09',
     category: 'hotfix',
+    title: 'Conversas recentes na ordem certa',
+    description: 'A lista volta a priorizar as mensagens mais novas, mantendo apenas as conversas fixadas acima das demais.',
+  },
+  {
+    date: '2026-05-09',
+    category: 'hotfix',
     title: 'Painel abre mais rápido',
     description: 'Ao recarregar o sistema, o atendimento aparece primeiro e o restante do painel entra sem travar a lista de conversas.',
   },

@@ -113,11 +113,43 @@ function removeMessage(messages: ChatMessage[], payload: Pick<MessageDeletedPayl
   );
 }
 
+function isVisibleConversationMessage(message: ChatMessage): boolean {
+  return (message.role === 'user' || message.role === 'assistant') && Boolean(message.content);
+}
+
+function latestVisibleMessage(messages: ChatMessage[] | undefined): ChatMessage | undefined {
+  return [...(messages ?? [])].reverse().find(isVisibleConversationMessage);
+}
+
+function parseSessionActivityTime(value: string | null | undefined): number {
+  if (!value || /^\d{2}:\d{2}$/.test(value)) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function sortSessionsForList(sessions: ChatSession[]): ChatSession[] {
+  return sessions
+    .map((session, index) => ({ session, index }))
+    .sort((left, right) => {
+      if (!!left.session.pinned !== !!right.session.pinned) {
+        return right.session.pinned ? 1 : -1;
+      }
+
+      const activityDiff =
+        parseSessionActivityTime(right.session.lastMessageTime) -
+        parseSessionActivityTime(left.session.lastMessageTime);
+      if (activityDiff !== 0) return activityDiff;
+
+      return left.index - right.index;
+    })
+    .map(({ session }) => session);
+}
+
 function applyDeletedMessage(session: ChatSession, payload: MessageDeletedPayload): ChatSession {
   const messages = removeMessage(session.messages ?? [], payload);
   if (messages.length === (session.messages ?? []).length) return session;
 
-  const latest = messages.at(-1);
+  const latest = latestVisibleMessage(messages);
   return {
     ...session,
     messages,
@@ -129,55 +161,14 @@ function applyDeletedMessage(session: ChatSession, payload: MessageDeletedPayloa
 function mergeSessions(previous: ChatSession[], incoming: ChatSession[]): ChatSession[] {
   const previousById = new Map(previous.map((session) => [session.id, session]));
 
-  return incoming.map((session) => {
+  return sortSessionsForList(incoming.map((session) => {
     const existing = previousById.get(session.id);
     return {
       ...session,
       messages: existing?.messages ?? session.messages ?? [],
       alerts: existing?.alerts ?? session.alerts,
     };
-  });
-}
-
-function reorderSessionToTop(sessions: ChatSession[], sessionId: string): ChatSession[] {
-  const index = sessions.findIndex((session) => session.id === sessionId);
-  if (index <= 0) {
-    return resortByEscalation(sessions);
-  }
-
-  const next = [...sessions];
-  const [session] = next.splice(index, 1);
-  next.unshift(session);
-  return resortByEscalation(next);
-}
-
-/**
- * Pin escalated sessions to the top, ordered by oldest escalation first
- * (longest-waiting on top — that's the SLA-critical one). Non-escalated
- * sessions keep their existing order below. Stable for non-escalated rows.
- */
-function resortByEscalation(sessions: ChatSession[]): ChatSession[] {
-  let hasEscalation = false;
-  for (const s of sessions) {
-    if (s.status === 'escalated') {
-      hasEscalation = true;
-      break;
-    }
-  }
-  if (!hasEscalation) return sessions;
-
-  const escalated: ChatSession[] = [];
-  const rest: ChatSession[] = [];
-  for (const s of sessions) {
-    if (s.status === 'escalated') escalated.push(s);
-    else rest.push(s);
-  }
-  escalated.sort((a, b) => {
-    const ta = a.escalatedAt ? new Date(a.escalatedAt).getTime() : 0;
-    const tb = b.escalatedAt ? new Date(b.escalatedAt).getTime() : 0;
-    return ta - tb; // oldest first
-  });
-  return [...escalated, ...rest];
+  }));
 }
 
 export function useWhatsAppSessions(token: string | null) {
@@ -248,7 +239,7 @@ export function useWhatsAppSessions(token: string | null) {
           return acc;
         }, []);
 
-        return replaced ? next : [session, ...previous];
+        return sortSessionsForList(replaced ? next : [session, ...previous]);
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível abrir a conversa.');
@@ -444,20 +435,20 @@ export function useWhatsAppSessions(token: string | null) {
     if (!jid || !token) return;
     let nextPinned = false;
     setSessions((previous) =>
-      previous.map((session) => {
+      sortSessionsForList(previous.map((session) => {
         if (session.id !== jid) return session;
         nextPinned = !session.pinned;
         return { ...session, pinned: nextPinned };
-      }),
+      })),
     );
     try {
       await setSessionPinnedApi(token, jid, nextPinned);
     } catch (error) {
       // Roll back on failure so the UI matches server state.
       setSessions((previous) =>
-        previous.map((session) =>
+        sortSessionsForList(previous.map((session) =>
           session.id === jid ? { ...session, pinned: !nextPinned } : session,
-        ),
+        )),
       );
       throw error;
     }
@@ -513,7 +504,7 @@ export function useWhatsAppSessions(token: string | null) {
                     }
                   : session,
               );
-              return resortByEscalation(next);
+              return sortSessionsForList(next);
             });
             setLastEscalation({
               sessionId: data.sessionId,
@@ -567,11 +558,11 @@ export function useWhatsAppSessions(token: string | null) {
           if (parsed.type === 'session_pinned') {
             const data = parsed.data;
             setSessions((previous) =>
-              previous.map((session) =>
+              sortSessionsForList(previous.map((session) =>
                 session.id === data.sessionId
                   ? { ...session, pinned: data.pinned }
                   : session,
-              ),
+              )),
             );
             return;
           }
@@ -596,9 +587,9 @@ export function useWhatsAppSessions(token: string | null) {
           if (parsed.type === 'message_deleted') {
             const data = parsed.data;
             setSessions((previous) =>
-              previous.map((session) =>
+              sortSessionsForList(previous.map((session) =>
                 session.id === data.sessionId ? applyDeletedMessage(session, data) : session,
-              ),
+              )),
             );
             return;
           }
@@ -660,7 +651,7 @@ export function useWhatsAppSessions(token: string | null) {
                 )
               : [nextSession, ...previous];
 
-            return reorderSessionToTop(merged, payload.sessionId);
+            return sortSessionsForList(merged);
           });
         } catch {
           // Ignore malformed WS payloads.

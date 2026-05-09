@@ -236,6 +236,7 @@ interface SessionRow {
 
 interface MessageRow {
   id: string;
+  session_id?: string;
   wa_message_id: string | null;
   role: string;
   content: string | null;
@@ -246,7 +247,7 @@ interface MessageRow {
   audio_transcript_status: AudioTranscriptStatus | null;
 }
 
-const MESSAGE_COLUMNS = 'id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status';
+const MESSAGE_COLUMNS = 'id, session_id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status';
 
 type AssistantResponseSource = 'ai_auto' | 'human_manual';
 
@@ -258,6 +259,12 @@ interface AddAssistantMessageOptions {
 interface LatestInboundMessageRow {
   id: string;
   sent_at: string;
+}
+
+interface LatestSessionActivity {
+  sessionId?: string;
+  preview: string;
+  sentAt: string;
 }
 
 interface SessionFamily {
@@ -305,17 +312,22 @@ function parseSessionTimestamp(value: string | null | undefined): number {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function sessionActivityTime(row: SessionRow): number {
-  return parseSessionTimestamp(row.last_message_time) || parseSessionTimestamp(row.updated_at);
+function rowLastMessageTime(row: SessionRow): number {
+  return parseSessionTimestamp(row.last_message_time);
 }
 
 function familyUpdatedTime(rows: SessionRow[]): number {
   return Math.max(...rows.map((row) => parseSessionTimestamp(row.updated_at)));
 }
 
+function familySessionActivityTime(rows: SessionRow[]): number {
+  const latestStoredMessageTime = Math.max(...rows.map(rowLastMessageTime));
+  return latestStoredMessageTime || familyUpdatedTime(rows);
+}
+
 function pickLatestSessionRow(rows: SessionRow[]): SessionRow {
   return [...rows].sort((left, right) => {
-    const activityDiff = sessionActivityTime(right) - sessionActivityTime(left);
+    const activityDiff = rowLastMessageTime(right) - rowLastMessageTime(left);
     if (activityDiff !== 0) return activityDiff;
 
     const updatedDiff = parseSessionTimestamp(right.updated_at) - parseSessionTimestamp(left.updated_at);
@@ -323,6 +335,22 @@ function pickLatestSessionRow(rows: SessionRow[]): SessionRow {
 
     return right.remote_jid.localeCompare(left.remote_jid);
   })[0];
+}
+
+function isVisibleConversationMessage(row: Pick<MessageRow, 'role' | 'content'>): boolean {
+  return (row.role === 'user' || row.role === 'assistant') && Boolean(row.content);
+}
+
+function latestActivityFromMessageRow(row: Pick<MessageRow, 'content' | 'sent_at' | 'session_id'>): LatestSessionActivity {
+  return {
+    sessionId: row.session_id,
+    preview: parseStructuredMessage(row.content || '').preview,
+    sentAt: row.sent_at,
+  };
+}
+
+function latestActivityTime(activity: LatestSessionActivity | undefined): number {
+  return parseSessionTimestamp(activity?.sentAt);
 }
 
 function resolveCustomerName(rows: SessionRow[], fallback: string): string {
@@ -723,13 +751,34 @@ function mapMessage(row: MessageRow): ChatMessage {
   };
 }
 
-function mapSession(family: SessionFamily, messages: ChatMessage[] = [], latestCustomerSentAt?: string): StoredSession {
+function mapSession(
+  family: SessionFamily,
+  messages: ChatMessage[] = [],
+  latestActivity?: LatestSessionActivity,
+): StoredSession {
+  const activityRow = latestActivity?.sessionId
+    ? family.rows.find((row) => row.id === latestActivity.sessionId)
+    : undefined;
+  const canonicalRow = activityRow ?? family.latest;
   const customerName = resolveCustomerName(
     family.rows,
-    formatPhone(phoneFromJid(family.latest.remote_jid)),
+    formatPhone(phoneFromJid(canonicalRow.remote_jid)),
   );
-  const customerPhone = resolveCustomerPhone(family.rows, family.latest.remote_jid);
-  const lastMessage = parseStructuredMessage(family.latest.last_message || '').preview;
+  const customerPhone = resolveCustomerPhone(family.rows, canonicalRow.remote_jid);
+  const latestLoadedMessage = [...messages]
+    .reverse()
+    .find((message) =>
+      (message.role === 'user' || message.role === 'assistant') &&
+      Boolean(message.content),
+    );
+  const activity = latestLoadedMessage
+    ? {
+        sessionId: latestActivity?.sessionId,
+        preview: latestLoadedMessage.preview,
+        sentAt: latestLoadedMessage.timestamp,
+      }
+    : latestActivity;
+  const lastMessage = activity?.preview ?? parseStructuredMessage(family.latest.last_message || '').preview;
 
   // Escalation status takes priority over active/archived collapsing — if any row
   // in the family is escalated, the whole conversation is escalated. Same for
@@ -755,13 +804,13 @@ function mapSession(family: SessionFamily, messages: ChatMessage[] = [], latestC
     .at(-1) ?? null;
 
   return {
-    id: family.latest.remote_jid,
+    id: canonicalRow.remote_jid,
     customerName,
     customerPhone,
     lastMessage,
-    // Prefer the ISO sent_at from zelochat_messages so legacy "HH:MM" strings stored
-    // when the server ran in UTC are self-healed without a data migration.
-    lastMessageTime: latestCustomerSentAt || family.latest.last_message_time || '',
+    // Prefer the real latest visible message timestamp so metadata-only updates
+    // (read/resolve/profile/pin) never masquerade as chat recency.
+    lastMessageTime: activity?.sentAt || family.latest.last_message_time || '',
     unreadCount: family.rows.reduce((sum, row) => sum + (row.unread_count ?? 0), 0),
     messages,
     status: familyStatus,
@@ -1118,8 +1167,12 @@ export async function getSession(jid: string, empresaId: string): Promise<Stored
   }
 
   const msgRows = (messages as MessageRow[]);
-  const latestUserSentAt = [...msgRows].reverse().find(m => m.role === 'user')?.sent_at;
-  return mapSession(family, msgRows.map(mapMessage), latestUserSentAt);
+  const latestVisibleMessage = [...msgRows].reverse().find(isVisibleConversationMessage);
+  return mapSession(
+    family,
+    msgRows.map(mapMessage),
+    latestVisibleMessage ? latestActivityFromMessageRow(latestVisibleMessage) : undefined,
+  );
 }
 
 export async function getAllSessions(empresaId: string): Promise<StoredSession[]> {
@@ -1139,42 +1192,62 @@ export async function getAllSessions(empresaId: string): Promise<StoredSession[]
     families.set(key, family);
   }
 
-  // Batch-load the latest customer message timestamp per session to self-heal
-  // legacy "HH:MM" strings that were stored when the server ran in UTC.
+  // Batch-load the latest visible chat message per session. Session `updated_at`
+  // also changes for read/status/profile maintenance, so it cannot drive the
+  // "recent conversations" list without pulling old chats upward.
   const allSessionIds = rows.map(r => r.id);
-  const latestCustomerSentAtBySessionId = new Map<string, string>();
+  const latestActivityBySessionId = new Map<string, LatestSessionActivity>();
   if (allSessionIds.length > 0) {
-    const { data: latestMsgs } = await getServiceSupabase()
+    const { data: latestMsgs, error: latestMsgsError } = await getServiceSupabase()
       .from('zelochat_messages')
-      .select('session_id, sent_at')
+      .select('session_id, role, content, sent_at')
       .eq('empresa_id', empresaId)
-      .eq('role', 'user')
+      .in('role', ['user', 'assistant'])
       .in('session_id', allSessionIds)
       .order('sent_at', { ascending: false });
-    for (const m of (latestMsgs ?? []) as { session_id: string; sent_at: string }[]) {
-      if (!latestCustomerSentAtBySessionId.has(m.session_id)) {
-        latestCustomerSentAtBySessionId.set(m.session_id, m.sent_at);
+
+    if (latestMsgsError) {
+      throw new Error(latestMsgsError.message);
+    }
+
+    for (const m of (latestMsgs ?? []) as Array<MessageRow & { session_id: string }>) {
+      if (!m.content || latestActivityBySessionId.has(m.session_id)) {
+        continue;
       }
+      latestActivityBySessionId.set(m.session_id, latestActivityFromMessageRow(m));
     }
   }
 
   return [...families.values()]
-    .sort((a, b) =>
-      familyUpdatedTime(b) - familyUpdatedTime(a),
-    )
+    .sort((a, b) => {
+      const aPinned = a.some((row) => row.pinned === true);
+      const bPinned = b.some((row) => row.pinned === true);
+      if (aPinned !== bPinned) return bPinned ? 1 : -1;
+
+      const aActivityTime = Math.max(
+        ...a.map((row) => latestActivityTime(latestActivityBySessionId.get(row.id))),
+        familySessionActivityTime(a),
+      );
+      const bActivityTime = Math.max(
+        ...b.map((row) => latestActivityTime(latestActivityBySessionId.get(row.id))),
+        familySessionActivityTime(b),
+      );
+      if (aActivityTime !== bActivityTime) return bActivityTime - aActivityTime;
+
+      return familyUpdatedTime(b) - familyUpdatedTime(a);
+    })
     .map((rowsForContact) => {
       const family: SessionFamily = {
         primary: pickPrimarySessionRow(rowsForContact),
         latest: pickLatestSessionRow(rowsForContact),
         rows: rowsForContact,
       };
-      // Pick the most recent customer sent_at across all rows in this contact family
-      const latestCustomerSentAt = rowsForContact
-        .map(r => latestCustomerSentAtBySessionId.get(r.id))
-        .filter((v): v is string => Boolean(v))
-        .sort()
+      const latestActivity = rowsForContact
+        .map((row) => latestActivityBySessionId.get(row.id))
+        .filter((activity): activity is LatestSessionActivity => Boolean(activity))
+        .sort((a, b) => latestActivityTime(a) - latestActivityTime(b))
         .at(-1);
-      return mapSession(family, [], latestCustomerSentAt);
+      return mapSession(family, [], latestActivity);
     });
 }
 
@@ -1644,10 +1717,10 @@ export async function addAssistantMessage(
     const preview = attachment
       ? buildAttachmentPreview(attachment, text)
       : text || (toolCalls ? '[Ação interna]' : '');
-    // Do NOT update last_message_time here — that field reflects the *customer's* last
-    // message specifically (so the conversation list shows "Ontem às 23:01" relative to
-    // the customer's send time, not when the operator/AI replied). Sort order in the
-    // list is driven by updated_at, which still bumps via ensureSession.
+    // Do NOT update last_message_time here: backend metrics still use that field
+    // as the customer's last inbound time. The operator chat list gets the actual
+    // latest visible message time from `zelochat_messages` on refresh and from the
+    // websocket payload below in real time.
     const sessionRow = await ensureSession({
       empresaId,
       jid,
@@ -1700,9 +1773,7 @@ export async function addAssistantMessage(
           message: storedMsg,
           autoReply: mappedSession?.autoReply,
           lastMessage: preview,
-          // Use the family's stored last_message_time (customer's last send) so the list
-          // doesn't briefly flip to the operator's send time and back on refresh.
-          lastMessageTime: mappedSession?.lastMessageTime || storedMsg.timestamp,
+          lastMessageTime: storedMsg.timestamp,
         },
       },
       empresaId,
