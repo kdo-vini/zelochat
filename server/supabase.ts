@@ -5,6 +5,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 let serviceClient: SupabaseClient | null = null;
 let boundEmpresaId: string | null = null;
 
+const EMPRESA_CACHE_TTL_MS = 5 * 60 * 1000;
+const empresaIdCache = new Map<string, { empresaId: string; userId: string; cachedAt: number }>();
+
 function getSupabaseUrl(): string {
   const value = process.env.SUPABASE_URL;
   if (!value) {
@@ -60,6 +63,11 @@ export async function resolveEmpresaAndUserIdFromToken(
 
   const userId = authData.user.id;
 
+  const cached = empresaIdCache.get(userId);
+  if (cached && Date.now() - cached.cachedAt < EMPRESA_CACHE_TTL_MS) {
+    return { empresaId: cached.empresaId, userId: cached.userId };
+  }
+
   const { data: empresa, error: empresaError } = await supabase
     .from('empresa_perfil')
     .select('id')
@@ -74,6 +82,7 @@ export async function resolveEmpresaAndUserIdFromToken(
     throw new Error('EMPRESA_NOT_FOUND');
   }
 
+  empresaIdCache.set(userId, { empresaId: empresa.id, userId, cachedAt: Date.now() });
   return { empresaId: empresa.id, userId };
 }
 

@@ -365,7 +365,7 @@ export interface MessageBubbleProps {
   isDeleting?: boolean;
 }
 
-export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerName, onDelete, isDeleting = false }: MessageBubbleProps) {
+const MessageBubbleInner = React.memo(function MessageBubble({ message, isLastInGroup, profilePicUrl, customerName, onDelete, isDeleting = false }: MessageBubbleProps) {
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -626,4 +626,6 @@ export function MessageBubble({ message, isLastInGroup, profilePicUrl, customerN
       </div>
     </>
   );
-}
+});
+
+export { MessageBubbleInner as MessageBubble };

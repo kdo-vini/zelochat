@@ -1034,16 +1034,41 @@ router.post('/api/sessions/bulk/delete', async (req: Request, res: Response) => 
 
 /**
  * GET /api/sessions/:jid — Returns a specific session with its messages.
+ * Query params: limit (number, default 50, max 200), before (ISO timestamp cursor)
  */
 router.get('/api/sessions/:jid', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const session = await getSession(req.params.jid, empresaId);
+    const rawLimit = parseInt(String(req.query.limit ?? '50'), 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 50;
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+    const session = await getSession(req.params.jid, empresaId, limit, before);
     if (!session) {
       res.status(404).json({ error: 'Conversa não encontrada' });
       return;
     }
-    res.json({ session });
+    res.json({ session, hasMore: session.hasMore });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * GET /api/sessions/:jid/messages — Returns paginated messages for a session (for infinite scroll).
+ * Query params: limit (number, default 50, max 200), before (ISO timestamp cursor)
+ */
+router.get('/api/sessions/:jid/messages', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const rawLimit = parseInt(String(req.query.limit ?? '50'), 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 50;
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+    const session = await getSession(req.params.jid, empresaId, limit, before);
+    if (!session) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+    res.json({ messages: session.messages, hasMore: session.hasMore });
   } catch (error) {
     sendAuthError(res, error);
   }

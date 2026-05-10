@@ -98,13 +98,28 @@ export async function getSessions(token: string): Promise<ChatSession[]> {
   return body.sessions;
 }
 
-export async function getSession(token: string, jid: string): Promise<ChatSession> {
-  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}`), {
+export async function getSession(token: string, jid: string): Promise<ChatSession & { hasMore: boolean }> {
+  const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}?limit=50`), {
     headers: authHeaders(token),
   });
 
-  const body = await parseResponse<SessionResponse>(response);
-  return body.session;
+  const body = await parseResponse<SessionResponse & { hasMore?: boolean }>(response);
+  return { ...body.session, hasMore: body.hasMore ?? false };
+}
+
+export async function getOlderMessages(
+  token: string,
+  jid: string,
+  before: string,
+  limit = 50,
+): Promise<{ messages: ChatSession['messages']; hasMore: boolean }> {
+  const params = new URLSearchParams({ before, limit: String(limit) });
+  const response = await apiFetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(jid)}/messages?${params.toString()}`),
+    { headers: authHeaders(token) },
+  );
+  const body = await parseResponse<{ messages: ChatSession['messages']; hasMore: boolean }>(response);
+  return body;
 }
 
 export async function sendMessage(

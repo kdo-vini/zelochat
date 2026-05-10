@@ -838,9 +838,58 @@ async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
 }
 
 async function fetchSessionFamily(empresaId: string, jid: string): Promise<SessionFamily | null> {
-  const rows = await fetchAllSessionRows(empresaId);
-  const targetKey = buildContactKey(phoneFromJid(jid) || jid);
-  const familyRows = rows.filter(
+  const supabase = getServiceSupabase();
+  const SESSION_COLUMNS = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
+
+  // Step 1: fetch just the target row to obtain customer_phone for the family lookup.
+  const { data: targetData, error: targetError } = await supabase
+    .from('zelochat_sessions')
+    .select(SESSION_COLUMNS)
+    .eq('empresa_id', empresaId)
+    .eq('remote_jid', jid)
+    .maybeSingle();
+
+  if (targetError) {
+    throw new Error(targetError.message);
+  }
+
+  // Step 2: build the normalized phone key used to group family rows.
+  const normalizedPhone = phoneFromJid(jid) || jid;
+  const targetKey = buildContactKey(normalizedPhone);
+
+  // Derive the stored customer_phone from the target row (if it exists), then
+  // also include the raw phone digits extracted from the JID so we match rows
+  // whose customer_phone was stored in a slightly different format.
+  const storedPhone = (targetData as SessionRow | null)?.customer_phone ?? null;
+
+  // Step 3: fetch all rows in the family with a single OR query.
+  // We match on exact JID OR on the stored customer_phone OR on the normalized
+  // phone digits from the JID (handles rows inserted before phone normalisation).
+  const orClauses: string[] = [`remote_jid.eq.${jid}`];
+  if (storedPhone) {
+    orClauses.push(`customer_phone.eq.${storedPhone}`);
+  }
+  // Also match the raw digit string extracted from the JID in case it differs
+  // from the stored phone (e.g. stored without country code).
+  if (normalizedPhone && normalizedPhone !== storedPhone) {
+    orClauses.push(`customer_phone.eq.${normalizedPhone}`);
+  }
+
+  const { data: familyData, error: familyError } = await supabase
+    .from('zelochat_sessions')
+    .select(SESSION_COLUMNS)
+    .eq('empresa_id', empresaId)
+    .or(orClauses.join(','))
+    .order('updated_at', { ascending: false });
+
+  if (familyError) {
+    throw new Error(familyError.message);
+  }
+
+  // Step 4: apply the same in-memory key matching as the original implementation
+  // to handle edge cases where the OR query may return rows from a different
+  // contact with the same stored phone (unlikely but defensive).
+  const familyRows = ((familyData as SessionRow[]) ?? []).filter(
     (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey,
   );
 
@@ -1140,7 +1189,12 @@ async function upsertInboundUserMessage(params: {
   return mapMessage(data as MessageRow);
 }
 
-export async function getSession(jid: string, empresaId: string): Promise<StoredSession | null> {
+export async function getSession(
+  jid: string,
+  empresaId: string,
+  limit = 50,
+  before?: string,
+): Promise<(StoredSession & { hasMore: boolean }) | null> {
   // P0.2 — empresaId is REQUIRED. Previously defaulted to getBoundEmpresaId()
   // which is null in multi-tenant deploys (count !== 1 at startup), causing
   // operations to silently no-op or write to the wrong tenant.
@@ -1155,24 +1209,36 @@ export async function getSession(jid: string, empresaId: string): Promise<Stored
     return null;
   }
 
-  const { data: messages, error } = await supabase
+  let query = supabase
     .from('zelochat_messages')
     .select(MESSAGE_COLUMNS)
     .eq('empresa_id', empresaId)
     .in('session_id', family.rows.map((row) => row.id))
-    .order('sent_at', { ascending: true });
+    .order('sent_at', { ascending: false })
+    .limit(limit);
+
+  if (before) {
+    query = query.lt('sent_at', before);
+  }
+
+  const { data: messages, error } = await query;
 
   if (error) {
     throw new Error(error.message);
   }
 
-  const msgRows = (messages as MessageRow[]);
+  const hasMore = (messages as MessageRow[]).length === limit;
+  // Reverse so messages are in ascending order (oldest first) for display.
+  const msgRows = (messages as MessageRow[]).slice().reverse();
   const latestVisibleMessage = [...msgRows].reverse().find(isVisibleConversationMessage);
-  return mapSession(
-    family,
-    msgRows.map(mapMessage),
-    latestVisibleMessage ? latestActivityFromMessageRow(latestVisibleMessage) : undefined,
-  );
+  return {
+    ...mapSession(
+      family,
+      msgRows.map(mapMessage),
+      latestVisibleMessage ? latestActivityFromMessageRow(latestVisibleMessage) : undefined,
+    ),
+    hasMore,
+  };
 }
 
 export async function getAllSessions(empresaId: string): Promise<StoredSession[]> {
