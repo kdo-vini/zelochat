@@ -1010,7 +1010,7 @@ export function ChatView({
       setContactPhone('');
       setContactOrg('');
     } catch (err) {
-      setChatActionError(err instanceof Error ? err.message : 'Não foi possível enviar o contato.');
+      setChatActionError(getFriendlyErrorMessage(err) || 'Não foi possível enviar o contato.');
     } finally {
       setIsSending(false);
     }
@@ -1076,7 +1076,7 @@ export function ChatView({
         if (!activeSessionId) { setChatActionError('Selecione uma conversa para enviar a resposta rápida.'); return; }
         setIsSending(true);
         try { await send(activeSessionId, { text: qr.response }); setOwnerInput(''); }
-        catch (e) { setChatActionError(e instanceof Error ? e.message : 'Não foi possível enviar.'); }
+        catch (e) { setChatActionError(getFriendlyErrorMessage(e) || 'Não foi possível enviar.'); }
         finally { setIsSending(false); }
         return;
       }
@@ -1096,7 +1096,7 @@ export function ChatView({
       setOwnerInput('');
       setPendingAttachment(null);
     } catch (e) {
-      setChatActionError(e instanceof Error ? e.message : 'Não foi possível enviar.');
+      setChatActionError(getFriendlyErrorMessage(e) || 'Não foi possível enviar.');
     } finally {
       setIsSending(false);
     }

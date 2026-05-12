@@ -31,6 +31,9 @@ export function getFriendlyErrorMessage(err: unknown): string {
   if (msg.includes('servidor whatsapp offline')) {
     return 'Servidor WhatsApp offline. Verifique se o servidor está ativo e tente novamente.';
   }
+  if (msg.includes('websocket not connected') || msg.includes('failed to send') || msg.includes('not connected')) {
+    return 'WhatsApp desconectado no momento. Aguarde alguns segundos e tente novamente.';
+  }
   if (msg.includes('network') || msg.includes('failed to fetch')) {
     return 'Erro de conexão. Verifique sua internet e tente novamente.';
   }
