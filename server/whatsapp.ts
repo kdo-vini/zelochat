@@ -446,6 +446,26 @@ export async function sendWhatsAppAudio(
   return id;
 }
 
+export async function sendContactMessage(
+  jid: string,
+  contact: { fullName: string; phoneNumber: string; organization?: string },
+  empresaId?: string | null,
+): Promise<void> {
+  const instance = await resolveInstance(empresaId);
+  await axios.post(
+    `${BASE_URL}/message/sendContact/${instance}`,
+    {
+      number: jid,
+      contact: [{
+        fullName: contact.fullName,
+        phoneNumber: contact.phoneNumber,
+        ...(contact.organization ? { organization: contact.organization } : {}),
+      }],
+    },
+    { headers: apiHeaders() },
+  );
+}
+
 export async function fetchProfilePicture(
   jid: string,
   empresaId?: string | null,

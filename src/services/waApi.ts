@@ -136,6 +136,19 @@ export async function sendMessage(
   await parseResponse(response);
 }
 
+export async function sendContact(
+  token: string,
+  to: string,
+  contact: { fullName: string; phoneNumber: string; organization?: string },
+): Promise<void> {
+  const response = await apiFetch(apiUrl('/api/send-contact'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ to, ...contact }),
+  });
+  await parseResponse(response);
+}
+
 export async function deleteMessage(
   token: string,
   messageId: string,

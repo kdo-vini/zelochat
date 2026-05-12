@@ -13,6 +13,7 @@ import {
   sendTextMessage,
   sendMediaMessage,
   sendWhatsAppAudio,
+  sendContactMessage,
   fetchProfilePicture,
   handleConnectionUpdate,
   dispatchIncomingMessage,
@@ -1078,7 +1079,7 @@ router.get('/api/sessions/:jid/messages', async (req: Request, res: Response) =>
  * POST /api/send — Sends a text message to a WhatsApp contact.
  * Body: { to: string (jid), message?: string, attachment?: ChatAttachment }
  */
-router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, res: Response) => {
+router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, res: Response) => {
   const { to, message, attachment } = req.body as {
     to?: string;
     message?: string;
@@ -1110,7 +1111,7 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
         waMessageId = await sendWhatsAppAudio(to, mediaUrl, empresaId);
       } else {
         waMessageId = await sendMediaMessage(to, {
-          mediatype: attachment.type === 'image' ? 'image' : 'document',
+          mediatype: attachment.type === 'image' ? 'image' : attachment.type === 'video' ? 'video' : 'document',
           mimetype: attachment.mimeType,
           media: mediaUrl,
           caption: trimmedMessage || undefined,
@@ -1132,6 +1133,38 @@ router.post('/api/send', express.json({ limit: '6mb' }), async (req: Request, re
       return;
     }
     console.error('[Router] Send error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/send-contact — Sends a vCard contact to a WhatsApp contact.
+ * Body: { to: string (jid), fullName: string, phoneNumber: string, organization?: string }
+ */
+router.post('/api/send-contact', express.json({ limit: '50kb' }), async (req: Request, res: Response) => {
+  const { to, fullName, phoneNumber, organization } = req.body as {
+    to?: string;
+    fullName?: string;
+    phoneNumber?: string;
+    organization?: string;
+  };
+
+  if (!to || !fullName?.trim() || !phoneNumber?.trim()) {
+    res.status(400).json({ error: 'Campos obrigatórios: to, fullName, phoneNumber' });
+    return;
+  }
+
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await sendContactMessage(to, { fullName: fullName.trim(), phoneNumber: phoneNumber.trim(), organization: organization?.trim() || undefined }, empresaId);
+    await addAssistantMessage(to, `[Contato enviado] ${fullName.trim()}`, undefined, empresaId);
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    console.error('[Router] Send contact error:', error);
     res.status(500).json({ error: error.message });
   }
 });

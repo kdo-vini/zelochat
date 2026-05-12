@@ -30,6 +30,9 @@ import {
   Square,
   StickyNote,
   Trash2,
+  Upload,
+  UserPlus,
+  Video,
   X,
 } from 'lucide-react';
 import {
@@ -57,6 +60,7 @@ import { ConfirmModal } from '../ConfirmModal';
 import { ContactAvatar } from '../ContactAvatar';
 import { Modal, useModalTitleId } from '../Modal';
 import { getFriendlyErrorMessage } from '../../services/errorMessages';
+import { sendContact } from '../../services/waApi';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -540,12 +544,18 @@ export function ChatView({
   const [manualOrderSaving, setManualOrderSaving] = useState(false);
   const [manualOrderError, setManualOrderError] = useState<string | null>(null);
   const newChatTitleId = useModalTitleId();
+  const contactModalTitleId = useModalTitleId();
   const chatListRef = useRef<HTMLDivElement>(null);
   const [chatListScrollTop, setChatListScrollTop] = useState(0);
   const [chatListViewportHeight, setChatListViewportHeight] = useState(0);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [contactModalOpen, setContactModalOpen] = useState(false);
+  const [contactName, setContactName] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [contactOrg, setContactOrg] = useState('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -597,6 +607,7 @@ export function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const activeSession = useMemo(
@@ -939,6 +950,10 @@ export function ChatView({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+    if (type === 'video' && file.size > 50 * 1024 * 1024) {
+      setChatActionError('Vídeo muito grande. O limite é 50 MB.');
+      return;
+    }
     setAttachmentLoading(true);
     setChatActionError(null);
     try {
@@ -954,6 +969,50 @@ export function ChatView({
       setChatActionError(error instanceof Error ? error.message : 'Não foi possível carregar o arquivo.');
     } finally {
       setAttachmentLoading(false);
+    }
+  };
+
+  const handleDroppedFile = async (file: File, type: ChatAttachment['type']) => {
+    if (type === 'video' && file.size > 50 * 1024 * 1024) {
+      setChatActionError('Vídeo muito grande. O limite é 50 MB.');
+      return;
+    }
+    setAttachmentLoading(true);
+    setChatActionError(null);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setPendingAttachment({
+        type,
+        mimeType: file.type || (type === 'image' ? 'image/jpeg' : 'application/octet-stream'),
+        fileName: file.name,
+        sizeBytes: file.size,
+        dataUrl,
+      });
+    } catch (error) {
+      setChatActionError(error instanceof Error ? error.message : 'Não foi possível carregar o arquivo.');
+    } finally {
+      setAttachmentLoading(false);
+    }
+  };
+
+  const handleSendContact = async () => {
+    if (!activeSession || !contactName.trim() || !contactPhone.trim() || !token) return;
+    setIsSending(true);
+    setChatActionError(null);
+    try {
+      await sendContact(token, activeSession.id, {
+        fullName: contactName.trim(),
+        phoneNumber: contactPhone.trim(),
+        organization: contactOrg.trim() || undefined,
+      });
+      setContactModalOpen(false);
+      setContactName('');
+      setContactPhone('');
+      setContactOrg('');
+    } catch (err) {
+      setChatActionError(err instanceof Error ? err.message : 'Não foi possível enviar o contato.');
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -1543,9 +1602,31 @@ export function ChatView({
         </aside>
 
         {/* Chat panel */}
-        <main className={`relative flex-col overflow-hidden wa-pattern w-full md:flex-1 ${
-          activeSessionId ? 'flex' : 'hidden md:flex'
-        }`}>
+        <main
+          className={`relative flex-col overflow-hidden wa-pattern w-full md:flex-1 ${
+            activeSessionId ? 'flex' : 'hidden md:flex'
+          }`}
+          onDragOver={(e) => { e.preventDefault(); if (activeSession) setIsDragging(true); }}
+          onDragEnter={(e) => { e.preventDefault(); if (activeSession) setIsDragging(true); }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false); }}
+          onDrop={async (e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            if (!activeSession) return;
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            const type: ChatAttachment['type'] =
+              file.type.startsWith('video/') ? 'video' :
+              file.type.startsWith('image/') ? 'image' : 'document';
+            await handleDroppedFile(file, type);
+          }}
+        >
+          {isDragging && activeSession && (
+            <div className="pointer-events-none absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 border-2 border-dashed border-[var(--color-brand)] bg-[var(--color-brand)]/10 backdrop-blur-[2px]">
+              <Upload className="h-10 w-10 text-[var(--color-brand)]" strokeWidth={1.5} />
+              <p className="text-[15px] font-semibold text-[var(--color-brand)]">Solte o arquivo para enviar</p>
+            </div>
+          )}
           {activeSession ? (
             <>
               <input
@@ -1561,6 +1642,13 @@ export function ChatView({
                 accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv"
                 className="hidden"
                 onChange={(event) => void handleAttachmentSelect(event, 'document')}
+              />
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/*"
+                className="hidden"
+                onChange={(event) => void handleAttachmentSelect(event, 'video')}
               />
 
               {/* Header */}
@@ -1807,6 +1895,12 @@ export function ChatView({
                         alt={pendingAttachment.fileName}
                         className="h-16 w-16 rounded-xl object-cover"
                       />
+                    ) : pendingAttachment.type === 'video' ? (
+                      <video
+                        src={pendingAttachment.dataUrl}
+                        className="h-16 w-16 rounded-xl object-cover"
+                        muted
+                      />
                     ) : pendingAttachment.type === 'audio' ? (
                       <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
                         <Mic className="h-6 w-6" strokeWidth={1.8} />
@@ -1819,7 +1913,7 @@ export function ChatView({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13px] font-semibold text-[var(--color-ink)]">{pendingAttachment.fileName}</p>
                       <p className="text-[12px] text-[var(--color-ink-muted)]">
-                        {pendingAttachment.type === 'image' ? 'Imagem pronta para envio' : pendingAttachment.type === 'audio' ? 'Áudio pronto para envio' : 'Documento pronto para envio'} • {formatAttachmentSize(pendingAttachment.sizeBytes)}
+                        {pendingAttachment.type === 'image' ? 'Imagem pronta para envio' : pendingAttachment.type === 'video' ? 'Vídeo pronto para envio' : pendingAttachment.type === 'audio' ? 'Áudio pronto para envio' : 'Documento pronto para envio'} • {formatAttachmentSize(pendingAttachment.sizeBytes)}
                       </p>
                     </div>
                     <button
@@ -1871,6 +1965,22 @@ export function ChatView({
                       title="Enviar documento"
                     >
                       <Paperclip className="h-4.5 w-4.5" strokeWidth={1.8} />
+                    </button>
+                    <button
+                      onClick={() => videoInputRef.current?.click()}
+                      disabled={attachmentLoading || isSending}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
+                      title="Enviar vídeo"
+                    >
+                      <Video className="h-4.5 w-4.5" strokeWidth={1.8} />
+                    </button>
+                    <button
+                      onClick={() => { setContactModalOpen(true); setChatActionError(null); }}
+                      disabled={isSending}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
+                      title="Enviar contato"
+                    >
+                      <UserPlus className="h-4.5 w-4.5" strokeWidth={1.8} />
                     </button>
                     <button
                       onClick={isRecording ? handleStopRecording : handleStartRecording}
@@ -2327,6 +2437,76 @@ export function ChatView({
         confirmLabel="Marcar"
         confirmLoadingLabel="Marcando..."
       />
+
+      {/* ── Enviar contato modal ─────────────────────────────────── */}
+      {contactModalOpen && (
+        <Modal
+          open
+          onClose={() => { if (!isSending) { setContactModalOpen(false); setContactName(''); setContactPhone(''); setContactOrg(''); } }}
+          titleId={contactModalTitleId}
+          disableEscape={isSending}
+          panelClassName="w-[400px] max-w-[calc(100vw-2rem)] bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-pop)] border border-[var(--color-line)] overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-line)]">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-[var(--color-brand-soft)] flex items-center justify-center">
+                <UserPlus className="w-4 h-4 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
+              </div>
+              <h3 id={contactModalTitleId} className="text-[14px] font-semibold text-[var(--color-ink)]">Enviar contato</h3>
+            </div>
+            <button
+              onClick={() => { setContactModalOpen(false); setContactName(''); setContactPhone(''); setContactOrg(''); }}
+              disabled={isSending}
+              aria-label="Fechar"
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <X className="w-4 h-4" strokeWidth={2} />
+            </button>
+          </div>
+          <div className="px-5 py-4 space-y-3">
+            <div>
+              <label className="block text-[12px] font-medium text-[var(--color-ink-muted)] mb-1">Nome *</label>
+              <input
+                type="text"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+                placeholder="Ex: João Silva"
+                disabled={isSending}
+                className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-brand)] focus:outline-none disabled:opacity-50"
+              />
+            </div>
+            <div>
+              <label className="block text-[12px] font-medium text-[var(--color-ink-muted)] mb-1">Telefone *</label>
+              <input
+                type="tel"
+                value={contactPhone}
+                onChange={(e) => setContactPhone(e.target.value)}
+                placeholder="Ex: 5514998360854"
+                disabled={isSending}
+                className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-brand)] focus:outline-none disabled:opacity-50"
+              />
+            </div>
+            <div>
+              <label className="block text-[12px] font-medium text-[var(--color-ink-muted)] mb-1">Empresa <span className="text-[var(--color-ink-faint)]">(opcional)</span></label>
+              <input
+                type="text"
+                value={contactOrg}
+                onChange={(e) => setContactOrg(e.target.value)}
+                placeholder="Ex: Donutopia"
+                disabled={isSending}
+                className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 text-[13px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-brand)] focus:outline-none disabled:opacity-50"
+              />
+            </div>
+            <button
+              onClick={() => void handleSendContact()}
+              disabled={isSending || !contactName.trim() || !contactPhone.trim()}
+              className="w-full rounded-xl bg-[var(--color-brand)] py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {isSending ? 'Enviando...' : 'Enviar contato'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

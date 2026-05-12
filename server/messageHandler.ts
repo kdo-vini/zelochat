@@ -1614,6 +1614,21 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
         : undefined,
       dataUrl: await extractAttachmentDataUrl(msg, mime, sanitizeFileName(msg.message.documentMessage.fileName, 'documento'), resolvedEmpresaId),
     };
+  } else if (msg.message?.videoMessage) {
+    const mime = msg.message.videoMessage.mimetype || 'video/mp4';
+    const rawFileName = msg.message.videoMessage.fileName;
+    const fileName = rawFileName
+      ? sanitizeFileName(rawFileName, 'video-whatsapp.mp4')
+      : 'video-whatsapp.mp4';
+    attachment = {
+      type: 'video',
+      mimeType: mime,
+      fileName,
+      sizeBytes: msg.message.videoMessage.fileLength
+        ? Number(msg.message.videoMessage.fileLength)
+        : undefined,
+      dataUrl: await extractAttachmentDataUrl(msg, mime, fileName, resolvedEmpresaId),
+    };
   }
 
   const preview =
