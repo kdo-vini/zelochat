@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-12',
+    category: 'medium',
+    title: 'Quebra de linha no chat e Cérebro IA com mais espaço',
+    description: 'Agora dá pra quebrar linha no chat com Shift+Enter ou Ctrl+Enter — texto colado com formatação aparece igual ao WhatsApp. O campo do Cérebro IA também ficou maior e dá pra arrastar pra expandir, com mais espaço pra detalhar as instruções.',
+  },
+  {
     date: '2026-05-09',
     category: 'hotfix',
     title: 'Conversas recentes na ordem certa',

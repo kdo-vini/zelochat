@@ -1019,7 +1019,7 @@ export const AIConfigsView = ({
           <div className="p-4 space-y-2">
             <textarea
               ref={promptRef}
-              className="w-full h-40 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-4 text-[13px] font-mono outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] resize-none leading-relaxed transition-colors"
+              className="w-full min-h-[320px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-4 text-[13px] font-mono outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] resize-y leading-relaxed transition-colors"
               value={promptDraft}
               onChange={e => { setPromptDraft(e.target.value); setPromptJustSaved(false); }}
               placeholder="Descreva como sua IA deve falar, o tom, limites e prioridades — ou clique em Gerar com IA."

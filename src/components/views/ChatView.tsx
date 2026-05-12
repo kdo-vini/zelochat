@@ -597,6 +597,7 @@ export function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const chatTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
@@ -921,6 +922,13 @@ export function ChatView({
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [activeSessionId, activeSessionMessages]);
+
+  // Reset textarea height when ownerInput is cleared (e.g. after sending)
+  useEffect(() => {
+    if (!ownerInput && chatTextareaRef.current) {
+      chatTextareaRef.current.style.height = 'auto';
+    }
+  }, [ownerInput]);
 
   /* ─── Handlers ──────────────────────────────────────────────── */
 
@@ -1878,16 +1886,41 @@ export function ChatView({
                     </button>
                   </div>
                   <div className="relative flex-1">
-                    <input
-                      type="text"
+                    <textarea
+                      ref={chatTextareaRef}
+                      rows={1}
                       value={ownerInput}
-                      onChange={(e) => setOwnerInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && !isSending && void handleOwnerSend()}
+                      onChange={(e) => {
+                        setOwnerInput(e.target.value);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = `${e.target.scrollHeight}px`;
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          if (e.shiftKey || e.ctrlKey) {
+                            e.preventDefault();
+                            const el = e.currentTarget;
+                            const start = el.selectionStart ?? ownerInput.length;
+                            const end = el.selectionEnd ?? ownerInput.length;
+                            const next = ownerInput.slice(0, start) + '\n' + ownerInput.slice(end);
+                            setOwnerInput(next);
+                            requestAnimationFrame(() => {
+                              el.selectionStart = start + 1;
+                              el.selectionEnd = start + 1;
+                              el.style.height = 'auto';
+                              el.style.height = `${el.scrollHeight}px`;
+                            });
+                          } else {
+                            e.preventDefault();
+                            if (!isSending) void handleOwnerSend();
+                          }
+                        }
+                      }}
                       disabled={isSending || aiAssistLoading !== null}
                       placeholder={pendingAttachment ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /atalho'}
-                      className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-12 disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="w-full resize-none overflow-y-auto max-h-[160px] bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-12 disabled:opacity-60 disabled:cursor-not-allowed leading-[1.5]"
                     />
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <div className="absolute right-3 bottom-2.5">
                       {pendingAttachment ? (
                         <Paperclip className="h-4 w-4 text-[var(--color-brand)]" strokeWidth={1.8} />
                       ) : (

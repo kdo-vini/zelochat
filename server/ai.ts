@@ -53,7 +53,7 @@ import {
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
 const PENDING_ORDER_TTL_MIN = 30;
-const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 10000;
+const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 50000;
 const IMAGE_HISTORY_CAP = 3;
 
 type AssistantPersistOptions = NonNullable<Parameters<typeof addAssistantMessage>[5]>;

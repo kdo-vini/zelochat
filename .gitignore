@@ -19,3 +19,5 @@ playwright-report/
 # keep it in a folder you add explicitly here.
 
 .vercel
+.env*.local
+.env.railway
