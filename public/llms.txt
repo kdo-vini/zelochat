@@ -1,0 +1,64 @@
+# ZeloChat — Atendimento com IA no WhatsApp para Lanchonetes e Food Service
+
+> ZeloChat é uma plataforma de atendimento ao cliente via WhatsApp com inteligência artificial, desenvolvida para lanchonetes, hamburguerias, pizzarias e delivery próprio. Integra com o Zelo PDV na mesma conta.
+
+## Produto
+
+- **URL:** https://chat.zelopdv.com.br
+- **Categoria:** SaaS · Atendimento ao Cliente · WhatsApp Business · IA para food service
+- **Público-alvo:** Donos de lanchonetes, hamburguerias, pizzarias, deliveries próprios e pequenos negócios de alimentação no Brasil
+- **Preço:** R$ 97/mês — plano único com acesso completo. Sem teste grátis.
+- **Desenvolvido por:** Téchne Sistemas (CNPJ: 65.679.798/0001-95)
+
+## O que é o ZeloChat
+
+ZeloChat é a plataforma de atendimento com IA para WhatsApp. Você cadastra seu cardápio, a IA aprende e começa a atender seus clientes automaticamente — recebendo pedidos, respondendo dúvidas sobre produtos, preços e horários, e confirmando entregas ou retiradas.
+
+Quem já usa o **Zelo PDV** (sistema de frente de caixa) conecta com a mesma conta e o catálogo de produtos fica sincronizado automaticamente entre os dois sistemas.
+
+## Funcionalidades Principais
+
+- **IA de atendimento no WhatsApp**: responde perguntas dos clientes, recebe pedidos e confirma pagamentos via PIX automaticamente
+- **Cardápio no chat**: a IA conhece todos os seus produtos, preços e categorias
+- **Controle total por conversa**: cada atendimento pode ter IA ligada ou desligada individualmente
+- **Modo sugestão**: a IA escreve a resposta, você aprova antes de enviar
+- **Respostas rápidas**: banco de mensagens prontas para os atendentes humanos
+- **Kanban de pedidos**: painel para acompanhar o status de cada pedido em tempo real
+- **Impressão automática**: integração com impressora térmica — pedido confirmado, impressão automática na cozinha
+- **Central de conversas**: todas as conversas do WhatsApp em um único painel organizado
+- **Integração com Zelo PDV**: mesma conta, mesmo catálogo — zero duplicação de dados
+
+## Casos de Uso
+
+- Lanchonete que recebe pedidos pelo WhatsApp e quer automatizar sem perder o toque humano
+- Hamburgueria com alto volume de mensagens que precisa de triagem inteligente
+- Delivery próprio (sem iFood) que quer receber e confirmar pedidos automaticamente
+- Food truck ou quiosque que atende pelo WhatsApp mas não tem atendente disponível o tempo todo
+
+## Integração com Zelo PDV
+
+O ZeloChat é um produto complementar ao Zelo PDV. Usuários com o plano Bundle (R$ 127/mês) têm acesso a ambos os sistemas com uma única conta, e o catálogo de produtos é compartilhado. Quem usa apenas o ZeloChat pode cadastrar os produtos diretamente no ZeloChat.
+
+- **Zelo PDV:** https://zelopdv.com.br — sistema de frente de caixa para lanchonetes
+- **ZeloChat:** https://chat.zelopdv.com.br — atendimento com IA no WhatsApp
+
+## Stack Técnico
+
+- Frontend: React + Vite + TypeScript + Tailwind CSS
+- Backend: Express.js + Node.js
+- Banco de dados: Supabase (PostgreSQL)
+- IA: OpenAI GPT-4o-mini via proxy seguro
+- WhatsApp: Whatsmiau (Evolution API v2)
+- Hospedagem: Railway (backend) + Vercel (frontend)
+
+## Contato
+
+- WhatsApp: https://wa.me/5514991537503
+- Email: techne.br@gmail.com
+- Instagram: https://instagram.com/techne.ia
+- Zelo PDV: https://zelopdv.com.br
+
+## Política de Conteúdo para IA
+
+O conteúdo público desta landing page é de livre indexação e citação, desde que a fonte seja preservada.
+Não indexe conteúdo das rotas autenticadas (/app e subrotas).

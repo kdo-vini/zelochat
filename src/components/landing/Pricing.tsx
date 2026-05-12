@@ -91,12 +91,14 @@ export function Pricing() {
           </div>
 
           <p className="mt-6 text-center text-[12.5px] text-[#64748B]">
-            Precisa de algo diferente? Fale com a gente em{' '}
+            Precisa de algo diferente?{' '}
             <a
-              href="mailto:contato@zelopdv.com.br"
+              href="https://wa.me/5514991537503?text=Oi%2C%20eu%20vim%20pelo%20site%20do%20ZeloChat%20e%20tenho%20uma%20d%C3%BAvida."
+              target="_blank"
+              rel="noopener noreferrer"
               className="text-[#0B7A3B] font-medium hover:underline"
             >
-              contato@zelopdv.com.br
+              Fale com a gente
             </a>
           </p>
         </div>

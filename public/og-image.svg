@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0B1120"/>
+      <stop offset="100%" style="stop-color:#0d1a30"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="80%" cy="30%" r="40%">
+      <stop offset="0%" style="stop-color:#25D366;stop-opacity:0.25"/>
+      <stop offset="100%" style="stop-color:#25D366;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="20%" cy="70%" r="35%">
+      <stop offset="0%" style="stop-color:#0b9778;stop-opacity:0.15"/>
+      <stop offset="100%" style="stop-color:#0b9778;stop-opacity:0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow1)"/>
+  <rect width="1200" height="630" fill="url(#glow2)"/>
+
+  <!-- Logo mark (Z) -->
+  <rect x="80" y="220" width="72" height="72" rx="16" fill="#0b9778"/>
+  <path d="M94 234h44v9.6L109 273h29v9.6H94V273l29-29.4h-29z" fill="white"/>
+
+  <!-- Brand name -->
+  <text x="170" y="278" font-family="Inter, Arial, sans-serif" font-size="52" font-weight="700" fill="white">Zelo<tspan fill="#25D366">Chat</tspan></text>
+
+  <!-- Tagline -->
+  <text x="80" y="340" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="400" fill="rgba(255,255,255,0.75)">Atendimento com IA no WhatsApp</text>
+  <text x="80" y="385" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="400" fill="rgba(255,255,255,0.75)">para lanchonetes e food service</text>
+
+  <!-- Bottom strip -->
+  <rect x="80" y="450" width="440" height="3" rx="2" fill="#25D366" opacity="0.6"/>
+
+  <!-- URL -->
+  <text x="80" y="500" font-family="Inter, Arial, sans-serif" font-size="24" fill="rgba(255,255,255,0.4)">chat.zelopdv.com.br</text>
+
+  <!-- Decorative WhatsApp icon (right side) -->
+  <circle cx="980" cy="315" r="140" fill="#25D366" opacity="0.08"/>
+  <circle cx="980" cy="315" r="100" fill="#25D366" opacity="0.08"/>
+  <!-- Simple message bubble shape -->
+  <path d="M930 270 Q930 250 950 250 L1010 250 Q1030 250 1030 270 L1030 310 Q1030 330 1010 330 L970 330 L955 350 L955 330 Q930 330 930 310 Z" fill="#25D366" opacity="0.35"/>
+  <rect x="950" y="275" width="60" height="8" rx="4" fill="white" opacity="0.5"/>
+  <rect x="950" y="292" width="44" height="8" rx="4" fill="white" opacity="0.35"/>
+</svg>

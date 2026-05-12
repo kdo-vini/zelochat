@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, Play, CreditCard, Zap, Headphones } from 'lucide-react';
+import { ArrowRight, Play, Ban, Zap, Headphones } from 'lucide-react';
 import { ChatPreview } from './ChatPreview';
 import { ZeloPDVLink } from './ZeloPDVLink';
 
@@ -56,8 +56,8 @@ export function Hero() {
 
           <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12.5px] text-white/60">
             <span className="inline-flex items-center gap-1.5">
-              <CreditCard className="w-3.5 h-3.5" />
-              Sem cartão de crédito
+              <Ban className="w-3.5 h-3.5" />
+              Cancele quando quiser
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5" />

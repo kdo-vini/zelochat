@@ -13,11 +13,8 @@ import { Footer } from '../components/landing/Footer';
 export default function LandingPage() {
   useEffect(() => {
     document.body.classList.add('landing-theme');
-    const prevTitle = document.title;
-    document.title = 'ZeloChat — Atendimento com IA para o ZeloPDV';
     return () => {
       document.body.classList.remove('landing-theme');
-      document.title = prevTitle;
     };
   }, []);
 

@@ -11,15 +11,7 @@ interface AuthCardProps {
 function ZeloChatLogo({ onDark = false }: { onDark?: boolean }) {
   return (
     <div className="flex items-center gap-2">
-      <svg viewBox="0 0 32 32" className="w-9 h-9" aria-hidden="true">
-        <path
-          d="M16 2C8.268 2 2 7.82 2 15c0 2.51.78 4.84 2.11 6.79L2 30l8.38-2.13A15.9 15.9 0 0 0 16 28c7.732 0 14-5.82 14-13S23.732 2 16 2z"
-          fill="#25D366"
-        />
-        <circle cx="11" cy="15" r="1.5" fill="white" />
-        <circle cx="16" cy="15" r="1.5" fill="white" />
-        <circle cx="21" cy="15" r="1.5" fill="white" />
-      </svg>
+      <img src="/icon-192.png" className="w-9 h-9 object-contain" alt="ZeloChat" aria-hidden="true" />
       <span className={`text-xl font-bold ${onDark ? 'text-white' : 'text-[#0B1120]'}`}>
         ZeloChat
       </span>
