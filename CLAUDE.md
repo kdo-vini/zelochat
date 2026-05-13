@@ -141,7 +141,7 @@ ZeloChat and ZeloPDV are two separate apps that **share one Supabase project** (
 - **`subscriptions`** — owned by ZeloPDV's webhook handler. Schema, CHECK constraints (`plan_tier`, `status`), RLS. We READ; we never DDL.
 - **`super_admins`** — admin pool. ZeloPDV-owned.
 - **`produtos`, `categorias`, `subcategorias`** — shared catalog. ZeloChat reads + writes ROWS, but the SCHEMA is ZeloPDV's. Multi-tenant via `id_usuario` (note: PDV uses `id_usuario`, not `empresa_id` — different convention).
-- **`vendas*`, `caixas*`, `caixa_*`, `pessoas`, `expenses`, `vendas_pagamentos`, `mesas`, `comandas*`, `delivery_*`, `categorias_complementos`, `complementos`, `produtos_complementos_config`, `email_*`, `subscription_cron_logs`, `admin_activity_logs`** — PDV/admin only.
+- **`vendas*`, `caixas*`, `caixa_*`, `pessoas`, `expenses`, `vendas_pagamentos`, `mesas`, `comandas*`, `email_*`, `subscription_cron_logs`, `admin_activity_logs`** — PDV/admin only.
 - **`auth.*` schema** — Supabase platform.
 - **`storage.*` schema (objects/buckets table itself)** — Supabase platform; we add policies + buckets, never alter the platform tables.
 
@@ -176,13 +176,8 @@ These functions are CRITICAL for product correctness. Each one has caused (or ha
 
 When changing any of these, follow the rule: read CLAUDE.md → read CODE_REVIEW.md → read the existing inline docstring → walk through ONE customer scenario in your head before editing.
 
-## Legacy / ignore (delivery module was abandoned)
+## Legacy / ignore
 
-Do NOT surface, write to, or reference these in ZeloChat UI / prompts:
-
-- `produtos.visivel_delivery` — delivery-only flag, ignore
-- `categorias_complementos`, `complementos`, `produtos_complementos_config` — addons/extras system for delivery; unused
-- Any `delivery_*` prefixed tables — abandoned module
 - `subscription*` tables — belong to ZeloPDV's paid tier, ZeloChat has its own pricing (§Pricing)
 
 When building product CRUD, stick to: `nome`, `preco`, `id_categoria`, `id_subcategoria`, `controlar_estoque`, `estoque_atual`, `eh_item_por_unidade`, `ocultar_no_pdv`. For anything more granular, direct the user to [zelopdv.com.br](https://zelopdv.com.br) rather than replicating the full PDV admin.
@@ -290,6 +285,22 @@ Source: `server/billing.ts`. Front: `SubscriptionPaywall` + `BillingManagementCa
 - `STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE` (obrigatórios; sem fallback hardcoded para evitar usar price de produção em dev)
 
 `requireActiveZelochatSubscription()` em `server/supabase.ts` rejeita `'trialing'` propositalmente — política produto é "sem teste grátis".
+
+## Notificações de status de pedido (JÁ IMPLEMENTADO)
+
+Quando o dono arrasta um card no Kanban, o cliente **já recebe WhatsApp automático** — NÃO é um gap. As flags `notify_customer_preparing`, `notify_customer_ready` e `notify_customer_out_for_delivery` ficam em `empresa_perfil`. A lógica de envio está em `server/router.ts` na rota `PATCH /api/orders/:id/status` (~linha 1484). O texto enviado por status está hard-coded no mesmo bloco. As flags são configuráveis pelo Gerente IA via `SET_CUSTOMER_NOTIFICATION` em `server/managerAssistant.ts`.
+
+## Estoque no cardápio
+
+Produtos com `controlar_estoque = true` exibem badge de estoque colorido na `CatalogView`: verde (>5), âmbar (1–5), vermelho (0 = "Sem estoque"). Produtos sem controle de estoque não mostram nada. O campo `estoque_atual` já é lido pelo `useCatalog.ts`. A baixa de estoque quando um pedido do ZeloChat é confirmado **ainda não está implementada** — deve ser feita via RPC do ZeloPDV (coordenar com o repo do ZeloPDV antes de implementar, pois o schema de `produtos` é deles).
+
+## Histórico do cliente (abordagem planejada, não implementada)
+
+Para memória cross-conversation da IA, a abordagem planejada é: manter um campo de resumo minimalista no perfil do cliente (provavelmente em `zelochat_sessions` ou nova tabela) com até X caracteres, que a IA sobrepõe/atualiza incrementalmente a cada conversa. Não é um log completo — é um "perfil vivo" comprimido. Ainda não implementado.
+
+## Bug conhecido: 413 ao gerar resposta IA manual em conversa longa
+
+Quando o contexto da conversa é muito longo (histórico extenso), ao tentar gerar uma resposta com IA manualmente no chat (`/api/ai/complete` ou equivalente), o servidor retorna HTTP 413 (payload too large). Isso acontece porque o histórico completo é enviado no body da requisição sem truncamento. Fix: truncar o histórico antes de enviar ao modelo, ou usar o mesmo sistema de janela de contexto que a IA automática já usa em `server/ai.ts`.
 
 ## UI conventions
 

@@ -18,7 +18,7 @@ import {
   DEFAULT_TIMEZONE,
   type CatalogCategoriaGroup,
 } from './configStore.js';
-import { getServiceSupabase } from './supabase.js';
+import { getServiceSupabase, getEmpresaUserId } from './supabase.js';
 import { buildContentForModel, buildImageContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
 import {
   isPixPaymentMethod,
@@ -552,6 +552,16 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     await sendAndPersistText(jid, errMsg, pending.empresaId);
     return;
   }
+
+  // Fire-and-forget: decrement stock for items with controlar_estoque=true.
+  // Failure never blocks order confirmation — stock count is best-effort.
+  getEmpresaUserId(pending.empresaId).then((userId) => {
+    if (!userId) return;
+    return getServiceSupabase().rpc('zelochat_decrement_stock', {
+      p_id_usuario: userId,
+      p_items: pending.items.map((i) => ({ name: i.product, qty: i.quantity })),
+    });
+  }).then(null, (err) => console.error('[stock] decrement failed (non-blocking):', err));
 
   await clearPendingOrder(jid, pending.empresaId);
 
@@ -1943,6 +1953,7 @@ export function buildSystemInstruction(
   customerHistory: string,
   triggers: TriggerRecord[],
   activeOrdersBlock: string,
+  customerProfile?: string | null,
 ): string {
   const cfg = getConfig(empresaId);
 
@@ -2112,6 +2123,7 @@ REGRAS DE CÁLCULO PARA PRODUTOS POR UNIDADE — "CENTOS" (MUITO IMPORTANTE):
 HISTÓRICO DESTE CLIENTE (uso interno — NÃO revelar ao cliente):
 ${customerHistory}
 IMPORTANTE: Use o histórico acima APENAS para personalizar o atendimento (ex: sugerir produtos já pedidos). NUNCA informe ao cliente quantos pedidos ele fez, valores anteriores ou qualquer dado do histórico. Essas informações são confidenciais.
+${customerProfile ? `\nPERFIL DESTE CLIENTE (resumo automático — uso interno):\n${customerProfile}\nUse para personalizar tom e sugestões. Não mencione ao cliente que você tem esse perfil.` : ''}
 
 PEDIDOS ATIVOS DESTE CLIENTE (em produção/aguardando retirada/em entrega):
 ${activeOrdersBlock}
@@ -2567,6 +2579,79 @@ async function handleReceiptForActiveOrder(
   return ack;
 }
 
+// Minimum messages in the current session before we bother building a profile.
+const PROFILE_MIN_MESSAGES = 6;
+// Max chars sent to the model for profile extraction (last N messages preview).
+const PROFILE_CONTEXT_CHARS = 1500;
+
+async function updateCustomerProfile(
+  customerPhone: string | undefined,
+  empresaId: string,
+  messages: { role: string; content?: string | null; preview?: string | null }[],
+  currentProfile: string | null | undefined,
+): Promise<void> {
+  if (messages.length < PROFILE_MIN_MESSAGES) return;
+  if (!customerPhone) return;
+
+  const supabase = getServiceSupabase();
+
+  const snippet = messages
+    .slice(-10)
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => {
+      const text = (m.content ?? m.preview ?? '').slice(0, 200);
+      return `${m.role === 'user' ? 'Cliente' : 'IA'}: ${text}`;
+    })
+    .join('\n')
+    .slice(0, PROFILE_CONTEXT_CHARS);
+
+  let newProfile: string;
+  try {
+    const openai = getAI();
+    const res = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      max_tokens: 150,
+      temperature: 0.3,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Você é um assistente de CRM. Atualize o perfil do cliente em até 3 frases curtas (máx 500 chars). ' +
+            'Capture: nome preferido, preferências recorrentes, restrições alimentares, horários habituais, reclamações frequentes. ' +
+            'Descarte cortesias genéricas. Responda APENAS com o perfil atualizado, sem comentários.',
+        },
+        {
+          role: 'user',
+          content: `Perfil atual: ${currentProfile || 'nenhum'}\n\nÚltimas mensagens:\n${snippet}`,
+        },
+      ],
+    });
+    recordAiUsage({
+      empresaId,
+      feature: 'customer_profile',
+      model: OPENAI_MODEL,
+      status: 'success',
+      usage: res.usage,
+    });
+    newProfile = (res.choices[0]?.message?.content ?? '').trim().slice(0, 600);
+  } catch (err) {
+    console.warn('[AI] updateCustomerProfile: model call failed (non-blocking):', err);
+    return;
+  }
+
+  if (!newProfile) return;
+
+  // Update all sessions in the family (same empresa + same phone)
+  const { error } = await supabase
+    .from('zelochat_sessions')
+    .update({ customer_profile: newProfile })
+    .eq('empresa_id', empresaId)
+    .eq('customer_phone', customerPhone);
+  if (error) {
+    console.warn('[AI] updateCustomerProfile: DB update failed (non-blocking):', error.message);
+  }
+}
+
 /**
  * 🚨 CRITICAL — AI dispatch entry point
  *
@@ -2863,6 +2948,7 @@ export async function generateAndSendReply(
     customerHistory,
     triggers,
     activeOrdersBlock,
+    session.customerProfile,
   );
   // Two-layer detection: the legacy `shouldForceCreateOrderAfterObservationPrompt`
   // requires the AI summary message to contain product/payment tokens, which
@@ -3676,6 +3762,14 @@ export async function generateAndSendReply(
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 
     await sendAndPersistText(jid, cleanReply, resolvedEmpresaId, { responseSource: 'ai_auto' });
+
+    // Fire-and-forget: update customer profile after each successful AI reply.
+    updateCustomerProfile(
+      session.customerPhone,
+      resolvedEmpresaId,
+      session.messages,
+      session.customerProfile,
+    ).catch((err) => console.warn('[AI] updateCustomerProfile (non-blocking):', err));
 
     console.log(`[AI] Replied to ${jid}: ${cleanReply.slice(0, 80)}...`);
     resetAiFailureCounter(resolvedEmpresaId, jid);

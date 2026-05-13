@@ -215,6 +215,7 @@ export interface StoredSession {
   escalatedAt?: string | null;
   acknowledgedAt?: string | null;
   pinned?: boolean;
+  customerProfile?: string | null;
 }
 
 interface SessionRow {
@@ -232,6 +233,7 @@ interface SessionRow {
   acknowledged_at: string | null;
   pinned: boolean | null;
   updated_at: string;
+  customer_profile: string | null;
 }
 
 interface MessageRow {
@@ -819,6 +821,7 @@ function mapSession(
     escalatedAt,
     acknowledgedAt,
     pinned: family.rows.some((row) => row.pinned === true),
+    customerProfile: family.primary.customer_profile ?? family.latest.customer_profile ?? null,
   };
 }
 
@@ -826,7 +829,7 @@ async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
     .from('zelochat_sessions')
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile')
     .eq('empresa_id', empresaId)
     .order('updated_at', { ascending: false });
 
@@ -839,7 +842,7 @@ async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
 
 async function fetchSessionFamily(empresaId: string, jid: string): Promise<SessionFamily | null> {
   const supabase = getServiceSupabase();
-  const SESSION_COLUMNS = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
+  const SESSION_COLUMNS = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
 
   // Step 1: fetch just the target row to obtain customer_phone for the family lookup.
   const { data: targetData, error: targetError } = await supabase
@@ -947,7 +950,7 @@ export async function ensureSession(params: {
       .from('zelochat_sessions')
       .update(payload)
       .eq('id', existing.id)
-      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at')
+      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile')
       .single();
 
     if (error) {
@@ -960,7 +963,7 @@ export async function ensureSession(params: {
   const { data, error } = await supabase
     .from('zelochat_sessions')
     .insert(payload)
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at')
+    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile')
     .single();
 
   if (error) {

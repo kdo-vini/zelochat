@@ -86,6 +86,24 @@ export async function resolveEmpresaAndUserIdFromToken(
   return { empresaId: empresa.id, userId };
 }
 
+const empresaUserIdCache = new Map<string, { userId: string; cachedAt: number }>();
+
+export async function getEmpresaUserId(empresaId: string): Promise<string | null> {
+  const cached = empresaUserIdCache.get(empresaId);
+  if (cached && Date.now() - cached.cachedAt < EMPRESA_CACHE_TTL_MS) {
+    return cached.userId;
+  }
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from('empresa_perfil')
+    .select('user_id')
+    .eq('id', empresaId)
+    .maybeSingle();
+  if (error || !data?.user_id) return null;
+  empresaUserIdCache.set(empresaId, { userId: data.user_id, cachedAt: Date.now() });
+  return data.user_id;
+}
+
 export async function requireEmpresaId(req: Request): Promise<string> {
   const token = extractBearerToken(req);
   if (!token) {

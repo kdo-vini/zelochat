@@ -16,6 +16,30 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-13',
+    category: 'big',
+    title: 'IA começa a lembrar das preferências de cada cliente',
+    description: 'A IA vai aprendendo com cada atendimento: se o cliente sempre pede sem cebola, costuma pedir às sextas ou prefere deixar na portaria, ela vai lembrando entre conversas e personalizando o atendimento automaticamente.',
+  },
+  {
+    date: '2026-05-13',
+    category: 'medium',
+    title: 'Estoque abaixa sozinho quando pedido é confirmado',
+    description: 'Produtos com controle de estoque têm a quantidade descontada automaticamente assim que a IA confirma um pedido — sem precisar ajustar na mão depois.',
+  },
+  {
+    date: '2026-05-13',
+    category: 'hotfix',
+    title: 'IA voltou a responder em conversas longas',
+    description: 'Em atendimentos com histórico muito extenso, a IA podia travar ao tentar gerar uma resposta assistida pelo operador. Corrigido.',
+  },
+  {
+    date: '2026-05-12',
+    category: 'medium',
+    title: 'Vídeo, arrastar arquivos e envio de contato',
+    description: 'Agora dá pra enviar vídeos pro cliente direto pelo painel, arrastar qualquer arquivo ou imagem pra enviar sem precisar clicar em botão, e compartilhar contatos do WhatsApp pela conversa.',
+  },
+  {
     date: '2026-05-12',
     category: 'medium',
     title: 'Quebra de linha no chat e Cérebro IA com mais espaço',

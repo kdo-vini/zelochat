@@ -24,6 +24,7 @@ export interface ChatSession {
   escalatedAt?: string | null;
   acknowledgedAt?: string | null;
   pinned?: boolean;
+  customerProfile?: string | null;
 }
 
 export type EscalationReasonCategory =

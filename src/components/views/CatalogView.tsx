@@ -520,6 +520,20 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({ produto, onEdit, onDele
 
       <span className="font-mono text-sm text-gray-700">R$ {produto.preco.toFixed(2)}</span>
 
+      {produto.controlar_estoque && (
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums ${
+            produto.estoque_atual === 0
+              ? 'bg-red-100 text-red-700'
+              : produto.estoque_atual <= 5
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-green-100 text-green-700'
+          }`}
+        >
+          {produto.estoque_atual === 0 ? 'Sem estoque' : `${produto.estoque_atual} em estoque`}
+        </span>
+      )}
+
       <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
         <IconBtn title="Editar produto" onClick={onEdit}>
           <Pencil className="h-3.5 w-3.5" />
