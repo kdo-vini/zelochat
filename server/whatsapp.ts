@@ -4,7 +4,6 @@ import { resolve } from 'path';
 import { broadcast, type WsEvent } from './ws.js';
 import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { getBoundEmpresaId } from './supabase.js';
-import { sendDisconnectAlert, sendReconnectConfirmation } from './email.js';
 import { redactInstance } from './redact.js';
 import { normalizeWhatsAppTextFormatting } from '../src/domain/chat.js';
 
@@ -321,11 +320,7 @@ export function handleConnectionUpdate(data: any, empresaId: string | null = nul
     broadcast({ type: 'connection', data: 'connected' }, empresaId ?? undefined);
     if (empresaId) {
       const phone = ownerJid ? ownerJid.split('@')[0] : null;
-      void (async () => {
-        const { wasConnected } = await setConnectionState(empresaId, true, phone);
-        // Only email on real reconnect (was previously offline — avoids noise on startup).
-        if (!wasConnected) void sendReconnectConfirmation(empresaId);
-      })();
+      void setConnectionState(empresaId, true, phone);
     }
     console.log('[WhatsApp] Connected!');
   } else if (state === 'close') {
@@ -333,11 +328,7 @@ export function handleConnectionUpdate(data: any, empresaId: string | null = nul
     currentQR = null;
     broadcast({ type: 'connection', data: 'disconnected' }, empresaId ?? undefined);
     if (empresaId) {
-      void (async () => {
-        const { wasConnected } = await setConnectionState(empresaId, false);
-        // Only email on real disconnect (not on startup / already-offline noise).
-        if (wasConnected && !manuallyDisconnected) void sendDisconnectAlert(empresaId);
-      })();
+      void setConnectionState(empresaId, false);
     }
     if (manuallyDisconnected) {
       console.log('[WhatsApp] Disconnected by user — auto-reconnect suppressed.');
