@@ -24,8 +24,12 @@ async function callAI(
   return data.content;
 }
 
+const MAX_CONTENT_CHARS_PER_MSG = 3_000;
+
 function contentForInternalAi(message: ChatMessage): string {
-  return message.content ?? message.preview ?? '';
+  const raw = message.content ?? message.preview ?? '';
+  if (raw.length <= MAX_CONTENT_CHARS_PER_MSG) return raw;
+  return raw.slice(0, MAX_CONTENT_CHARS_PER_MSG) + '…[truncado]';
 }
 
 function getBrazilNowContext(): string {
