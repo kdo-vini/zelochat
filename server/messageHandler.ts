@@ -693,6 +693,14 @@ export const __mediaExtractionForTests = {
 };
 
 async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string, empresaId: string): Promise<string | undefined> {
+  // Strip parameters (`; codecs=opus`, charset, etc.) antes de qualquer uso em Storage
+  // ou data URI. Whatsmiau envia áudio inbound como `audio/ogg; codecs=opus`; Supabase
+  // Storage faz match estrito contra `bucket.allowed_mime_types` (que lista só `audio/ogg`
+  // puro), então o tipo parametrizado faz o upload jogar exceção e cai no fallback de
+  // data URI inline. O base64 inteiro vai pra `zelochat_messages.content` (50-150 KB por
+  // áudio) e trava o broadcast / fetch de histórico.
+  const storageMime = mimeType.split(';')[0]?.trim() || mimeType;
+
   // 1. Base64 path — Whatsmiau enviou bytes inline. AQUI precisamos de cap
   // porque o decode acontece no nosso process. base64 → ~75% bytes reais.
   // Calculamos o tamanho aproximado ANTES de decodar pra evitar alocar buffer
@@ -709,10 +717,10 @@ async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: st
         // Upload to Supabase for a persistent public URL
         try {
           const buffer = Buffer.from(pure, 'base64');
-          return await uploadReceivedMedia(buffer, fileName, mimeType, empresaId);
+          return await uploadReceivedMedia(buffer, fileName, storageMime, empresaId);
         } catch (err) {
           console.warn('[Media] Supabase upload failed, using data URI:', err);
-          return `data:${mimeType};base64,${pure}`;
+          return `data:${storageMime};base64,${pure}`;
         }
       }
     }

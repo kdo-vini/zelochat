@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-14',
+    category: 'hotfix',
+    title: 'Áudios do WhatsApp voltam a aparecer no chat',
+    description: 'Áudios enviados pelo cliente estavam ficando "travados" e deixando a conversa lenta para abrir. Agora aparecem rapidamente como um player de áudio normal, junto com imagens e documentos.',
+  },
+  {
+    date: '2026-05-14',
     category: 'medium',
     title: 'Chat mostra melhor o andamento dos pedidos',
     description: 'Pedidos em conferência, pedido confirmado, comprovante Pix pendente e avisos internos da IA agora aparecem em cards mais claros dentro da conversa. Quando o pedido já entrou na produção, você também pode abrir a fila direto por ali.',

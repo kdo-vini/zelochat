@@ -97,6 +97,10 @@ export function buildAttachmentPreview(
     return '[Áudio]';
   }
 
+  if (attachment.type === 'video') {
+    return trimmed ? `[Vídeo] ${trimmed}` : '[Vídeo]';
+  }
+
   const name = attachment.fileName?.trim();
   if (trimmed) {
     return `[Documento] ${trimmed}`;
