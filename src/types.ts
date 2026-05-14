@@ -9,6 +9,15 @@ export interface Product {
 
 export type SessionStatus = 'active' | 'escalated' | 'resolved' | 'archived';
 
+export interface Tag {
+  id: string;
+  empresaId: string;
+  name: string;
+  color: string;
+  aiInstructions: string | null;
+  createdAt: string;
+}
+
 export interface ChatSession {
   id: string;
   customerName: string;
@@ -25,6 +34,7 @@ export interface ChatSession {
   acknowledgedAt?: string | null;
   pinned?: boolean;
   customerProfile?: string | null;
+  tags?: Tag[];
 }
 
 export type EscalationReasonCategory =

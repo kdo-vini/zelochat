@@ -78,6 +78,16 @@ import {
 import { BUILTIN_TRIGGERS, isBuiltinTriggerId } from './builtinTriggers.js';
 import { buildDashboardOverview } from './dashboardMetrics.js';
 import {
+  listTags,
+  createTag,
+  updateTag,
+  deleteTag,
+  getSessionTagsFull,
+  applyTagToSession,
+  removeTagFromSession,
+  getAllSessionTagsForEmpresa,
+} from './tags.js';
+import {
   acknowledgeSession,
   countOpenEscalations,
   escalateSession,
@@ -971,6 +981,19 @@ router.get('/api/sessions', async (req: Request, res: Response) => {
   }
 });
 
+/** GET /api/sessions/tags-map — all session→tag assignments for the empresa, in one batch. */
+router.get('/api/sessions/tags-map', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const map = await getAllSessionTagsForEmpresa(empresaId);
+    const obj: Record<string, unknown[]> = {};
+    for (const [sessionId, sessionTags] of map) obj[sessionId] = sessionTags;
+    res.json({ map: obj });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 /**
  * Bulk routes — registered before `/api/sessions/:jid/...` so the `:jid`
  * placeholder never swallows the literal "bulk" segment.
@@ -1681,6 +1704,100 @@ router.patch('/api/triggers/builtin/:id', async (req: Request, res: Response) =>
     sendTriggerError(res, error);
   }
 });
+
+// ── Tags ─────────────────────────────────────────────────────────────────────
+
+router.get('/api/tags', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const tags = await listTags(empresaId);
+    res.json({ tags });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.post('/api/tags', async (req: Request, res: Response) => {
+  const { name, color, aiInstructions } = (req.body ?? {}) as {
+    name?: string; color?: string; aiInstructions?: string | null;
+  };
+  if (!name?.trim()) {
+    res.status(400).json({ error: 'Nome da tag é obrigatório.' });
+    return;
+  }
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const tag = await createTag(
+      empresaId,
+      name,
+      color || '#6366f1',
+      aiInstructions ?? null,
+    );
+    res.status(201).json({ tag });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.put('/api/tags/:id', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const tag = await updateTag(empresaId, req.params.id, req.body ?? {});
+    if (!tag) {
+      res.status(404).json({ error: 'Tag não encontrada.' });
+      return;
+    }
+    res.json({ tag });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.delete('/api/tags/:id', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const deleted = await deleteTag(empresaId, req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Tag não encontrada.' });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.post('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await applyTagToSession(empresaId, req.params.sessionId, req.params.tagId);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.delete('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Response) => {
+  try {
+    await requireEmpresaId(req);
+    await removeTagFromSession(req.params.sessionId, req.params.tagId);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.get('/api/sessions/:sessionId/tags', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const tags = await getSessionTagsFull(empresaId, req.params.sessionId);
+    res.json({ tags });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * POST /api/sessions/:jid/escalate — manual operator escalation (no AI involvement).

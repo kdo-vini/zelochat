@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
-import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown, Activity, RefreshCw, ReceiptText } from 'lucide-react';
-import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse, PixReceiptConfig } from '../../types';
+import { Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap, UserCog, Sparkles, Save, Check, Shield, ChevronDown, Activity, RefreshCw, ReceiptText, Tag as TagIcon, X as XIcon } from 'lucide-react';
+import { ZeloState, ChatMessage, Trigger, TriggerKind, QuickResponse, PixReceiptConfig, Tag } from '../../types';
+import { useTags } from '../../hooks/useTags';
 import { normalizePixReceiptConfig } from '../../domain/pixReceipt';
 import {
   getOwnerResponse,
@@ -114,7 +115,13 @@ export const AIConfigsView = ({
   refreshEmpresa,
 }: AIConfigsViewProps) => {
   const builtinTriggers = useBuiltinTriggers(token);
+  const { tags, createTag, updateTag: updateTagFn, deleteTag: deleteTagFn } = useTags(token);
   const toast = useToast();
+  const [tagForm, setTagForm] = useState<{ name: string; color: string; aiInstructions: string } | null>(null);
+  const [editingTag, setEditingTag] = useState<Tag | null>(null);
+  const [tagBusy, setTagBusy] = useState(false);
+  const [deletingTag, setDeletingTag] = useState<Tag | null>(null);
+  const TAG_COLORS = ['#6366f1', '#ec4899', '#f97316', '#22c55e', '#0ea5e9', '#eab308', '#8b5cf6', '#64748b'];
   const [aiHealth, setAiHealth] = useState<AiHealthReport | null>(null);
   const [aiHealthLoading, setAiHealthLoading] = useState(false);
   const [aiHealthError, setAiHealthError] = useState<string | null>(null);
@@ -971,6 +978,191 @@ export const AIConfigsView = ({
             </div>
           </div>
         </div>
+
+        {/* Tags de Atendimento */}
+        <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">
+          <SectionHeader
+            icon={TagIcon}
+            title="Tags de atendimento"
+            subtitle="Classifique contatos e defina instruções específicas de IA para cada perfil"
+            action={
+              <button
+                onClick={() => { setEditingTag(null); setTagForm({ name: '', color: TAG_COLORS[0], aiInstructions: '' }); }}
+                className="h-7 px-2.5 bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] rounded-md text-[12px] font-semibold flex items-center gap-1 hover:bg-[var(--color-line)] transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" /> Nova tag
+              </button>
+            }
+          />
+          <div className="p-3 space-y-2">
+            {tags.length === 0 && !tagForm && (
+              <p className="text-[13px] text-center text-[var(--color-ink-faint)] py-4">Nenhuma tag criada. Crie tags para classificar clientes por perfil.</p>
+            )}
+            {tags.map((tag) => (
+              editingTag?.id === tag.id ? (
+                <div key={tag.id} className="bg-[var(--color-surface-muted)] border border-[var(--color-brand)] rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={tagForm?.name ?? tag.name}
+                      onChange={(e) => setTagForm((f) => f ? { ...f, name: e.target.value } : null)}
+                      className="flex-1 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1 text-[13px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20"
+                      placeholder="Nome da tag"
+                    />
+                    <div className="flex gap-1">
+                      {TAG_COLORS.map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => setTagForm((f) => f ? { ...f, color: c } : null)}
+                          className="w-5 h-5 rounded-full border-2 transition-all"
+                          style={{ backgroundColor: c, borderColor: tagForm?.color === c ? 'var(--color-ink)' : 'transparent' }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <textarea
+                    value={tagForm?.aiInstructions ?? tag.aiInstructions ?? ''}
+                    onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
+                    rows={3}
+                    className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
+                    placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => { setEditingTag(null); setTagForm(null); }}
+                      className="h-7 px-3 rounded-md text-[12px] font-medium text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]"
+                    >Cancelar</button>
+                    <button
+                      disabled={tagBusy || !tagForm?.name?.trim()}
+                      onClick={async () => {
+                        if (!tagForm?.name?.trim()) return;
+                        setTagBusy(true);
+                        try {
+                          await updateTagFn(tag.id, { name: tagForm.name, color: tagForm.color, aiInstructions: tagForm.aiInstructions || null });
+                          toast.success('Tag atualizada.');
+                          setEditingTag(null); setTagForm(null);
+                        } catch { toast.error('Erro ao salvar tag.'); }
+                        finally { setTagBusy(false); }
+                      }}
+                      className="h-7 px-3 rounded-md text-[12px] font-semibold bg-[var(--color-ink)] text-white hover:bg-[var(--color-ink-soft)] disabled:opacity-50 flex items-center gap-1"
+                    >
+                      {tagBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                      Salvar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div key={tag.id} className="group flex items-start gap-2.5 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-2.5">
+                  <span className="w-3 h-3 rounded-full flex-shrink-0 mt-0.5" style={{ backgroundColor: tag.color }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-[var(--color-ink)]">{tag.name}</p>
+                    {tag.aiInstructions && (
+                      <p className="text-[11.5px] text-[var(--color-ink-muted)] truncate">{tag.aiInstructions}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => { setEditingTag(tag); setTagForm({ name: tag.name, color: tag.color, aiInstructions: tag.aiInstructions ?? '' }); }}
+                      className="p-1 rounded-md text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] hover:bg-[var(--color-line)]"
+                    ><Save className="w-3.5 h-3.5" /></button>
+                    <button
+                      onClick={() => setDeletingTag(tag)}
+                      className="p-1 rounded-md text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
+                    ><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+              )
+            ))}
+            {/* New tag form */}
+            {tagForm && !editingTag && (
+              <div className="bg-[var(--color-surface-muted)] border border-[var(--color-brand)] rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={tagForm.name}
+                    onChange={(e) => setTagForm((f) => f ? { ...f, name: e.target.value } : null)}
+                    className="flex-1 bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1 text-[13px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20"
+                    placeholder="Nome da tag (ex: Revendedor)"
+                  />
+                  <div className="flex gap-1">
+                    {TAG_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => setTagForm((f) => f ? { ...f, color: c } : null)}
+                        className="w-5 h-5 rounded-full border-2 transition-all"
+                        style={{ backgroundColor: c, borderColor: tagForm.color === c ? 'var(--color-ink)' : 'transparent' }}
+                      />
+                    ))}
+                  </div>
+                  <button onClick={() => setTagForm(null)} className="p-1 rounded-md text-[var(--color-ink-faint)] hover:bg-[var(--color-line)]">
+                    <XIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <textarea
+                  value={tagForm.aiInstructions}
+                  onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
+                  rows={3}
+                  className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
+                  placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
+                />
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setTagForm(null)}
+                    className="h-7 px-3 rounded-md text-[12px] font-medium text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]"
+                  >Cancelar</button>
+                  <button
+                    disabled={tagBusy || !tagForm.name.trim()}
+                    onClick={async () => {
+                      if (!tagForm.name.trim()) return;
+                      setTagBusy(true);
+                      try {
+                        await createTag({ name: tagForm.name, color: tagForm.color, aiInstructions: tagForm.aiInstructions || null });
+                        toast.success(`Tag "${tagForm.name}" criada.`);
+                        setTagForm(null);
+                      } catch { toast.error('Erro ao criar tag.'); }
+                      finally { setTagBusy(false); }
+                    }}
+                    className="h-7 px-3 rounded-md text-[12px] font-semibold bg-[var(--color-ink)] text-white hover:bg-[var(--color-ink-soft)] disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {tagBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                    Criar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Tag delete confirm */}
+        {deletingTag && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-2xl shadow-[var(--shadow-pop)] p-6 w-[340px] max-w-[calc(100vw-2rem)] space-y-4">
+              <p className="text-[14px] font-semibold text-[var(--color-ink)]">Remover tag "{deletingTag.name}"?</p>
+              <p className="text-[13px] text-[var(--color-ink-muted)]">A tag será removida de todas as conversas onde estiver aplicada.</p>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setDeletingTag(null)} className="h-8 px-3 rounded-md text-[13px] font-medium text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]">Cancelar</button>
+                <button
+                  disabled={tagBusy}
+                  onClick={async () => {
+                    setTagBusy(true);
+                    try {
+                      await deleteTagFn(deletingTag.id);
+                      toast.success(`Tag "${deletingTag.name}" removida.`);
+                      setDeletingTag(null);
+                    } catch { toast.error('Erro ao remover tag.'); }
+                    finally { setTagBusy(false); }
+                  }}
+                  className="h-8 px-3 rounded-md text-[13px] font-semibold bg-[var(--color-alert)] text-white hover:opacity-90 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {tagBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Remover
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* System Prompt */}
         <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden">

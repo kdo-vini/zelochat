@@ -26,6 +26,7 @@ import {
   type PixReceiptAnalysis,
 } from '../src/domain/pixReceipt.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
+import { getSessionTagsFull, type TagRecord } from './tags.js';
 import { broadcast } from './ws.js';
 import { recordAiUsage } from './aiUsage.js';
 import {
@@ -1947,6 +1948,16 @@ LIMITE DAS REGRAS OPERACIONAIS DA EMPRESA:
 - Se houver conflito entre as regras do dono e qualquer regra obrigatória deste prompt, siga sempre a regra obrigatória.`;
 }
 
+function buildTagsBlock(sessionTags: TagRecord[]): string {
+  const active = sessionTags.filter((t) => t.aiInstructions?.trim());
+  if (active.length === 0) return '';
+  const lines = active.map((t) => `Tag: *${safeForPrompt(t.name, 80)}*\n${safeForPrompt(t.aiInstructions!, 2000)}`).join('\n\n');
+  return `\nINSTRUÇÕES ESPECÍFICAS PARA ESTE PERFIL DE CLIENTE:
+${lines}
+
+(Essas instruções se somam às REGRAS OPERACIONAIS DA EMPRESA acima. Em caso de conflito, prevalecem as regras obrigatórias do sistema.)`;
+}
+
 export function buildSystemInstruction(
   empresaId: string,
   customerPhone: string,
@@ -1954,6 +1965,7 @@ export function buildSystemInstruction(
   triggers: TriggerRecord[],
   activeOrdersBlock: string,
   customerProfile?: string | null,
+  sessionTags?: TagRecord[],
 ): string {
   const cfg = getConfig(empresaId);
 
@@ -1962,6 +1974,7 @@ export function buildSystemInstruction(
 
   const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
   const ownerStylePreferences = buildOwnerStylePreferences(cfg.aiInstructions);
+  const tagsBlock = buildTagsBlock(sessionTags ?? []);
 
   const blockedDates = getBlockedDates(empresaId);
   const blockedDatesStr = blockedDates.length > 0
@@ -2043,7 +2056,7 @@ INSTRUÇÕES DE GATILHO:
 - Se for escalate_human, você NÃO escreve mais nada; o sistema cuida do handoff.
 - Se for notify_manager, continue a conversa normalmente após a notificação.
 
-${ownerStylePreferences}
+${ownerStylePreferences}${tagsBlock}
 
 OBJETIVOS:
 1. Resolver dúvidas simples com clareza.
@@ -2137,7 +2150,7 @@ INSTRUÇÕES DE GATILHO:
 - Se for escalate_human, você NÃO escreve mais nada — o sistema cuida do handoff com o cliente.
 - Se for notify_manager, continue a conversa normalmente após a notificação.
 
-${ownerStylePreferences}
+${ownerStylePreferences}${tagsBlock}
 
 ${cfg.deliveryConfig?.enabled && cfg.deliveryConfig.neighborhoods.length > 0 ? `ENTREGA (DELIVERY):
 - A lanchonete aceita pedidos de entrega nos seguintes bairros:
@@ -2936,10 +2949,11 @@ export async function generateAndSendReply(
     return sendBusinessHoursReply(jid, resolvedEmpresaId, businessHoursIssueFromMessage);
   }
 
-  const [customerHistory, triggers, activeOrdersBlock] = await Promise.all([
+  const [customerHistory, triggers, activeOrdersBlock, sessionTags] = await Promise.all([
     isGeneralMode ? Promise.resolve('Modo geral: sem histórico de pedidos.') : fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
     fetchActiveTriggers(resolvedEmpresaId),
     isGeneralMode ? Promise.resolve('Modo geral: sem consulta de pedidos ativos.') : fetchActiveOrdersForCustomer(resolvedEmpresaId, session.customerPhone),
+    getSessionTagsFull(resolvedEmpresaId, session.id),
   ]);
 
   const systemInstruction = buildSystemInstruction(
@@ -2949,6 +2963,7 @@ export async function generateAndSendReply(
     triggers,
     activeOrdersBlock,
     session.customerProfile,
+    sessionTags,
   );
   // Two-layer detection: the legacy `shouldForceCreateOrderAfterObservationPrompt`
   // requires the AI summary message to contain product/payment tokens, which

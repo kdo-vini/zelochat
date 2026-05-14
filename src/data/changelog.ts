@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-14',
+    category: 'big',
+    title: 'Tags de atendimento por perfil de cliente',
+    description: 'Agora você pode criar tags coloridas para classificar seus contatos (ex: Revendedor, Supermercado, Lead, VIP) e definir instruções específicas para a IA se comportar diferente com cada perfil. As tags aparecem como bolinhas coloridas na lista de conversas e podem ser aplicadas ou removidas no painel do cliente.',
+  },
+  {
     date: '2026-05-13',
     category: 'big',
     title: 'IA começa a lembrar das preferências de cada cliente',

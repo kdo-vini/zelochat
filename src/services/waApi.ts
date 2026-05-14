@@ -6,6 +6,7 @@ import type {
   DashboardOverview,
   DashboardRange,
   EscalationEvent,
+  Tag,
   Trigger,
   TriggerKind,
 } from '../types';
@@ -472,6 +473,79 @@ export async function setBuiltinTriggerDisabled(
       headers: authHeaders(token),
       body: JSON.stringify({ disabled }),
     },
+  );
+  await parseResponse(response);
+}
+
+// ── Tags ─────────────────────────────────────────────────────────────────────
+
+export async function getSessionTagsMap(token: string): Promise<Record<string, Tag[]>> {
+  const response = await apiFetch(apiUrl('/api/sessions/tags-map'), { headers: authHeaders(token) });
+  const body = await parseResponse<{ map: Record<string, Tag[]> }>(response);
+  return body.map;
+}
+
+export async function listTags(token: string): Promise<Tag[]> {
+  const response = await apiFetch(apiUrl('/api/tags'), { headers: authHeaders(token) });
+  const body = await parseResponse<{ tags: Tag[] }>(response);
+  return body.tags;
+}
+
+export async function createTag(
+  token: string,
+  data: { name: string; color: string; aiInstructions: string | null },
+): Promise<Tag> {
+  const response = await apiFetch(apiUrl('/api/tags'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  });
+  const body = await parseResponse<{ tag: Tag }>(response);
+  return body.tag;
+}
+
+export async function updateTag(
+  token: string,
+  tagId: string,
+  patch: Partial<{ name: string; color: string; aiInstructions: string | null }>,
+): Promise<Tag> {
+  const response = await apiFetch(apiUrl(`/api/tags/${encodeURIComponent(tagId)}`), {
+    method: 'PUT',
+    headers: authHeaders(token),
+    body: JSON.stringify(patch),
+  });
+  const body = await parseResponse<{ tag: Tag }>(response);
+  return body.tag;
+}
+
+export async function deleteTag(token: string, tagId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/tags/${encodeURIComponent(tagId)}`), {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+  await parseResponse(response);
+}
+
+export async function applyTagToSession(
+  token: string,
+  sessionId: string,
+  tagId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/tags/${encodeURIComponent(tagId)}`),
+    { method: 'POST', headers: authHeaders(token) },
+  );
+  await parseResponse(response);
+}
+
+export async function removeTagFromSession(
+  token: string,
+  sessionId: string,
+  tagId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/tags/${encodeURIComponent(tagId)}`),
+    { method: 'DELETE', headers: authHeaders(token) },
   );
   await parseResponse(response);
 }
