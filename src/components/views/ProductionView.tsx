@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ConfirmModal } from '../ConfirmModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
+import { resolveOrderFocusRequest, type OrderFocusRequest } from '../../domain/orderFocus';
 import { STATUS_LABELS, STATUS_COLORS } from '../../constants';
 import { format, parseISO, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -725,6 +726,8 @@ export const ProductionView = ({
   onDeleteOrder,
   onUpdateStatus,
   isAuthenticated,
+  focusedOrderRequest,
+  focusedOrderRequestKey,
 }: {
   state: ProductionState;
   onDragEnd: (r: DropResult) => void;
@@ -734,6 +737,8 @@ export const ProductionView = ({
   onDeleteOrder: (id: string) => Promise<void>;
   onUpdateStatus: (id: string, status: Order['status']) => void;
   isAuthenticated: boolean;
+  focusedOrderRequest?: OrderFocusRequest | null;
+  focusedOrderRequestKey?: number | null;
 }) => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -756,6 +761,14 @@ export const ProductionView = ({
   const liveSelectedOrder = selectedOrder
     ? state.orders.find((o) => o.id === selectedOrder.id) ?? null
     : null;
+
+  useEffect(() => {
+    if (!focusedOrderRequest || !focusedOrderRequestKey) return;
+    const targetOrder = resolveOrderFocusRequest(state.orders, focusedOrderRequest);
+    if (!targetOrder) return;
+    setFeedFilter('all');
+    setSelectedOrder(targetOrder);
+  }, [focusedOrderRequest, focusedOrderRequestKey, state.orders]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">

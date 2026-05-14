@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-14',
+    category: 'medium',
+    title: 'Chat mostra melhor o andamento dos pedidos',
+    description: 'Pedidos em conferência, pedido confirmado, comprovante Pix pendente e avisos internos da IA agora aparecem em cards mais claros dentro da conversa. Quando o pedido já entrou na produção, você também pode abrir a fila direto por ali.',
+  },
+  {
+    date: '2026-05-14',
     category: 'big',
     title: 'Tags de atendimento por perfil de cliente',
     description: 'Agora você pode criar tags coloridas para classificar seus contatos (ex: Revendedor, Supermercado, Lead, VIP) e definir instruções específicas para a IA se comportar diferente com cada perfil. As tags aparecem como bolinhas coloridas na lista de conversas e podem ser aplicadas ou removidas no painel do cliente.',

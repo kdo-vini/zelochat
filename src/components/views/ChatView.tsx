@@ -64,6 +64,7 @@ import { ContactAvatar } from '../ContactAvatar';
 import { Modal, useModalTitleId } from '../Modal';
 import { getFriendlyErrorMessage } from '../../services/errorMessages';
 import { sendContact } from '../../services/waApi';
+import type { OrderFocusRequest } from '../../domain/orderFocus';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
 
@@ -466,6 +467,7 @@ export interface ChatViewProps {
   resolveEscalation: (jid: string) => Promise<void>;
   escalateManually: (jid: string, reason?: string) => Promise<void>;
   acknowledgeEscalation: (jid: string) => Promise<void>;
+  onOpenOrder?: (request: OrderFocusRequest) => void;
   /** Bumps when a new escalation event arrives so the sidebar log can refetch. */
   escalationRefetchKey?: string | number | null;
   /** Last session_tags_updated WS event — used to sync sessionTagsMap in real time. */
@@ -499,6 +501,7 @@ export function ChatView({
   resolveEscalation,
   escalateManually,
   acknowledgeEscalation,
+  onOpenOrder,
   escalationRefetchKey,
   lastTagsUpdate,
 }: ChatViewProps) {
@@ -1906,8 +1909,10 @@ export function ChatView({
                             isLastInGroup={isLastInGroup}
                             profilePicUrl={profilePics[activeSession.id]}
                             customerName={activeSession.customerName}
+                            sessionCustomerPhone={activeSession.customerPhone}
                             onDelete={handleDeleteMessage}
                             isDeleting={deletingMessageId === message.id}
+                            onOpenOrder={onOpenOrder}
                           />
                         </motion.div>
                       );

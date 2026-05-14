@@ -1,7 +1,27 @@
 import React, { useRef, useState } from 'react';
-import { FileAudio, FileText, FileVideo, ImageOff, Loader2, MoreVertical, Pause, Play, Trash2, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bell,
+  Check,
+  Clock,
+  ExternalLink,
+  FileAudio,
+  FileText,
+  FileVideo,
+  ImageOff,
+  Loader2,
+  MoreVertical,
+  Package,
+  Pause,
+  Play,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
 import type { ChatMessage, MessageStatus } from '../../types';
 import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../domain/chat';
+import { parseChatEventCard, type ChatEventCardData, type ChatEventTone } from '../../domain/chatFeedback';
+import type { OrderFocusRequest } from '../../domain/orderFocus';
 import { Modal, useModalTitleId } from '../Modal';
 
 /* ─── Helpers ─────────────────────────────────────────────────────── */
@@ -352,6 +372,84 @@ function MetaRow({ timestamp, isOutgoing, status }: { timestamp: string; isOutgo
   );
 }
 
+function eventToneStyles(tone: ChatEventTone) {
+  switch (tone) {
+    case 'success':
+      return {
+        card: 'border-emerald-200 bg-emerald-50/95',
+        icon: 'bg-emerald-100 text-emerald-700',
+        badge: 'bg-emerald-100 text-emerald-800',
+        subtitle: 'text-emerald-900/75',
+        detailWrap: 'bg-white/75 border border-emerald-100',
+        detailText: 'text-emerald-950',
+        button: 'bg-emerald-600 text-white hover:bg-emerald-700',
+      };
+    case 'pending':
+      return {
+        card: 'border-amber-200 bg-amber-50/95',
+        icon: 'bg-amber-100 text-amber-700',
+        badge: 'bg-amber-100 text-amber-800',
+        subtitle: 'text-amber-900/75',
+        detailWrap: 'bg-white/75 border border-amber-100',
+        detailText: 'text-amber-950',
+        button: 'bg-amber-600 text-white hover:bg-amber-700',
+      };
+    case 'warning':
+      return {
+        card: 'border-orange-200 bg-orange-50/95',
+        icon: 'bg-orange-100 text-orange-700',
+        badge: 'bg-orange-100 text-orange-800',
+        subtitle: 'text-orange-950/70',
+        detailWrap: 'bg-white/75 border border-orange-100',
+        detailText: 'text-orange-950',
+        button: 'bg-orange-600 text-white hover:bg-orange-700',
+      };
+    case 'danger':
+      return {
+        card: 'border-rose-200 bg-rose-50/95',
+        icon: 'bg-rose-100 text-rose-700',
+        badge: 'bg-rose-100 text-rose-800',
+        subtitle: 'text-rose-950/70',
+        detailWrap: 'bg-white/75 border border-rose-100',
+        detailText: 'text-rose-950',
+        button: 'bg-rose-600 text-white hover:bg-rose-700',
+      };
+    case 'info':
+    default:
+      return {
+        card: 'border-sky-200 bg-sky-50/95',
+        icon: 'bg-sky-100 text-sky-700',
+        badge: 'bg-sky-100 text-sky-800',
+        subtitle: 'text-sky-950/70',
+        detailWrap: 'bg-white/75 border border-sky-100',
+        detailText: 'text-sky-950',
+        button: 'bg-sky-600 text-white hover:bg-sky-700',
+      };
+  }
+}
+
+function EventIcon({ event }: { event: ChatEventCardData }) {
+  const className = 'h-[18px] w-[18px]';
+  switch (event.kind) {
+    case 'order_confirmed':
+    case 'order_already_confirmed':
+      return <Check className={className} strokeWidth={2.3} />;
+    case 'pending_confirmation':
+    case 'pending_text_confirmation':
+    case 'pending_order_echo':
+      return <Clock className={className} strokeWidth={2.1} />;
+    case 'pending_pix_receipt':
+      return <Sparkles className={className} strokeWidth={2.1} />;
+    case 'escalated':
+    case 'tool_error':
+      return <AlertTriangle className={className} strokeWidth={2.1} />;
+    case 'manager_notified':
+      return <Bell className={className} strokeWidth={2.1} />;
+    default:
+      return <Package className={className} strokeWidth={2.1} />;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    Main MessageBubble component
    ═══════════════════════════════════════════════════════════════════ */
@@ -361,11 +459,22 @@ export interface MessageBubbleProps {
   isLastInGroup: boolean;
   profilePicUrl?: string;
   customerName: string;
+  sessionCustomerPhone?: string;
   onDelete?: (message: ChatMessage) => void | Promise<void>;
   isDeleting?: boolean;
+  onOpenOrder?: (request: OrderFocusRequest) => void;
 }
 
-const MessageBubbleInner = React.memo(function MessageBubble({ message, isLastInGroup, profilePicUrl, customerName, onDelete, isDeleting = false }: MessageBubbleProps) {
+const MessageBubbleInner = React.memo(function MessageBubble({
+  message,
+  isLastInGroup,
+  profilePicUrl,
+  customerName,
+  sessionCustomerPhone,
+  onDelete,
+  isDeleting = false,
+  onOpenOrder,
+}: MessageBubbleProps) {
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -378,6 +487,131 @@ const MessageBubbleInner = React.memo(function MessageBubble({ message, isLastIn
 
   const parsed = parseStructuredMessage(message.content ?? '');
   const displayText = parsed.text ?? '';
+  const eventCard = parseChatEventCard(message, sessionCustomerPhone);
+
+  const deleteMenuButton = isOutgoing && message.waMessageId && onDelete ? (
+    <div className="absolute right-1 top-1 z-30">
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          setMenuOpen((open) => !open);
+        }}
+        disabled={isDeleting}
+        title="Opções da mensagem"
+        aria-label="Opções da mensagem"
+        className="flex h-6 w-6 items-center justify-center rounded-md bg-white/75 text-[#667781] opacity-80 transition-all hover:bg-white hover:text-[#111b21] focus:opacity-100 disabled:cursor-wait disabled:opacity-70 group-hover/bubble:opacity-100"
+      >
+        {isDeleting
+          ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
+          : <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />}
+      </button>
+
+      {menuOpen && (
+        <>
+          <button
+            type="button"
+            aria-label="Fechar menu"
+            className="fixed inset-0 z-20 cursor-default"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="absolute right-0 top-7 z-40 w-56 overflow-hidden rounded-lg border border-black/5 bg-white py-1 shadow-lg">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen(false);
+                void onDelete(message);
+              }}
+              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-medium text-[#b42318] transition-colors hover:bg-[#fee4e2]"
+            >
+              <Trash2 className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
+              <span>Apagar mensagem para todos</span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  ) : null;
+
+  if (eventCard) {
+    const styles = eventToneStyles(eventCard.tone);
+    const isEventOutgoing = message.role === 'assistant';
+    const canOpenOrder = Boolean(eventCard.focusRequest && eventCard.actionLabel && onOpenOrder);
+
+    return (
+      <div
+        className={`flex ${isEventOutgoing ? 'justify-end' : 'justify-center'}`}
+        style={{ paddingLeft: isEventOutgoing ? 63 : 24, paddingRight: isEventOutgoing ? 24 : 63 }}
+      >
+        <div className={`group/bubble relative w-full max-w-[430px] overflow-hidden rounded-[20px] border shadow-[0_8px_24px_rgba(15,23,42,0.08)] ${styles.card}`}>
+          {deleteMenuButton}
+
+          <div className="flex items-start gap-3 px-4 py-3.5">
+            <div className={`mt-0.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${styles.icon}`}>
+              <EventIcon event={eventCard} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[14px] font-semibold text-[var(--color-ink)]">{eventCard.title}</p>
+                {eventCard.badge && (
+                  <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${styles.badge}`}>
+                    {eventCard.badge}
+                  </span>
+                )}
+                {eventCard.sendFailed && (
+                  <span className="rounded-full bg-white/85 px-2 py-0.5 text-[10.5px] font-semibold text-orange-700">
+                    Reenviar manualmente
+                  </span>
+                )}
+              </div>
+              {eventCard.subtitle && (
+                <p className={`mt-1 text-[12.5px] leading-relaxed ${styles.subtitle}`}>
+                  {eventCard.subtitle}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {eventCard.lines.length > 0 && (
+            <div className="px-4 pb-3">
+              <div className={`rounded-2xl px-3.5 py-3 ${styles.detailWrap}`}>
+                <div className="space-y-1.5">
+                  {eventCard.lines.map((line, index) => (
+                    <p key={`${message.id}-line-${index}`} className={`text-[13px] leading-relaxed whitespace-pre-wrap break-words ${styles.detailText}`}>
+                      <WhatsAppText text={line} />
+                    </p>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {canOpenOrder && eventCard.focusRequest && (
+            <div className="px-4 pb-3">
+              <button
+                type="button"
+                onClick={() => onOpenOrder(eventCard.focusRequest!)}
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors ${styles.button}`}
+              >
+                <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.1} />
+                {eventCard.actionLabel}
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-1.5 px-4 pb-3 text-[11px] text-[var(--color-ink-faint)]">
+            <span>{formatClock(message.timestamp)}</span>
+            {isOutgoing && <MessageTicks status={message.status} />}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (message.role === 'assistant' && message.tool_calls?.length && !displayText) {
+    return null;
+  }
 
   /* ── Bubble wrapper styles (WhatsApp-accurate) ── */
   const bubbleStyle: React.CSSProperties = {
@@ -409,50 +643,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({ message, isLastIn
           {/* Tail */}
           {hasTail && (isOutgoing ? <TailOut /> : <TailIn />)}
 
-          {isOutgoing && message.waMessageId && onDelete && (
-            <div className="absolute right-1 top-1 z-30">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setMenuOpen((open) => !open);
-                }}
-                disabled={isDeleting}
-                title="OpÃ§Ãµes da mensagem"
-                aria-label="OpÃ§Ãµes da mensagem"
-                className="flex h-6 w-6 items-center justify-center rounded-md bg-[#d9fdd3]/80 text-[#667781] opacity-70 transition-all hover:bg-white/90 hover:text-[#111b21] focus:opacity-100 disabled:cursor-wait disabled:opacity-70 group-hover/bubble:opacity-100"
-              >
-                {isDeleting
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
-                  : <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />}
-              </button>
-
-              {menuOpen && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Fechar menu"
-                    className="fixed inset-0 z-20 cursor-default"
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <div className="absolute right-0 top-7 z-40 w-56 overflow-hidden rounded-lg border border-black/5 bg-white py-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setMenuOpen(false);
-                        void onDelete(message);
-                      }}
-                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-medium text-[#b42318] transition-colors hover:bg-[#fee4e2]"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
-                      <span>Apagar mensagem para todos</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          {deleteMenuButton}
 
           {/* ── Image ── */}
           {message.kind === 'image' && (

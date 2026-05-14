@@ -69,6 +69,7 @@ import { loadInitialState, saveInitialState } from './services/statePersistence'
 import type { Order, ZeloState } from './types';
 import { PRICING } from './data/pricing';
 import { normalizeZeloChatMode } from './domain/zelochatMode';
+import type { OrderFocusRequest } from './domain/orderFocus';
 
 type View =
   | 'dashboard'
@@ -198,6 +199,7 @@ export default function AppShell() {
   const [activeView, setActiveView] = useState<View>('chat');
   const [state, setState] = useState<ZeloState>(() => loadInitialState());
   const [activeSessionId, setActiveSessionIdState] = useState<string | null>(() => readStoredActiveSessionId());
+  const [pendingOrderFocus, setPendingOrderFocus] = useState<{ key: number; request: OrderFocusRequest } | null>(null);
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(() => {
     try {
       return localStorage.getItem('zelochat_sidebar_expanded') !== 'false';
@@ -208,6 +210,7 @@ export default function AppShell() {
   const [deferredDataReady, setDeferredDataReady] = useState(false);
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingOrderFocusSeqRef = useRef(0);
   const lastSyncedConfigRef = useRef<string | null>(null);
   const hasSeenConfigSnapshotRef = useRef(false);
   // P1.34 — track consecutive sync failures to surface a SINGLE toast after
@@ -876,6 +879,15 @@ export default function AppShell() {
     setActiveView('kanban');
   }, []);
 
+  const handleOpenOrderFromChat = useCallback((request: OrderFocusRequest) => {
+    pendingOrderFocusSeqRef.current += 1;
+    setPendingOrderFocus({
+      key: pendingOrderFocusSeqRef.current,
+      request,
+    });
+    setActiveView('kanban');
+  }, []);
+
   const handleDispatchSuccess = useCallback((orderId: string) => {
     updateOrderStatus(orderId, 'out_for_delivery');
   }, [updateOrderStatus]);
@@ -1163,6 +1175,7 @@ export default function AppShell() {
             resolveEscalation={handleResolveEscalation}
             escalateManually={escalateManually}
             acknowledgeEscalation={acknowledgeEscalation}
+            onOpenOrder={handleOpenOrderFromChat}
             escalationRefetchKey={lastEscalation?.event.id ?? null}
             lastTagsUpdate={lastTagsUpdate}
           />
@@ -1194,6 +1207,8 @@ export default function AppShell() {
                     onDeleteOrder={handleDeleteOrder}
                     onUpdateStatus={updateOrderStatus}
                     isAuthenticated={!!token}
+                    focusedOrderRequest={pendingOrderFocus?.request ?? null}
+                    focusedOrderRequestKey={pendingOrderFocus?.key ?? null}
                   />
                 </DragDropContext>
               )}
