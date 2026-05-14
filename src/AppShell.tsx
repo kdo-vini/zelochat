@@ -301,6 +301,7 @@ export default function AppShell() {
     acknowledgeEscalation,
     waConnected,
     wsConnected,
+    lastTagsUpdate,
   } = useWhatsAppSessions(token);
   const { count: openEscalationCount, reload: reloadOpenEscalationCount } = useOpenEscalationCount(
     token,
@@ -1163,6 +1164,7 @@ export default function AppShell() {
             escalateManually={escalateManually}
             acknowledgeEscalation={acknowledgeEscalation}
             escalationRefetchKey={lastEscalation?.event.id ?? null}
+            lastTagsUpdate={lastTagsUpdate}
           />
         ) : (
           /* ── Other views (lazy-loaded) ──────────────────────────── */

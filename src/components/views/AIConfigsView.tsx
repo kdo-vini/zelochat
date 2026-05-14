@@ -1021,13 +1021,19 @@ export const AIConfigsView = ({
                       ))}
                     </div>
                   </div>
-                  <textarea
-                    value={tagForm?.aiInstructions ?? tag.aiInstructions ?? ''}
-                    onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
-                    rows={3}
-                    className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
-                    placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
-                  />
+                  <div className="relative">
+                    <textarea
+                      value={tagForm?.aiInstructions ?? tag.aiInstructions ?? ''}
+                      onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
+                      rows={3}
+                      maxLength={1000}
+                      className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
+                      placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
+                    />
+                    <span className="absolute bottom-1.5 right-2 text-[10px] text-[var(--color-ink-faint)]">
+                      {(tagForm?.aiInstructions ?? tag.aiInstructions ?? '').length}/1000
+                    </span>
+                  </div>
                   <div className="flex gap-2 justify-end">
                     <button
                       onClick={() => { setEditingTag(null); setTagForm(null); }}
@@ -1100,13 +1106,19 @@ export const AIConfigsView = ({
                     <XIcon className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <textarea
-                  value={tagForm.aiInstructions}
-                  onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
-                  rows={3}
-                  className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
-                  placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
-                />
+                <div className="relative">
+                  <textarea
+                    value={tagForm.aiInstructions}
+                    onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
+                    rows={3}
+                    maxLength={1000}
+                    className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
+                    placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
+                  />
+                  <span className="absolute bottom-1.5 right-2 text-[10px] text-[var(--color-ink-faint)]">
+                    {tagForm.aiInstructions.length}/1000
+                  </span>
+                </div>
                 <div className="flex gap-2 justify-end">
                   <button
                     onClick={() => setTagForm(null)}

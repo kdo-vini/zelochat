@@ -53,7 +53,7 @@ import {
 } from '../../services/openaiService';
 import type { ChatAttachment, ChatMessage, ChatSession, Order, QuickResponse, Tag } from '../../types';
 import { useTags } from '../../hooks/useTags';
-import { getSessionTagsMap } from '../../services/waApi';
+import { getSessionTagsMap, applyTagToSession, removeTagFromSession } from '../../services/waApi';
 import { MessageBubble } from './MessageBubble';
 import { EscaladoBadge } from '../shared/EscaladoBadge';
 import { SlaTimer } from '../shared/SlaTimer';
@@ -468,6 +468,8 @@ export interface ChatViewProps {
   acknowledgeEscalation: (jid: string) => Promise<void>;
   /** Bumps when a new escalation event arrives so the sidebar log can refetch. */
   escalationRefetchKey?: string | number | null;
+  /** Last session_tags_updated WS event — used to sync sessionTagsMap in real time. */
+  lastTagsUpdate?: { sessionId: string; tags: { id: string; name: string; color: string; aiInstructions: string | null; empresaId: string; createdAt: string }[]; ts: number } | null;
 }
 
 /* ─── Component ───────────────────────────────────────────────── */
@@ -498,6 +500,7 @@ export function ChatView({
   escalateManually,
   acknowledgeEscalation,
   escalationRefetchKey,
+  lastTagsUpdate,
 }: ChatViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [ownerInput, setOwnerInput] = useState('');
@@ -521,11 +524,20 @@ export function ChatView({
   const { tags: allTags } = useTags(token);
   const [sessionTagsMap, setSessionTagsMap] = useState<Record<string, Tag[]>>({});
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
     void getSessionTagsMap(token).then(setSessionTagsMap).catch(() => {/* ignore */});
   }, [token]);
+
+  useEffect(() => {
+    if (!lastTagsUpdate) return;
+    setSessionTagsMap((prev) => ({
+      ...prev,
+      [lastTagsUpdate.sessionId]: lastTagsUpdate.tags as Tag[],
+    }));
+  }, [lastTagsUpdate]);
 
   const activeSessionTagIds = useMemo(() => {
     if (!activeSessionId) return new Set<string>();
@@ -544,9 +556,7 @@ export function ChatView({
     const alreadyApplied = activeSessionTagIds.has(tagId);
     if (alreadyApplied) {
       try {
-        await fetch(`/api/sessions/${encodeURIComponent(activeSessionId)}/tags/${encodeURIComponent(tagId)}`, {
-          method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
-        });
+        await removeTagFromSession(token, activeSessionId, tagId);
         setSessionTagsMap((prev) => ({
           ...prev,
           [activeSessionId]: (prev[activeSessionId] ?? []).filter((t) => t.id !== tagId),
@@ -554,9 +564,7 @@ export function ChatView({
       } catch { /* ignore */ }
     } else {
       try {
-        await fetch(`/api/sessions/${encodeURIComponent(activeSessionId)}/tags/${encodeURIComponent(tagId)}`, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}` },
-        });
+        await applyTagToSession(token, activeSessionId, tagId);
         setSessionTagsMap((prev) => ({
           ...prev,
           [activeSessionId]: [...(prev[activeSessionId] ?? []), tag],
@@ -682,6 +690,8 @@ export function ChatView({
         if (statusFilter === 'resolved' && s.status !== 'resolved') return false;
       }
 
+      if (tagFilter && !(sessionTagsMap[s.id] ?? []).some((t) => t.id === tagFilter)) return false;
+
       if (!q) return true;
       const phone = normalizePhoneNumber(s.customerPhone);
       return (
@@ -700,7 +710,7 @@ export function ChatView({
       else rest.push(s);
     }
     return pinned.length > 0 ? [...pinned, ...rest] : matched;
-  }, [sessions, searchQuery, statusFilter]);
+  }, [sessions, searchQuery, statusFilter, tagFilter, sessionTagsMap]);
 
   useEffect(() => {
     const el = chatListRef.current;
@@ -715,7 +725,7 @@ export function ChatView({
   useEffect(() => {
     setChatListScrollTop(0);
     chatListRef.current?.scrollTo({ top: 0 });
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, tagFilter]);
 
   // Selection helpers
   const toggleSelectJid = useCallback((jid: string) => {
@@ -1449,6 +1459,26 @@ export function ChatView({
               </button>
             ))}
           </div>
+
+          {allTags.length > 0 && (
+            <div className="px-3 py-1.5 border-b border-[var(--color-line)] flex-shrink-0 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+              {allTags.map((tag) => (
+                <button
+                  key={tag.id}
+                  onClick={() => setTagFilter((f) => f === tag.id ? null : tag.id)}
+                  className={`flex-shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                    tagFilter === tag.id
+                      ? 'text-white'
+                      : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                  }`}
+                  style={tagFilter === tag.id ? { backgroundColor: tag.color } : undefined}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color }} />
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           {selectionMode && (
             <div className="px-3 py-2 border-b border-[var(--color-line)] flex-shrink-0 bg-[var(--color-brand-soft)] flex items-center gap-2 flex-wrap">

@@ -88,6 +88,7 @@ type WsEvent =
   | { type: 'session_status_changed'; data: SessionStatusChangedPayload }
   | { type: 'session_read'; data: { sessionId: string; unreadCount: number } }
   | { type: 'session_pinned'; data: { sessionId: string; pinned: boolean } }
+  | { type: 'session_tags_updated'; data: { sessionId: string; tags: { id: string; name: string; color: string; aiInstructions: string | null; empresaId: string; createdAt: string }[] } }
   | { type: 'qr' | 'connection'; data: unknown };
 
 export interface EscalationNotice {
@@ -184,6 +185,7 @@ export function useWhatsAppSessions(token: string | null) {
   // while the socket is open; AppShell reads it to render a "Reconectando…"
   // pill.
   const [wsConnected, setWsConnected] = useState<boolean>(false);
+  const [lastTagsUpdate, setLastTagsUpdate] = useState<{ sessionId: string; tags: { id: string; name: string; color: string; aiInstructions: string | null; empresaId: string; createdAt: string }[]; ts: number } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -609,6 +611,11 @@ export function useWhatsAppSessions(token: string | null) {
             return;
           }
 
+          if (parsed.type === 'session_tags_updated') {
+            setLastTagsUpdate({ ...parsed.data, ts: Date.now() });
+            return;
+          }
+
           if (parsed.type !== 'message' && parsed.type !== 'message_sent') {
             return;
           }
@@ -715,5 +722,6 @@ export function useWhatsAppSessions(token: string | null) {
     acknowledgeEscalation,
     waConnected,
     wsConnected,
+    lastTagsUpdate,
   };
 }

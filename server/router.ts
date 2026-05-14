@@ -1734,7 +1734,12 @@ router.post('/api/tags', async (req: Request, res: Response) => {
       aiInstructions ?? null,
     );
     res.status(201).json({ tag });
-  } catch (error) {
+  } catch (error: unknown) {
+    const pg = error as { code?: string };
+    if (pg.code === '23505') {
+      res.status(400).json({ error: 'Já existe uma tag com esse nome.' });
+      return;
+    }
     res.status(500).json({ error: String(error) });
   }
 });
@@ -1771,6 +1776,8 @@ router.post('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Re
   try {
     const empresaId = await requireEmpresaId(req);
     await applyTagToSession(empresaId, req.params.sessionId, req.params.tagId);
+    const updatedTags = await getSessionTagsFull(empresaId, req.params.sessionId);
+    broadcast({ type: 'session_tags_updated', data: { sessionId: req.params.sessionId, tags: updatedTags } }, empresaId);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -1779,8 +1786,10 @@ router.post('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Re
 
 router.delete('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Response) => {
   try {
-    await requireEmpresaId(req);
+    const empresaId = await requireEmpresaId(req);
     await removeTagFromSession(req.params.sessionId, req.params.tagId);
+    const updatedTags = await getSessionTagsFull(empresaId, req.params.sessionId);
+    broadcast({ type: 'session_tags_updated', data: { sessionId: req.params.sessionId, tags: updatedTags } }, empresaId);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: String(error) });
