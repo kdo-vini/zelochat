@@ -104,8 +104,8 @@ const NAV_SECONDARY: NavItem[] = [
   { id: 'ai-configs', icon: Bot,          label: 'Cérebro IA', description: 'Configurar assistente' },
 ];
 
-const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile']);
-const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers', 'catalog', 'novidades']);
+const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile', 'novidades']);
+const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers', 'catalog']);
 const ACTIVE_SESSION_STORAGE_KEY = 'zelochat_active_session_id';
 const BOOT_MARK_PREFIX = 'zelochat:boot';
 
@@ -276,7 +276,7 @@ export default function AppShell() {
   const bottomSheetItems = useMemo(
     () => [
       ...secondaryNavItems,
-      ...(isGeneralMode ? [] : [{ id: 'novidades' as View, icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }]),
+      { id: 'novidades' as View, icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' },
       { id: 'settings' as View, icon: Settings, label: 'Configurações', description: 'Empresa e integrações' },
       { id: 'profile' as View, icon: UserIcon, label: 'Perfil', description: 'Sua conta' },
     ],
@@ -1066,14 +1066,12 @@ export default function AppShell() {
 
         {/* Bottom: novidades + settings + printer + profile */}
         <div className="mt-auto px-2 flex flex-col gap-0.5 flex-shrink-0 pt-2 border-t border-[var(--color-line)]">
-          {!isGeneralMode && (
-            <NavButton
-              item={{ id: 'novidades', icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }}
-              active={activeView === 'novidades'}
-              expanded={sidebarExpanded}
-              onClick={() => setActiveView('novidades')}
-            />
-          )}
+          <NavButton
+            item={{ id: 'novidades', icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }}
+            active={activeView === 'novidades'}
+            expanded={sidebarExpanded}
+            onClick={() => setActiveView('novidades')}
+          />
           <NavButton
             item={{ id: 'settings', icon: Settings, label: 'Configurações', description: 'Empresa e integrações' }}
             active={activeView === 'settings'}
@@ -1293,7 +1291,7 @@ export default function AppShell() {
                   onDispatchSuccess={handleDispatchSuccess}
                 />
               )}
-              {activeView === 'novidades' && !isGeneralMode && (
+              {activeView === 'novidades' && (
                 <NovidadesView />
               )}
             </div>
