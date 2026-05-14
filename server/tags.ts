@@ -31,6 +31,26 @@ function mapTag(row: TagRow): TagRecord {
 
 const SELECT_COLS = 'id, empresa_id, name, color, ai_instructions, created_at';
 
+/**
+ * Resolve a session identifier that may be a UUID or a WhatsApp JID into
+ * the canonical `zelochat_sessions.id` UUID. The frontend uses
+ * `remote_jid` as the canonical session id (see `mapSession` in
+ * messageHandler), so the tag routes accept JIDs and resolve here before
+ * touching `zelochat_session_tags`, which references the UUID column.
+ */
+async function resolveSessionUuid(empresaId: string, sessionIdOrJid: string): Promise<string | null> {
+  if (!sessionIdOrJid.includes('@')) return sessionIdOrJid;
+  const sb = getServiceSupabase();
+  const { data, error } = await sb
+    .from('zelochat_sessions')
+    .select('id')
+    .eq('empresa_id', empresaId)
+    .eq('remote_jid', sessionIdOrJid)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as { id: string } | null)?.id ?? null;
+}
+
 export async function listTags(empresaId: string): Promise<TagRecord[]> {
   const sb = getServiceSupabase();
   const { data, error } = await sb
@@ -104,7 +124,9 @@ export async function getSessionTagIds(sessionId: string): Promise<string[]> {
   return (data ?? []).map((r: { tag_id: string }) => r.tag_id);
 }
 
-export async function getSessionTagsFull(empresaId: string, sessionId: string): Promise<TagRecord[]> {
+export async function getSessionTagsFull(empresaId: string, sessionIdOrJid: string): Promise<TagRecord[]> {
+  const sessionId = await resolveSessionUuid(empresaId, sessionIdOrJid);
+  if (!sessionId) return [];
   const sb = getServiceSupabase();
   const { data, error } = await sb
     .from('zelochat_session_tags')
@@ -120,9 +142,11 @@ export async function getSessionTagsFull(empresaId: string, sessionId: string): 
 
 export async function applyTagToSession(
   empresaId: string,
-  sessionId: string,
+  sessionIdOrJid: string,
   tagId: string,
 ): Promise<void> {
+  const sessionId = await resolveSessionUuid(empresaId, sessionIdOrJid);
+  if (!sessionId) throw new Error('Sessão não encontrada para aplicar tag.');
   const sb = getServiceSupabase();
   const { error } = await sb
     .from('zelochat_session_tags')
@@ -131,9 +155,12 @@ export async function applyTagToSession(
 }
 
 export async function removeTagFromSession(
-  sessionId: string,
+  empresaId: string,
+  sessionIdOrJid: string,
   tagId: string,
 ): Promise<void> {
+  const sessionId = await resolveSessionUuid(empresaId, sessionIdOrJid);
+  if (!sessionId) return;
   const sb = getServiceSupabase();
   const { error } = await sb
     .from('zelochat_session_tags')
@@ -147,18 +174,21 @@ export async function getAllSessionTagsForEmpresa(
   empresaId: string,
 ): Promise<Map<string, TagRecord[]>> {
   const sb = getServiceSupabase();
+  // Join with zelochat_sessions so we can key the resulting map by the JID
+  // (`remote_jid`), which is what the frontend uses as `ChatSession.id`.
   const { data, error } = await sb
     .from('zelochat_session_tags')
-    .select(`session_id, zelochat_tags(${SELECT_COLS})`)
+    .select(`zelochat_tags(${SELECT_COLS}), zelochat_sessions!inner(remote_jid)`)
     .eq('empresa_id', empresaId);
   if (error) throw error;
 
   const map = new Map<string, TagRecord[]>();
-  for (const row of (data ?? []) as { session_id: string; zelochat_tags: TagRow | null }[]) {
-    if (!row.zelochat_tags) continue;
-    const existing = map.get(row.session_id) ?? [];
+  for (const row of (data ?? []) as { zelochat_tags: TagRow | null; zelochat_sessions: { remote_jid: string } | null }[]) {
+    if (!row.zelochat_tags || !row.zelochat_sessions?.remote_jid) continue;
+    const jid = row.zelochat_sessions.remote_jid;
+    const existing = map.get(jid) ?? [];
     existing.push(mapTag(row.zelochat_tags));
-    map.set(row.session_id, existing);
+    map.set(jid, existing);
   }
   return map;
 }

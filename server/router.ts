@@ -1787,7 +1787,7 @@ router.post('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Re
 router.delete('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    await removeTagFromSession(req.params.sessionId, req.params.tagId);
+    await removeTagFromSession(empresaId, req.params.sessionId, req.params.tagId);
     const updatedTags = await getSessionTagsFull(empresaId, req.params.sessionId);
     broadcast({ type: 'session_tags_updated', data: { sessionId: req.params.sessionId, tags: updatedTags } }, empresaId);
     res.json({ ok: true });
