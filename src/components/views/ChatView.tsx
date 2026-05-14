@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { JSX } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Archive,
@@ -569,10 +568,14 @@ export function ChatView({
     } else {
       try {
         await applyTagToSession(token, activeSessionId, tagId);
-        setSessionTagsMap((prev) => ({
-          ...prev,
-          [activeSessionId]: [...(prev[activeSessionId] ?? []), tag],
-        }));
+        setSessionTagsMap((prev) => {
+          const existing: Tag[] = prev[activeSessionId] ?? [];
+          // The WS `session_tags_updated` broadcast can land before this awaited
+          // HTTP response resolves — when that happens the authoritative list is
+          // already in the map and a naive append duplicates the tag visually.
+          if (existing.some((t) => t.id === tag.id)) return prev;
+          return { ...prev, [activeSessionId]: [...existing, tag] };
+        });
       } catch { /* ignore */ }
     }
   }, [token, activeSessionId, activeSessionTagIds, allTags]);
