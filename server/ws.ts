@@ -17,7 +17,8 @@ export type WsEventType =
   | 'session_pinned'
   | 'escalation_triggered'
   | 'escalation_resolved'
-  | 'session_status_changed';
+  | 'session_status_changed'
+  | 'session_tags_updated';
 
 export interface WsEvent {
   type: WsEventType;

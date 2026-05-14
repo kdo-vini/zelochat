@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { JSX } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Archive,
@@ -599,6 +600,7 @@ export function ChatView({
   const [deleteMessagePending, setDeleteMessagePending] = useState<ChatMessage | null>(null);
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [aiAssistMenuOpen, setAiAssistMenuOpen] = useState(false);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [aiAssistLoading, setAiAssistLoading] = useState<'improve' | 'reply' | 'order' | null>(null);
   const [manualOrderDraft, setManualOrderDraft] = useState<ManualOrderFormData | null>(null);
   const [manualOrderDateDisplay, setManualOrderDateDisplay] = useState('');
@@ -2037,51 +2039,69 @@ export function ChatView({
                 </AnimatePresence>
 
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1">
+                  <div className="relative flex-shrink-0">
                     <button
-                      onClick={() => imageInputRef.current?.click()}
+                      type="button"
+                      onClick={() => setAttachmentMenuOpen((open) => !open)}
                       disabled={attachmentLoading || isSending}
                       className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
-                      title="Enviar imagem"
-                    >
-                      <ImagePlus className="h-4.5 w-4.5" strokeWidth={1.8} />
-                    </button>
-                    <button
-                      onClick={() => documentInputRef.current?.click()}
-                      disabled={attachmentLoading || isRecording || isSending}
-                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
-                      title="Enviar documento"
+                      title="Anexar"
                     >
                       <Paperclip className="h-4.5 w-4.5" strokeWidth={1.8} />
                     </button>
-                    <button
-                      onClick={() => videoInputRef.current?.click()}
-                      disabled={attachmentLoading || isSending}
-                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
-                      title="Enviar vídeo"
-                    >
-                      <Video className="h-4.5 w-4.5" strokeWidth={1.8} />
-                    </button>
-                    <button
-                      onClick={() => { setContactModalOpen(true); setChatActionError(null); }}
-                      disabled={isSending}
-                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
-                      title="Enviar contato"
-                    >
-                      <UserPlus className="h-4.5 w-4.5" strokeWidth={1.8} />
-                    </button>
-                    <button
-                      onClick={isRecording ? handleStopRecording : handleStartRecording}
-                      disabled={attachmentLoading || !!pendingAttachment || isSending}
-                      className={`flex h-10 w-10 items-center justify-center rounded-xl shadow-[var(--shadow-card)] transition-colors disabled:opacity-50 ${
-                        isRecording
-                          ? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
-                          : 'bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
-                      }`}
-                      title={isRecording ? 'Parar gravação' : 'Gravar áudio'}
-                    >
-                      {isRecording ? <MicOff className="h-4.5 w-4.5" strokeWidth={1.8} /> : <Mic className="h-4.5 w-4.5" strokeWidth={1.8} />}
-                    </button>
+                    <AnimatePresence>
+                      {attachmentMenuOpen && (
+                        <>
+                          <motion.button
+                            type="button"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-40 cursor-default"
+                            onClick={() => setAttachmentMenuOpen(false)}
+                          />
+                          <motion.div
+                            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                            className="absolute bottom-full left-0 z-50 mb-2 w-52 overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-pop)]"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => { setAttachmentMenuOpen(false); imageInputRef.current?.click(); }}
+                              className="flex w-full items-center gap-3 border-b border-[var(--color-line)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                            >
+                              <ImagePlus className="h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                              <span className="text-[13px] font-medium text-[var(--color-ink)]">Imagem</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setAttachmentMenuOpen(false); videoInputRef.current?.click(); }}
+                              className="flex w-full items-center gap-3 border-b border-[var(--color-line)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                            >
+                              <Video className="h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                              <span className="text-[13px] font-medium text-[var(--color-ink)]">Vídeo</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setAttachmentMenuOpen(false); documentInputRef.current?.click(); }}
+                              className="flex w-full items-center gap-3 border-b border-[var(--color-line)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                            >
+                              <FileText className="h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                              <span className="text-[13px] font-medium text-[var(--color-ink)]">Documento</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setAttachmentMenuOpen(false); setContactModalOpen(true); setChatActionError(null); }}
+                              className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                            >
+                              <UserPlus className="h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                              <span className="text-[13px] font-medium text-[var(--color-ink)]">Contato</span>
+                            </button>
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <div className="relative flex-1">
                     <textarea
@@ -2199,6 +2219,18 @@ export function ChatView({
                       )}
                     </div>
                   </div>
+                  <button
+                    onClick={isRecording ? handleStopRecording : handleStartRecording}
+                    disabled={attachmentLoading || !!pendingAttachment || isSending}
+                    className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl shadow-[var(--shadow-card)] transition-colors disabled:opacity-50 ${
+                      isRecording
+                        ? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
+                        : 'bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                    }`}
+                    title={isRecording ? 'Parar gravação' : 'Gravar áudio'}
+                  >
+                    {isRecording ? <MicOff className="h-4.5 w-4.5" strokeWidth={1.8} /> : <Mic className="h-4.5 w-4.5" strokeWidth={1.8} />}
+                  </button>
                   <button
                     onClick={() => void handleOwnerSend()}
                     disabled={isSending || (!ownerInput.trim() && !pendingAttachment)}

@@ -134,7 +134,7 @@ export async function getSessionTagsFull(empresaId: string, sessionIdOrJid: stri
     .eq('session_id', sessionId)
     .eq('empresa_id', empresaId);
   if (error) throw error;
-  return ((data ?? []) as { zelochat_tags: TagRow | null }[])
+  return ((data ?? []) as unknown as { zelochat_tags: TagRow | null }[])
     .map((r) => r.zelochat_tags)
     .filter((t): t is TagRow => t !== null)
     .map(mapTag);
@@ -183,7 +183,7 @@ export async function getAllSessionTagsForEmpresa(
   if (error) throw error;
 
   const map = new Map<string, TagRecord[]>();
-  for (const row of (data ?? []) as { zelochat_tags: TagRow | null; zelochat_sessions: { remote_jid: string } | null }[]) {
+  for (const row of (data ?? []) as unknown as { zelochat_tags: TagRow | null; zelochat_sessions: { remote_jid: string } | null }[]) {
     if (!row.zelochat_tags || !row.zelochat_sessions?.remote_jid) continue;
     const jid = row.zelochat_sessions.remote_jid;
     const existing = map.get(jid) ?? [];
@@ -207,7 +207,7 @@ export async function getTagsForSessions(
   if (error) throw error;
 
   const map = new Map<string, TagRecord[]>();
-  for (const row of (data ?? []) as { session_id: string; zelochat_tags: TagRow | null }[]) {
+  for (const row of (data ?? []) as unknown as { session_id: string; zelochat_tags: TagRow | null }[]) {
     if (!row.zelochat_tags) continue;
     const existing = map.get(row.session_id) ?? [];
     existing.push(mapTag(row.zelochat_tags));

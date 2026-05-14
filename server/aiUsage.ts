@@ -9,7 +9,8 @@ export type AiUsageFeature =
   | 'ai_simulator'
   | 'ai_trigger_parse'
   | 'ai_transcription'
-  | 'pix_receipt_validation';
+  | 'pix_receipt_validation'
+  | 'customer_profile';
 
 export type AiUsageStatus = 'success' | 'error' | 'rate_limited';
 

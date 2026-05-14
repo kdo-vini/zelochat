@@ -23,9 +23,15 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
   {
     date: '2026-05-14',
+    category: 'minor',
+    title: 'Caixa de mensagem mais espaçosa',
+    description: 'Os botões de imagem, vídeo, documento e contato agora ficam reunidos em um único botão de clipe que abre as opções pra cima. O microfone foi pro lado do botão de enviar, deixando muito mais espaço pra digitar.',
+  },
+  {
+    date: '2026-05-14',
     category: 'big',
     title: 'Tags de atendimento por perfil de cliente',
-    description: 'Agora você pode criar tags coloridas para classificar seus contatos (ex: Revendedor, Supermercado, Lead, VIP) e definir instruções específicas para a IA se comportar diferente com cada perfil. As tags aparecem como bolinhas coloridas na lista de conversas e podem ser aplicadas ou removidas no painel do cliente.',
+    description: 'Agora você pode criar tags coloridas para classificar seus contatos (ex: Revendedor, Lead, VIP) e definir instruções específicas para a IA se comportar diferente com cada perfil. As tags aparecem como bolinhas coloridas na lista de conversas e podem ser aplicadas ou removidas no painel do cliente.',
   },
   {
     date: '2026-05-13',
