@@ -680,7 +680,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
       ? isOutgoing ? '7.5px 7.5px 0 7.5px' : '7.5px 7.5px 7.5px 0'
       : '7.5px',
     boxShadow: '0 1px 0.5px rgba(11,20,26,0.13)',
-    maxWidth: message.kind === 'image' || message.kind === 'video' ? 330 : undefined,
+    maxWidth: message.kind === 'image' || message.kind === 'video' ? 330 : 300,
     position: 'relative',
   };
 
@@ -721,9 +721,6 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           paddingRight: isOutgoing ? 0 : 63,
           marginBottom: hasReactions ? 14 : 0,
         }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
       >
         {/* Desktop reply button — incoming side */}
         {onReply && !isOutgoing && (
@@ -743,6 +740,9 @@ const MessageBubbleInner = React.memo(function MessageBubble({
             transition: dragX ? 'none' : 'transform 0.2s ease-out',
           }}
           className="group/bubble relative"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         >
           {/* Tail */}
           {hasTail && (isOutgoing ? <TailOut /> : <TailIn />)}
