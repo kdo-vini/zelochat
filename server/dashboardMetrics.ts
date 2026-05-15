@@ -5,15 +5,12 @@ import { getServiceSupabase } from './supabase.js';
 
 type SessionMetricRow = {
   id: string;
-  remote_jid: string;
   customer_name: string | null;
   customer_phone: string | null;
-  last_message: string | null;
   last_message_time: string | null;
   unread_count: number | null;
   status: string | null;
   auto_reply: boolean | null;
-  updated_at: string;
 };
 
 type MessageMetricRow = {
@@ -50,6 +47,10 @@ type OrderMetricRow = {
   total: number | string;
 };
 
+const parsedDashboardSessionLimit = Number(process.env.ZELOCHAT_DASHBOARD_SESSION_LIMIT ?? 5000);
+const DASHBOARD_SESSION_LIMIT = Number.isFinite(parsedDashboardSessionLimit) && parsedDashboardSessionLimit > 0
+  ? parsedDashboardSessionLimit
+  : 5000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function saoPauloDateKey(date: Date): string {
@@ -252,8 +253,11 @@ export async function buildDashboardOverview(
   ] = await Promise.all([
     supabase
       .from('zelochat_sessions')
-      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, updated_at')
-      .eq('empresa_id', empresaId),
+      .select('id, customer_name, customer_phone, last_message_time, unread_count, status, auto_reply', { count: 'exact' })
+      .eq('empresa_id', empresaId)
+      .neq('status', 'archived')
+      .order('last_message_time', { ascending: false, nullsFirst: false })
+      .limit(DASHBOARD_SESSION_LIMIT),
     supabase
       .from('zelochat_messages')
       .select('id, session_id, role, content, sent_at, tool_calls')
@@ -286,6 +290,10 @@ export async function buildDashboardOverview(
   if (messagesResult.error) throw new Error(messagesResult.error.message);
   if (escalationsResult.error) throw new Error(escalationsResult.error.message);
   if (ordersResult.error) throw new Error(ordersResult.error.message);
+
+  if ((sessionsResult.count ?? 0) > DASHBOARD_SESSION_LIMIT) {
+    console.warn(`[dashboard] empresa=${empresaId} session metrics capped at ${DASHBOARD_SESSION_LIMIT}/${sessionsResult.count}.`);
+  }
 
   const sessions = (sessionsResult.data ?? []) as SessionMetricRow[];
   const messages = (messagesResult.data ?? []) as MessageMetricRow[];

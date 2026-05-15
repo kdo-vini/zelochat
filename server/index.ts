@@ -13,6 +13,7 @@ import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { scheduleReply } from './replyDebouncer.js';
+import { slowRequestLogger } from './observability.js';
 
 // PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -53,6 +54,8 @@ app.use((req, res, next) => {
   }
   return express.json({ limit: '100kb' })(req, res, next);
 });
+
+app.use(slowRequestLogger);
 
 /**
  * Global paywall: every /api/* route requires an active ZeloChat subscription

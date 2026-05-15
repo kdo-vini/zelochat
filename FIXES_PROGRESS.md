@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-06 Sprint 52):** piloto de comprovante Pix implementado como feature flag por empresa. Pedidos Pix podem ficar pendentes ate imagem/PDF aprovado por validador dedicado, com auditoria em pending/orders e fallback conservador. QA em preview validou Donutopia com PDF/imagem sinteticos e adicionou a migration 021 para alinhar a constraint de AI usage.
+**Latest execution note (2026-05-15 Sprint 57):** hotfix de escala para heavy-user. `/api/sessions` agora evita URLs gigantes no Supabase, limita payload inicial, bulk actions deixam de varrer todas as sessões, Dashboard busca menos colunas e slow requests passam a aparecer nos logs do Railway.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,15 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 57 (2026-05-15) - Hotfix de escala para loja heavy-user
+
+- Conversas - carregamento inicial limita o payload de `zelochat_sessions`, remove `customer_profile` da lista e quebra a consulta de atividade recente em chunks menores para evitar `TypeError: fetch failed` no Railway - `server/messageHandler.ts`
+- Acoes em massa - marcar como lida e arquivar agora resolvem apenas as familias dos JIDs selecionados, sem buscar todas as sessoes da empresa - `server/messageHandler.ts`
+- Dashboard - overview busca menos colunas de sessoes ativas/pendentes e registra aviso se bater o teto defensivo de leitura - `server/dashboardMetrics.ts`
+- Observabilidade - requests acima de 2s passam a gerar `console.warn` com empresa, rota, status e duracao - `server/observability.ts`, `server/index.ts`, `server/supabase.ts`
+- Tags - mapa de tags do chat ganhou cache curto no navegador e continua invalidando por WebSocket - `src/components/views/ChatView.tsx`
+- Verificacao - `npm run lint` passou.
 
 ### Sprint 56 (2026-05-09) - Ordem real da lista de conversas
 

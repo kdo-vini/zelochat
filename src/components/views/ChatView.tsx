@@ -511,6 +511,8 @@ export function ChatView({
 
   type ChatListFilter = 'all' | 'unread' | 'active' | 'escalated' | 'resolved' | 'archived';
   const FILTER_STORAGE_KEY = 'zelochat:chatFilter';
+  const TAGS_CACHE_KEY = 'zelochat:sessionTagsMap:v1';
+  const TAGS_CACHE_TTL_MS = 30_000;
   const [statusFilter, setStatusFilter] = useState<ChatListFilter>(() => {
     if (typeof window === 'undefined') return 'all';
     const stored = window.localStorage.getItem(FILTER_STORAGE_KEY);
@@ -531,15 +533,39 @@ export function ChatView({
 
   useEffect(() => {
     if (!token) return;
-    void getSessionTagsMap(token).then(setSessionTagsMap).catch(() => {/* ignore */});
+    try {
+      const cached = window.localStorage.getItem(TAGS_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached) as { savedAt?: number; map?: Record<string, Tag[]> };
+        if (parsed.savedAt && Date.now() - parsed.savedAt < TAGS_CACHE_TTL_MS && parsed.map) {
+          setSessionTagsMap(parsed.map);
+          return;
+        }
+      }
+    } catch { /* ignore */ }
+
+    void getSessionTagsMap(token)
+      .then((map) => {
+        setSessionTagsMap(map);
+        try {
+          window.localStorage.setItem(TAGS_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), map }));
+        } catch { /* ignore */ }
+      })
+      .catch(() => {/* ignore */});
   }, [token]);
 
   useEffect(() => {
     if (!lastTagsUpdate) return;
-    setSessionTagsMap((prev) => ({
-      ...prev,
-      [lastTagsUpdate.sessionId]: lastTagsUpdate.tags as Tag[],
-    }));
+    setSessionTagsMap((prev) => {
+      const next = {
+        ...prev,
+        [lastTagsUpdate.sessionId]: lastTagsUpdate.tags as Tag[],
+      };
+      try {
+        window.localStorage.setItem(TAGS_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), map: next }));
+      } catch { /* ignore */ }
+      return next;
+    });
   }, [lastTagsUpdate]);
 
   const activeSessionTagIds = useMemo(() => {

@@ -110,7 +110,9 @@ export async function requireEmpresaId(req: Request): Promise<string> {
     throw new Error('UNAUTHORIZED');
   }
 
-  return resolveEmpresaIdFromToken(token);
+  const empresaId = await resolveEmpresaIdFromToken(token);
+  (req as Request & { empresaId?: string }).empresaId = empresaId;
+  return empresaId;
 }
 
 export async function requireEmpresaAndUserId(
@@ -121,7 +123,10 @@ export async function requireEmpresaAndUserId(
     throw new Error('UNAUTHORIZED');
   }
 
-  return resolveEmpresaAndUserIdFromToken(token);
+  const resolved = await resolveEmpresaAndUserIdFromToken(token);
+  (req as Request & { empresaId?: string; userId?: string }).empresaId = resolved.empresaId;
+  (req as Request & { empresaId?: string; userId?: string }).userId = resolved.userId;
+  return resolved;
 }
 
 /**

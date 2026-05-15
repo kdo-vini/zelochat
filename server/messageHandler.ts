@@ -26,6 +26,16 @@ const transcriptionFailures = new Map<string, number>();
 const audioTranscriptionJobs = new Map<string, Promise<void>>();
 const AUDIO_TRANSCRIPTION_WAIT_MS = Number(process.env.AUDIO_TRANSCRIPTION_WAIT_MS ?? 90000);
 const AUDIO_TRANSCRIPTION_POLL_MS = 750;
+const parsedSessionListLimit = Number(process.env.ZELOCHAT_SESSION_LIST_LIMIT ?? 2000);
+const SESSION_LIST_LIMIT = Number.isFinite(parsedSessionListLimit) && parsedSessionListLimit > 0
+  ? parsedSessionListLimit
+  : 2000;
+const MESSAGE_ACTIVITY_CHUNK_SIZE = 50;
+const MESSAGE_ACTIVITY_CONCURRENCY = 4;
+const BULK_FAMILY_LOOKUP_CONCURRENCY = 8;
+
+const SESSION_COLUMNS_FULL = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
+const SESSION_COLUMNS_LIST = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
 
 function transcriptionKey(empresaId: string, jid: string): string {
   return `${empresaId}:${jid}`;
@@ -33,6 +43,32 @@ function transcriptionKey(empresaId: string, jid: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  }));
+  return results;
 }
 
 function trackAudioTranscriptionJob(messageId: string, job: Promise<void>): void {
@@ -833,29 +869,46 @@ function mapSession(
   };
 }
 
-async function fetchAllSessionRows(empresaId: string): Promise<SessionRow[]> {
+interface FetchAllSessionRowsOptions {
+  limit?: number;
+  includeCustomerProfile?: boolean;
+}
+
+async function fetchAllSessionRows(
+  empresaId: string,
+  options: FetchAllSessionRowsOptions = {},
+): Promise<SessionRow[]> {
   const supabase = getServiceSupabase();
+  const limit = Math.max(1, Math.min(options.limit ?? SESSION_LIST_LIMIT, SESSION_LIST_LIMIT));
+  const columns = options.includeCustomerProfile ? SESSION_COLUMNS_FULL : SESSION_COLUMNS_LIST;
   const { data, error } = await supabase
     .from('zelochat_sessions')
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile')
+    .select(columns)
     .eq('empresa_id', empresaId)
-    .order('updated_at', { ascending: false });
+    .order('pinned', { ascending: false, nullsFirst: false })
+    .order('last_message_time', { ascending: false, nullsFirst: false })
+    .order('updated_at', { ascending: false })
+    .limit(limit);
 
   if (error) {
     throw new Error(error.message);
   }
 
-  return (data as SessionRow[]) ?? [];
+  if ((data?.length ?? 0) >= limit) {
+    console.warn(`[sessions] empresa=${empresaId} hit session list cap limit=${limit}; pagination/backfill needed.`);
+  }
+
+  return (((data as unknown) as Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }>) ?? [])
+    .map((row) => ({ ...row, customer_profile: row.customer_profile ?? null }));
 }
 
 async function fetchSessionFamily(empresaId: string, jid: string): Promise<SessionFamily | null> {
   const supabase = getServiceSupabase();
-  const SESSION_COLUMNS = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
 
   // Step 1: fetch just the target row to obtain customer_phone for the family lookup.
   const { data: targetData, error: targetError } = await supabase
     .from('zelochat_sessions')
-    .select(SESSION_COLUMNS)
+    .select(SESSION_COLUMNS_FULL)
     .eq('empresa_id', empresaId)
     .eq('remote_jid', jid)
     .maybeSingle();
@@ -888,7 +941,7 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
 
   const { data: familyData, error: familyError } = await supabase
     .from('zelochat_sessions')
-    .select(SESSION_COLUMNS)
+    .select(SESSION_COLUMNS_FULL)
     .eq('empresa_id', empresaId)
     .or(orClauses.join(','))
     .order('updated_at', { ascending: false });
@@ -1273,35 +1326,36 @@ export async function getAllSessions(empresaId: string): Promise<StoredSession[]
   // also changes for read/status/profile maintenance, so it cannot drive the
   // "recent conversations" list without pulling old chats upward.
   //
-  // CHUNKED: empresas com muitas sessões (Casa dos Salgados tem 419) geravam
-  // uma URL `.in(session_id, ...)` de ~15KB que o undici/Node.js do Railway
-  // recusava com `TypeError: fetch failed`. Quebrar em batches de 50 mantém
-  // cada URL bem dentro do limite e roda em paralelo.
+  // CHUNKED: heavy tenants can have hundreds of sessions. A single PostgREST
+  // `.in(session_id, [...])` URL can exceed undici/Railway limits and fail
+  // before Supabase even receives it. Batches keep each URL small and bounded.
   const allSessionIds = rows.map(r => r.id);
   const latestActivityBySessionId = new Map<string, LatestSessionActivity>();
   if (allSessionIds.length > 0) {
-    const CHUNK_SIZE = 50;
-    const chunks: string[][] = [];
-    for (let i = 0; i < allSessionIds.length; i += CHUNK_SIZE) {
-      chunks.push(allSessionIds.slice(i, i + CHUNK_SIZE));
-    }
-
     const supabase = getServiceSupabase();
-    const results = await Promise.all(
-      chunks.map((chunk) =>
-        supabase
+    const chunks = chunkArray(allSessionIds, MESSAGE_ACTIVITY_CHUNK_SIZE);
+    const results = await mapWithConcurrency<string[], { data: unknown; error: { message: string } | null }>(
+      chunks,
+      MESSAGE_ACTIVITY_CONCURRENCY,
+      async (chunk) => {
+        const msgLimit = Math.min(Math.max(chunk.length * 4, 50), 250);
+        const { data, error } = await supabase
           .from('zelochat_messages')
           .select('session_id, role, content, sent_at')
           .eq('empresa_id', empresaId)
           .in('role', ['user', 'assistant'])
           .in('session_id', chunk)
           .order('sent_at', { ascending: false })
-          .limit(chunk.length * 4),
-      ),
+          .limit(msgLimit);
+        return { data, error };
+      },
     );
 
     for (const { data, error } of results) {
-      if (error) throw new Error(error.message);
+      if (error) {
+        throw new Error(error.message);
+      }
+
       for (const m of (data ?? []) as Array<MessageRow & { session_id: string }>) {
         if (!m.content || latestActivityBySessionId.has(m.session_id)) {
           continue;
@@ -1376,6 +1430,28 @@ export async function markSessionAsRead(jid: string, empresaId: string): Promise
   );
 }
 
+async function resolveSessionRowsForJids(
+  empresaId: string,
+  jids: string[],
+): Promise<{ targetIds: string[]; acceptedJids: string[] }> {
+  const uniqueJids = Array.from(new Set(jids.filter(Boolean)));
+  const families = await mapWithConcurrency(
+    uniqueJids,
+    BULK_FAMILY_LOOKUP_CONCURRENCY,
+    async (jid) => ({ jid, family: await fetchSessionFamily(empresaId, jid) }),
+  );
+
+  const targetIds = new Set<string>();
+  const acceptedJids: string[] = [];
+  for (const { jid, family } of families) {
+    if (!family) continue;
+    acceptedJids.push(jid);
+    for (const row of family.rows) targetIds.add(row.id);
+  }
+
+  return { targetIds: Array.from(targetIds), acceptedJids };
+}
+
 /**
  * Batch-zero unread_count for many session families in a single UPDATE.
  * Each jid is resolved to its family rows so multi-row contacts are fully cleared.
@@ -1385,27 +1461,15 @@ export async function markSessionAsRead(jid: string, empresaId: string): Promise
 export async function markSessionsAsRead(jids: string[], empresaId: string): Promise<void> {
   if (!empresaId || !Array.isArray(jids) || jids.length === 0) return;
 
-  const allRows = await fetchAllSessionRows(empresaId);
-  const targetIds = new Set<string>();
-  const acceptedJids: string[] = [];
-
-  for (const jid of jids) {
-    const targetKey = buildContactKey(phoneFromJid(jid) || jid);
-    const familyRows = allRows.filter(
-      (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey,
-    );
-    if (familyRows.length === 0) continue;
-    acceptedJids.push(jid);
-    for (const row of familyRows) targetIds.add(row.id);
-  }
-
-  if (targetIds.size === 0) return;
+  const { targetIds, acceptedJids } = await resolveSessionRowsForJids(empresaId, jids);
+  if (targetIds.length === 0) return;
 
   const supabase = getServiceSupabase();
   const { error } = await supabase
     .from('zelochat_sessions')
     .update({ unread_count: 0, updated_at: new Date().toISOString() })
-    .in('id', Array.from(targetIds));
+    .eq('empresa_id', empresaId)
+    .in('id', targetIds);
 
   if (error) throw new Error(error.message);
 
@@ -1428,21 +1492,8 @@ export async function markSessionsAsRead(jids: string[], empresaId: string): Pro
 export async function archiveSessions(jids: string[], empresaId: string): Promise<void> {
   if (!empresaId || !Array.isArray(jids) || jids.length === 0) return;
 
-  const allRows = await fetchAllSessionRows(empresaId);
-  const targetIds = new Set<string>();
-  const acceptedJids: string[] = [];
-
-  for (const jid of jids) {
-    const targetKey = buildContactKey(phoneFromJid(jid) || jid);
-    const familyRows = allRows.filter(
-      (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey,
-    );
-    if (familyRows.length === 0) continue;
-    acceptedJids.push(jid);
-    for (const row of familyRows) targetIds.add(row.id);
-  }
-
-  if (targetIds.size === 0) return;
+  const { targetIds, acceptedJids } = await resolveSessionRowsForJids(empresaId, jids);
+  if (targetIds.length === 0) return;
 
   const supabase = getServiceSupabase();
   const now = new Date().toISOString();
@@ -1450,7 +1501,7 @@ export async function archiveSessions(jids: string[], empresaId: string): Promis
     .from('zelochat_sessions')
     .update({ status: 'archived', escalated_at: null, updated_at: now })
     .eq('empresa_id', empresaId)
-    .in('id', Array.from(targetIds));
+    .in('id', targetIds);
 
   if (error) throw new Error(error.message);
 

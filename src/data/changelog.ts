@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-15',
+    category: 'hotfix',
+    title: 'Conversas abrem melhor em dias de alto movimento',
+    description: 'A lista de atendimentos e o painel inicial ficaram mais leves para lojas com muitas conversas acumuladas, evitando travamentos ao abrir o sistema.',
+  },
+  {
     date: '2026-05-14',
     category: 'hotfix',
     title: 'Áudios do WhatsApp voltam a aparecer no chat',
