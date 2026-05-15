@@ -85,6 +85,19 @@ function trackAudioTranscriptionJob(messageId: string, job: Promise<void>): void
   });
 }
 
+type AudioTranscriptionSettledHandler = (params: {
+  empresaId: string;
+  jid: string;
+  messageId: string;
+  status: 'done' | 'failed';
+}) => void | Promise<void>;
+
+let audioTranscriptionSettledHandler: AudioTranscriptionSettledHandler | null = null;
+
+export function onAudioTranscriptionSettled(handler: AudioTranscriptionSettledHandler): void {
+  audioTranscriptionSettledHandler = handler;
+}
+
 /**
  * Wraps `transcribeAudio` and tracks consecutive Whisper failures per session.
  * Resets the counter on any successful transcription OR any non-audio message
@@ -116,6 +129,7 @@ async function transcribeAudioWithFailureTracking(
     if (status === 'done') {
       // Success — reset the failure counter for this session.
       transcriptionFailures.delete(key);
+      void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'done' });
       return;
     }
 
@@ -123,7 +137,10 @@ async function transcribeAudioWithFailureTracking(
     const next = (transcriptionFailures.get(key) ?? 0) + 1;
     transcriptionFailures.set(key, next);
 
-    if (next < TRANSCRIPTION_FAILURE_THRESHOLD) return;
+    if (next < TRANSCRIPTION_FAILURE_THRESHOLD) {
+      void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
+      return;
+    }
 
     // Threshold reached — auto-escalate.
     console.log(`[transcription] auto-escalated empresa=${empresaId} jid=${jid} after 3 consecutive Whisper failures`);
@@ -217,6 +234,21 @@ export const __audioTranscriptionWaitForTests = {
   pendingAudioMessagesForNextReply,
 };
 
+export async function shouldRearmAfterAudioTranscription(
+  empresaId: string,
+  jid: string,
+  messageId: string,
+): Promise<boolean> {
+  const session = await getSession(jid, empresaId);
+  if (!session?.autoReply || session.status === 'escalated') return false;
+  const messages = session.messages ?? [];
+  const targetIndex = messages.findIndex((message) => message.id === messageId);
+  if (targetIndex < 0) return false;
+  const lastAssistantIndex = messages.map((message) => message.role).lastIndexOf('assistant');
+  if (targetIndex <= lastAssistantIndex) return false;
+  return pendingAudioMessagesForNextReply(messages).length === 0;
+}
+
 const jidQueues = new Map<string, Promise<void>>();
 
 /**
@@ -261,6 +293,22 @@ export interface StoredSession {
   customerProfile?: string | null;
 }
 
+export type SessionListStatusFilter = SessionStatus | 'unread' | 'all';
+
+export interface SessionListQuery {
+  limit?: number;
+  cursor?: string | null;
+  status?: SessionListStatusFilter;
+  search?: string | null;
+  tagId?: string | null;
+}
+
+export interface SessionListPage {
+  sessions: StoredSession[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 interface SessionRow {
   id: string;
   remote_jid: string;
@@ -294,9 +342,11 @@ interface MessageRow {
   quoted_wa_id: string | null;
   quoted_from_me: boolean | null;
   quoted_preview: string | null;
+  outbound_status: ChatMessage['status'] | null;
+  outbound_error: string | null;
 }
 
-const MESSAGE_COLUMNS = 'id, session_id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status, reactions, quoted_wa_id, quoted_from_me, quoted_preview';
+const MESSAGE_COLUMNS = 'id, session_id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status, reactions, quoted_wa_id, quoted_from_me, quoted_preview, outbound_status, outbound_error';
 
 type AssistantResponseSource = 'ai_auto' | 'human_manual';
 
@@ -812,6 +862,7 @@ function mapMessage(row: MessageRow): ChatMessage {
     quotedWaId: row.quoted_wa_id ?? undefined,
     quotedFromMe: row.quoted_from_me ?? undefined,
     quotedPreview: row.quoted_preview ?? undefined,
+    status: row.outbound_status ?? undefined,
   };
 }
 
@@ -890,6 +941,10 @@ function mapSession(
 interface FetchAllSessionRowsOptions {
   limit?: number;
   includeCustomerProfile?: boolean;
+  offset?: number;
+  status?: SessionListStatusFilter;
+  search?: string | null;
+  tagId?: string | null;
 }
 
 async function fetchAllSessionRows(
@@ -898,15 +953,50 @@ async function fetchAllSessionRows(
 ): Promise<SessionRow[]> {
   const supabase = getServiceSupabase();
   const limit = Math.max(1, Math.min(options.limit ?? SESSION_LIST_LIMIT, SESSION_LIST_LIMIT));
+  const offset = Math.max(0, options.offset ?? 0);
   const columns = options.includeCustomerProfile ? SESSION_COLUMNS_FULL : SESSION_COLUMNS_LIST;
-  const { data, error } = await supabase
+  let query = supabase
     .from('zelochat_sessions')
     .select(columns)
     .eq('empresa_id', empresaId)
     .order('pinned', { ascending: false, nullsFirst: false })
     .order('last_message_time', { ascending: false, nullsFirst: false })
-    .order('updated_at', { ascending: false })
-    .limit(limit);
+    .order('updated_at', { ascending: false });
+
+  if (options.status && options.status !== 'all') {
+    if (options.status === 'unread') {
+      query = query.gt('unread_count', 0).neq('status', 'archived');
+    } else {
+      query = query.eq('status', options.status);
+    }
+  } else {
+    query = query.neq('status', 'archived');
+  }
+
+  const search = options.search?.trim().replace(/[,%()]/g, ' ');
+  if (search) {
+    const digits = search.replace(/\D/g, '');
+    const clauses = [
+      `customer_name.ilike.%${search}%`,
+      `last_message.ilike.%${search}%`,
+    ];
+    if (digits) clauses.push(`customer_phone.ilike.%${digits}%`, `remote_jid.ilike.%${digits}%`);
+    query = query.or(clauses.join(','));
+  }
+
+  if (options.tagId) {
+    const { data: taggedRows, error: tagError } = await supabase
+      .from('zelochat_session_tags')
+      .select('session_id')
+      .eq('empresa_id', empresaId)
+      .eq('tag_id', options.tagId);
+    if (tagError) throw new Error(tagError.message);
+    const taggedIds = ((taggedRows as Array<{ session_id: string }> | null) ?? []).map((row) => row.session_id);
+    if (taggedIds.length === 0) return [];
+    query = query.in('id', taggedIds);
+  }
+
+  const { data, error } = await query.range(offset, offset + limit - 1);
 
   if (error) {
     throw new Error(error.message);
@@ -1075,6 +1165,8 @@ async function insertMessage(params: {
   quotedWaId?: string | null;
   quotedFromMe?: boolean | null;
   quotedPreview?: string | null;
+  outboundStatus?: ChatMessage['status'] | null;
+  outboundError?: string | null;
 }): Promise<ChatMessage> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
@@ -1091,15 +1183,130 @@ async function insertMessage(params: {
       quoted_wa_id: params.quotedWaId || null,
       quoted_from_me: params.quotedFromMe ?? null,
       quoted_preview: params.quotedPreview || null,
+      outbound_status: params.outboundStatus ?? null,
+      outbound_error: params.outboundError ?? null,
     })
     .select(MESSAGE_COLUMNS)
     .single();
 
   if (error) {
+    if (params.waMessageId && error.code === '23505') {
+      const { data: existing, error: existingError } = await supabase
+        .from('zelochat_messages')
+        .select(MESSAGE_COLUMNS)
+        .eq('empresa_id', params.empresaId)
+        .eq('wa_message_id', params.waMessageId)
+        .maybeSingle();
+      if (existingError) throw new Error(existingError.message);
+      if (existing) return mapMessage(existing as MessageRow);
+    }
     throw new Error(error.message);
   }
 
   return mapMessage(data as MessageRow);
+}
+
+export async function messageExistsByWhatsAppId(
+  empresaId: string,
+  waMessageId: string,
+): Promise<boolean> {
+  if (!empresaId || !waMessageId) return false;
+  const { data, error } = await getServiceSupabase()
+    .from('zelochat_messages')
+    .select('id')
+    .eq('empresa_id', empresaId)
+    .eq('wa_message_id', waMessageId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return Boolean(data);
+}
+
+export async function createAssistantMessageIntent(
+  jid: string,
+  content: string | null,
+  empresaId: string,
+  attachment?: ChatAttachment,
+  quoted?: Pick<AddAssistantMessageOptions, 'quotedWaId' | 'quotedFromMe' | 'quotedPreview'>,
+): Promise<ChatMessage> {
+  if (!empresaId) throw new Error('empresaId is required');
+
+  return serializeForJid(jid, async () => {
+    const text = content ?? '';
+    const storedContent = text || attachment ? serializeStructuredMessage({ text, attachment }) : null;
+    const preview = attachment ? buildAttachmentPreview(attachment, text) : text;
+    const sessionRow = await ensureSession({
+      empresaId,
+      jid,
+      customerPhone: formatPhone(phoneFromJid(jid)),
+      lastMessage: storedContent || '',
+    });
+
+    const storedMsg = await insertMessage({
+      empresaId,
+      sessionId: sessionRow.id,
+      role: 'assistant',
+      content: storedContent,
+      sentAt: new Date().toISOString(),
+      quotedWaId: quoted?.quotedWaId ?? null,
+      quotedFromMe: quoted?.quotedFromMe ?? null,
+      quotedPreview: quoted?.quotedPreview ?? null,
+      outboundStatus: 'sending',
+    });
+
+    const family = await fetchSessionFamily(empresaId, jid);
+    const mappedSession = family ? mapSession(family) : null;
+    broadcast(
+      {
+        type: 'message_sent',
+        data: {
+          sessionId: jid,
+          customerName: mappedSession?.customerName,
+          customerPhone: mappedSession?.customerPhone,
+          message: storedMsg,
+          autoReply: mappedSession?.autoReply,
+          lastMessage: preview,
+          lastMessageTime: storedMsg.timestamp,
+        },
+      },
+      empresaId,
+    );
+    return storedMsg;
+  });
+}
+
+export async function markAssistantMessageSendSucceeded(
+  empresaId: string,
+  messageId: string,
+  waMessageId?: string | null,
+): Promise<void> {
+  const { error } = await getServiceSupabase()
+    .from('zelochat_messages')
+    .update({
+      outbound_status: 'sent',
+      outbound_error: null,
+      ...(waMessageId ? { wa_message_id: waMessageId } : {}),
+    })
+    .eq('empresa_id', empresaId)
+    .eq('id', messageId);
+  if (error) throw new Error(error.message);
+  broadcast({ type: 'message_status', data: { messageId: waMessageId ?? messageId, dbMessageId: messageId, status: 'sent' } }, empresaId);
+}
+
+export async function markAssistantMessageSendFailed(
+  empresaId: string,
+  messageId: string,
+  errorMessage: string,
+): Promise<void> {
+  const { error } = await getServiceSupabase()
+    .from('zelochat_messages')
+    .update({
+      outbound_status: 'failed',
+      outbound_error: errorMessage.slice(0, 1000),
+    })
+    .eq('empresa_id', empresaId)
+    .eq('id', messageId);
+  if (error) throw new Error(error.message);
+  broadcast({ type: 'message_status', data: { messageId, dbMessageId: messageId, status: 'failed' } }, empresaId);
 }
 
 export async function deleteMessageByWhatsAppId(params: {
@@ -1391,14 +1598,33 @@ export async function getSession(
   };
 }
 
-export async function getAllSessions(empresaId: string): Promise<StoredSession[]> {
+function parseSessionCursor(cursor?: string | null): number {
+  if (!cursor) return 0;
+  const raw = Number(cursor);
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 0;
+}
+
+export async function getSessionsPage(
+  empresaId: string,
+  params: SessionListQuery = {},
+): Promise<SessionListPage> {
   if (!empresaId) {
-    return [];
+    return { sessions: [], nextCursor: null, hasMore: false };
   }
 
-  const allRows = await fetchAllSessionRows(empresaId);
+  const requestedLimit = Math.max(1, Math.min(params.limit ?? 50, 100));
+  const offset = parseSessionCursor(params.cursor);
+  const allRows = await fetchAllSessionRows(empresaId, {
+    limit: requestedLimit + 1,
+    offset,
+    status: params.status,
+    search: params.search,
+    tagId: params.tagId,
+  });
+  const hasMore = allRows.length > requestedLimit;
+  const pageRows = allRows.slice(0, requestedLimit);
   // Exclude group chats (@g.us) and any non-individual JIDs
-  const rows = allRows.filter(row => row.remote_jid.endsWith('@s.whatsapp.net'));
+  const rows = pageRows.filter(row => row.remote_jid.endsWith('@s.whatsapp.net'));
   const families = new Map<string, SessionRow[]>();
 
   for (const row of rows) {
@@ -1451,7 +1677,7 @@ export async function getAllSessions(empresaId: string): Promise<StoredSession[]
     }
   }
 
-  return [...families.values()]
+  const sessions = [...families.values()]
     .sort((a, b) => {
       const aPinned = a.some((row) => row.pinned === true);
       const bPinned = b.some((row) => row.pinned === true);
@@ -1482,6 +1708,16 @@ export async function getAllSessions(empresaId: string): Promise<StoredSession[]
         .at(-1);
       return mapSession(family, [], latestActivity);
     });
+
+  return {
+    sessions,
+    nextCursor: hasMore ? String(offset + requestedLimit) : null,
+    hasMore,
+  };
+}
+
+export async function getAllSessions(empresaId: string): Promise<StoredSession[]> {
+  return (await getSessionsPage(empresaId, { limit: SESSION_LIST_LIMIT, status: 'all' })).sessions;
 }
 
 export async function markSessionAsRead(jid: string, empresaId: string): Promise<void> {

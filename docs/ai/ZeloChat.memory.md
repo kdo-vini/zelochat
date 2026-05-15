@@ -89,6 +89,9 @@
   - `supabase/migrations/028_performance_indexes.sql`
   - `supabase/migrations/031_zelochat_tags.sql`
   - `supabase/migrations/032_zelochat_session_tags.sql`
+  - `supabase/migrations/033_zelochat_session_tags_tenant_enforcement.sql`
+  - `supabase/migrations/034_zelochat_outbound_message_lifecycle.sql`
+  - `supabase/migrations/035_zelochat_sessions_pagination_indexes.sql`
 - Logs / observability:
   - `server/observability.ts`
   - `server/webhookLog.ts`
@@ -98,6 +101,8 @@
   - `tests/aiSchedule.test.ts`
   - `tests/conversationState.test.ts`
   - `tests/pixReceipt.test.ts`
+  - `tests/audioTranscriptionRearm.test.ts`
+  - `tests/auditFixGuardrails.test.ts`
   - `tests/qa-chat-sync.spec.ts`
   - `tests/qa-session.spec.ts`
   - `tests/replyDebouncer.test.ts`
@@ -117,15 +122,15 @@
 
 2. User opens ZeloChat dashboard -> sessions loaded -> filters/tags/search applied -> messages loaded
   - Auth: `src/hooks/useSupabaseSession.ts`
-  - Session list load: `src/hooks/useWhatsAppSessions.ts` `refresh()` -> `src/services/waApi.ts` `getSessions()` -> `GET /api/sessions`
-  - Session list build: `server/messageHandler.ts` `getAllSessions()`
-  - Client-side filters/search/tags: `src/components/views/ChatView.tsx`
+  - Session list load: `src/hooks/useWhatsAppSessions.ts` `refresh()` -> `src/services/waApi.ts` `getSessions()` -> paginated `GET /api/sessions`
+  - Session list build: `server/messageHandler.ts` `getSessionsPage()`
+  - Status/search/tag filters are sent to the server by `src/components/views/ChatView.tsx`
   - Conversation open: `src/hooks/useWhatsAppSessions.ts` `hydrateSession()` -> `src/services/waApi.ts` `getSession()`
 
 3. User opens a heavy conversation with many messages
   - Backend support exists: `server/router.ts` `GET /api/sessions/:jid/messages`
   - Backend pagination: `server/messageHandler.ts` `getSession(jid, empresaId, limit, before)`
-  - Frontend current behavior: `src/services/waApi.ts` exposes `getOlderMessages()`, but `src/components/views/ChatView.tsx` does not call it in the current head.
+  - Frontend behavior: `src/hooks/useWhatsAppSessions.ts` exposes `loadOlderMessages()` and `src/components/views/ChatView.tsx` calls it when the operator scrolls near the top.
 
 4. User switches conversation from AI to manual
   - UI toggle: `src/components/views/ChatView.tsx`
@@ -218,8 +223,8 @@
   - `000_zelochat_schema.sql` contains the current baseline snapshot.
   - `014_zelochat_rls_hardening.sql` contains additional hardening but is still marked draft/not applied in repo comments.
 - Known risky areas:
-  - `zelochat_session_tags` does not enforce tenant consistency between session and tag.
-  - `/webhook/:instance` accepts missing token today because forwarded secret validation is dormant.
+  - `zelochat_session_tags` has service-layer ownership validation plus migration `033_zelochat_session_tags_tenant_enforcement.sql` for DB-level tenant consistency.
+  - `/webhook/:instance` fails closed on missing token by default. `setWebhookForInstance()` registers tokenized webhook URLs because Whatsmiau custom headers have historically been unreliable. `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT=1` is the temporary emergency bypass.
   - Service-role usage is still common on backend hot paths, so explicit tenant filters remain critical.
 
 ## AI Engine Summary
@@ -263,22 +268,23 @@
 ## Performance Hot Paths
 | Hot path | Files involved | Query / behavior | Pagination | Server-side filtering | Index / scaling note |
 | --- | --- | --- | --- | --- | --- |
-| Initial dashboard load | `src/AppShell.tsx`, `src/hooks/useWhatsAppSessions.ts`, `server/router.ts`, `server/messageHandler.ts` | Loads `/api/sessions`, all tags, session tags map, and later idle-loaded catalog/orders | No for inbox list | No for inbox search/status/tag | Current inbox is capped at 2000 sessions and filtered client-side |
-| Session/contact list | `server/messageHandler.ts`, `src/components/views/ChatView.tsx` | `getAllSessions()` loads a capped session set, then batch-loads latest visible messages | No | No | Fan-out preview queries add load on `zelochat_messages` |
-| Message open | `server/router.ts`, `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts` | `GET /api/sessions/:jid?limit=50` | Yes in backend, not wired in UI beyond first page | N/A | Current UI truncates at 50 messages |
-| Message send | `server/router.ts`, `server/messageHandler.ts`, `server/whatsapp.ts` | `/api/send` sends outbound then persists assistant message | N/A | N/A | Confirmed lifecycle gap if send succeeds and DB persist fails |
-| Incoming webhook | `server/router.ts`, `server/index.ts`, `server/messageHandler.ts` | Ack first, raw-event log, dedupe inbound by `wa_message_id`, schedule AI | N/A | N/A | Missing enforced secret validation remains a risk |
+| Initial dashboard load | `src/AppShell.tsx`, `src/hooks/useWhatsAppSessions.ts`, `server/router.ts`, `server/messageHandler.ts` | Loads paged `/api/sessions`, all tags, session tags map, and later idle-loaded catalog/orders | Yes for inbox list | Yes for inbox status/search/tag | Migration `035_zelochat_sessions_pagination_indexes.sql` supports the paged inbox |
+| Session/contact list | `server/messageHandler.ts`, `src/components/views/ChatView.tsx` | `getSessionsPage()` returns server-filtered pages; frontend loads more near list bottom | Yes | Yes | Preview fan-out still exists inside each page, but the blast radius is bounded by page size |
+| Message open | `server/router.ts`, `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts` | `GET /api/sessions/:jid?limit=50` and `GET /api/sessions/:jid/messages?before=...` | Yes | N/A | Chat UI now loads older messages on top-scroll |
+| Message send | `server/router.ts`, `server/messageHandler.ts`, `server/whatsapp.ts` | `/api/send` persists an outbound intent (`outbound_status='sending'`), sends through Whatsmiau, then marks `sent` or `failed` | N/A | N/A | Migration `034_zelochat_outbound_message_lifecycle.sql` adds persisted lifecycle fields |
+| Incoming webhook | `server/router.ts`, `server/index.ts`, `server/messageHandler.ts` | Token check, ack first, raw-event log, dedupe inbound by `wa_message_id`, schedule AI | N/A | N/A | Missing token now 401s unless the explicit rollout bypass env is set |
 | AI reply generation | `server/ai.ts`, `server/configStore.ts` | Hydrates runtime config, builds large prompt, calls OpenAI with tools | No | Partial | Catalog can dominate prompt size in larger tenants |
 | Tag filtering/search | `src/hooks/useTags.ts`, `src/components/views/ChatView.tsx`, `server/tags.ts` | Loads all tags and full session->tags map, filters client-side | No | No | Not suitable for very large inboxes |
 | Unread counts / last message preview | `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts` | Counts persist on sessions; last visible preview is rebuilt from message batches on refresh | No | N/A | Current preview computation adds extra queries |
 | Zelo PDV product/profile loading | `src/hooks/useCatalog.ts`, `src/hooks/useEmpresaPerfil.ts`, `server/configStore.ts` | Frontend loads entire shared catalog with caps; backend loads full shared catalog without limit | No | No | Current runtime can be overwritten by browser snapshot |
 
 ## Existing Risks / Known Pitfalls
-- Confirmed: cross-tenant tag attachment can leak foreign tag metadata and AI instructions.
-- Confirmed: inbound webhook secret validation is dormant; missing token is accepted.
-- Confirmed: inbox list is capped and not paginated.
-- Confirmed: older message pagination exists in the backend but is not wired in the chat UI.
-- Confirmed: audio transcription timeout can leave the customer without an automatic reply.
+- Fixed in Sprint 58: cross-tenant tag attachment is blocked in service code and migration `033` enforces session/tag tenant consistency.
+- Fixed in Sprint 58: inbound webhook token validation fails closed by default, with tokenized webhook URLs and an explicit temporary rollout bypass env.
+- Fixed in Sprint 58: inbox list has a paginated/filterable server API and frontend load-more wiring.
+- Fixed in Sprint 58: older message pagination is wired into the chat UI on top-scroll.
+- Fixed in Sprint 58: audio transcription completion re-arms the debounced AI reply when the audio remains the latest unanswered customer turn.
+- Fixed in Sprint 58: manual outbound sends persist `sending`/`sent`/`failed` lifecycle state and fromMe echo repair no longer skips missing DB rows.
 - Confirmed: AI runtime ignores stock-controlled availability and can be overwritten by stale browser snapshots through `/api/sync-config`.
 - Confirmed: `out_for_delivery` orders are missing from AI active-order context.
 - Confirmed: no persisted prompt/context snapshot exists for supportability; only aggregated AI usage is stored.
@@ -288,7 +294,7 @@
 - Multi-tenant instance resolution and inbound dedupe by `wa_message_id` are implemented in the current head.
 - Session list virtualization exists in `src/components/views/ChatView.tsx`; the main bottleneck is backend/data volume, not only DOM rendering.
 - `000_zelochat_schema.sql` now exists as a recovery snapshot, but `014_zelochat_rls_hardening.sql` is still marked draft and the repo baseline remains internally inconsistent.
-- `GET /api/sessions/:jid/messages` already exists, but the current chat UI still does not call `getOlderMessages()`.
+- `GET /api/sessions/:jid/messages` exists and is wired into the chat UI on top-scroll.
 
 ## Verification Commands
 - Install: `npm install`
@@ -304,6 +310,7 @@
   - `package.json` does not define a `test` script.
   - Playwright specs exist under `tests/*.spec.ts`.
   - Additional TypeScript test files exist under `tests/*.test.ts`.
+  - Sprint 58 guardrails: `npx tsx tests/audioTranscriptionRearm.test.ts` and `npx tsx tests/auditFixGuardrails.test.ts`
   - Exact canonical test command is Unknown / not confirmed yet.
 - Database/migration commands: Unknown / not confirmed yet from this repo alone. Supabase migrations are stored under `supabase/migrations/`.
 

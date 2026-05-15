@@ -4,6 +4,7 @@ import type {
   ChatAttachment,
   ChatMessage,
   ChatSession,
+  ChatSessionsQuery,
   EscalationEvent,
   SessionStatus,
 } from '../types';
@@ -18,6 +19,7 @@ import {
   escalateSessionManually as escalateSessionManuallyApi,
   fetchProfilePicture as fetchProfilePictureApi,
   getSession,
+  getOlderMessages,
   getSessions,
   markSessionRead,
   markSessionsRead,
@@ -76,6 +78,13 @@ type MessageDeletedPayload = {
   dbMessageId?: string | null;
 };
 
+type MessageStatusPayload = {
+  messageId: string;
+  dbMessageId?: string | null;
+  remoteJid?: string;
+  status: string;
+};
+
 type ReactionUpdatePayload = {
   sessionId: string | null;
   dbMessageId: string;
@@ -88,6 +97,7 @@ type WsEvent =
   | { type: 'message'; data: SessionEventPayload }
   | { type: 'message_sent'; data: SessionEventPayload }
   | { type: 'message_update'; data: MessageUpdatePayload }
+  | { type: 'message_status'; data: MessageStatusPayload }
   | { type: 'message_deleted'; data: MessageDeletedPayload }
   | { type: 'reaction_update'; data: ReactionUpdatePayload }
   | { type: 'contact_update'; data: { remoteJid: string, pushName: string, profilePicUrl?: string } }
@@ -120,6 +130,15 @@ function removeMessage(messages: ChatMessage[], payload: Pick<MessageDeletedPayl
     message.id !== payload.messageId &&
     message.waMessageId !== payload.messageId,
   );
+}
+
+function normalizeMessageStatus(status: string): ChatMessage['status'] | null {
+  const value = status.toLowerCase();
+  if (value === 'read' || value === 'read_ack') return 'read';
+  if (value === 'delivered' || value === 'delivery_ack') return 'delivered';
+  if (value === 'sent' || value === 'server_ack') return 'sent';
+  if (value === 'queued' || value === 'sending' || value === 'failed') return value;
+  return null;
 }
 
 function isVisibleConversationMessage(message: ChatMessage): boolean {
@@ -186,6 +205,10 @@ export function useWhatsAppSessions(token: string | null) {
   const [error, setError] = useState<string | null>(null);
   const [lastEscalation, setLastEscalation] = useState<EscalationNotice | null>(null);
   const [waConnected, setWaConnected] = useState<boolean | null>(null);
+  const [sessionsCursor, setSessionsCursor] = useState<string | null>(null);
+  const [hasMoreSessions, setHasMoreSessions] = useState(false);
+  const [loadingMoreSessions, setLoadingMoreSessions] = useState(false);
+  const lastSessionQueryRef = useRef<ChatSessionsQuery>({ limit: 50 });
   // P1.33 — track the WebSocket layer separately from the WhatsApp/Whatsmiau
   // connection. The previous state machine only flipped on explicit
   // `connection` events from the server, so when the WS itself dropped the
@@ -200,26 +223,51 @@ export function useWhatsAppSessions(token: string | null) {
   const reconnectAttemptRef = useRef(0);
   const connectedAtRef = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (query: ChatSessionsQuery = {}) => {
     if (!token) {
       setSessions([]);
       setError(null);
+      setSessionsCursor(null);
+      setHasMoreSessions(false);
       return;
     }
 
     setLoading(true);
     setError(null);
+    const nextQuery: ChatSessionsQuery = { limit: 50, ...query, cursor: null };
+    lastSessionQueryRef.current = nextQuery;
 
     try {
       await bindEmpresa(token);
-      const nextSessions = await getSessions(token);
-      setSessions((previous) => mergeSessions(previous, nextSessions));
+      const page = await getSessions(token, nextQuery);
+      setSessions((previous) => mergeSessions(previous, page.sessions));
+      setSessionsCursor(page.nextCursor);
+      setHasMoreSessions(page.hasMore);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível carregar as conversas.');
     } finally {
       setLoading(false);
     }
   }, [token]);
+
+  const loadMoreSessions = useCallback(async () => {
+    if (!token || !hasMoreSessions || !sessionsCursor || loadingMoreSessions) return;
+    setLoadingMoreSessions(true);
+    setError(null);
+    try {
+      const page = await getSessions(token, {
+        ...lastSessionQueryRef.current,
+        cursor: sessionsCursor,
+      });
+      setSessions((previous) => sortSessionsForList([...previous, ...page.sessions.filter((next) => !previous.some((s) => s.id === next.id))]));
+      setSessionsCursor(page.nextCursor);
+      setHasMoreSessions(page.hasMore);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível carregar mais conversas.');
+    } finally {
+      setLoadingMoreSessions(false);
+    }
+  }, [hasMoreSessions, loadingMoreSessions, sessionsCursor, token]);
 
   const hydrateSession = useCallback(async (jid: string) => {
     if (!token || !jid) return;
@@ -240,8 +288,9 @@ export function useWhatsAppSessions(token: string | null) {
             acc.push({
               ...item,
               ...session,
-              messages: session.messages ?? item.messages ?? [],
-              alerts: item.alerts ?? session.alerts,
+                  messages: session.messages ?? item.messages ?? [],
+                  hasMoreMessages: session.hasMore,
+                  alerts: item.alerts ?? session.alerts,
             });
             seen.add(session.id);
             replaced = true;
@@ -249,12 +298,37 @@ export function useWhatsAppSessions(token: string | null) {
           return acc;
         }, []);
 
-        return sortSessionsForList(replaced ? next : [session, ...previous]);
+        return sortSessionsForList(replaced ? next : [{ ...session, hasMoreMessages: session.hasMore }, ...previous]);
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível abrir a conversa.');
     }
   }, [token]);
+
+  const loadOlderMessages = useCallback(async (jid: string) => {
+    if (!token || !jid) return;
+    const current = sessions.find((session) => session.id === jid);
+    const oldest = current?.messages?.[0];
+    if (!oldest || current?.hasMoreMessages === false) return;
+
+    try {
+      const page = await getOlderMessages(token, jid, oldest.timestamp);
+      setSessions((previous) =>
+        previous.map((session) => {
+          if (session.id !== jid) return session;
+          const existingIds = new Set((session.messages ?? []).map((message) => message.id));
+          const older = page.messages.filter((message) => !existingIds.has(message.id));
+          return {
+            ...session,
+            messages: [...older, ...(session.messages ?? [])],
+            hasMoreMessages: page.hasMore,
+          };
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível carregar mensagens antigas.');
+    }
+  }, [sessions, token]);
 
   const send = useCallback(async (
     jid: string,
@@ -605,6 +679,24 @@ export function useWhatsAppSessions(token: string | null) {
             return;
           }
 
+          if (parsed.type === 'message_status') {
+            const nextStatus = normalizeMessageStatus(parsed.data.status);
+            if (!nextStatus) return;
+            setSessions((previous) =>
+              previous.map((session) => ({
+                ...session,
+                messages: (session.messages ?? []).map((message) => {
+                  const matches =
+                    message.id === parsed.data.dbMessageId ||
+                    message.id === parsed.data.messageId ||
+                    message.waMessageId === parsed.data.messageId;
+                  return matches ? { ...message, status: nextStatus } : message;
+                }),
+              })),
+            );
+            return;
+          }
+
           if (parsed.type === 'reaction_update') {
             const { sessionId, dbMessageId, reactions } = parsed.data;
             if (!sessionId) return;
@@ -729,7 +821,11 @@ export function useWhatsAppSessions(token: string | null) {
     loading,
     error,
     refresh,
+    loadMoreSessions,
+    hasMoreSessions,
+    loadingMoreSessions,
     hydrateSession,
+    loadOlderMessages,
     send,
     markRead,
     markManyRead,

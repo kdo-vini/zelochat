@@ -31,6 +31,13 @@ function mapTag(row: TagRow): TagRecord {
 
 const SELECT_COLS = 'id, empresa_id, name, color, ai_instructions, created_at';
 
+export class TagTenantMismatchError extends Error {
+  constructor() {
+    super('Tag não encontrada para esta empresa.');
+    this.name = 'TagTenantMismatchError';
+  }
+}
+
 /**
  * Resolve a session identifier that may be a UUID or a WhatsApp JID into
  * the canonical `zelochat_sessions.id` UUID. The frontend uses
@@ -39,16 +46,29 @@ const SELECT_COLS = 'id, empresa_id, name, color, ai_instructions, created_at';
  * touching `zelochat_session_tags`, which references the UUID column.
  */
 async function resolveSessionUuid(empresaId: string, sessionIdOrJid: string): Promise<string | null> {
-  if (!sessionIdOrJid.includes('@')) return sessionIdOrJid;
   const sb = getServiceSupabase();
-  const { data, error } = await sb
+  let query = sb
     .from('zelochat_sessions')
     .select('id')
-    .eq('empresa_id', empresaId)
-    .eq('remote_jid', sessionIdOrJid)
-    .maybeSingle();
+    .eq('empresa_id', empresaId);
+  query = sessionIdOrJid.includes('@')
+    ? query.eq('remote_jid', sessionIdOrJid)
+    : query.eq('id', sessionIdOrJid);
+  const { data, error } = await query.maybeSingle();
   if (error) throw error;
   return (data as { id: string } | null)?.id ?? null;
+}
+
+async function ensureTagBelongsToEmpresa(empresaId: string, tagId: string): Promise<void> {
+  const sb = getServiceSupabase();
+  const { data, error } = await sb
+    .from('zelochat_tags')
+    .select('id')
+    .eq('id', tagId)
+    .eq('empresa_id', empresaId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new TagTenantMismatchError();
 }
 
 export async function listTags(empresaId: string): Promise<TagRecord[]> {
@@ -136,7 +156,7 @@ export async function getSessionTagsFull(empresaId: string, sessionIdOrJid: stri
   if (error) throw error;
   return ((data ?? []) as unknown as { zelochat_tags: TagRow | null }[])
     .map((r) => r.zelochat_tags)
-    .filter((t): t is TagRow => t !== null)
+    .filter((t): t is TagRow => t !== null && t.empresa_id === empresaId)
     .map(mapTag);
 }
 
@@ -147,6 +167,7 @@ export async function applyTagToSession(
 ): Promise<void> {
   const sessionId = await resolveSessionUuid(empresaId, sessionIdOrJid);
   if (!sessionId) throw new Error('Sessão não encontrada para aplicar tag.');
+  await ensureTagBelongsToEmpresa(empresaId, tagId);
   const sb = getServiceSupabase();
   const { error } = await sb
     .from('zelochat_session_tags')
@@ -161,12 +182,14 @@ export async function removeTagFromSession(
 ): Promise<void> {
   const sessionId = await resolveSessionUuid(empresaId, sessionIdOrJid);
   if (!sessionId) return;
+  await ensureTagBelongsToEmpresa(empresaId, tagId);
   const sb = getServiceSupabase();
   const { error } = await sb
     .from('zelochat_session_tags')
     .delete()
     .eq('session_id', sessionId)
-    .eq('tag_id', tagId);
+    .eq('tag_id', tagId)
+    .eq('empresa_id', empresaId);
   if (error) throw error;
 }
 
@@ -184,7 +207,7 @@ export async function getAllSessionTagsForEmpresa(
 
   const map = new Map<string, TagRecord[]>();
   for (const row of (data ?? []) as unknown as { zelochat_tags: TagRow | null; zelochat_sessions: { remote_jid: string } | null }[]) {
-    if (!row.zelochat_tags || !row.zelochat_sessions?.remote_jid) continue;
+    if (!row.zelochat_tags || row.zelochat_tags.empresa_id !== empresaId || !row.zelochat_sessions?.remote_jid) continue;
     const jid = row.zelochat_sessions.remote_jid;
     const existing = map.get(jid) ?? [];
     existing.push(mapTag(row.zelochat_tags));
@@ -208,7 +231,7 @@ export async function getTagsForSessions(
 
   const map = new Map<string, TagRecord[]>();
   for (const row of (data ?? []) as unknown as { session_id: string; zelochat_tags: TagRow | null }[]) {
-    if (!row.zelochat_tags) continue;
+    if (!row.zelochat_tags || row.zelochat_tags.empresa_id !== empresaId) continue;
     const existing = map.get(row.session_id) ?? [];
     existing.push(mapTag(row.zelochat_tags));
     map.set(row.session_id, existing);

@@ -34,10 +34,14 @@ import {
   type QuotedContext,
 } from './whatsapp.js';
 import {
-  getAllSessions,
+  getSessionsPage,
   getSession,
   addAssistantMessage,
+  createAssistantMessageIntent,
   handleOutboundMessage,
+  messageExistsByWhatsAppId,
+  markAssistantMessageSendFailed,
+  markAssistantMessageSendSucceeded,
   updateMessageReaction,
   deleteMessageByWhatsAppId,
   updateSessionProfilePic,
@@ -89,6 +93,7 @@ import {
   applyTagToSession,
   removeTagFromSession,
   getAllSessionTagsForEmpresa,
+  TagTenantMismatchError,
 } from './tags.js';
 import {
   acknowledgeSession,
@@ -337,7 +342,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     if (data.key?.fromMe) {
       if (data.message?.deviceSentMessage) return;
       const msgId: string = data.key?.id ?? '';
-      if (msgId && wasSentByServer(msgId)) return;
+      if (msgId && wasSentByServer(msgId) && await messageExistsByWhatsAppId(empresaId, msgId)) return;
       const remoteJid: string = data.key?.remoteJid ?? '';
       if (!remoteJid.endsWith('@s.whatsapp.net')) return;
       handleOutboundMessage(data, empresaId).catch((err) =>
@@ -653,16 +658,15 @@ router.post('/webhook', async (_req: Request, res: Response) => {
  *      It's not strictly a secret (it appears in Whatsmiau's dashboard, our
  *      logs, error reports), so we don't rely on it alone.
  *
- *   2. apikey header (validate-if-present today, strict when
- *      WEBHOOK_REQUIRE_TOKEN=1 is set in env): we compare against the
- *      empresa's `webhook_token` UUID stored in empresa_perfil. Whatsmiau
- *      can be configured to send this via webhook config.
+ *   2. webhook_token: accepted from `apikey` / `x-webhook-token` headers or
+ *      `?token=` query param. The query param exists because Whatsmiau v2 has
+ *      historically accepted custom header config without forwarding those
+ *      headers on delivery. Webhook registration now includes the token in
+ *      the configured URL, so the route fails closed by default.
  *
- * Today (validate-if-present): if the header is missing, we log a warning
- * and proceed. If present but mismatched, we reject 401 immediately. This
- * lets us roll out the feature: deploy code first, then configure Whatsmiau
- * to send the token, watch logs to confirm 100% of inbound webhooks include
- * the header, then flip WEBHOOK_REQUIRE_TOKEN=1 to require it.
+ * Emergency rollout lever: WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT=1 can
+ * temporarily restore validate-if-present behavior while Whatsmiau configs are
+ * being re-registered. Keep it off in normal production.
  *
  * BUTTERFLY EFFECT: changes here cascade to (a) the AI dispatch — a forged
  * webhook can inject prompts into the AI; (b) the order pipeline — fake
@@ -686,51 +690,35 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   }
   const { empresaId, webhookToken } = ctx;
 
-  // Webhook token auth (P0.1) — currently DORMANT. Investigation in
-  // 2026-04-29 (via the WEBHOOK_DEBUG_HEADERS diagnostic, since removed)
-  // proved that Whatsmiau v2's webhook config accepts a `headers.apikey`
-  // field (visible in GET /v2/webhook/find/{instance}) but its delivery
-  // layer does NOT actually forward that header on inbound webhook calls.
-  // The field is UI-only on their side. Until they fix it, no real
-  // request will ever carry an apikey header, so strict mode would 401
-  // 100% of legitimate traffic. Code is kept so that if Whatsmiau ever
-  // fixes the forwarding, we just flip WEBHOOK_REQUIRE_TOKEN=1 with no
-  // further changes. The actual auth boundary today is the per-instance
-  // URL path (64-bit random suffix on new instances). See SESSION_HANDOFF
-  // §"P0.1 strict mode" + CLAUDE.md §"Webhook auth boundary".
+  // Webhook token auth (P0.1): fail closed by default. We accept either a
+  // header or query token because Whatsmiau has not reliably forwarded custom
+  // headers historically; setWebhookForInstance registers `?token=...`.
+  const queryToken = Array.isArray(req.query.token) ? req.query.token[0] : req.query.token;
   const headerToken = (
     (req.headers['apikey'] as string | undefined) ??
     (req.headers['x-webhook-token'] as string | undefined) ??
+    (typeof queryToken === 'string' ? queryToken : undefined) ??
     ''
   ).trim();
 
-  const requireStrict = (process.env.WEBHOOK_REQUIRE_TOKEN ?? '').toLowerCase();
-  const isStrict = requireStrict === '1' || requireStrict === 'true' || requireStrict === 'yes';
+  const allowMissingDuringRollout = (process.env.WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT ?? '').toLowerCase();
+  const canAllowMissing = allowMissingDuringRollout === '1' || allowMissingDuringRollout === 'true' || allowMissingDuringRollout === 'yes';
 
   let authStatus: 'token_match' | 'token_missing' | 'token_mismatch';
   if (headerToken) {
-    if (headerToken !== webhookToken) {
+    if (!safeEqualString(headerToken, webhookToken)) {
       console.warn(`[Webhook] 401 — token mismatch for instance "${redactInstance(instance)}"`);
       res.status(401).json({ error: 'invalid webhook token' });
       return;
     }
     authStatus = 'token_match';
-  } else if (isStrict) {
-    // Strict mode: missing token is a hard reject. Flip WEBHOOK_REQUIRE_TOKEN=1
-    // only after Whatsmiau is confirmed to be sending the apikey header on
-    // 100% of inbound webhooks for ALL active empresas.
-    console.warn(`[Webhook] 401 — strict mode rejected missing token for instance "${redactInstance(instance)}"`);
+  } else if (canAllowMissing) {
+    console.warn(`[Webhook] token missing but allowed by WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT for instance "${redactInstance(instance)}"`);
+    authStatus = 'token_missing';
+  } else {
+    console.warn(`[Webhook] 401 — missing token for instance "${redactInstance(instance)}"`);
     res.status(401).json({ error: 'webhook token required' });
     return;
-  } else {
-    // Validate-if-present mode (default). The auth_status column on
-    // zelochat_webhook_events_raw still records `token_missing` so the
-    // DB is the canary — if Whatsmiau ever starts forwarding headers,
-    // we'll see token_match rows show up without any code change. No
-    // log here because, given the current Whatsmiau bug (see header
-    // comment), this branch fires on 100% of real traffic and would
-    // be pure noise.
-    authStatus = 'token_missing';
   }
 
   // Ack the webhook FIRST — Whatsmiau's retry timer starts the moment we
@@ -979,13 +967,22 @@ router.post('/api/qr/refresh', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/sessions — Returns all active WhatsApp sessions.
+ * GET /api/sessions — Returns a paginated, server-filtered inbox page.
  */
 router.get('/api/sessions', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const sessions = await getAllSessions(empresaId);
-    res.json({ sessions });
+    const rawLimit = parseInt(String(req.query.limit ?? '50'), 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50;
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+    const statusRaw = typeof req.query.status === 'string' ? req.query.status : 'all';
+    const status = ['all', 'unread', 'active', 'escalated', 'resolved', 'archived'].includes(statusRaw)
+      ? statusRaw as 'all' | 'unread' | 'active' | 'escalated' | 'resolved' | 'archived'
+      : 'all';
+    const search = typeof req.query.q === 'string' ? req.query.q : null;
+    const tagId = typeof req.query.tagId === 'string' ? req.query.tagId : null;
+    const page = await getSessionsPage(empresaId, { limit, cursor, status, search, tagId });
+    res.json(page);
   } catch (error) {
     sendAuthError(res, error);
   }
@@ -1130,41 +1127,48 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
     const trimmedMessage = message?.trim() ?? '';
     const validQuoted = quoted?.waMessageId ? quoted : null;
     let waMessageId: string | undefined;
+    let outboundAttachment = attachment;
 
     if (attachment?.dataUrl) {
-      // Whatsmiau only accepts public URLs — upload to Supabase Storage first.
-      // empresaId scopes the path per-tenant + adds a 128-bit random slug
-      // (P0.5) so cross-tenant enumeration is infeasible.
       const mediaUrl = await uploadMediaForSend(
         attachment.dataUrl,
         attachment.fileName,
         attachment.mimeType,
         empresaId,
       );
-      if (attachment.type === 'audio') {
-        // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)
-        waMessageId = await sendWhatsAppAudio(to, mediaUrl, empresaId, validQuoted);
-      } else {
-        waMessageId = await sendMediaMessage(to, {
-          mediatype: attachment.type === 'image' ? 'image' : attachment.type === 'video' ? 'video' : 'document',
-          mimetype: attachment.mimeType,
-          media: mediaUrl,
-          caption: trimmedMessage || undefined,
-          fileName: attachment.fileName,
-        }, empresaId, validQuoted);
-      }
-    } else {
-      waMessageId = await sendTextMessage(to, trimmedMessage, empresaId, validQuoted);
+      outboundAttachment = { ...attachment, dataUrl: mediaUrl };
     }
 
-    await addAssistantMessage(to, trimmedMessage, undefined, empresaId, attachment, {
-      responseSource: 'human_manual',
-      waMessageId,
+    const intent = await createAssistantMessageIntent(to, trimmedMessage, empresaId, outboundAttachment, {
       quotedWaId: validQuoted?.waMessageId ?? null,
       quotedFromMe: validQuoted?.fromMe ?? null,
       quotedPreview: validQuoted?.previewText ?? null,
     });
-    res.json({ ok: true, messageId: waMessageId ?? null });
+
+    try {
+      if (outboundAttachment?.dataUrl) {
+        if (outboundAttachment.type === 'audio') {
+          // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)
+          waMessageId = await sendWhatsAppAudio(to, outboundAttachment.dataUrl, empresaId, validQuoted);
+        } else {
+          waMessageId = await sendMediaMessage(to, {
+            mediatype: outboundAttachment.type === 'image' ? 'image' : outboundAttachment.type === 'video' ? 'video' : 'document',
+            mimetype: outboundAttachment.mimeType,
+            media: outboundAttachment.dataUrl,
+            caption: trimmedMessage || undefined,
+            fileName: outboundAttachment.fileName,
+          }, empresaId, validQuoted);
+        }
+      } else {
+        waMessageId = await sendTextMessage(to, trimmedMessage, empresaId, validQuoted);
+      }
+      await markAssistantMessageSendSucceeded(empresaId, intent.id, waMessageId ?? null);
+      res.json({ ok: true, messageId: waMessageId ?? null, dbMessageId: intent.id });
+    } catch (sendError) {
+      const messageText = sendError instanceof Error ? sendError.message : String(sendError);
+      await markAssistantMessageSendFailed(empresaId, intent.id, messageText);
+      throw sendError;
+    }
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, error);
@@ -1795,6 +1799,10 @@ router.post('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: Re
     broadcast({ type: 'session_tags_updated', data: { sessionId: req.params.sessionId, tags: updatedTags } }, empresaId);
     res.json({ ok: true });
   } catch (error) {
+    if (error instanceof TagTenantMismatchError) {
+      res.status(404).json({ error: error.message });
+      return;
+    }
     res.status(500).json({ error: String(error) });
   }
 });
@@ -1807,6 +1815,10 @@ router.delete('/api/sessions/:sessionId/tags/:tagId', async (req: Request, res: 
     broadcast({ type: 'session_tags_updated', data: { sessionId: req.params.sessionId, tags: updatedTags } }, empresaId);
     res.json({ ok: true });
   } catch (error) {
+    if (error instanceof TagTenantMismatchError) {
+      res.status(404).json({ error: error.message });
+      return;
+    }
     res.status(500).json({ error: String(error) });
   }
 });

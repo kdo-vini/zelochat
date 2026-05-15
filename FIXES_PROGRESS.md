@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-15 Sprint 57):** hotfix de escala para heavy-user. `/api/sessions` agora evita URLs gigantes no Supabase, limita payload inicial, bulk actions resolvem familias em lote, pedidos/catalogo carregam com filtros defensivos, Dashboard busca menos colunas e slow requests passam a aparecer nos logs do Railway.
+**Latest execution note (2026-05-15 Sprint 58):** P0/P1 do novo audit em `docs/ai` implementados. Tags agora validam tenant no servidor e ganham enforcement no banco; webhook por instância falha fechado com URL tokenizada; inbox ganhou paginação/filtros no backend e load-more no frontend; envio manual persiste ciclo `sending/sent/failed`; áudio transcrito tarde rearma a resposta da IA quando ainda é o último turno do cliente.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,16 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 58 (2026-05-15) - P0/P1 do re-audit ZeloChat
+
+- Segurança tags - aplicar/remover tags valida sessão e tag dentro da mesma empresa, leituras ignoram junções envenenadas e migration `033_zelochat_session_tags_tenant_enforcement.sql` remove inconsistências antes de adicionar FKs compostas por empresa - `server/tags.ts`, `server/router.ts`, `supabase/migrations/033_zelochat_session_tags_tenant_enforcement.sql`
+- Webhook - `/webhook/:instance` agora exige token por padrão, aceita header ou `?token=`, registra webhooks com URL tokenizada e mantém apenas o bypass explícito `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT=1` para rollout emergencial - `server/router.ts`, `server/whatsapp.ts`
+- Conversas - `/api/sessions` passou a aceitar `limit`, `cursor`, `status`, `q` e `tagId`; o hook e a tela de chat carregam mais conversas sob demanda e mensagens antigas no topo da conversa - `server/messageHandler.ts`, `server/router.ts`, `src/services/waApi.ts`, `src/hooks/useWhatsAppSessions.ts`, `src/components/views/ChatView.tsx`, `supabase/migrations/035_zelochat_sessions_pagination_indexes.sql`
+- Envio manual - mensagens enviadas pelo painel agora criam uma intenção persistida antes do WhatsApp, depois viram `sent` ou `failed`; eco `fromMe` só é ignorado quando o banco já tem o `wa_message_id`, permitindo reparar o caso "WhatsApp enviou, DB falhou" - `server/router.ts`, `server/messageHandler.ts`, `src/components/views/MessageBubble.tsx`, `supabase/migrations/034_zelochat_outbound_message_lifecycle.sql`
+- Áudio - quando a transcrição termina depois do timeout inicial, o backend rearma o debounce da IA se o áudio ainda é o último turno não respondido e a conversa continua em IA/sem escalação - `server/messageHandler.ts`, `server/index.ts`, `tests/audioTranscriptionRearm.test.ts`
+- Docs/tests - memória do audit atualizada e guardrails estáticos adicionados para os fixes críticos - `docs/ai/ZeloChat.memory.md`, `tests/auditFixGuardrails.test.ts`
+- Verificação - `npm run lint`, `npx tsc --noEmit -p server/tsconfig.json`, `npx tsx tests/audioTranscriptionRearm.test.ts`, `npx tsx tests/auditFixGuardrails.test.ts` e `npm run build` passaram.
 
 ### Sprint 57 (2026-05-15) - Hotfix de escala para loja heavy-user
 

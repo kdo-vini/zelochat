@@ -3,6 +3,8 @@ import type {
   ChatAttachment,
   ChatMessage,
   ChatSession,
+  ChatSessionsPage,
+  ChatSessionsQuery,
   DashboardOverview,
   DashboardRange,
   EscalationEvent,
@@ -13,7 +15,7 @@ import type {
 import { apiUrl, apiFetch } from '../config';
 import type { AiGlobalMode } from '../domain/aiSchedule';
 
-type SessionsResponse = { sessions: ChatSession[] };
+type SessionsResponse = ChatSessionsPage;
 type SessionResponse = { session: ChatSession };
 export type AiHealthSummaryStatus = 'ready' | 'disabled' | 'scheduled_off' | 'needs_configuration';
 export interface AiSettings {
@@ -91,13 +93,24 @@ export async function bindEmpresa(token: string): Promise<void> {
   await parseResponse(response);
 }
 
-export async function getSessions(token: string): Promise<ChatSession[]> {
-  const response = await apiFetch(apiUrl('/api/sessions'), {
+export async function getSessions(token: string, query: ChatSessionsQuery = {}): Promise<ChatSessionsPage> {
+  const params = new URLSearchParams();
+  if (query.limit) params.set('limit', String(query.limit));
+  if (query.cursor) params.set('cursor', query.cursor);
+  if (query.status && query.status !== 'all') params.set('status', query.status);
+  if (query.q?.trim()) params.set('q', query.q.trim());
+  if (query.tagId) params.set('tagId', query.tagId);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiFetch(apiUrl(`/api/sessions${suffix}`), {
     headers: authHeaders(token),
   });
 
   const body = await parseResponse<SessionsResponse>(response);
-  return body.sessions;
+  return {
+    sessions: body.sessions,
+    nextCursor: body.nextCursor ?? null,
+    hasMore: body.hasMore ?? false,
+  };
 }
 
 export async function getSession(token: string, jid: string): Promise<ChatSession & { hasMore: boolean }> {

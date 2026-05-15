@@ -35,6 +35,23 @@ export interface ChatSession {
   pinned?: boolean;
   customerProfile?: string | null;
   tags?: Tag[];
+  hasMoreMessages?: boolean;
+}
+
+export type ChatListFilter = 'all' | 'unread' | 'active' | 'escalated' | 'resolved' | 'archived';
+
+export interface ChatSessionsQuery {
+  limit?: number;
+  cursor?: string | null;
+  status?: ChatListFilter;
+  q?: string;
+  tagId?: string | null;
+}
+
+export interface ChatSessionsPage {
+  sessions: ChatSession[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 export type EscalationReasonCategory =
@@ -241,7 +258,7 @@ export type MessageRole = 'user' | 'assistant' | 'tool' | 'system';
 
 export type ChatAttachmentType = 'image' | 'document' | 'audio' | 'video';
 
-export type MessageStatus = 'sent' | 'delivered' | 'read';
+export type MessageStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export interface ChatAttachment {
   type: ChatAttachmentType;

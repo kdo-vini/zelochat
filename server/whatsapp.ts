@@ -2,7 +2,7 @@ import axios from 'axios';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { broadcast, type WsEvent } from './ws.js';
-import { getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
+import { getEmpresaAndTokenForInstance, getInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { getBoundEmpresaId } from './supabase.js';
 import { redactInstance } from './redact.js';
 import { normalizeWhatsAppTextFormatting } from '../src/domain/chat.js';
@@ -126,6 +126,16 @@ function apiHeaders() {
   return { apikey: API_KEY };
 }
 
+async function buildWebhookUrl(instanceName: string): Promise<string> {
+  const publicUrl = getPublicWebhookUrl();
+  const webhookUrl = new URL(`${publicUrl}/webhook/${encodeURIComponent(instanceName)}`);
+  const ctx = await getEmpresaAndTokenForInstance(instanceName);
+  if (ctx?.webhookToken) {
+    webhookUrl.searchParams.set('token', ctx.webhookToken);
+  }
+  return webhookUrl.toString();
+}
+
 function v2Url(path: string): string {
   return `${BASE_URL}${BASE_URL.endsWith('/v2') ? '' : '/v2'}${path}`;
 }
@@ -182,8 +192,7 @@ export async function registerWebhook(force = false): Promise<boolean> {
     return true;
   }
 
-  const publicUrl = getPublicWebhookUrl();
-  const webhookUrl = `${publicUrl}/webhook/${INSTANCE_NAME}`;
+  const webhookUrl = await buildWebhookUrl(INSTANCE_NAME);
 
   if (!force && webhookUrl === lastRegisteredWebhook) return true;
 
@@ -610,8 +619,7 @@ export async function logoutInstance(instanceName: string): Promise<void> {
 export async function setWebhookForInstance(instanceName: string): Promise<void> {
   if (isWebhookRegisterDisabled()) return;
   if (!instanceName) return;
-  const publicUrl = getPublicWebhookUrl();
-  const webhookUrl = `${publicUrl}/webhook/${instanceName}`;
+  const webhookUrl = await buildWebhookUrl(instanceName);
   try {
     await axios.post(
       `${BASE_URL}/webhook/set/${instanceName}`,

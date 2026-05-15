@@ -286,7 +286,12 @@ export default function AppShell() {
     sessions,
     loading: chatLoading,
     error: chatError,
+    refresh: refreshSessions,
+    loadMoreSessions,
+    hasMoreSessions,
+    loadingMoreSessions,
     hydrateSession,
+    loadOlderMessages,
     send,
     markRead,
     markManyRead,
@@ -1163,6 +1168,11 @@ export default function AppShell() {
             deleteMessage={deleteMessage}
             updateSessionName={updateSessionName}
             hydrateSession={hydrateSession}
+            loadOlderMessages={loadOlderMessages}
+            refreshSessions={refreshSessions}
+            loadMoreSessions={loadMoreSessions}
+            hasMoreSessions={hasMoreSessions}
+            loadingMoreSessions={loadingMoreSessions}
             onDeleteSession={handleDeleteSession}
             markManyRead={markManyRead}
             bulkArchive={bulkArchive}

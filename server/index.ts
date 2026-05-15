@@ -4,7 +4,12 @@ import express from 'express';
 import { createServer } from 'http';
 import { createWsServer } from './ws.js';
 import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl } from './whatsapp.js';
-import { handleIncomingMessage, getSession } from './messageHandler.js';
+import {
+  handleIncomingMessage,
+  getSession,
+  onAudioTranscriptionSettled,
+  shouldRearmAfterAudioTranscription,
+} from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
 import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscription } from './supabase.js';
@@ -162,6 +167,57 @@ function checkAutoReplyRateLimit(empresaId: string, jid: string): boolean {
   return false;
 }
 
+async function scheduleAutoReplyIfAllowed(params: {
+  empresaId: string;
+  jid: string;
+  messageId?: string;
+  reason: 'inbound' | 'audio_transcription_settled';
+}): Promise<void> {
+  const { empresaId, jid, messageId } = params;
+  const session = await getSession(jid, empresaId);
+  if (!session?.autoReply) return;
+  if (session.status === 'escalated') return;
+
+  await ensureAiSettingsHydrated(empresaId);
+  if (!isAiGloballyEnabledNow(empresaId)) return;
+  if (!process.env.OPENAI_API_KEY) return;
+
+  scheduleReply({
+    empresaId,
+    jid,
+    messageId,
+    fire: async () => {
+      const freshSession = await getSession(jid, empresaId);
+      if (!freshSession?.autoReply) return;
+      if (freshSession.status === 'escalated') return;
+      if (!isAiGloballyEnabledNow(empresaId)) return;
+
+      if (!checkAutoReplyRateLimit(empresaId, jid)) return;
+
+      try {
+        await generateAndSendReply(jid, empresaId);
+      } catch (err) {
+        console.error('[AutoReply] Error:', err);
+      }
+    },
+  });
+}
+
+onAudioTranscriptionSettled(async ({ empresaId, jid, messageId }) => {
+  try {
+    const shouldRearm = await shouldRearmAfterAudioTranscription(empresaId, jid, messageId);
+    if (!shouldRearm) return;
+    await scheduleAutoReplyIfAllowed({
+      empresaId,
+      jid,
+      messageId,
+      reason: 'audio_transcription_settled',
+    });
+  } catch (err) {
+    console.error('[AutoReply] audio transcription re-arm failed:', err);
+  }
+});
+
 onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // SECURITY: empresaIdFromWebhook MUST come from the per-instance route
   // (`/webhook/:instance` → empresa_perfil.whatsmiau_instance lookup). We do
@@ -194,56 +250,12 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   const jid = msg.key?.remoteJid;
   if (!jid) return;
 
-  const session = await getSession(jid, empresaId);
-  // Defense in depth: AI is gated by BOTH auto_reply AND status. An escalated
-  // conversation must never be answered by the AI even if a stale auto_reply=true
-  // sneaks in (race condition or data drift). The escalation handler always sets
-  // both — this check is the second line of defense.
-  const isEscalated = session?.status === 'escalated';
-
-  // Global kill-switch — early gate to skip debounce/timer entirely. Fail-closed:
-  // if hydration hasn't happened yet (server just rebooted, frontend never opened),
-  // we treat aiEnabled as off until the DB confirms otherwise. ai.ts re-checks as
-  // a second line of defense; both must agree before we burn an OpenAI call.
-  await ensureAiSettingsHydrated(empresaId);
-  const globalAiEnabled = isAiGloballyEnabledNow(empresaId);
-
-  if (session?.autoReply && !isEscalated && globalAiEnabled && process.env.OPENAI_API_KEY) {
-    // messageId is optional — replyDebouncer skips the read receipt step when
-    // it's absent (some payload shapes don't carry a usable key.id) but still
-    // debounces and fires. Customer never gets dropped just because of a
-    // missing id field.
-    const messageId = msg.key?.id;
-
-    // Three-stage debounce (read → typing → reply). The fire callback runs
-    // ~10s after the LAST message in the burst (default 3+3+4s). It re-checks
-    // gates because the operator can flip auto_reply / escalate / disable AI
-    // during the wait window — defense against the in-memory state going stale.
-    //
-    // Rate limit moved here from per-message: charge ONE slot per real reply,
-    // not per inbound message. With coalescing, "5 quick msgs in 10s" is one
-    // reply, so it's correct to consume one slot. Strictly looser than before;
-    // no spam regression.
-    scheduleReply({
-      empresaId,
-      jid,
-      messageId,
-      fire: async () => {
-        const freshSession = await getSession(jid, empresaId);
-        if (!freshSession?.autoReply) return;
-        if (freshSession.status === 'escalated') return;
-        if (!isAiGloballyEnabledNow(empresaId)) return;
-
-        if (!checkAutoReplyRateLimit(empresaId, jid)) return;
-
-        try {
-          await generateAndSendReply(jid, empresaId);
-        } catch (err) {
-          console.error('[AutoReply] Error:', err);
-        }
-      },
-    });
-  }
+  await scheduleAutoReplyIfAllowed({
+    empresaId,
+    jid,
+    messageId: msg.key?.id,
+    reason: 'inbound',
+  });
 });
 
 // --- Start server ---
