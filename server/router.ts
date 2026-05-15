@@ -110,6 +110,8 @@ import {
 
 const router = Router();
 
+const ORDER_NOTIFICATION_COLUMNS = 'id, customer_name, customer_phone, items, delivery_address, payment_method, status, total';
+
 interface AiSettingsPayload {
   mode: AiGlobalMode;
   scheduleStart: string | null;
@@ -1438,7 +1440,7 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
         .maybeSingle(),
       supabase
         .from('zelochat_orders')
-        .select('*')
+        .select(ORDER_NOTIFICATION_COLUMNS)
         .eq('id', orderId)
         .eq('empresa_id', empresaId)
         .maybeSingle(),
@@ -1524,7 +1526,7 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
 
     const { data: existing, error: loadErr } = await supabase
       .from('zelochat_orders')
-      .select('*')
+      .select(ORDER_NOTIFICATION_COLUMNS)
       .eq('id', orderId)
       .eq('empresa_id', empresaId)
       .maybeSingle();

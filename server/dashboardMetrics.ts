@@ -17,7 +17,6 @@ type MessageMetricRow = {
   id: string;
   session_id: string;
   role: string;
-  content: string | null;
   sent_at: string;
   tool_calls: unknown[] | null;
 };
@@ -50,6 +49,10 @@ type OrderMetricRow = {
 const parsedDashboardSessionLimit = Number(process.env.ZELOCHAT_DASHBOARD_SESSION_LIMIT ?? 5000);
 const DASHBOARD_SESSION_LIMIT = Number.isFinite(parsedDashboardSessionLimit) && parsedDashboardSessionLimit > 0
   ? parsedDashboardSessionLimit
+  : 5000;
+const parsedDashboardMessageLimit = Number(process.env.ZELOCHAT_DASHBOARD_MESSAGE_LIMIT ?? 5000);
+const DASHBOARD_MESSAGE_LIMIT = Number.isFinite(parsedDashboardMessageLimit) && parsedDashboardMessageLimit > 0
+  ? parsedDashboardMessageLimit
   : 5000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -168,7 +171,6 @@ function parsePickupMinutes(value: string | null | undefined): number | null {
 
 function isAssistantCustomerReply(message: MessageMetricRow): boolean {
   return message.role === 'assistant'
-    && !!message.content
     && (!message.tool_calls || message.tool_calls.length === 0);
 }
 
@@ -260,14 +262,14 @@ export async function buildDashboardOverview(
       .limit(DASHBOARD_SESSION_LIMIT),
     supabase
       .from('zelochat_messages')
-      .select('id, session_id, role, content, sent_at, tool_calls')
+      .select('id, session_id, role, sent_at, tool_calls', { count: 'exact' })
       .eq('empresa_id', empresaId)
       .in('role', ['user', 'assistant'])
       .gte('sent_at', start.toISOString())
       .lt('sent_at', end.toISOString())
       .order('session_id', { ascending: true })
       .order('sent_at', { ascending: true })
-      .limit(5000),
+      .limit(DASHBOARD_MESSAGE_LIMIT),
     fetchResponseEvents(empresaId, start, end),
     supabase
       .from('zelochat_escalation_events')
@@ -293,6 +295,9 @@ export async function buildDashboardOverview(
 
   if ((sessionsResult.count ?? 0) > DASHBOARD_SESSION_LIMIT) {
     console.warn(`[dashboard] empresa=${empresaId} session metrics capped at ${DASHBOARD_SESSION_LIMIT}/${sessionsResult.count}.`);
+  }
+  if ((messagesResult.count ?? 0) > DASHBOARD_MESSAGE_LIMIT) {
+    console.warn(`[dashboard] empresa=${empresaId} first-response metrics capped at ${DASHBOARD_MESSAGE_LIMIT}/${messagesResult.count}.`);
   }
 
   const sessions = (sessionsResult.data ?? []) as SessionMetricRow[];

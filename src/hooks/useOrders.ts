@@ -8,6 +8,25 @@ import type { Order } from '../types';
 
 type NewOrder = Omit<Order, 'id' | 'createdAt'>;
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const ORDER_LOOKBACK_DAYS = 14;
+const ORDER_LIST_LIMIT = 1000;
+const ORDER_COLUMNS = 'id, customer_name, customer_phone, items, pickup_date, pickup_time, delivery_address, driver_id, payment_method, observations, status, total, created_at';
+
+function saoPauloDateKey(offsetDays = 0): string {
+  const date = new Date(Date.now() + offsetDays * MS_PER_DAY);
+  const parts = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value ?? '1970';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '01';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '01';
+  return `${year}-${month}-${day}`;
+}
+
 function rowToOrder(row: Record<string, unknown>): Order {
   return {
     id:              row.id as string,
@@ -78,13 +97,21 @@ export function useOrders(
         empresaIdRef.current = empresaId;
       }
 
-      const { data, error: dbError } = await supabase
+      const startDate = saoPauloDateKey(-ORDER_LOOKBACK_DAYS);
+      const { data, error: dbError, count } = await supabase
         .from('zelochat_orders')
-        .select('*')
+        .select(ORDER_COLUMNS, { count: 'exact' })
         .eq('empresa_id', empresaId)
-        .order('created_at', { ascending: false });
+        .or(`status.neq.delivered,pickup_date.gte.${startDate}`)
+        .order('pickup_date', { ascending: true })
+        .order('pickup_time', { ascending: true })
+        .order('created_at', { ascending: false })
+        .limit(ORDER_LIST_LIMIT);
 
       if (dbError) throw dbError;
+      if ((count ?? 0) > ORDER_LIST_LIMIT) {
+        console.warn(`[orders] lista operacional limitada a ${ORDER_LIST_LIMIT}/${count} pedidos; histórico precisa de paginação.`);
+      }
       setOrders((data ?? []).map(rowToOrder));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível carregar os pedidos.');
@@ -188,7 +215,7 @@ export function useOrders(
         total:            payload.total,
         source:           'manual',
       })
-      .select()
+      .select(ORDER_COLUMNS)
       .single();
 
     if (dbError) throw dbError;

@@ -18,8 +18,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-15',
     category: 'hotfix',
-    title: 'Conversas abrem melhor em dias de alto movimento',
-    description: 'A lista de atendimentos e o painel inicial ficaram mais leves para lojas com muitas conversas acumuladas, evitando travamentos ao abrir o sistema.',
+    title: 'Sistema mais leve em dias de alto movimento',
+    description: 'Conversas, pedidos e cardápio carregam de forma mais controlada para lojas com muito movimento acumulado, evitando travamentos ao abrir o sistema.',
   },
   {
     date: '2026-05-14',

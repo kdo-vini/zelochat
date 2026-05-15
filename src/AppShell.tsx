@@ -352,7 +352,7 @@ export default function AppShell() {
   } = useQuickResponses(session, { enabled: shouldLoadQuickResponses });
   const catalogReadyForConfigSync = isGeneralMode || catalog.hasLoaded;
 
-  useEffect(() => { saveInitialState(state); }, [state]);
+  useEffect(() => { saveInitialState(state); }, [state.dailyContext, state.businessInfo, state.profile]);
 
   useEffect(() => {
     try { localStorage.setItem('zelochat_sidebar_expanded', String(sidebarExpanded)); } catch {}

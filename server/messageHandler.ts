@@ -32,10 +32,17 @@ const SESSION_LIST_LIMIT = Number.isFinite(parsedSessionListLimit) && parsedSess
   : 2000;
 const MESSAGE_ACTIVITY_CHUNK_SIZE = 50;
 const MESSAGE_ACTIVITY_CONCURRENCY = 4;
-const BULK_FAMILY_LOOKUP_CONCURRENCY = 8;
+const BULK_SESSION_RESOLUTION_CHUNK_SIZE = 50;
+const BULK_SESSION_RESOLUTION_CONCURRENCY = 4;
 
 const SESSION_COLUMNS_FULL = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
 const SESSION_COLUMNS_LIST = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
+
+function normalizeSessionRows(
+  rows: Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }> | null | undefined,
+): SessionRow[] {
+  return (rows ?? []).map((row) => ({ ...row, customer_profile: row.customer_profile ?? null }));
+}
 
 function transcriptionKey(empresaId: string, jid: string): string {
   return `${empresaId}:${jid}`;
@@ -898,8 +905,7 @@ async function fetchAllSessionRows(
     console.warn(`[sessions] empresa=${empresaId} hit session list cap limit=${limit}; pagination/backfill needed.`);
   }
 
-  return (((data as unknown) as Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }>) ?? [])
-    .map((row) => ({ ...row, customer_profile: row.customer_profile ?? null }));
+  return normalizeSessionRows((data as unknown) as Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }>);
 }
 
 async function fetchSessionFamily(empresaId: string, jid: string): Promise<SessionFamily | null> {
@@ -1435,18 +1441,79 @@ async function resolveSessionRowsForJids(
   jids: string[],
 ): Promise<{ targetIds: string[]; acceptedJids: string[] }> {
   const uniqueJids = Array.from(new Set(jids.filter(Boolean)));
-  const families = await mapWithConcurrency(
-    uniqueJids,
-    BULK_FAMILY_LOOKUP_CONCURRENCY,
-    async (jid) => ({ jid, family: await fetchSessionFamily(empresaId, jid) }),
-  );
+  if (uniqueJids.length === 0) return { targetIds: [], acceptedJids: [] };
+
+  const supabase = getServiceSupabase();
+  const rowsById = new Map<string, SessionRow>();
+  const targetRowsByJid = new Map<string, SessionRow>();
+
+  const addRows = (rows: SessionRow[]) => {
+    for (const row of rows) rowsById.set(row.id, row);
+  };
+
+  const fetchRowsByColumn = async (
+    column: 'remote_jid' | 'customer_phone',
+    values: string[],
+  ): Promise<SessionRow[]> => {
+    const chunks = chunkArray(Array.from(new Set(values.filter(Boolean))), BULK_SESSION_RESOLUTION_CHUNK_SIZE);
+    const rowsByChunk = await mapWithConcurrency(
+      chunks,
+      BULK_SESSION_RESOLUTION_CONCURRENCY,
+      async (chunk) => {
+        const { data, error } = await supabase
+          .from('zelochat_sessions')
+          .select(SESSION_COLUMNS_LIST)
+          .eq('empresa_id', empresaId)
+          .in(column, chunk)
+          .limit(Math.max(chunk.length * 10, 100));
+
+        if (error) throw new Error(error.message);
+        return normalizeSessionRows((data as unknown) as Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }>);
+      },
+    );
+    return rowsByChunk.flat();
+  };
+
+  const targetRows = await fetchRowsByColumn('remote_jid', uniqueJids);
+  addRows(targetRows);
+  for (const row of targetRows) targetRowsByJid.set(row.remote_jid, row);
+
+  const phoneCandidates = new Set<string>();
+  for (const jid of uniqueJids) {
+    const jidPhone = phoneFromJid(jid);
+    const targetRow = targetRowsByJid.get(jid);
+    const values = [
+      jidPhone,
+      jidPhone.startsWith('55') ? jidPhone.slice(2) : '',
+      buildContactKey(jidPhone || jid),
+      jidPhone ? formatPhone(jidPhone) : '',
+      targetRow?.customer_phone ?? '',
+    ];
+    for (const value of values) {
+      const trimmed = value.trim();
+      if (trimmed) phoneCandidates.add(trimmed);
+    }
+  }
+
+  addRows(await fetchRowsByColumn('customer_phone', Array.from(phoneCandidates)));
+
+  const allRows = Array.from(rowsById.values());
 
   const targetIds = new Set<string>();
   const acceptedJids: string[] = [];
-  for (const { jid, family } of families) {
-    if (!family) continue;
+  for (const jid of uniqueJids) {
+    const targetKey = buildContactKey(phoneFromJid(jid) || jid);
+    const targetRow = targetRowsByJid.get(jid);
+    const familyKeys = new Set<string>([targetKey]);
+    if (targetRow) familyKeys.add(buildSessionKeyFromRow(targetRow));
+
+    const familyRows = allRows.filter(
+      (row) => row.remote_jid === jid || familyKeys.has(buildSessionKeyFromRow(row)),
+    );
+    if (familyRows.length === 0) continue;
+
     acceptedJids.push(jid);
-    for (const row of family.rows) targetIds.add(row.id);
+    for (const row of familyRows) targetIds.add(row.id);
   }
 
   return { targetIds: Array.from(targetIds), acceptedJids };
