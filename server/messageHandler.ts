@@ -1275,13 +1275,19 @@ export async function getAllSessions(empresaId: string): Promise<StoredSession[]
   const allSessionIds = rows.map(r => r.id);
   const latestActivityBySessionId = new Map<string, LatestSessionActivity>();
   if (allSessionIds.length > 0) {
+    // Limit to 2× the session count so each session has a good chance of
+    // having its latest message represented. The query is ordered DESC so
+    // most-recent messages come first; sessions beyond the window fall back
+    // to the `last_message` / `last_message_time` columns on the session row.
+    const msgLimit = Math.max(allSessionIds.length * 2, 500);
     const { data: latestMsgs, error: latestMsgsError } = await getServiceSupabase()
       .from('zelochat_messages')
       .select('session_id, role, content, sent_at')
       .eq('empresa_id', empresaId)
       .in('role', ['user', 'assistant'])
       .in('session_id', allSessionIds)
-      .order('sent_at', { ascending: false });
+      .order('sent_at', { ascending: false })
+      .limit(msgLimit);
 
     if (latestMsgsError) {
       throw new Error(latestMsgsError.message);
