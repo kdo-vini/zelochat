@@ -11,7 +11,6 @@ import {
   CreditCard,
   FileText,
   ImagePlus,
-  Info,
   Loader2,
   MapPin,
   MessageCircle,
@@ -51,7 +50,7 @@ import {
   getOwnerResponse,
   type ManualOrderDraftSuggestion,
 } from '../../services/openaiService';
-import type { ChatAttachment, ChatMessage, ChatSession, Order, QuickResponse, Tag } from '../../types';
+import type { ChatAttachment, ChatListFilter, ChatMessage, ChatSession, Order, QuickResponse, Tag } from '../../types';
 import { useTags } from '../../hooks/useTags';
 import { getSessionTagsMap, applyTagToSession, removeTagFromSession } from '../../services/waApi';
 import { MessageBubble } from './MessageBubble';
@@ -457,6 +456,11 @@ export interface ChatViewProps {
   deleteMessage: (jid: string, message: ChatMessage) => Promise<void>;
   updateSessionName: (jid: string, name: string) => Promise<void>;
   hydrateSession: (jid: string) => Promise<void>;
+  loadOlderMessages: (jid: string) => Promise<void>;
+  refreshSessions: (query?: { status?: ChatListFilter; q?: string; tagId?: string | null }) => Promise<void>;
+  loadMoreSessions: () => Promise<void>;
+  hasMoreSessions: boolean;
+  loadingMoreSessions: boolean;
   onDeleteSession: (id: string) => Promise<void>;
   markManyRead: (jids: string[]) => Promise<void>;
   bulkArchive: (jids: string[]) => Promise<void>;
@@ -491,6 +495,11 @@ export function ChatView({
   deleteMessage,
   updateSessionName,
   hydrateSession,
+  loadOlderMessages,
+  refreshSessions,
+  loadMoreSessions,
+  hasMoreSessions,
+  loadingMoreSessions,
   onDeleteSession,
   markManyRead,
   bulkArchive,
@@ -509,7 +518,6 @@ export function ChatView({
   const [ownerInput, setOwnerInput] = useState('');
   const [chatActionError, setChatActionError] = useState<string | null>(null);
 
-  type ChatListFilter = 'all' | 'unread' | 'active' | 'escalated' | 'resolved' | 'archived';
   const FILTER_STORAGE_KEY = 'zelochat:chatFilter';
   const TAGS_CACHE_KEY = 'zelochat:sessionTagsMap:v1';
   const TAGS_CACHE_TTL_MS = 30_000;
@@ -530,6 +538,17 @@ export function ChatView({
   const [sessionTagsMap, setSessionTagsMap] = useState<Record<string, Tag[]>>({});
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refreshSessions({
+        status: statusFilter,
+        q: searchQuery,
+        tagId: tagFilter,
+      });
+    }, searchQuery.trim() ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshSessions, searchQuery, statusFilter, tagFilter]);
 
   useEffect(() => {
     if (!token) return;
@@ -762,6 +781,15 @@ export function ChatView({
     chatListRef.current?.scrollTo({ top: 0 });
   }, [searchQuery, statusFilter, tagFilter]);
 
+  const handleChatListScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    setChatListScrollTop(el.scrollTop);
+    if (!hasMoreSessions || loadingMoreSessions) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < CHAT_SESSION_ROW_HEIGHT * 4) {
+      void loadMoreSessions();
+    }
+  }, [hasMoreSessions, loadMoreSessions, loadingMoreSessions]);
+
   // Selection helpers
   const toggleSelectJid = useCallback((jid: string) => {
     setSelectedJids((previous) => {
@@ -915,6 +943,8 @@ export function ChatView({
   const separatorRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const stickyHideTimerRef = useRef<number | null>(null);
   const rafPendingRef = useRef(false);
+  const preservingOlderScrollRef = useRef(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
 
   const registerSeparator = useCallback((key: string, el: HTMLDivElement | null) => {
     if (el) separatorRefs.current.set(key, el);
@@ -922,6 +952,29 @@ export function ChatView({
   }, []);
 
   const handleMessagesScroll = useCallback(() => {
+    const currentContainer = scrollRef.current;
+    if (
+      currentContainer &&
+      activeSession?.id &&
+      activeSession.hasMoreMessages &&
+      !loadingOlderMessages &&
+      currentContainer.scrollTop < 80
+    ) {
+      const beforeHeight = currentContainer.scrollHeight;
+      preservingOlderScrollRef.current = true;
+      setLoadingOlderMessages(true);
+      void loadOlderMessages(activeSession.id).finally(() => {
+        window.requestAnimationFrame(() => {
+          const afterContainer = scrollRef.current;
+          if (afterContainer) {
+            afterContainer.scrollTop = Math.max(0, afterContainer.scrollHeight - beforeHeight + afterContainer.scrollTop);
+          }
+          preservingOlderScrollRef.current = false;
+          setLoadingOlderMessages(false);
+        });
+      });
+    }
+
     if (rafPendingRef.current) return;
     rafPendingRef.current = true;
     requestAnimationFrame(() => {
@@ -955,7 +1008,7 @@ export function ChatView({
         setStickyVisible(false);
       }
     });
-  }, []);
+  }, [activeSession?.hasMoreMessages, activeSession?.id, loadOlderMessages, loadingOlderMessages]);
 
   // Reset sticky state when active session changes
   useEffect(() => {
@@ -1026,6 +1079,7 @@ export function ChatView({
   };
 
   useEffect(() => {
+    if (preservingOlderScrollRef.current) return;
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [activeSessionId, activeSessionMessages]);
 
@@ -1574,7 +1628,7 @@ export function ChatView({
 
           <div
             ref={chatListRef}
-            onScroll={(e) => setChatListScrollTop(e.currentTarget.scrollTop)}
+            onScroll={handleChatListScroll}
             className="flex-1 overflow-y-auto custom-scrollbar"
           >
             {chatLoading && sessions.length === 0 && (
@@ -1714,6 +1768,11 @@ export function ChatView({
             {chatListWindow.bottomPad > 0 && (
               <div aria-hidden="true" style={{ height: chatListWindow.bottomPad }} />
             )}
+            {loadingMoreSessions && (
+              <div className="px-4 py-3 text-center text-[12px] text-[var(--color-ink-muted)]">
+                Carregando mais conversas...
+              </div>
+            )}
           </div>
 
           {/* Drag handle to resize the conversation list. The thin visible bar sits on the
@@ -1793,7 +1852,7 @@ export function ChatView({
                   <ArrowLeft className="h-5 w-5" strokeWidth={2} />
                 </button>
                 <button
-                  onClick={() => setDetailsOpen((v) => !v)}
+                  onClick={() => { setDetailsOpen((v: boolean) => !v); setMobileDetailsOpen(true); }}
                   className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface)]/70"
                 >
                   <ContactAvatar
@@ -1842,21 +1901,6 @@ export function ChatView({
                       IA
                     </button>
                   </div>
-                  {/* Desktop toggle */}
-                  <button
-                    onClick={() => setDetailsOpen((v) => !v)}
-                    className="hidden md:inline-flex rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
-                  >
-                    {detailsOpen ? 'Fechar perfil' : 'Abrir perfil'}
-                  </button>
-                  {/* Mobile: open details overlay */}
-                  <button
-                    onClick={() => setMobileDetailsOpen(true)}
-                    aria-label="Detalhes"
-                    className="md:hidden flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)]/70 transition-colors"
-                  >
-                    <Info className="h-5 w-5" strokeWidth={1.8} />
-                  </button>
                   <div className="relative">
                     <button
                       onClick={() => setChatMenuOpen((v) => !v)}
@@ -1899,6 +1943,11 @@ export function ChatView({
                       Criptografia de ponta a ponta
                     </span>
                   </div>
+                  {loadingOlderMessages && (
+                    <div className="self-center mb-2 text-[11px] text-[var(--color-ink-muted)]">
+                      Carregando mensagens antigas...
+                    </div>
+                  )}
 
                   <AnimatePresence initial={false}>
                     {chatRenderItems.map((item, i) => {
@@ -2063,9 +2112,17 @@ export function ChatView({
                       </div>
                     )}
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-[var(--color-ink)]">{pendingAttachment.fileName}</p>
+                      <p className="truncate text-[13px] font-semibold text-[var(--color-ink)]">
+                        {pendingAttachment.type === 'audio' ? 'Áudio gravado' : pendingAttachment.fileName}
+                      </p>
                       <p className="text-[12px] text-[var(--color-ink-muted)]">
-                        {pendingAttachment.type === 'image' ? 'Imagem pronta para envio' : pendingAttachment.type === 'video' ? 'Vídeo pronto para envio' : pendingAttachment.type === 'audio' ? 'Áudio pronto para envio' : 'Documento pronto para envio'} • {formatAttachmentSize(pendingAttachment.sizeBytes)}
+                        {pendingAttachment.type === 'image'
+                          ? `Imagem pronta para envio • ${formatAttachmentSize(pendingAttachment.sizeBytes)}`
+                          : pendingAttachment.type === 'video'
+                          ? `Vídeo pronto para envio • ${formatAttachmentSize(pendingAttachment.sizeBytes)}`
+                          : pendingAttachment.type === 'audio'
+                          ? 'Pronto para envio'
+                          : `Documento pronto para envio • ${formatAttachmentSize(pendingAttachment.sizeBytes)}`}
                       </p>
                     </div>
                     <button

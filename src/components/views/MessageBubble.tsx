@@ -57,6 +57,12 @@ function seededBars(seed: string, count: number): number[] {
 /* ─── Status ticks (WhatsApp-accurate SVGs) ──────────────────────── */
 
 function MessageTicks({ status }: { status?: MessageStatus }) {
+  if (status === 'queued' || status === 'sending') {
+    return <Clock className="w-3 h-3 ml-0.5 text-[#8696a0]" strokeWidth={2} />;
+  }
+  if (status === 'failed') {
+    return <X className="w-3 h-3 ml-0.5 text-[var(--color-alert)]" strokeWidth={2} />;
+  }
   if (!status || status === 'sent') {
     return (
       <svg width="16" height="11" viewBox="0 0 16 11" className="inline-block flex-shrink-0 ml-0.5">
@@ -453,22 +459,18 @@ function EventIcon({ event }: { event: ChatEventCardData }) {
 
 /* ─── Reaction badge ─────────────────────────────────────────────── */
 
-function ReactionBadge({ reactions, isOutgoing }: { reactions: MessageReaction[]; isOutgoing: boolean }) {
-  if (!reactions.length) return null;
-  const grouped: Record<string, number> = {};
-  for (const r of reactions) grouped[r.emoji] = (grouped[r.emoji] ?? 0) + 1;
+function ReactionBadge({ reactions }: { reactions: MessageReaction[] }) {
+  const active = reactions.filter(r => r.emoji);
+  if (!active.length) return null;
+  const emojis = [...new Set(active.map(r => r.emoji))];
+  const total = active.length;
   return (
-    <div className={`flex gap-0.5 ${isOutgoing ? 'justify-end pr-1' : 'justify-start pl-1'}`} style={{ marginTop: -4 }}>
-      {Object.entries(grouped).map(([emoji, count]) => (
-        <span
-          key={emoji}
-          className="flex items-center gap-0.5 rounded-full bg-white border border-black/10 shadow-sm select-none"
-          style={{ fontSize: 13, lineHeight: 1, padding: '2px 5px' }}
-        >
-          {emoji}
-          {count > 1 && <span style={{ fontSize: 10, color: '#8696a0', marginLeft: 1 }}>{count}</span>}
-        </span>
-      ))}
+    <div
+      className="flex items-center rounded-full bg-white border border-black/10 shadow-sm select-none"
+      style={{ fontSize: 13, lineHeight: 1, padding: '2px 5px', gap: 2 }}
+    >
+      {emojis.map(emoji => <span key={emoji}>{emoji}</span>)}
+      {total > 1 && <span style={{ fontSize: 10, color: '#667781', marginLeft: 1 }}>{total}</span>}
     </div>
   );
 }
@@ -717,7 +719,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
         style={{
           paddingLeft: isOutgoing ? 63 : 0,
           paddingRight: isOutgoing ? 0 : 63,
-          marginBottom: hasReactions ? 10 : 0,
+          marginBottom: hasReactions ? 14 : 0,
         }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -734,10 +736,6 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           </button>
         )}
 
-        <div
-          style={{ position: 'relative' }}
-          className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}
-        >
         <div
           style={{
             ...bubbleStyle,
@@ -926,12 +924,20 @@ const MessageBubbleInner = React.memo(function MessageBubble({
               status={message.status}
             />
           </div>
-        </div>
 
-        {/* Reaction badges — below the bubble, overlapping slightly */}
-        {hasReactions && (
-          <ReactionBadge reactions={message.reactions!} isOutgoing={isOutgoing} />
-        )}
+          {/* Reaction badge — small ball on bottom corner */}
+          {hasReactions && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: -13,
+                ...(isOutgoing ? { right: 6 } : { left: 6 }),
+                zIndex: 10,
+              }}
+            >
+              <ReactionBadge reactions={message.reactions!} />
+            </div>
+          )}
         </div>
 
         {/* Desktop reply button — outgoing side */}
