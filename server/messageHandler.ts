@@ -1272,32 +1272,42 @@ export async function getAllSessions(empresaId: string): Promise<StoredSession[]
   // Batch-load the latest visible chat message per session. Session `updated_at`
   // also changes for read/status/profile maintenance, so it cannot drive the
   // "recent conversations" list without pulling old chats upward.
+  //
+  // CHUNKED: empresas com muitas sessões (Casa dos Salgados tem 419) geravam
+  // uma URL `.in(session_id, ...)` de ~15KB que o undici/Node.js do Railway
+  // recusava com `TypeError: fetch failed`. Quebrar em batches de 50 mantém
+  // cada URL bem dentro do limite e roda em paralelo.
   const allSessionIds = rows.map(r => r.id);
   const latestActivityBySessionId = new Map<string, LatestSessionActivity>();
   if (allSessionIds.length > 0) {
-    // Limit to 2× the session count so each session has a good chance of
-    // having its latest message represented. The query is ordered DESC so
-    // most-recent messages come first; sessions beyond the window fall back
-    // to the `last_message` / `last_message_time` columns on the session row.
-    const msgLimit = Math.max(allSessionIds.length * 2, 500);
-    const { data: latestMsgs, error: latestMsgsError } = await getServiceSupabase()
-      .from('zelochat_messages')
-      .select('session_id, role, content, sent_at')
-      .eq('empresa_id', empresaId)
-      .in('role', ['user', 'assistant'])
-      .in('session_id', allSessionIds)
-      .order('sent_at', { ascending: false })
-      .limit(msgLimit);
-
-    if (latestMsgsError) {
-      throw new Error(latestMsgsError.message);
+    const CHUNK_SIZE = 50;
+    const chunks: string[][] = [];
+    for (let i = 0; i < allSessionIds.length; i += CHUNK_SIZE) {
+      chunks.push(allSessionIds.slice(i, i + CHUNK_SIZE));
     }
 
-    for (const m of (latestMsgs ?? []) as Array<MessageRow & { session_id: string }>) {
-      if (!m.content || latestActivityBySessionId.has(m.session_id)) {
-        continue;
+    const supabase = getServiceSupabase();
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        supabase
+          .from('zelochat_messages')
+          .select('session_id, role, content, sent_at')
+          .eq('empresa_id', empresaId)
+          .in('role', ['user', 'assistant'])
+          .in('session_id', chunk)
+          .order('sent_at', { ascending: false })
+          .limit(chunk.length * 4),
+      ),
+    );
+
+    for (const { data, error } of results) {
+      if (error) throw new Error(error.message);
+      for (const m of (data ?? []) as Array<MessageRow & { session_id: string }>) {
+        if (!m.content || latestActivityBySessionId.has(m.session_id)) {
+          continue;
+        }
+        latestActivityBySessionId.set(m.session_id, latestActivityFromMessageRow(m));
       }
-      latestActivityBySessionId.set(m.session_id, latestActivityFromMessageRow(m));
     }
   }
 
