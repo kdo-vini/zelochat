@@ -3,7 +3,7 @@ import cors from 'cors';
 import express from 'express';
 import { createServer } from 'http';
 import { createWsServer } from './ws.js';
-import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl } from './whatsapp.js';
+import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl, setWebhookForInstance } from './whatsapp.js';
 import {
   handleIncomingMessage,
   getSession,
@@ -307,6 +307,34 @@ httpServer.listen(PORT, () => {
         }, 10_000);
       } else {
         console.log(`[Server] Multi-tenant detected (${count ?? 0} empresas) — skipping auto-bind. Each request resolves its own empresa via JWT or webhook path.`);
+
+        // Re-register webhooks for all active instances so that the ?token= query
+        // param is always present in the URL Whatsmiau calls. Without this, instances
+        // created before the webhook-token feature was deployed have no token in their
+        // registered URL, causing 401 "webhook token required" on every inbound message.
+        // Runs fire-and-forget; failures are logged but never crash startup.
+        (async () => {
+          try {
+            const { data: instances } = await getServiceSupabase()
+              .from('empresa_perfil')
+              .select('whatsmiau_instance')
+              .not('whatsmiau_instance', 'is', null)
+              .not('webhook_token', 'is', null);
+            if (instances && instances.length > 0) {
+              console.log(`[Server] Re-registering webhooks for ${instances.length} tenant instance(s)...`);
+              await Promise.allSettled(
+                instances.map((row: { whatsmiau_instance: string }) =>
+                  setWebhookForInstance(row.whatsmiau_instance).catch((err) =>
+                    console.error(`[Server] Webhook re-register failed for ${row.whatsmiau_instance}:`, err),
+                  ),
+                ),
+              );
+              console.log('[Server] Webhook re-registration sweep complete.');
+            }
+          } catch (err) {
+            console.warn('[Server] Webhook re-registration sweep failed:', err);
+          }
+        })();
       }
     } catch (err) {
       console.warn('[Server] Auto-bind failed:', err);

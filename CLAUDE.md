@@ -106,12 +106,12 @@ Investigação em 2026-04-29 (commit 8b367c4 com diagnóstico `WEBHOOK_DEBUG_HEA
 
 **Auth boundary efetivo hoje: o nome da instância no path da URL.**
 - **Instâncias novas**: `zelo-{empresaId8}-{16hex}` = 64 bits de entropia → unguessable. Suporta escala nacional.
-- **Instâncias legacy (pré-rotação)**: `zelo-{empresaId8}` ou `Comercial_d3c6ca80`. Enumeráveis a partir do UUID da empresa. **Devem ser rotacionadas** (deletar + recriar via fluxo normal de `/api/qr`).
-- O código de validação de `apikey` em `/webhook/:instance` está dormente (lê o header, compara, mas como nunca chega, é no-op). Se Whatsmiau consertar o forwarding, `WEBHOOK_REQUIRE_TOKEN=1` passa a ser viável sem mudança de código — `auth_status` em `zelochat_webhook_events_raw` é a canary.
+- **Instâncias legacy (pré-rotação)**: formato `zelo-{empresaId8}` sem sufixo aleatório. Enumeráveis a partir do UUID da empresa. **Devem ser rotacionadas** (deletar + recriar via fluxo normal de `/api/qr`).
+- **Auth via `?token=` na URL está ATIVA.** `/webhook/:instance` extrai o token do query param (Whatsmiau não forwarda o header `apikey`, mas respeita a URL completa). O token deve estar presente na URL registrada — `server/index.ts` garante isso no startup. `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT=1` é um escape de emergência para rollouts.
 
-**NÃO regenere a coluna `webhook_token` em `empresa_perfil`** — ela é dormente mas será o segredo quando strict mode virar viável. Manter estável.
-- **Legacy global lifecycle** (`fetchQR`, `disconnectWhatsApp`, `syncStatusFromUpstream` em `whatsapp.ts`) ainda existe pra rodar o auto-reconnect e health check da empresa "primary" (Donutopia). Os broadcasts WS dessas funções são escopados via `getBoundEmpresaId()` pra não vazar pra outros tenants.
-- **Backfill**: a empresa Donutopia (única ativa no beta) recebeu `whatsmiau_instance = 'Comercial_d3c6ca80'` na migration. Outras empresas ficam NULL até clicarem em "Gerar QR Code" pela primeira vez.
+**NÃO regenere a coluna `webhook_token` em `empresa_perfil`** — é o segredo que autentica o webhook via `?token=` na URL. Manter estável; nunca expor em logs.
+- **Legacy global lifecycle** (`fetchQR`, `disconnectWhatsApp`, `syncStatusFromUpstream` em `whatsapp.ts`) ainda existe pra rodar o auto-reconnect e health check de empresas single-tenant. Os broadcasts WS dessas funções são escopados via `getBoundEmpresaId()` pra não vazar pra outros tenants.
+- No startup multi-tenant, `server/index.ts` re-registra os webhooks de todas as instâncias ativas para garantir que o `?token=` esteja sempre na URL registrada no Whatsmiau.
 
 ## Database (Supabase)
 
@@ -249,17 +249,9 @@ If you change ANY of these three layers, manually walk through the duplicate-ord
 
 ## ⚠️ Local dev steals the production webhook (read before running `npm run dev:server`)
 
-The `.env` checked into the repo points at the **production** Whatsmiau instance (`Comercial_d3c6ca80`). On startup, `server/whatsapp.ts` calls `setWebhook` with the local server's public URL — in dev that's a Cloudflare tunnel from `scripts/tunnel.js`. This **silently overwrites the production webhook URL on Whatsmiau**, redirecting all real customers' inbound messages to the dev machine. Outbound sends still work (they hit Whatsmiau directly), so the symptom is "app sends but receives nothing in prod" — not an obvious failure.
+The `.env` checked into the repo may point at a production Whatsmiau instance. On startup, `server/whatsapp.ts` calls `setWebhook` (single-tenant) or `setWebhookForInstance` (multi-tenant) with the local server's public URL — in dev that's a Cloudflare tunnel from `scripts/tunnel.js`. This **silently overwrites the production webhook URL on Whatsmiau**, redirecting all real customers' inbound messages to the dev machine. Outbound sends still work (they hit Whatsmiau directly), so the symptom is "app sends but receives nothing in prod" — not an obvious failure.
 
-When this happens, recover with:
-
-```bash
-curl -X POST "https://api.whatsmiau.dev/webhook/set/Comercial_d3c6ca80" \
-  -H "apikey: $WHATSMIAU_API_KEY" -H "Content-Type: application/json" \
-  -d '{"webhook":{"enabled":true,"url":"https://zelochat-production.up.railway.app/webhook","webhookByEvents":false,"webhookBase64":true,"events":["MESSAGES_UPSERT","MESSAGES_UPDATE","MESSAGES_DELETE","CONNECTION_UPDATE","CONTACTS_UPSERT"]}}'
-```
-
-A Railway redeploy also fixes it (prod re-registers its own URL on startup).
+When this happens, a Railway redeploy fixes it (prod re-registers its own URL on startup with the correct `?token=`).
 
 **Before running any local dev command that boots the backend** (`npm run dev:server`, `npm run dev:all`, `npx tsx server/index.ts`, integration tests that import `server/whatsapp.ts`):
 

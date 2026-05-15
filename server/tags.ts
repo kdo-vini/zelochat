@@ -201,7 +201,7 @@ export async function getAllSessionTagsForEmpresa(
   // (`remote_jid`), which is what the frontend uses as `ChatSession.id`.
   const { data, error } = await sb
     .from('zelochat_session_tags')
-    .select(`zelochat_tags(${SELECT_COLS}), zelochat_sessions!inner(remote_jid)`)
+    .select(`zelochat_tags(${SELECT_COLS}), zelochat_sessions!zelochat_session_tags_session_empresa_fk(remote_jid)`)
     .eq('empresa_id', empresaId);
   if (error) throw error;
 
