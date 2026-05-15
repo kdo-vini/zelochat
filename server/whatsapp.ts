@@ -343,16 +343,31 @@ export function handleConnectionUpdate(data: any, empresaId: string | null = nul
   }
 }
 
+export interface QuotedContext {
+  waMessageId: string;
+  fromMe: boolean;
+  remoteJid: string;
+  previewText?: string;
+}
+
+function buildQuotedPayload(quoted: QuotedContext) {
+  return {
+    key: { id: quoted.waMessageId, fromMe: quoted.fromMe, remoteJid: quoted.remoteJid },
+    message: { conversation: quoted.previewText ?? '' },
+  };
+}
+
 export async function sendTextMessage(
   jid: string,
   text: string,
   empresaId?: string | null,
+  quoted?: QuotedContext | null,
 ): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
   const normalizedText = normalizeWhatsAppTextFormatting(text);
   const res = await axios.post(
     `${BASE_URL}/message/sendText/${instance}`,
-    { number: jid, text: normalizedText },
+    { number: jid, text: normalizedText, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data);
@@ -404,6 +419,7 @@ export async function sendMediaMessage(
     fileName?: string;
   },
   empresaId?: string | null,
+  quoted?: QuotedContext | null,
 ): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
   const normalizedParams = {
@@ -412,7 +428,7 @@ export async function sendMediaMessage(
   };
   const res = await axios.post(
     `${BASE_URL}/message/sendMedia/${instance}`,
-    { number: jid, ...normalizedParams },
+    { number: jid, ...normalizedParams, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data);
@@ -425,11 +441,12 @@ export async function sendWhatsAppAudio(
   jid: string,
   audioUrl: string,
   empresaId?: string | null,
+  quoted?: QuotedContext | null,
 ): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
   const res = await axios.post(
     `${BASE_URL}/message/sendWhatsAppAudio/${instance}`,
-    { number: jid, audio: audioUrl, encoding: true },
+    { number: jid, audio: audioUrl, encoding: true, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data);

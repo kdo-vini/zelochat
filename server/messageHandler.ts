@@ -290,15 +290,22 @@ interface MessageRow {
   sent_at: string;
   audio_transcript: string | null;
   audio_transcript_status: AudioTranscriptStatus | null;
+  reactions: Array<{ emoji: string; fromMe: boolean }> | null;
+  quoted_wa_id: string | null;
+  quoted_from_me: boolean | null;
+  quoted_preview: string | null;
 }
 
-const MESSAGE_COLUMNS = 'id, session_id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status';
+const MESSAGE_COLUMNS = 'id, session_id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status, reactions, quoted_wa_id, quoted_from_me, quoted_preview';
 
 type AssistantResponseSource = 'ai_auto' | 'human_manual';
 
 interface AddAssistantMessageOptions {
   responseSource?: AssistantResponseSource;
   waMessageId?: string | null;
+  quotedWaId?: string | null;
+  quotedFromMe?: boolean | null;
+  quotedPreview?: string | null;
 }
 
 interface LatestInboundMessageRow {
@@ -801,6 +808,10 @@ function mapMessage(row: MessageRow): ChatMessage {
     tool_call_id: row.tool_call_id || undefined,
     audio_transcript: row.audio_transcript,
     audio_transcript_status: row.audio_transcript_status,
+    reactions: row.reactions ?? [],
+    quotedWaId: row.quoted_wa_id ?? undefined,
+    quotedFromMe: row.quoted_from_me ?? undefined,
+    quotedPreview: row.quoted_preview ?? undefined,
   };
 }
 
@@ -1061,6 +1072,9 @@ async function insertMessage(params: {
   waMessageId?: string | null;
   tool_calls?: any[] | null;
   tool_call_id?: string | null;
+  quotedWaId?: string | null;
+  quotedFromMe?: boolean | null;
+  quotedPreview?: string | null;
 }): Promise<ChatMessage> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
@@ -1074,6 +1088,9 @@ async function insertMessage(params: {
       tool_calls: params.tool_calls || null,
       tool_call_id: params.tool_call_id || null,
       sent_at: params.sentAt,
+      quoted_wa_id: params.quotedWaId || null,
+      quoted_from_me: params.quotedFromMe ?? null,
+      quoted_preview: params.quotedPreview || null,
     })
     .select(MESSAGE_COLUMNS)
     .single();
@@ -1133,6 +1150,63 @@ export async function deleteMessageByWhatsAppId(params: {
   );
 
   return { deleted: Boolean(data?.length), dbMessageId: deletedId };
+}
+
+export async function updateMessageReaction(params: {
+  empresaId: string;
+  targetWaMessageId: string;
+  emoji: string;
+  fromMe: boolean;
+}): Promise<{ sessionId: string | null; dbMessageId: string | null; reactions: Array<{ emoji: string; fromMe: boolean }> } | null> {
+  const supabase = getServiceSupabase();
+
+  const { data: msg, error: fetchErr } = await supabase
+    .from('zelochat_messages')
+    .select('id, session_id, reactions')
+    .eq('empresa_id', params.empresaId)
+    .eq('wa_message_id', params.targetWaMessageId)
+    .maybeSingle();
+
+  if (fetchErr || !msg) return null;
+
+  const current: Array<{ emoji: string; fromMe: boolean }> = (msg.reactions as any) ?? [];
+  // One reaction per sender side (fromMe). Remove existing then add new (empty emoji = remove).
+  const filtered = current.filter((r) => r.fromMe !== params.fromMe);
+  const updated = params.emoji ? [...filtered, { emoji: params.emoji, fromMe: params.fromMe }] : filtered;
+
+  const { error: updateErr } = await supabase
+    .from('zelochat_messages')
+    .update({ reactions: updated })
+    .eq('id', msg.id);
+
+  if (updateErr) {
+    console.error('[Reaction] update failed:', updateErr.message);
+    return null;
+  }
+
+  // Resolve the session JID so the frontend can target the right conversation
+  const { data: session } = await supabase
+    .from('zelochat_sessions')
+    .select('remote_jid')
+    .eq('id', msg.session_id)
+    .maybeSingle();
+
+  const sessionJid = session?.remote_jid ?? null;
+
+  broadcast(
+    {
+      type: 'reaction_update',
+      data: {
+        sessionId: sessionJid,
+        dbMessageId: msg.id as string,
+        targetWaMessageId: params.targetWaMessageId,
+        reactions: updated,
+      },
+    },
+    params.empresaId,
+  );
+
+  return { sessionId: sessionJid, dbMessageId: msg.id as string, reactions: updated };
 }
 
 async function recordResponseEventForLatestInbound(params: {
@@ -1216,6 +1290,9 @@ async function upsertInboundUserMessage(params: {
   content: string | null;
   sentAt: string;
   waMessageId: string;
+  quotedWaId?: string | null;
+  quotedFromMe?: boolean | null;
+  quotedPreview?: string | null;
 }): Promise<ChatMessage | null> {
   const supabase = getServiceSupabase();
 
@@ -1242,6 +1319,9 @@ async function upsertInboundUserMessage(params: {
       content: params.content,
       sent_at: params.sentAt,
       wa_message_id: params.waMessageId,
+      quoted_wa_id: params.quotedWaId || null,
+      quoted_from_me: params.quotedFromMe ?? null,
+      quoted_preview: params.quotedPreview || null,
     })
     .select(MESSAGE_COLUMNS)
     .single();
@@ -1817,6 +1897,26 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // ever fires in prod.
   const waMessageId = (msg.key?.id ?? null) as string | null;
 
+  // Extract quoted/reply context from contextInfo (present when customer replies to a specific message)
+  const contextInfo = msg.message?.extendedTextMessage?.contextInfo
+    ?? msg.message?.imageMessage?.contextInfo
+    ?? msg.message?.videoMessage?.contextInfo
+    ?? msg.message?.audioMessage?.contextInfo
+    ?? msg.message?.documentMessage?.contextInfo
+    ?? null;
+  const quotedWaId: string | null = contextInfo?.stanzaId ?? null;
+  const quotedFromMe: boolean | null = quotedWaId ? (contextInfo?.participant == null) : null;
+  const quotedMsgContent = contextInfo?.quotedMessage;
+  const quotedPreview: string | null = quotedMsgContent
+    ? (quotedMsgContent.conversation
+        ?? quotedMsgContent.extendedTextMessage?.text
+        ?? (quotedMsgContent.imageMessage ? '[Imagem]' : null)
+        ?? (quotedMsgContent.audioMessage ? '[Áudio]' : null)
+        ?? (quotedMsgContent.videoMessage ? '[Vídeo]' : null)
+        ?? (quotedMsgContent.documentMessage ? '[Documento]' : null)
+        ?? null)
+    : null;
+
   let storedMsg: ChatMessage;
   if (waMessageId) {
     const upserted = await upsertInboundUserMessage({
@@ -1825,6 +1925,9 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       content: storedContent,
       sentAt: sentAt.toISOString(),
       waMessageId,
+      quotedWaId,
+      quotedFromMe,
+      quotedPreview,
     });
     if (!upserted) {
       console.log(`[MessageHandler] dedup: skip retry of wa_message_id=${waMessageId} for ${jid}`);
@@ -2024,6 +2127,9 @@ export async function addAssistantMessage(
       tool_calls: toolCalls,
       waMessageId: options.waMessageId,
       sentAt,
+      quotedWaId: options.quotedWaId,
+      quotedFromMe: options.quotedFromMe,
+      quotedPreview: options.quotedPreview,
     });
 
     if (options.responseSource && storedContent && !toolCalls?.length) {

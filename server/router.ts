@@ -31,12 +31,14 @@ import {
   logoutInstance,
   setWebhookForInstance,
   wasSentByServer,
+  type QuotedContext,
 } from './whatsapp.js';
 import {
   getAllSessions,
   getSession,
   addAssistantMessage,
   handleOutboundMessage,
+  updateMessageReaction,
   deleteMessageByWhatsAppId,
   updateSessionProfilePic,
   setAutoReply,
@@ -353,6 +355,20 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     if (!remoteJid.endsWith('@s.whatsapp.net')) return; // only individual chats
     const botJid = getOwnJid();
     if (botJid && remoteJid === botJid) return;
+
+    // Reactions: update the target message's reactions array instead of saving as text
+    const reactionMsg = data.message?.reactionMessage;
+    if (reactionMsg) {
+      const targetId: string = reactionMsg.key?.id ?? '';
+      const emoji: string = reactionMsg.text ?? '';
+      const fromMe: boolean = reactionMsg.key?.fromMe ?? false;
+      if (targetId) {
+        updateMessageReaction({ empresaId, targetWaMessageId: targetId, emoji, fromMe }).catch(
+          (err) => console.error('[Webhook] reaction update failed:', err),
+        );
+      }
+      return;
+    }
 
     const interactiveParams = data.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
     const interactiveId = interactiveParams
@@ -1097,10 +1113,11 @@ router.get('/api/sessions/:jid/messages', async (req: Request, res: Response) =>
  * Body: { to: string (jid), message?: string, attachment?: ChatAttachment }
  */
 router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, res: Response) => {
-  const { to, message, attachment } = req.body as {
+  const { to, message, attachment, quoted } = req.body as {
     to?: string;
     message?: string;
     attachment?: ChatAttachment;
+    quoted?: QuotedContext | null;
   };
 
   if (!to || (!message?.trim() && !attachment)) {
@@ -1111,6 +1128,7 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
   try {
     const empresaId = await requireEmpresaId(req);
     const trimmedMessage = message?.trim() ?? '';
+    const validQuoted = quoted?.waMessageId ? quoted : null;
     let waMessageId: string | undefined;
 
     if (attachment?.dataUrl) {
@@ -1125,7 +1143,7 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
       );
       if (attachment.type === 'audio') {
         // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)
-        waMessageId = await sendWhatsAppAudio(to, mediaUrl, empresaId);
+        waMessageId = await sendWhatsAppAudio(to, mediaUrl, empresaId, validQuoted);
       } else {
         waMessageId = await sendMediaMessage(to, {
           mediatype: attachment.type === 'image' ? 'image' : attachment.type === 'video' ? 'video' : 'document',
@@ -1133,15 +1151,18 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
           media: mediaUrl,
           caption: trimmedMessage || undefined,
           fileName: attachment.fileName,
-        }, empresaId);
+        }, empresaId, validQuoted);
       }
     } else {
-      waMessageId = await sendTextMessage(to, trimmedMessage, empresaId);
+      waMessageId = await sendTextMessage(to, trimmedMessage, empresaId, validQuoted);
     }
 
     await addAssistantMessage(to, trimmedMessage, undefined, empresaId, attachment, {
       responseSource: 'human_manual',
       waMessageId,
+      quotedWaId: validQuoted?.waMessageId ?? null,
+      quotedFromMe: validQuoted?.fromMe ?? null,
+      quotedPreview: validQuoted?.previewText ?? null,
     });
     res.json({ ok: true, messageId: waMessageId ?? null });
   } catch (error: any) {

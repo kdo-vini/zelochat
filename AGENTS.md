@@ -11,6 +11,10 @@ Three companion docs at the project root capture context not visible from the co
 3. **[BILLING.md](./BILLING.md)** — Stripe/Asaas runbook + cross-product subscription details.
 4. **[CLAUDE.md](./CLAUDE.md)** — Project context. Has two non-negotiable sections: "Shared database with ZeloPDV" (what we MUSTN'T touch) and "Critical functions — touch with extreme care" (functions whose breakage cascades to customer money loss).
 
+## Codex memory
+
+Before any deep ZeloChat task, read [docs/ai/ZeloChat.memory.md](./docs/ai/ZeloChat.memory.md) first. Keep findings evidence-based and update that memory when the repo's confirmed architecture or risks materially change.
+
 Inline `🚨 CRITICAL` JSDoc-style blocks in the source code mark functions whose breakage has caused — or could cause — a customer-visible outage. Search for that emoji to find them.
 
 ## Novidades changelog convention

@@ -253,6 +253,11 @@ export interface ChatAttachment {
 
 export type AudioTranscriptStatus = 'pending' | 'done' | 'failed';
 
+export interface MessageReaction {
+  emoji: string;
+  fromMe: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   waMessageId?: string | null;
@@ -267,4 +272,8 @@ export interface ChatMessage {
   tool_call_id?: string;
   audio_transcript?: string | null;
   audio_transcript_status?: AudioTranscriptStatus | null;
+  reactions?: MessageReaction[];
+  quotedWaId?: string;
+  quotedFromMe?: boolean;
+  quotedPreview?: string;
 }

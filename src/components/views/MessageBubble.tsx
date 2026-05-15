@@ -4,6 +4,7 @@ import {
   Bell,
   Check,
   Clock,
+  CornerUpLeft,
   ExternalLink,
   FileAudio,
   FileText,
@@ -18,7 +19,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { ChatMessage, MessageStatus } from '../../types';
+import type { ChatMessage, MessageReaction, MessageStatus } from '../../types';
 import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../domain/chat';
 import { parseChatEventCard, type ChatEventCardData, type ChatEventTone } from '../../domain/chatFeedback';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
@@ -450,6 +451,56 @@ function EventIcon({ event }: { event: ChatEventCardData }) {
   }
 }
 
+/* ─── Reaction badge ─────────────────────────────────────────────── */
+
+function ReactionBadge({ reactions, isOutgoing }: { reactions: MessageReaction[]; isOutgoing: boolean }) {
+  if (!reactions.length) return null;
+  const grouped: Record<string, number> = {};
+  for (const r of reactions) grouped[r.emoji] = (grouped[r.emoji] ?? 0) + 1;
+  return (
+    <div className={`flex gap-0.5 ${isOutgoing ? 'justify-end pr-1' : 'justify-start pl-1'}`} style={{ marginTop: -4 }}>
+      {Object.entries(grouped).map(([emoji, count]) => (
+        <span
+          key={emoji}
+          className="flex items-center gap-0.5 rounded-full bg-white border border-black/10 shadow-sm select-none"
+          style={{ fontSize: 13, lineHeight: 1, padding: '2px 5px' }}
+        >
+          {emoji}
+          {count > 1 && <span style={{ fontSize: 10, color: '#8696a0', marginLeft: 1 }}>{count}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Quoted message preview (inside bubble) ─────────────────────── */
+
+function QuotedPreview({ preview, fromMe, isOutgoing }: { preview: string; fromMe?: boolean; isOutgoing: boolean }) {
+  const accentColor = fromMe ? '#3EB489' : '#8696a0';
+  return (
+    <div
+      style={{
+        borderLeft: `4px solid ${accentColor}`,
+        background: isOutgoing ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.04)',
+        borderRadius: 6,
+        padding: '5px 8px',
+        marginBottom: 4,
+        maxWidth: '100%',
+        overflow: 'hidden',
+      }}
+    >
+      <p style={{ fontSize: 12, color: accentColor, fontWeight: 600, margin: '0 0 1px 0' }}>
+        {fromMe ? 'Você' : 'Cliente'}
+      </p>
+      <p
+        style={{ fontSize: 12.5, color: '#111b21', margin: 0, opacity: 0.75, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      >
+        {preview}
+      </p>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    Main MessageBubble component
    ═══════════════════════════════════════════════════════════════════ */
@@ -463,7 +514,10 @@ export interface MessageBubbleProps {
   onDelete?: (message: ChatMessage) => void | Promise<void>;
   isDeleting?: boolean;
   onOpenOrder?: (request: OrderFocusRequest) => void;
+  onReply?: (message: ChatMessage) => void;
 }
+
+const DRAG_THRESHOLD = 60;
 
 const MessageBubbleInner = React.memo(function MessageBubble({
   message,
@@ -474,10 +528,14 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   onDelete,
   isDeleting = false,
   onOpenOrder,
+  onReply,
 }: MessageBubbleProps) {
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dragX, setDragX] = useState(0);
+  const touchStartX = useRef<number>(0);
+  const dragging = useRef(false);
 
   /* System messages handled elsewhere */
   const isSystem = message.kind === 'text' && (message.content ?? '').includes('[SISTEMA]');
@@ -624,6 +682,25 @@ const MessageBubbleInner = React.memo(function MessageBubble({
     position: 'relative',
   };
 
+  const hasReactions = Boolean(message.reactions?.length);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!onReply) return;
+    touchStartX.current = e.touches[0].clientX;
+    dragging.current = false;
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!onReply) return;
+    const dx = e.touches[0].clientX - touchStartX.current;
+    if (dx > 0 && dx < 120) { setDragX(dx); dragging.current = true; }
+  };
+  const handleTouchEnd = () => {
+    if (!onReply) return;
+    if (dragX >= DRAG_THRESHOLD) onReply(message);
+    setDragX(0);
+    dragging.current = false;
+  };
+
   return (
     <>
       {lightbox && (
@@ -636,10 +713,39 @@ const MessageBubbleInner = React.memo(function MessageBubble({
       )}
 
       <div
-        className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}
-        style={{ paddingLeft: isOutgoing ? 63 : 0, paddingRight: isOutgoing ? 0 : 63 }}
+        className={`flex group/row items-center ${isOutgoing ? 'justify-end' : 'justify-start'}`}
+        style={{
+          paddingLeft: isOutgoing ? 63 : 0,
+          paddingRight: isOutgoing ? 0 : 63,
+          marginBottom: hasReactions ? 10 : 0,
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
-        <div style={bubbleStyle} className="group/bubble relative">
+        {/* Desktop reply button — incoming side */}
+        {onReply && !isOutgoing && (
+          <button
+            onClick={() => onReply(message)}
+            title="Responder"
+            className="mr-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-black/10 bg-white shadow-sm opacity-0 transition-opacity group-hover/row:opacity-100"
+          >
+            <CornerUpLeft className="h-3.5 w-3.5" style={{ color: '#8696a0' }} />
+          </button>
+        )}
+
+        <div
+          style={{ position: 'relative' }}
+          className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}
+        >
+        <div
+          style={{
+            ...bubbleStyle,
+            transform: dragX ? `translateX(${dragX}px)` : undefined,
+            transition: dragX ? 'none' : 'transform 0.2s ease-out',
+          }}
+          className="group/bubble relative"
+        >
           {/* Tail */}
           {hasTail && (isOutgoing ? <TailOut /> : <TailIn />)}
 
@@ -799,6 +905,13 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           <div style={{
             padding: message.kind === 'text' ? '6px 7px 8px 9px' : '3px 7px 8px 9px',
           }}>
+            {message.quotedPreview && (
+              <QuotedPreview
+                preview={message.quotedPreview}
+                fromMe={message.quotedFromMe}
+                isOutgoing={isOutgoing}
+              />
+            )}
             {displayText && (
               <span
                 className="break-words whitespace-pre-wrap"
@@ -814,6 +927,23 @@ const MessageBubbleInner = React.memo(function MessageBubble({
             />
           </div>
         </div>
+
+        {/* Reaction badges — below the bubble, overlapping slightly */}
+        {hasReactions && (
+          <ReactionBadge reactions={message.reactions!} isOutgoing={isOutgoing} />
+        )}
+        </div>
+
+        {/* Desktop reply button — outgoing side */}
+        {onReply && isOutgoing && (
+          <button
+            onClick={() => onReply(message)}
+            title="Responder"
+            className="ml-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-black/10 bg-white shadow-sm opacity-0 transition-opacity group-hover/row:opacity-100"
+          >
+            <CornerUpLeft className="h-3.5 w-3.5" style={{ color: '#8696a0' }} />
+          </button>
+        )}
       </div>
     </>
   );

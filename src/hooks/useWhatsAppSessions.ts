@@ -76,12 +76,20 @@ type MessageDeletedPayload = {
   dbMessageId?: string | null;
 };
 
+type ReactionUpdatePayload = {
+  sessionId: string | null;
+  dbMessageId: string;
+  targetWaMessageId: string;
+  reactions: Array<{ emoji: string; fromMe: boolean }>;
+};
+
 type WsEvent =
   | { type: 'auth_ok'; data: { empresaId: string } }
   | { type: 'message'; data: SessionEventPayload }
   | { type: 'message_sent'; data: SessionEventPayload }
   | { type: 'message_update'; data: MessageUpdatePayload }
   | { type: 'message_deleted'; data: MessageDeletedPayload }
+  | { type: 'reaction_update'; data: ReactionUpdatePayload }
   | { type: 'contact_update'; data: { remoteJid: string, pushName: string, profilePicUrl?: string } }
   | { type: 'escalation_triggered'; data: EscalationTriggeredPayload }
   | { type: 'escalation_resolved'; data: EscalationResolvedPayload }
@@ -250,7 +258,7 @@ export function useWhatsAppSessions(token: string | null) {
 
   const send = useCallback(async (
     jid: string,
-    params: { text?: string; attachment?: ChatAttachment },
+    params: { text?: string; attachment?: ChatAttachment; quoted?: { waMessageId: string; fromMe: boolean; remoteJid: string; previewText?: string } | null },
   ) => {
     if (!token) {
       throw new Error('Faça login para enviar mensagens.');
@@ -259,6 +267,7 @@ export function useWhatsAppSessions(token: string | null) {
     await sendMessage(token, jid, {
       message: params.text,
       attachment: params.attachment,
+      quoted: params.quoted,
     });
   }, [token]);
 
@@ -592,6 +601,23 @@ export function useWhatsAppSessions(token: string | null) {
               sortSessionsForList(previous.map((session) =>
                 session.id === data.sessionId ? applyDeletedMessage(session, data) : session,
               )),
+            );
+            return;
+          }
+
+          if (parsed.type === 'reaction_update') {
+            const { sessionId, dbMessageId, reactions } = parsed.data;
+            if (!sessionId) return;
+            setSessions((previous) =>
+              previous.map((session) => {
+                if (session.id !== sessionId) return session;
+                return {
+                  ...session,
+                  messages: session.messages.map((msg) =>
+                    msg.id === dbMessageId ? { ...msg, reactions } : msg,
+                  ),
+                };
+              }),
             );
             return;
           }

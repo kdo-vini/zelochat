@@ -62,6 +62,7 @@ export interface ManagerAssistantResult {
 type SendMessagePayload = {
   message?: string;
   attachment?: ChatAttachment;
+  quoted?: { waMessageId: string; fromMe: boolean; remoteJid: string; previewText?: string } | null;
 };
 
 async function parseResponse<T>(response: Response): Promise<T> {

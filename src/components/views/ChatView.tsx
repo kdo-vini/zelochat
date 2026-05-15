@@ -452,7 +452,7 @@ export interface ChatViewProps {
   token: string | null;
   authLoading: boolean;
   profilePics: Record<string, string>;
-  send: (jid: string, payload: { text: string; attachment?: ChatAttachment }) => Promise<void>;
+  send: (jid: string, payload: { text: string; attachment?: ChatAttachment; quoted?: { waMessageId: string; fromMe: boolean; remoteJid: string; previewText?: string } | null }) => Promise<void>;
   toggleAutoReply: (jid: string, enabled: boolean) => Promise<void>;
   deleteMessage: (jid: string, message: ChatMessage) => Promise<void>;
   updateSessionName: (jid: string, name: string) => Promise<void>;
@@ -643,6 +643,7 @@ export function ChatView({
 
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [contactModalOpen, setContactModalOpen] = useState(false);
   const [contactName, setContactName] = useState('');
@@ -1028,6 +1029,10 @@ export function ChatView({
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [activeSessionId, activeSessionMessages]);
 
+  useEffect(() => {
+    setReplyingTo(null);
+  }, [activeSessionId]);
+
   // Reset textarea height when ownerInput is cleared (e.g. after sending)
   useEffect(() => {
     if (!ownerInput && chatTextareaRef.current) {
@@ -1186,9 +1191,18 @@ export function ChatView({
     if (!activeSessionId) { setChatActionError('Selecione uma conversa para enviar uma mensagem.'); return; }
     setIsSending(true);
     try {
-      await send(activeSessionId, { text, attachment: pendingAttachment ?? undefined });
+      const quoted = replyingTo?.waMessageId
+        ? {
+            waMessageId: replyingTo.waMessageId,
+            fromMe: replyingTo.role === 'assistant',
+            remoteJid: activeSessionId,
+            previewText: replyingTo.preview,
+          }
+        : null;
+      await send(activeSessionId, { text, attachment: pendingAttachment ?? undefined, quoted });
       setOwnerInput('');
       setPendingAttachment(null);
+      setReplyingTo(null);
     } catch (e) {
       setChatActionError(getFriendlyErrorMessage(e) || 'Não foi possível enviar.');
     } finally {
@@ -1944,6 +1958,7 @@ export function ChatView({
                             onDelete={handleDeleteMessage}
                             isDeleting={deletingMessageId === message.id}
                             onOpenOrder={onOpenOrder}
+                            onReply={message.waMessageId ? setReplyingTo : undefined}
                           />
                         </motion.div>
                       );
@@ -2005,6 +2020,24 @@ export function ChatView({
                     </motion.div>
                   )}
                 </AnimatePresence>
+
+                {replyingTo && (
+                  <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 shadow-sm">
+                    <div className="flex-1 min-w-0 border-l-4 pl-2" style={{ borderColor: replyingTo.role === 'assistant' ? '#3EB489' : '#8696a0' }}>
+                      <p className="text-[11px] font-semibold" style={{ color: replyingTo.role === 'assistant' ? '#3EB489' : '#8696a0' }}>
+                        {replyingTo.role === 'assistant' ? 'Você' : activeSession?.customerName ?? 'Cliente'}
+                      </p>
+                      <p className="truncate text-[12px] text-[var(--color-ink-faint)]">{replyingTo.preview}</p>
+                    </div>
+                    <button
+                      onClick={() => setReplyingTo(null)}
+                      className="flex-shrink-0 rounded-full p-1 text-[var(--color-ink-faint)] hover:bg-[var(--color-line)] transition-colors"
+                      title="Cancelar resposta"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {pendingAttachment && (
                   <div className="mb-3 flex items-start gap-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]/92 p-3 shadow-[var(--shadow-card)]">
