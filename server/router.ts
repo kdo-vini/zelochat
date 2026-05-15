@@ -36,6 +36,7 @@ import {
   getAllSessions,
   getSession,
   addAssistantMessage,
+  handleOutboundMessage,
   deleteMessageByWhatsAppId,
   updateSessionProfilePic,
   setAutoReply,
@@ -337,18 +338,9 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       if (msgId && wasSentByServer(msgId)) return;
       const remoteJid: string = data.key?.remoteJid ?? '';
       if (!remoteJid.endsWith('@s.whatsapp.net')) return;
-      const msgText = (
-        data.message?.conversation ??
-        data.message?.extendedTextMessage?.text ??
-        ''
-      ).trim();
-      if (msgText) {
-        addAssistantMessage(remoteJid, msgText, undefined, empresaId, undefined, {
-          waMessageId: msgId || null,
-        }).catch((err) =>
-          console.error('[Webhook] fromMe persist failed:', err),
-        );
-      }
+      handleOutboundMessage(data, empresaId).catch((err) =>
+        console.error('[Webhook] fromMe persist failed:', err),
+      );
       return;
     }
 

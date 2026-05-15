@@ -1694,6 +1694,23 @@ export async function handleIncomingMessage(msg: any, empresaId: string): Promis
   return serializeForJid(jid, () => _handleIncomingMessage(msg, empresaId));
 }
 
+const ALLOWED_DOC_MIMES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain',
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+  'audio/ogg', 'audio/mpeg',
+  'video/mp4',
+]);
+
+function sanitizeFileName(raw: string | null | undefined, fallback: string): string {
+  if (!raw) return fallback;
+  return raw.replace(/[/\\<>:"|?*\x00-\x1f]/g, '_').slice(0, 200) || fallback;
+}
+
 async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<boolean> {
   const jid = msg.key.remoteJid;
   console.log(`[MessageHandler] Incoming message — JID: ${jid} | pushName: ${msg.pushName}`);
@@ -1705,25 +1722,6 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   const incomingText = extractText(msg);
   const shouldTriggerAutoReply = shouldTriggerAutoReplyForMessage(msg);
   let attachment: ChatAttachment | undefined;
-
-  // Allowed document MIME types — blocks executable/HTML payloads from being stored
-  const ALLOWED_DOC_MIMES = new Set([
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'text/plain',
-    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-    'audio/ogg', 'audio/mpeg',
-    'video/mp4',
-  ]);
-
-  function sanitizeFileName(raw: string | null | undefined, fallback: string): string {
-    if (!raw) return fallback;
-    // Strip path separators and characters that could influence browser behavior
-    return raw.replace(/[/\\<>:"|?*\x00-\x1f]/g, '_').slice(0, 200) || fallback;
-  }
 
   if (msg.message?.imageMessage) {
     const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
@@ -1916,6 +1914,69 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // and poll-vote events return false here so the AI does not infer intent from
   // a placeholder.
   return shouldTriggerAutoReply;
+}
+
+export async function handleOutboundMessage(data: any, empresaId: string): Promise<void> {
+  const jid: string = data.key?.remoteJid ?? '';
+  const msgId: string = data.key?.id ?? '';
+  if (!jid || !empresaId) return;
+
+  const msgText = (
+    data.message?.conversation ??
+    data.message?.extendedTextMessage?.text ??
+    data.message?.imageMessage?.caption ??
+    data.message?.videoMessage?.caption ??
+    data.message?.documentMessage?.caption ??
+    ''
+  ).trim();
+
+  let attachment: ChatAttachment | undefined;
+  if (data.message?.imageMessage) {
+    const mime = data.message.imageMessage.mimetype || 'image/jpeg';
+    attachment = {
+      type: 'image',
+      mimeType: mime,
+      fileName: 'imagem-whatsapp.jpg',
+      sizeBytes: data.message.imageMessage.fileLength ? Number(data.message.imageMessage.fileLength) : undefined,
+      dataUrl: await extractAttachmentDataUrl(data, mime, 'imagem-whatsapp.jpg', empresaId),
+    };
+  } else if (data.message?.audioMessage) {
+    const mime = data.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
+    attachment = {
+      type: 'audio',
+      mimeType: mime,
+      fileName: 'audio-whatsapp.ogg',
+      sizeBytes: data.message.audioMessage.fileLength ? Number(data.message.audioMessage.fileLength) : undefined,
+      dataUrl: await extractAttachmentDataUrl(data, mime, 'audio-whatsapp.ogg', empresaId),
+    };
+  } else if (data.message?.documentMessage) {
+    const rawMime = data.message.documentMessage.mimetype || 'application/octet-stream';
+    const mime = ALLOWED_DOC_MIMES.has(rawMime) ? rawMime : 'application/octet-stream';
+    const fileName = sanitizeFileName(data.message.documentMessage.fileName, 'documento');
+    attachment = {
+      type: 'document',
+      mimeType: mime,
+      fileName,
+      sizeBytes: data.message.documentMessage.fileLength ? Number(data.message.documentMessage.fileLength) : undefined,
+      dataUrl: await extractAttachmentDataUrl(data, mime, fileName, empresaId),
+    };
+  } else if (data.message?.videoMessage) {
+    const mime = data.message.videoMessage.mimetype || 'video/mp4';
+    const fileName = sanitizeFileName(data.message.videoMessage.fileName, 'video-whatsapp.mp4');
+    attachment = {
+      type: 'video',
+      mimeType: mime,
+      fileName,
+      sizeBytes: data.message.videoMessage.fileLength ? Number(data.message.videoMessage.fileLength) : undefined,
+      dataUrl: await extractAttachmentDataUrl(data, mime, fileName, empresaId),
+    };
+  }
+
+  if (!msgText && !attachment) return;
+
+  await addAssistantMessage(jid, msgText || null, undefined, empresaId, attachment, {
+    waMessageId: msgId || null,
+  });
 }
 
 export async function addAssistantMessage(
