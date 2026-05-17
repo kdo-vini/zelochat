@@ -1198,22 +1198,6 @@ function evaluateScheduleContextText(
     if (requestedTimes.length === 0) {
       const closedIssue = findBusinessHoursIssueForSchedule(empresaId, date, undefined, now);
       if (closedIssue) return { type: 'business_hours', issue: closedIssue };
-      if (date === toIsoBrazil(now, tz)) {
-        const window = getOperatingWindow(empresaId);
-        const nowBr = getBrazilTimeParts(now, tz);
-        if (window && !isWithinOperatingWindow(nowBr.minutes, window)) {
-          return {
-            type: 'business_hours',
-            issue: {
-              date,
-              timeMinutes: nowBr.minutes,
-              kind: 'currently_closed',
-              window,
-              dayLabel: getDayLabelFromIso(date, tz),
-            },
-          };
-        }
-      }
       sawUsableSchedule = true;
       continue;
     }
@@ -2941,7 +2925,7 @@ export async function generateAndSendReply(
         resolvedEmpresaId,
         lastUserTextForDate,
         new Date(),
-        { checkCurrentMoment: recentScheduleContext?.type !== 'valid_schedule' },
+        { checkCurrentMoment: false },
       )
     : null;
   if (businessHoursIssueFromMessage) {
