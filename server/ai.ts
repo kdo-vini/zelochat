@@ -707,6 +707,19 @@ function dayLabelBrazil(d: Date, tz: string = DEFAULT_TIMEZONE): string {
 }
 
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const DAY_FULL_LABELS_BY_SHORT: Record<string, string> = {
+  'Dom': 'domingo',
+  'Seg': 'segunda-feira',
+  'Ter': 'terça-feira',
+  'Qua': 'quarta-feira',
+  'Qui': 'quinta-feira',
+  'Sex': 'sexta-feira',
+  'Sáb': 'sábado',
+};
+
+function dayFullLabelBrazil(shortLabel: string): string {
+  return DAY_FULL_LABELS_BY_SHORT[shortLabel] ?? shortLabel.toLowerCase();
+}
 const MONTH_BY_NAME: Record<string, number> = {
   janeiro: 1,
   fevereiro: 2,
@@ -1227,7 +1240,9 @@ function isScheduleGuardReply(text: string): boolean {
     normalized.includes('fora do horario de atendimento') ||
     normalized.includes('horario ja passou') ||
     normalized.includes('data esta bloqueada') ||
-    normalized.includes('dia de fechamento')
+    normalized.includes('dia de fechamento') ||
+    normalized.includes('hoje nao atendemos') ||
+    normalized.includes('a gente nao atende')
   );
 }
 
@@ -1277,8 +1292,13 @@ export function buildBusinessHoursReply(issue: BusinessHoursIssue, tz: string = 
     : 'Esse dia está marcado como fechado.';
 
   if (issue.kind === 'closed_day') {
-    const day = issue.dayLabel || 'esse dia';
-    return `Para ${dateLabel}, não estamos aceitando pedidos porque ${day} é dia de fechamento. Posso te ajudar a escolher outro dia, antecipar para antes, deixar para depois ou chamar um atendente.`;
+    const dayFull = issue.dayLabel ? dayFullLabelBrazil(issue.dayLabel) : '';
+    if (dateLabel === 'hoje') {
+      const dayPart = dayFull ? ` (${dayFull})` : '';
+      return `Oi! Hoje${dayPart} não atendemos. Mas posso te ajudar a agendar seu pedido para outro dia ou horário — me conta quando seria melhor pra você, ou, se preferir, chamo um atendente. 😊`;
+    }
+    const dayPart = dayFull ? ` (${dayFull})` : '';
+    return `Pro dia ${dateLabel}${dayPart} a gente não atende. Posso te ajudar a agendar pra outro dia ou horário — me conta quando seria melhor pra você, ou, se preferir, chamo um atendente. 😊`;
   }
 
   if (issue.kind === 'currently_closed') {
@@ -1978,14 +1998,25 @@ export function buildSystemInstruction(
   const operatingHoursStr = operatingWindow
     ? `${operatingWindow.openLabel}–${operatingWindow.closeLabel}`
     : (cfg.hours || 'Consulte a loja');
-  const closedDayWarning = isClosedToday
-    ? `\n\n⚠️ HOJE (${todayLabel}) É DIA DE FECHAMENTO. Informe educadamente que não estamos atendendo hoje e indique os dias em que abrimos: ${DAY_LABELS.filter((d) => !cfg.closedDays.includes(d)).join(', ')}. NÃO aceite pedidos para hoje.`
-    : '';
-
   const todayISO = toIsoBrazil(now, tz);
   const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000), tz);
   const todayBR = isoToDisplayBR(todayISO);
   const tomorrowBR = isoToDisplayBR(tomorrowISO);
+
+  const todayFullLabel = dayFullLabelBrazil(todayLabel);
+  const openDaysFull = DAY_LABELS
+    .filter((d) => !cfg.closedDays.includes(d))
+    .map((d) => dayFullLabelBrazil(d))
+    .join(', ');
+  const closedDayWarning = isClosedToday
+    ? `\n\n⚠️ HOJE A LOJA NÃO ATENDE.
+- Hoje é ${todayFullLabel} (${todayBR}) e não atendemos.
+- Se for a primeira mensagem do cliente (ex: "Oi", "Olá", "Boa tarde"), cumprimente com cordialidade ANTES de informar que não atendemos hoje. Ex: "Oi! Tudo bem? Hoje (${todayFullLabel}) a gente não atende, mas posso te ajudar a agendar seu pedido pra outro dia ou horário 😊".
+- Use o nome COMPLETO do dia da semana (domingo, segunda-feira, terça-feira, etc.). NUNCA escreva abreviações como "Dom", "Seg", "Ter".
+- Não use a expressão "dia de fechamento". Diga "hoje não atendemos" ou "a gente não atende hoje".
+- Ofereça SEMPRE agendar o pedido para outro dia ou outro horário. Dias em que abrimos: ${openDaysFull || 'consulte a loja'}.
+- NÃO aceite pedidos para hoje.`
+    : '';
   const nextDays: string[] = [];
   for (let i = 1; i <= 7; i++) {
     const d = new Date(now.getTime() + i * 86400000);
