@@ -2009,13 +2009,23 @@ export function buildSystemInstruction(
     .map((d) => dayFullLabelBrazil(d))
     .join(', ');
   const closedDayWarning = isClosedToday
-    ? `\n\n⚠️ HOJE A LOJA NÃO ATENDE.
-- Hoje é ${todayFullLabel} (${todayBR}) e não atendemos.
-- Se for a primeira mensagem do cliente (ex: "Oi", "Olá", "Boa tarde"), cumprimente com cordialidade ANTES de informar que não atendemos hoje. Ex: "Oi! Tudo bem? Hoje (${todayFullLabel}) a gente não atende, mas posso te ajudar a agendar seu pedido pra outro dia ou horário 😊".
-- Use o nome COMPLETO do dia da semana (domingo, segunda-feira, terça-feira, etc.). NUNCA escreva abreviações como "Dom", "Seg", "Ter".
+    ? `
+
+⚠️ AVISO CRÍTICO — HOJE A LOJA NÃO ATENDE
+HOJE é ${todayFullLabel} (${todayBR}) e a loja está fechada. Esta é a informação MAIS IMPORTANTE desta conversa.
+
+EM TODA RESPOSTA ao cliente, você DEVE:
+1. Deixar CLARO e logo no início que hoje (${todayFullLabel}) a gente não atende — NÃO esconda essa informação no meio da mensagem, NÃO ignore.
+2. Oferecer agendar pedido para outro dia ou horário, OU chamar um atendente.
+3. NUNCA aceitar pedido para hoje. NUNCA chame criar_pedido com pickupDate=hoje.
+
+Se for a primeira mensagem do cliente (ex: "Oi", "Olá", "Boa tarde", "Tenho interesse", "Quero a promoção"), cumprimente com cordialidade ANTES de informar que não atendemos. Exemplo: "Oi! Tudo bem? Hoje (${todayFullLabel}) a gente não atende, mas posso te ajudar a agendar pra outro dia 😊 Em que posso te ajudar?".
+
+REGRAS DE LINGUAGEM:
+- Use o nome COMPLETO do dia da semana (domingo, segunda-feira, terça-feira, etc.). NUNCA "Dom", "Seg", "Ter".
 - Não use a expressão "dia de fechamento". Diga "hoje não atendemos" ou "a gente não atende hoje".
-- Ofereça SEMPRE agendar o pedido para outro dia ou outro horário. Dias em que abrimos: ${openDaysFull || 'consulte a loja'}.
-- NÃO aceite pedidos para hoje.`
+
+Dias em que abrimos: ${openDaysFull || 'consulte a loja'}.`
     : '';
   const nextDays: string[] = [];
   for (let i = 1; i <= 7; i++) {
@@ -2087,7 +2097,7 @@ IMPORTANTE: não use ferramentas de pedido. A única ferramenta permitida neste 
     : '7. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.';
 
   return `Você é o assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
-Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).
+Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).${closedDayWarning}
 
 FORMATAÇÃO NO WHATSAPP:
 - Para negrito, use o padrão do WhatsApp com UM asterisco de cada lado: *texto*.
@@ -2113,7 +2123,7 @@ INFORMAÇÕES DA LANCHONETE:
 - Dias fechados: ${cfg.closedDays.join(', ') || 'Nenhum'}
 - Endereço: ${cfg.address || 'Consulte a loja'}
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
-- Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}${closedDayWarning}
+- Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}
 
 ENTENDIMENTO DE IMAGENS RECEBIDAS:
 - Quando o cliente enviar imagem, use a imagem junto com a legenda e o historico da conversa.

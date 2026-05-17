@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-17',
+    category: 'hotfix',
+    title: 'IA voltou a responder em todos os horários',
+    description: 'Em algumas lojas, a IA estava ficando muda para certos clientes — sem mandar nem uma resposta. Corrigimos o problema. Agora, sempre que a IA estiver no modo "Sempre ligada" (ou dentro do horário agendado), ela responde todo cliente. Em dias marcados como fechados, ela responde cumprimentando e avisando que hoje não atendemos, oferecendo agendar pra outro dia.',
+  },
+  {
     date: '2026-05-15',
     category: 'hotfix',
     title: 'Sistema mais leve em dias de alto movimento',

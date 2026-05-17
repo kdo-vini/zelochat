@@ -479,10 +479,20 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
 
 /**
  * Lazy hydration for the webhook hot-path. Skips the DB call if we've already
- * hydrated this empresa in this server lifetime. On DB error, logs and leaves
- * `aiEnabled` undefined — the kill-switch will then keep the AI silent until
- * the next message retries. This is intentional: we'd rather miss a reply than
- * send a reply when the dono asked us to stay quiet.
+ * hydrated this empresa in this server lifetime.
+ *
+ * Failure policy: on DB error, log and clear the cache so the next message
+ * retries — but PRESERVE the previously hydrated config (if any). Reasoning:
+ *   - If we never hydrated this empresa, config stays at DEFAULT_CONFIG with
+ *     `aiEnabled=undefined` and the kill-switch silences correctly (we don't
+ *     know what the dono configured).
+ *   - If we hydrated successfully earlier this lifetime, the prior values
+ *     (aiEnabled, aiMode, …) are still the dono's last expressed intent.
+ *     Wiping them on a transient DB error caused production silences for
+ *     established empresas (Casa dos Salgados, 2026-05-17): AI mode was
+ *     "always_on" in DB, but a transient query failure reset it to
+ *     `undefined`, making `isAiGloballyEnabledNow` return false until the
+ *     next successful hydration. Customers received no reply during the gap.
  */
 export async function ensureAiSettingsHydrated(empresaId: string): Promise<void> {
   const hydratedAt = hydratedAiSettings.get(empresaId);
@@ -491,7 +501,6 @@ export async function ensureAiSettingsHydrated(empresaId: string): Promise<void>
     await loadAiSettingsFromDb(empresaId);
   } catch (err) {
     hydratedAiSettings.delete(empresaId);
-    setConfig(empresaId, { aiEnabled: undefined, aiMode: undefined });
-    console.warn(`[configStore] ai settings hydration failed for ${empresaId} — kill-switch stays fail-closed:`, err);
+    console.warn(`[configStore] ai settings hydration failed for ${empresaId} — keeping last-good config:`, err);
   }
 }
