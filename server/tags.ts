@@ -30,6 +30,7 @@ function mapTag(row: TagRow): TagRecord {
 }
 
 const SELECT_COLS = 'id, empresa_id, name, color, ai_instructions, created_at';
+const TAG_RELATION = 'zelochat_tags!zelochat_session_tags_tag_empresa_fk';
 
 export class TagTenantMismatchError extends Error {
   constructor() {
@@ -150,7 +151,7 @@ export async function getSessionTagsFull(empresaId: string, sessionIdOrJid: stri
   const sb = getServiceSupabase();
   const { data, error } = await sb
     .from('zelochat_session_tags')
-    .select(`zelochat_tags(${SELECT_COLS})`)
+    .select(`${TAG_RELATION}(${SELECT_COLS})`)
     .eq('session_id', sessionId)
     .eq('empresa_id', empresaId);
   if (error) throw error;
@@ -201,7 +202,7 @@ export async function getAllSessionTagsForEmpresa(
   // (`remote_jid`), which is what the frontend uses as `ChatSession.id`.
   const { data, error } = await sb
     .from('zelochat_session_tags')
-    .select(`zelochat_tags(${SELECT_COLS}), zelochat_sessions!zelochat_session_tags_session_empresa_fk(remote_jid)`)
+    .select(`${TAG_RELATION}(${SELECT_COLS}), zelochat_sessions!zelochat_session_tags_session_empresa_fk(remote_jid)`)
     .eq('empresa_id', empresaId);
   if (error) throw error;
 
@@ -224,7 +225,7 @@ export async function getTagsForSessions(
   const sb = getServiceSupabase();
   const { data, error } = await sb
     .from('zelochat_session_tags')
-    .select(`session_id, zelochat_tags(${SELECT_COLS})`)
+    .select(`session_id, ${TAG_RELATION}(${SELECT_COLS})`)
     .eq('empresa_id', empresaId)
     .in('session_id', sessionIds);
   if (error) throw error;
