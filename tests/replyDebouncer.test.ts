@@ -8,6 +8,7 @@
 process.env.AI_DEBOUNCE_READ_MS = '50';
 process.env.AI_DEBOUNCE_TYPING_MS = '50';
 process.env.AI_DEBOUNCE_REPLY_MS = '50';
+process.env.ZELOCHAT_DISABLE_WHATSAPP_NETWORK = '1';
 
 const { scheduleReply, cancelPendingReply } = await import('../server/replyDebouncer.js');
 

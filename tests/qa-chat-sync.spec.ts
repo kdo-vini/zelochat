@@ -3,6 +3,11 @@ import { test, expect, request } from '@playwright/test';
 const BACKEND = 'http://localhost:3001';
 const FAKE_JID = '5514999990001@s.whatsapp.net';
 
+test.skip(
+  process.env.ZELOCHAT_E2E_BACKEND !== '1',
+  'Requires an isolated backend on localhost:3001. Do not run against the shared production Whatsmiau env.',
+);
+
 // Simulates a Whatsmiau MESSAGES_UPSERT webhook payload (text message)
 function makeWebhookPayload(text: string, jid = FAKE_JID) {
   return {

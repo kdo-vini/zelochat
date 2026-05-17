@@ -895,6 +895,7 @@ export async function sendPresence(
   delayMs = 0,
   empresaId?: string | null,
 ): Promise<void> {
+  if (process.env.ZELOCHAT_DISABLE_WHATSAPP_NETWORK === '1') return;
   try {
     const instance = await resolveInstance(empresaId);
     await axios.post(
@@ -915,6 +916,7 @@ export async function markWhatsAppMessageAsRead(
   messageId: string,
   empresaId?: string | null,
 ): Promise<void> {
+  if (process.env.ZELOCHAT_DISABLE_WHATSAPP_NETWORK === '1') return;
   try {
     const instance = await resolveInstance(empresaId);
     await axios.post(

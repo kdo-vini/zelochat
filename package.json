@@ -12,7 +12,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "npm run test:unit",
+    "test:unit": "tsx tests/run-unit-tests.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",

@@ -6,6 +6,11 @@ import { test, expect, request } from '@playwright/test';
 
 const BACKEND = 'http://localhost:3001';
 
+test.skip(
+  process.env.ZELOCHAT_E2E_BACKEND !== '1',
+  'Requires an isolated backend on localhost:3001. Do not run against the shared production Whatsmiau env.',
+);
+
 function makeWebhookPayload(text: string, jid: string, fromMe = false) {
   return {
     event: 'messages.upsert',

@@ -1979,6 +1979,7 @@ export function buildSystemInstruction(
   const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
   const ownerStylePreferences = buildOwnerStylePreferences(cfg.aiInstructions);
   const tagsBlock = buildTagsBlock(sessionTags ?? []);
+  const safeCustomerProfile = customerProfile ? safeForPrompt(customerProfile, 2000).trim() : '';
 
   const blockedDates = getBlockedDates(empresaId);
   const blockedDatesStr = blockedDates.length > 0
@@ -2161,7 +2162,7 @@ REGRAS DE CÁLCULO PARA PRODUTOS POR UNIDADE — "CENTOS" (MUITO IMPORTANTE):
 HISTÓRICO DESTE CLIENTE (uso interno — NÃO revelar ao cliente):
 ${customerHistory}
 IMPORTANTE: Use o histórico acima APENAS para personalizar o atendimento (ex: sugerir produtos já pedidos). NUNCA informe ao cliente quantos pedidos ele fez, valores anteriores ou qualquer dado do histórico. Essas informações são confidenciais.
-${customerProfile ? `\nPERFIL DESTE CLIENTE (resumo automático — uso interno):\n${customerProfile}\nUse para personalizar tom e sugestões. Não mencione ao cliente que você tem esse perfil.` : ''}
+${safeCustomerProfile ? `\nPERFIL DESTE CLIENTE (resumo automático — uso interno):\n${safeCustomerProfile}\nUse para personalizar tom e sugestões. Não mencione ao cliente que você tem esse perfil.` : ''}
 
 PEDIDOS ATIVOS DESTE CLIENTE (em produção/aguardando retirada/em entrega):
 ${activeOrdersBlock}

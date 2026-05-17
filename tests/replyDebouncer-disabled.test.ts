@@ -4,6 +4,7 @@
 // Run from zelochat/: npx tsx tests/replyDebouncer-disabled.test.ts
 
 process.env.AI_DEBOUNCE_DISABLED = '1';
+process.env.ZELOCHAT_DISABLE_WHATSAPP_NETWORK = '1';
 // These are ignored when disabled, but set them to detect leakage.
 process.env.AI_DEBOUNCE_READ_MS = '50';
 process.env.AI_DEBOUNCE_TYPING_MS = '50';

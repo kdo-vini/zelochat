@@ -227,6 +227,29 @@ function hasContradictionMarker(value: string): boolean {
   return QUALIFIER_PATTERNS.some((re) => re.test(norm));
 }
 
+const CONFIRMATION_FILLER_TOKENS = new Set<string>([
+  'ai',
+  'ae',
+  'aew',
+  'entao',
+  'e',
+  'por',
+  'favor',
+  'pfv',
+  'porfa',
+  'so',
+  'muito',
+  'mesmo',
+  'ta',
+  'tá',
+]);
+
+function hasOnlyConfirmationFillers(tokens: string[], matched: Set<number>): boolean {
+  return tokens
+    .filter((_, idx) => !matched.has(idx))
+    .every((token) => CONFIRMATION_FILLER_TOKENS.has(token));
+}
+
 /**
  * Classifies a customer reply text into a confirmation intent.
  *
@@ -321,6 +344,9 @@ export function classifyConfirmationIntent(
           for (let k = 0; k < len; k++) matched.add(i + k);
         }
       }
+    }
+    if (!hasOnlyConfirmationFillers(tokens, matched)) {
+      return 'unknown';
     }
     if (positive > 0 && negative === 0) {
       if (context.lastAiQuestion === 'observation_or_change' && farewell === positive) {
