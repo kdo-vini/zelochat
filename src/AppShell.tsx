@@ -63,6 +63,7 @@ import { useNotificationSound } from './hooks/useNotificationSound';
 import { useNotifications } from './hooks/useNotifications';
 import { useToast } from './contexts/ToastContext';
 import { SoundUnlockBanner } from './components/shared/SoundUnlockBanner';
+import { BackendOfflineBanner } from './components/shared/BackendOfflineBanner';
 import { apiUrl } from './config';
 import { inferCategoria } from './services/zeloApi';
 import { loadInitialState, saveInitialState } from './services/statePersistence';
@@ -1118,6 +1119,7 @@ export default function AppShell() {
 
       {/* ── Main content ─────────────────────────────────────────── */}
       <div className="relative flex flex-1 flex-col overflow-hidden pb-[64px] md:pb-0">
+        <BackendOfflineBanner />
         {token && (
           <SoundUnlockBanner
             unlocked={sound.unlocked}
