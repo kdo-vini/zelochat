@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-19',
+    category: 'hotfix',
+    title: 'Mensagens manuais voltaram a sair pelo WhatsApp',
+    description: 'Corrigimos o envio feito pelo atendente no chat para que a mensagem só apareça como enviada quando o WhatsApp realmente aceitar o envio.',
+  },
+  {
     date: '2026-05-17',
     category: 'hotfix',
     title: 'IA voltou a responder em todos os horários',

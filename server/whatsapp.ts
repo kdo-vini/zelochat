@@ -150,6 +150,32 @@ function extractWhatsmiauMessageId(data: any): string | undefined {
   ) as string | undefined;
 }
 
+function toWhatsmiauNumber(jidOrPhone: string): string {
+  const localPart = String(jidOrPhone || '').split('@')[0] ?? '';
+  const digits = localPart.replace(/\D/g, '');
+  if (!digits) {
+    throw new Error('Número de WhatsApp inválido para envio.');
+  }
+  if ((digits.length === 10 || digits.length === 11) && !digits.startsWith('55')) {
+    return `55${digits}`;
+  }
+  return digits;
+}
+
+function requireWhatsmiauMessageId(data: any, context: string): string {
+  const id = extractWhatsmiauMessageId(data);
+  if (id) return id;
+
+  const status = data?.status ?? data?.data?.status ?? data?.response?.status;
+  const message =
+    data?.message ??
+    data?.data?.message ??
+    data?.response?.message ??
+    data?.error ??
+    'Whatsmiau aceitou a requisição sem retornar ID da mensagem.';
+  throw new Error(`${context}: ${typeof message === 'string' ? message : JSON.stringify(message)}${status ? ` (status ${status})` : ''}`);
+}
+
 const TUNNEL_URL_FILE = resolve('.tunnel-url');
 let lastRegisteredWebhook = '';
 
@@ -376,10 +402,10 @@ export async function sendTextMessage(
   const normalizedText = normalizeWhatsAppTextFormatting(text);
   const res = await axios.post(
     `${BASE_URL}/message/sendText/${instance}`,
-    { number: jid, text: normalizedText, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
+    { number: toWhatsmiauNumber(jid), text: normalizedText, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
-  const id = extractWhatsmiauMessageId(res.data);
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de texto no Whatsmiau');
   trackSent(id);
   return id;
 }
@@ -403,7 +429,7 @@ export async function sendButtonMessage(
   await axios.post(
     `${BASE_URL}/message/sendButtons/${instance}`,
     {
-      number: jid,
+      number: toWhatsmiauNumber(jid),
       title: normalizeWhatsAppTextFormatting(title),
       description: normalizeWhatsAppTextFormatting(description),
       footer: normalizeWhatsAppTextFormatting(footer),
@@ -437,10 +463,10 @@ export async function sendMediaMessage(
   };
   const res = await axios.post(
     `${BASE_URL}/message/sendMedia/${instance}`,
-    { number: jid, ...normalizedParams, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
+    { number: toWhatsmiauNumber(jid), ...normalizedParams, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
-  const id = extractWhatsmiauMessageId(res.data);
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de mídia no Whatsmiau');
   trackSent(id);
   return id;
 }
@@ -455,10 +481,10 @@ export async function sendWhatsAppAudio(
   const instance = await resolveInstance(empresaId);
   const res = await axios.post(
     `${BASE_URL}/message/sendWhatsAppAudio/${instance}`,
-    { number: jid, audio: audioUrl, encoding: true, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
+    { number: toWhatsmiauNumber(jid), audio: audioUrl, encoding: true, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
-  const id = extractWhatsmiauMessageId(res.data);
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de áudio no Whatsmiau');
   trackSent(id);
   return id;
 }
@@ -472,7 +498,7 @@ export async function sendContactMessage(
   await axios.post(
     `${BASE_URL}/message/sendContact/${instance}`,
     {
-      number: jid,
+      number: toWhatsmiauNumber(jid),
       contact: [{
         fullName: contact.fullName,
         phoneNumber: contact.phoneNumber,
@@ -900,7 +926,7 @@ export async function sendPresence(
     const instance = await resolveInstance(empresaId);
     await axios.post(
       `${BASE_URL}/chat/sendPresence/${instance}`,
-      { number: jid, presence, ...(delayMs > 0 ? { delay: delayMs } : {}) },
+      { number: toWhatsmiauNumber(jid), presence, ...(delayMs > 0 ? { delay: delayMs } : {}) },
       { headers: apiHeaders() },
     );
   } catch (err) {
@@ -966,7 +992,7 @@ export async function sendListMessage(
   const instance = await resolveInstance(empresaId);
   await axios.post(
     `${BASE_URL}/message/sendList/${instance}`,
-    { number: jid, ...params },
+    { number: toWhatsmiauNumber(jid), ...params },
     { headers: apiHeaders() },
   );
 }
@@ -981,7 +1007,7 @@ export async function sendLocationMessage(
   const instance = await resolveInstance(empresaId);
   await axios.post(
     `${BASE_URL}/message/sendLocation/${instance}`,
-    { number: jid, ...params },
+    { number: toWhatsmiauNumber(jid), ...params },
     { headers: apiHeaders() },
   );
 }
@@ -1013,7 +1039,7 @@ export async function sendPollMessage(
   const instance = await resolveInstance(empresaId);
   await axios.post(
     `${BASE_URL}/message/sendPoll/${instance}`,
-    { number: jid, ...params },
+    { number: toWhatsmiauNumber(jid), ...params },
     { headers: apiHeaders() },
   );
 }

@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-15 Sprint 58):** P0/P1 do novo audit em `docs/ai` implementados. Tags agora validam tenant no servidor e ganham enforcement no banco; webhook por instância falha fechado com URL tokenizada; inbox ganhou paginação/filtros no backend e load-more no frontend; envio manual persiste ciclo `sending/sent/failed`; áudio transcrito tarde rearma a resposta da IA quando ainda é o último turno do cliente.
+**Latest execution note (2026-05-19 Sprint 59):** Hotfix de envio manual: chamadas de saída agora mandam telefone em dígitos para o Whatsmiau (não JID completo) e só marcam a bolha como enviada quando a resposta upstream traz ID de mensagem; respostas ambíguas viram `failed` no ciclo `sending/sent/failed`.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,13 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 59 (2026-05-19) - Hotfix envio manual WhatsApp
+
+- Atendimento manual - envios feitos pelo operador agora passam número em dígitos para o Whatsmiau, em vez do JID técnico da conversa, alinhando o payload com o contrato de envio do provedor - `server/whatsapp.ts`
+- Ciclo de envio - texto, mídia e áudio só viram `sent` quando o Whatsmiau retorna um ID real de mensagem; resposta ambígua agora marca a bolha como `failed` e evita falso sucesso visual - `server/whatsapp.ts`, `server/router.ts`
+- Novidades - entrada curta para operador sobre o retorno do envio manual - `src/data/changelog.ts`
+- Verificação - `npx tsx tests/auditFixGuardrails.test.ts`, `npm run lint`, `npx tsc --noEmit -p server/tsconfig.json` e `npm run build` passaram.
 
 ### Sprint 58 (2026-05-15) - P0/P1 do re-audit ZeloChat
 

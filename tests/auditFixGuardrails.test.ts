@@ -40,6 +40,10 @@ assert(router.includes('messageExistsByWhatsAppId'), 'fromMe echo skip checks da
 assert(router.includes('createAssistantMessageIntent'), 'manual sends persist an outbound intent before WhatsApp send');
 assert(router.includes('markAssistantMessageSendFailed'), 'manual send failures are persisted');
 
+const whatsapp = read('server/whatsapp.ts');
+assert(whatsapp.includes('toWhatsmiauNumber(jid)'), 'outbound sends pass phone digits to Whatsmiau instead of full JIDs');
+assert(whatsapp.includes('requireWhatsmiauMessageId(res.data'), 'manual outbound success requires a Whatsmiau message id');
+
 const messageHandler = read('server/messageHandler.ts');
 assert(messageHandler.includes('messageExistsByWhatsAppId'), 'message existence helper exists for outbound echo repair');
 assert(messageHandler.includes("error.code === '23505'"), 'outbound duplicate WhatsApp IDs are idempotent');

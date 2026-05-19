@@ -285,6 +285,7 @@
 - Fixed in Sprint 58: older message pagination is wired into the chat UI on top-scroll.
 - Fixed in Sprint 58: audio transcription completion re-arms the debounced AI reply when the audio remains the latest unanswered customer turn.
 - Fixed in Sprint 58: manual outbound sends persist `sending`/`sent`/`failed` lifecycle state and fromMe echo repair no longer skips missing DB rows.
+- Fixed in Sprint 59: outbound Whatsmiau send payloads use phone digits instead of full JIDs, and text/media/audio helpers require a returned provider message ID before the manual-send lifecycle can mark a message `sent`.
 - Confirmed: AI runtime ignores stock-controlled availability and can be overwritten by stale browser snapshots through `/api/sync-config`.
 - Confirmed: `out_for_delivery` orders are missing from AI active-order context.
 - Confirmed: no persisted prompt/context snapshot exists for supportability; only aggregated AI usage is stored.
