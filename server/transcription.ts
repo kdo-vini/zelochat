@@ -36,11 +36,25 @@ type TranscriptStatus = 'pending' | 'done' | 'failed';
 
 async function persistAndBroadcast(
   params: { empresaId: string; jid: string; messageId: string },
-  patch: { audio_transcript_status: TranscriptStatus; audio_transcript?: string | null },
+  patch: {
+    audio_transcript_status: TranscriptStatus;
+    audio_transcript?: string | null;
+    audio_transcript_error?: string | null;
+  },
 ): Promise<void> {
+  const dbPatch: Record<string, unknown> = {
+    audio_transcript_status: patch.audio_transcript_status,
+    audio_transcript: patch.audio_transcript ?? null,
+  };
+  if (patch.audio_transcript_status === 'failed') {
+    dbPatch.audio_transcript_error = patch.audio_transcript_error ?? null;
+  } else {
+    dbPatch.audio_transcript_error = null;
+  }
+
   const { error } = await getServiceSupabase()
     .from('zelochat_messages')
-    .update(patch)
+    .update(dbPatch)
     .eq('id', params.messageId)
     .eq('empresa_id', params.empresaId);
 
@@ -65,6 +79,18 @@ async function persistAndBroadcast(
   );
 }
 
+function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    const name = err.name && err.name !== 'Error' ? `${err.name}: ` : '';
+    return `${name}${err.message}`.slice(0, 1000);
+  }
+  try {
+    return String(err).slice(0, 1000);
+  } catch {
+    return 'unknown error';
+  }
+}
+
 /**
  * Persist-first, transcribe-async. Never throws — failures land as status='failed'
  * so the webhook handler can fire-and-forget without risking the response.
@@ -81,6 +107,7 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
     await persistAndBroadcast({ empresaId, jid, messageId }, {
       audio_transcript_status: 'failed',
       audio_transcript: null,
+      audio_transcript_error: 'missing audio URL',
     });
     return;
   }
@@ -90,6 +117,7 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
     await persistAndBroadcast({ empresaId, jid, messageId }, {
       audio_transcript_status: 'failed',
       audio_transcript: null,
+      audio_transcript_error: `audio too large: ${sizeBytes} bytes (limit ${MAX_AUDIO_BYTES})`,
     });
     return;
   }
@@ -111,6 +139,7 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
       await persistAndBroadcast({ empresaId, jid, messageId }, {
         audio_transcript_status: 'failed',
         audio_transcript: null,
+        audio_transcript_error: `downloaded audio too large: ${audioBlob.size} bytes (limit ${MAX_AUDIO_BYTES})`,
       });
       return;
     }
@@ -147,6 +176,7 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
     await persistAndBroadcast({ empresaId, jid, messageId }, {
       audio_transcript_status: 'failed',
       audio_transcript: null,
+      audio_transcript_error: describeError(err),
     });
   }
 }
