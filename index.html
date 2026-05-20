@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b9778" />
 
-    <title>ZeloChat — Atendimento com IA no WhatsApp para Lanchonetes</title>
-    <meta name="description" content="ZeloChat é a plataforma de atendimento com IA para WhatsApp. Cadastre seu cardápio, automatize conversas e venda mais. Integra com o Zelo PDV na mesma conta. Ideal para lanchonetes, hamburguerias e deliveries próprios." />
-    <meta name="keywords" content="atendimento whatsapp ia, chatbot whatsapp lanchonete, atendimento automatico whatsapp, whatsapp business ia, zelochat, zelo pdv, sistema lanchonete whatsapp, chatbot delivery, ia para lanchonete, automatizar whatsapp" />
+    <title>ZeloChat — IA atende seu WhatsApp e fecha pedido (com PIX e kanban)</title>
+    <meta name="description" content="IA que atende no WhatsApp, fecha pedido, lê comprovante PIX e organiza tudo num kanban — pra lanchonetes, hamburguerias e deliveries pararem de perder pedido por demora. R$97/mês." />
+    <meta name="keywords" content="atendimento whatsapp ia, chatbot whatsapp lanchonete, ia para whatsapp restaurante, sistema de pedidos por whatsapp, automacao whatsapp delivery, confirmar pix por comprovante, ler comprovante pix com ia, kanban de pedidos delivery, ia para lanchonete, atendimento automatico whatsapp, atender whatsapp 24 horas, zelochat, zelo pdv" />
     <meta name="author" content="Téchne Sistemas" />
     <meta name="robots" content="index, follow" />
     <meta name="geo.region" content="BR" />
@@ -17,8 +17,8 @@
     <!-- Open Graph / Facebook / WhatsApp -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://chat.zelopdv.com.br/" />
-    <meta property="og:title" content="ZeloChat — Atendimento com IA no WhatsApp para Lanchonetes" />
-    <meta property="og:description" content="Cadastre seu cardápio, automatize conversas e venda mais pelo WhatsApp. Integra com o Zelo PDV na mesma conta." />
+    <meta property="og:title" content="ZeloChat — IA atende seu WhatsApp, fecha pedido e confere PIX" />
+    <meta property="og:description" content="IA atende, fecha pedido, lê comprovante PIX e organiza tudo num kanban — sua equipe arrasta e o cliente recebe atualização sozinho. R$97/mês." />
     <meta property="og:image" content="https://chat.zelopdv.com.br/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -29,8 +29,8 @@
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:url" content="https://chat.zelopdv.com.br/" />
-    <meta name="twitter:title" content="ZeloChat — Atendimento com IA no WhatsApp para Lanchonetes" />
-    <meta name="twitter:description" content="Cadastre seu cardápio, automatize conversas e venda mais pelo WhatsApp. Integra com o Zelo PDV na mesma conta." />
+    <meta name="twitter:title" content="ZeloChat — IA atende seu WhatsApp, fecha pedido e confere PIX" />
+    <meta name="twitter:description" content="IA atende, fecha pedido, lê comprovante PIX e organiza tudo num kanban — sua equipe arrasta e o cliente recebe atualização sozinho. R$97/mês." />
     <meta name="twitter:image" content="https://chat.zelopdv.com.br/og-image.png" />
     <meta name="twitter:image:alt" content="ZeloChat — Atendimento com IA no WhatsApp" />
 
@@ -40,7 +40,7 @@
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "ZeloChat",
-      "description": "Plataforma de atendimento com IA para WhatsApp voltada a lanchonetes, hamburguerias e deliveries próprios. Automatiza conversas, recebe pedidos e integra com o Zelo PDV.",
+      "description": "Plataforma de IA para WhatsApp voltada a lanchonetes, hamburguerias, pizzarias e deliveries próprios. A IA atende clientes, fecha pedidos, lê comprovante PIX (imagem ou PDF) e organiza tudo em um kanban com drag-and-drop e atualizações automáticas para o cliente.",
       "url": "https://chat.zelopdv.com.br",
       "image": "https://chat.zelopdv.com.br/og-image.png",
       "applicationCategory": "BusinessApplication",
@@ -48,14 +48,20 @@
       "operatingSystem": "Web",
       "inLanguage": "pt-BR",
       "featureList": [
-        "Atendimento automático pelo WhatsApp com IA",
-        "Cadastro de cardápio e produtos",
-        "Kanban de pedidos em tempo real",
+        "IA atende clientes pelo WhatsApp 24 horas por dia",
+        "IA fecha pedidos end-to-end com cardápio, adicionais e observações",
+        "Leitura automática de comprovante PIX por imagem ou PDF (OCR + IA)",
+        "Identificação de nome e valor no comprovante PIX",
+        "Kanban de pedidos com drag-and-drop (Novo, Em preparo, Pronto, Entregue)",
+        "Atualizações automáticas no WhatsApp a cada mudança de status do pedido",
         "Confirmação de pedidos via botões interativos",
-        "Integração com impressora térmica",
-        "Modo sugestão: IA escreve, operador aprova",
+        "Modo sugestão: IA escreve a resposta, operador aprova antes de enviar",
+        "Cadastro de cardápio, categorias e estoque",
+        "Histórico e resumo por cliente",
+        "Impressão automática na cozinha (impressora térmica USB, sem instalar nada)",
+        "Integração nativa com o Zelo PDV na mesma conta",
         "Respostas rápidas para atendentes humanos",
-        "Integração com Zelo PDV na mesma conta"
+        "Dados isolados por loja, sem compartilhamento entre lojistas"
       ],
       "offers": {
         "@type": "Offer",
@@ -126,6 +132,30 @@
       "mainEntity": [
         {
           "@type": "Question",
+          "name": "A IA realmente dá conta de atender meus clientes?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Dá, e bem. A IA atende 24/7, faz triagem, tira dúvidas de cardápio, horário, preço, formas de pagamento e prazo de entrega, fecha pedido e ainda confere comprovante de PIX — isso já cobre a maioria das mensagens que chegam no WhatsApp da sua loja. Quando aparece uma exceção, uma reclamação ou uma negociação que pede sensibilidade humana, ela passa pra sua equipe com o resumo da conversa pronto."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "A IA lê comprovante PIX em imagem ou PDF?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Sim. O cliente pode mandar print do PIX ou o PDF do comprovante direto pelo WhatsApp. A IA lê o anexo, identifica nome do pagador e valor, e ajuda sua equipe a validar em segundos — sem precisar digitar conferência manual. Você pode configurar a IA pra só confirmar o pedido depois do comprovante chegar."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Como funciona o kanban de pedidos?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Cada pedido confirmado pelo WhatsApp vira um card no kanban — Novo, Em preparo, Pronto e Entregue/Retirado. Sua equipe arrasta o card de coluna conforme avança, e a cada mudança importante o cliente recebe automaticamente uma mensagem no WhatsApp avisando."
+          }
+        },
+        {
+          "@type": "Question",
           "name": "Preciso ter o ZeloPDV para usar o ZeloChat?",
           "acceptedAnswer": {
             "@type": "Answer",
@@ -192,12 +222,71 @@
     }
     </script>
 
+    <!-- Structured Data: HowTo (Do oi ao pedido pronto) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "HowTo",
+      "name": "Como funciona um pedido no ZeloChat — do oi ao pedido pronto",
+      "description": "Fluxo end-to-end de um pedido recebido pelo WhatsApp e processado com IA, leitura de comprovante PIX e kanban operacional.",
+      "totalTime": "PT5M",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "position": 1,
+          "name": "Cliente chama no WhatsApp",
+          "text": "O cliente manda mensagem no WhatsApp da loja. A IA responde em segundos e entende o que ele quer."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 2,
+          "name": "IA tira dúvidas e pega o pedido",
+          "text": "A IA conversa sobre cardápio, preços, adicionais, entrega, retirada e observações, e monta o pedido na conversa."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 3,
+          "name": "Cliente envia o comprovante PIX",
+          "text": "O cliente manda print ou PDF do comprovante. A IA lê o anexo, identifica nome e valor, e confirma o pagamento."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 4,
+          "name": "Pedido cai no kanban",
+          "text": "O pedido confirmado vira um card no kanban. A equipe da loja arrasta entre Novo, Em preparo, Pronto e Entregue."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 5,
+          "name": "Cliente recebe atualizações automáticas",
+          "text": "A cada mudança importante de status, o WhatsApp do cliente recebe automaticamente uma mensagem avisando."
+        }
+      ]
+    }
+    </script>
+
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" />
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap"
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap"
+      />
+    </noscript>
   </head>
   <body>
     <div id="root"></div>

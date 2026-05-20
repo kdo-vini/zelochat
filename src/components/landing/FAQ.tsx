@@ -9,6 +9,21 @@ interface QAItem {
 
 const FAQS: QAItem[] = [
   {
+    q: 'A IA realmente dá conta de atender meus clientes?',
+    a: (
+      <>
+        <strong>Dá, e bem.</strong> A IA atende 24/7, faz triagem, tira dúvidas
+        de cardápio, horário, preço, formas de pagamento e prazo de entrega,{' '}
+        <strong>fecha pedido</strong> e ainda confere comprovante de PIX —
+        isso já cobre a maioria das mensagens que chegam no WhatsApp da sua
+        loja. Quando aparece uma exceção, uma reclamação ou uma negociação que
+        pede sensibilidade humana, ela passa pra sua equipe com o resumo da
+        conversa pronto. <strong>Você fecha mais pedido com a mesma equipe</strong> —
+        sem cliente esperando, sem domingo perdido.
+      </>
+    ),
+  },
+  {
     q: 'Preciso ter o ZeloPDV para usar o ZeloChat?',
     a: (
       <>
@@ -74,17 +89,20 @@ export function FAQ() {
           </span>
 
           <h2 className="mt-4 text-[34px] lg:text-[40px] font-bold tracking-tight text-[#0B1120] leading-[1.15]">
-            Perguntas <span className="text-[#25D366]">frequentes</span>
+            Perguntas que os{' '}
+            <span className="text-[#25D366]">donos sempre fazem</span>
           </h2>
 
           <p className="mt-4 text-[15px] text-[#64748B] leading-relaxed">
-            Tudo que você precisa saber antes de começar a usar.
+            Sem letra miúda. Se você ainda tem dúvida, é só chamar no WhatsApp.
           </p>
         </div>
 
         <div className="mt-12 space-y-3">
           {FAQS.map(({ q, a }, i) => {
             const open = openIndex === i;
+            const panelId = `faq-panel-${i}`;
+            const buttonId = `faq-button-${i}`;
             return (
               <div
                 key={q}
@@ -96,8 +114,10 @@ export function FAQ() {
               >
                 <button
                   type="button"
+                  id={buttonId}
                   onClick={() => toggle(i)}
                   aria-expanded={open}
+                  aria-controls={panelId}
                   className="w-full flex items-center justify-between gap-4 text-left px-5 lg:px-6 py-5"
                 >
                   <span className="text-[15px] lg:text-[16px] font-semibold text-[#0B1120]">
@@ -109,11 +129,15 @@ export function FAQ() {
                         ? 'bg-[#25D366] text-white rotate-45'
                         : 'bg-[#F2F3F8] text-[#0B1120]'
                     }`}
+                    aria-hidden="true"
                   >
                     <Plus className="w-4 h-4" strokeWidth={2.4} />
                   </span>
                 </button>
                 <div
+                  id={panelId}
+                  role="region"
+                  aria-labelledby={buttonId}
                   className={`grid transition-all duration-200 ease-out ${
                     open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                   }`}

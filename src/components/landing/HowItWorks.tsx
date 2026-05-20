@@ -1,37 +1,53 @@
-import { UserPlus, Leaf, Rocket, type LucideIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { ZeloPDVLink } from './ZeloPDVLink';
+import {
+  MessageCircle,
+  Bot,
+  Receipt,
+  LayoutGrid,
+  Bell,
+  type LucideIcon,
+} from 'lucide-react';
 
 interface Step {
   number: number;
   icon: LucideIcon;
   title: string;
-  description: ReactNode;
+  description: string;
 }
 
 const STEPS: Step[] = [
   {
     number: 1,
-    icon: UserPlus,
-    title: 'Crie sua conta',
-    description: (
-      <>
-        Cadastre-se em minutos e configure seu cardápio. Se você já usa o{' '}
-        <ZeloPDVLink className="text-[#25D366] font-medium hover:underline" />, os produtos já aparecem automaticamente.
-      </>
-    ),
+    icon: MessageCircle,
+    title: 'Cliente chama no WhatsApp',
+    description: 'A IA responde em segundos e entende o que ele quer.',
   },
   {
     number: 2,
-    icon: Leaf,
-    title: 'Ative a IA',
-    description: 'A IA aprende com seus dados e já começa a te ajudar.',
+    icon: Bot,
+    title: 'IA tira dúvidas e pega o pedido',
+    description:
+      'Cardápio, preços, adicionais, entrega, retirada e observações.',
   },
   {
     number: 3,
-    icon: Rocket,
-    title: 'Atenda melhor e venda mais',
-    description: 'Responda mais rápido, encante clientes e aumente suas vendas.',
+    icon: Receipt,
+    title: 'Cliente envia o PIX',
+    description:
+      'A IA lê imagem ou PDF do comprovante e identifica valor e nome.',
+  },
+  {
+    number: 4,
+    icon: LayoutGrid,
+    title: 'Pedido cai no kanban',
+    description:
+      'Sua equipe arrasta entre Novo, Em preparo, Pronto e Entregue.',
+  },
+  {
+    number: 5,
+    icon: Bell,
+    title: 'Cliente recebe atualizações',
+    description:
+      'Cada mudança importante dispara mensagem automática no WhatsApp.',
   },
 ];
 
@@ -39,40 +55,47 @@ export function HowItWorks() {
   return (
     <section id="como-funciona" className="bg-[#EEF1F7] py-20 lg:py-24">
       <div className="max-w-[1200px] mx-auto px-6 lg:px-10">
-        <div className="text-center max-w-[700px] mx-auto">
+        <div className="text-center max-w-[760px] mx-auto">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366]/10 border border-[#25D366]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
             <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" />
             Como funciona
           </span>
 
           <h2 className="mt-4 text-[34px] lg:text-[40px] font-bold tracking-tight text-[#0B1120] leading-[1.15]">
-            Em <span className="text-[#25D366]">3 passos</span> você transforma
-            <br />
-            seu atendimento
+            Do <span className="text-[#25D366]">"oi"</span> ao pedido pronto
           </h2>
+          <p className="mt-4 text-[15px] text-[#64748B] leading-relaxed">
+            Cinco etapas. Uma conversa só. Sua equipe foca no que importa:
+            preparar e entregar.
+          </p>
         </div>
 
         <div className="mt-14 relative">
           <div
-            className="hidden md:block absolute top-[36px] left-[14%] right-[14%] border-t-2 border-dashed border-[#25D366]/30"
+            className="hidden lg:block absolute top-[36px] left-[8%] right-[8%] border-t-2 border-dashed border-[#25D366]/30"
             aria-hidden="true"
           />
 
-          <div className="grid md:grid-cols-3 gap-10 relative">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-5 relative">
             {STEPS.map(({ number, icon: Icon, title, description }) => (
-              <div key={number} className="flex flex-col items-center text-center">
+              <div
+                key={number}
+                className="flex flex-col items-center text-center"
+              >
                 <div className="relative">
                   <div className="w-[72px] h-[72px] rounded-full bg-[#0B1120] text-white flex items-center justify-center text-[22px] font-bold shadow-[0_8px_20px_rgba(11,17,32,0.2)]">
                     {number}
                   </div>
                 </div>
 
-                <div className="mt-6 w-[88px] h-[88px] rounded-[28px] bg-[#25D366]/10 border border-[#25D366]/20 flex items-center justify-center">
-                  <Icon className="w-9 h-9 text-[#25D366]" strokeWidth={1.8} />
+                <div className="mt-5 w-[76px] h-[76px] rounded-[24px] bg-[#25D366]/10 border border-[#25D366]/25 flex items-center justify-center">
+                  <Icon className="w-8 h-8 text-[#0B7A3B]" strokeWidth={1.8} />
                 </div>
 
-                <h3 className="mt-5 text-[17px] font-semibold text-[#0B1120]">{title}</h3>
-                <p className="mt-2 text-[13.5px] text-[#64748B] leading-relaxed max-w-[220px]">
+                <h3 className="mt-4 text-[15.5px] font-semibold text-[#0B1120] leading-snug max-w-[200px]">
+                  {title}
+                </h3>
+                <p className="mt-2 text-[13px] text-[#64748B] leading-relaxed max-w-[220px]">
                   {description}
                 </p>
               </div>

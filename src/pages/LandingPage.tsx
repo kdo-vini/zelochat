@@ -9,6 +9,7 @@ import { Testimonials } from '../components/landing/Testimonials';
 import { FAQ } from '../components/landing/FAQ';
 import { BottomCTA } from '../components/landing/BottomCTA';
 import { Footer } from '../components/landing/Footer';
+import { MobileStickyCTA } from '../components/landing/MobileStickyCTA';
 
 export default function LandingPage() {
   useEffect(() => {
@@ -32,6 +33,7 @@ export default function LandingPage() {
         <BottomCTA />
       </main>
       <Footer />
+      <MobileStickyCTA />
     </div>
   );
 }

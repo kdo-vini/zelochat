@@ -18,14 +18,17 @@ Quem já usa o **Zelo PDV** (sistema de frente de caixa) conecta com a mesma con
 
 ## Funcionalidades Principais
 
-- **IA de atendimento no WhatsApp**: responde perguntas dos clientes, recebe pedidos e confirma pagamentos via PIX automaticamente
+- **IA de atendimento no WhatsApp**: responde perguntas dos clientes, recebe pedidos end-to-end e conduz a venda pelo próprio WhatsApp
+- **Leitura de comprovante PIX por IA (OCR)**: cliente manda print ou PDF do PIX, a IA identifica nome do pagador e valor automaticamente; é possível configurar a IA para só confirmar o pedido depois do comprovante chegar
+- **Kanban de pedidos com drag-and-drop**: cards de pedido organizados em colunas (Novo, Em preparo, Pronto, Entregue/Retirado) para balcão e cozinha
+- **Atualizações automáticas no WhatsApp**: cada mudança de status do pedido no kanban dispara mensagem automática para o cliente no WhatsApp
 - **Cardápio no chat**: a IA conhece todos os seus produtos, preços e categorias
 - **Controle total por conversa**: cada atendimento pode ter IA ligada ou desligada individualmente
 - **Modo sugestão**: a IA escreve a resposta, você aprova antes de enviar
 - **Respostas rápidas**: banco de mensagens prontas para os atendentes humanos
-- **Kanban de pedidos**: painel para acompanhar o status de cada pedido em tempo real
 - **Impressão automática**: integração com impressora térmica — pedido confirmado, impressão automática na cozinha
 - **Central de conversas**: todas as conversas do WhatsApp em um único painel organizado
+- **Histórico e resumo por cliente**: cada cliente vira uma ficha (o que perguntou antes, o que comprou, o que reclamou)
 - **Integração com Zelo PDV**: mesma conta, mesmo catálogo — zero duplicação de dados
 
 ## Casos de Uso
@@ -49,7 +52,7 @@ O ZeloChat é um produto complementar ao Zelo PDV. Usuários com o plano Bundle 
 - Banco de dados: Supabase (PostgreSQL)
 - IA: OpenAI GPT-4o-mini via proxy seguro
 - WhatsApp: Whatsmiau (Evolution API v2)
-- Hospedagem: Railway (backend) + Vercel (frontend)
+- Hospedagem: Dokploy (backend + frontend)
 
 ## Contato
 

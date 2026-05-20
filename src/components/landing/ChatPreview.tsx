@@ -1,5 +1,25 @@
 import type { ReactNode } from 'react';
-import { X, Paperclip, Send, MessageCircle } from 'lucide-react';
+import {
+  X,
+  Paperclip,
+  Send,
+  MessageCircle,
+  FileText,
+  CheckCircle2,
+  ArrowRight,
+  Sparkles,
+  Check,
+} from 'lucide-react';
+
+const WHATSAPP_BG = '#EFEAE2';
+const WHATSAPP_USER_BUBBLE = '#D9FDD3';
+const WHATSAPP_BOT_BUBBLE = '#FFFFFF';
+const WHATSAPP_TEXT = '#111B21';
+const WHATSAPP_META = '#667781';
+
+// Subtle WhatsApp doodle pattern as inline SVG (tiled). Kept light to feel native.
+const WHATSAPP_PATTERN =
+  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'><g fill='%23000000' fill-opacity='0.035'><circle cx='15' cy='15' r='1.2'/><circle cx='75' cy='35' r='1.2'/><circle cx='45' cy='85' r='1.2'/><circle cx='100' cy='95' r='1.2'/><circle cx='30' cy='55' r='1.2'/><path d='M88 70c2-3 6-3 8 0' stroke='%23000' stroke-opacity='0.04' stroke-width='1.2' fill='none'/><path d='M10 95c3-2 7-2 10 0' stroke='%23000' stroke-opacity='0.04' stroke-width='1.2' fill='none'/></g></svg>\")";
 
 export function ChatPreview() {
   return (
@@ -13,10 +33,12 @@ export function ChatPreview() {
               <MessageCircle className="w-[18px] h-[18px] text-white" strokeWidth={2.2} />
             </div>
             <div>
-              <p className="text-[13.5px] font-semibold text-white leading-tight">ZeloChat</p>
+              <p className="text-[13.5px] font-semibold text-white leading-tight">
+                Juliana Silva
+              </p>
               <p className="text-[11px] text-[#25D366] leading-tight flex items-center gap-1 mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" />
-                Online
+                <Sparkles className="w-2.5 h-2.5" />
+                IA atendendo
               </p>
             </div>
           </div>
@@ -26,31 +48,82 @@ export function ChatPreview() {
         </div>
 
         <div className="flex">
-          <div className="flex-1 px-4 py-5 space-y-3 min-h-[340px]">
-            <BotBubble text="Olá! Como posso ajudar você hoje?" />
-            <UserBubble text="Quais são as formas de pagamento?" time="09:00" />
-            <BotBubble text="Aceitamos cartões de crédito, débito, PIX e dinheiro. Parcelamos em até 12x no cartão!" time="10:00" />
-            <TypingBubble />
-          </div>
-
-          <aside className="hidden md:flex w-[180px] flex-col border-l border-white/5 bg-[#0B1120] px-3 py-4">
-            <SidecarHeader>Resumo do atendimento</SidecarHeader>
-            <SidecarItem label="Cliente" value="Juliana Silva" />
-            <SidecarItem label="Canal" value="WhatsApp" />
-            <SidecarItem label="Tags" value="Interesse em compra" />
-            <SidecarItem
-              label="Histórico"
-              value={<span className="text-[#25D366]">Ver conversas</span>}
-            />
-            <div className="mt-3 border-t border-white/5 pt-3">
-              <p className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5">Produto sugerido</p>
-              <div className="flex items-center gap-2 rounded-md bg-white/5 p-1.5">
-                <div className="w-8 h-8 rounded bg-gradient-to-br from-[#25D366]/30 to-[#25D366]/10 flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[11px] font-medium text-white leading-tight truncate">Cafeteira Express</p>
-                  <p className="text-[10px] text-[#25D366] mt-0.5">R$ 499,90</p>
+          <div
+            className="flex-1 px-3.5 py-3.5 space-y-1.5"
+            style={{
+              backgroundColor: WHATSAPP_BG,
+              backgroundImage: WHATSAPP_PATTERN,
+            }}
+          >
+            <DateChip>HOJE</DateChip>
+            <UserBubble time="20:12">
+              Boa noite, quero 2 x-salada e uma Coca 2L. Faz entrega?
+            </UserBubble>
+            <BotBubble time="20:12">
+              Boa noite! Fazemos sim 🛵
+              <div className="mt-1.5 rounded-md bg-black/[0.04] border border-black/5 px-2.5 py-2 text-[11.5px] leading-snug">
+                <Row label="2x X-Salada" value="R$ 49,80" />
+                <Row label="1x Coca-Cola 2L" value="R$ 18,10" />
+                <div className="mt-1 pt-1 border-t border-black/10 flex justify-between font-semibold">
+                  <span>Total</span>
+                  <span>R$ 67,90</span>
                 </div>
               </div>
+              <div className="mt-1.5">Pode me enviar o endereço?</div>
+            </BotBubble>
+            <UserBubble time="20:13">
+              Rua das Flores, 120. Vou pagar no PIX.
+            </UserBubble>
+            <BotBubble time="20:13">
+              Perfeito. Pode mandar o comprovante por aqui que eu confiro nome e
+              valor pra você.
+            </BotBubble>
+            <ReceiptBubble />
+            <BotBubble time="20:14" tone="success">
+              <span className="inline-flex items-center gap-1.5 font-medium text-[#0B7A3B]">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Comprovante validado — R$ 67,90
+              </span>
+            </BotBubble>
+          </div>
+
+          <aside className="hidden md:flex w-[200px] flex-col border-l border-white/5 bg-[#0B1120] px-3 py-4">
+            <SidecarHeader>Status do pedido</SidecarHeader>
+            <div className="rounded-md bg-[#25D366]/10 border border-[#25D366]/25 px-2 py-1.5 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#25D366]" />
+              <span className="text-[11px] font-semibold text-[#25D366]">
+                PIX analisado
+              </span>
+            </div>
+
+            <SidecarItem label="Valor identificado" value="R$ 67,90" mt />
+            <SidecarItem label="Cliente" value="Juliana Silva" />
+            <SidecarItem label="Endereço" value="R. das Flores, 120" />
+
+            <div className="mt-3 border-t border-white/5 pt-3">
+              <p className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5">
+                Pedido detectado
+              </p>
+              <div className="rounded-md bg-white/5 border border-white/10 p-2">
+                <p className="text-[11px] text-white leading-snug">
+                  2x X-Salada
+                  <br />
+                  1x Coca-Cola 2L
+                </p>
+                <p className="text-[12px] text-[#25D366] font-semibold mt-1">
+                  R$ 67,90
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 border-t border-white/5 pt-3">
+              <p className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5">
+                Próxima ação
+              </p>
+              <button className="w-full inline-flex items-center justify-between gap-1.5 rounded-md bg-[#25D366] hover:bg-[#1EBE5D] transition-colors px-2 py-1.5 text-[11px] font-semibold text-white">
+                Enviar para preparo
+                <ArrowRight className="w-3 h-3" strokeWidth={2.6} />
+              </button>
             </div>
           </aside>
         </div>
@@ -73,54 +146,123 @@ export function ChatPreview() {
   );
 }
 
-function BotBubble({ text, time }: { text: string; time?: string }) {
+function DateChip({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-end gap-2">
-      <div className="w-6 h-6 rounded-full bg-[#25D366] flex items-center justify-center flex-shrink-0">
-        <MessageCircle className="w-3 h-3 text-white" strokeWidth={2.4} />
-      </div>
-      <div className="max-w-[75%] rounded-2xl rounded-bl-sm bg-white/10 text-white text-[12.5px] px-3 py-2 leading-snug">
-        {text}
-        {time && <div className="text-[10px] text-white/40 mt-0.5 text-right">{time}</div>}
-      </div>
+    <div className="flex justify-center py-1">
+      <span
+        className="text-[10px] font-medium px-2 py-0.5 rounded-md shadow-sm"
+        style={{ backgroundColor: '#FFFFFFCC', color: WHATSAPP_META }}
+      >
+        {children}
+      </span>
     </div>
   );
 }
 
-function UserBubble({ text, time }: { text: string; time?: string }) {
+function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-[#25D366] text-white text-[12.5px] px-3 py-2 leading-snug shadow-[0_1px_2px_rgba(0,0,0,0.2)]">
-        {text}
+    <div className="flex justify-between gap-3">
+      <span style={{ color: WHATSAPP_TEXT }}>{label}</span>
+      <span style={{ color: WHATSAPP_META }}>{value}</span>
+    </div>
+  );
+}
+
+function BotBubble({
+  children,
+  time,
+  tone,
+}: {
+  children: ReactNode;
+  time?: string;
+  tone?: 'success';
+}) {
+  return (
+    <div className="flex">
+      <div
+        className="relative max-w-[82%] rounded-lg rounded-tl-sm px-2.5 py-1.5 text-[12.5px] leading-snug shadow-[0_1px_0.5px_rgba(0,0,0,0.13)]"
+        style={{
+          backgroundColor: tone === 'success' ? '#E7F7EC' : WHATSAPP_BOT_BUBBLE,
+          color: WHATSAPP_TEXT,
+        }}
+      >
+        <div className="pr-10">{children}</div>
         {time && (
-          <div className="text-[10px] text-white/70 mt-0.5 text-right tabular-nums">{time}</div>
+          <span
+            className="absolute bottom-1 right-2 text-[9.5px] tabular-nums"
+            style={{ color: WHATSAPP_META }}
+          >
+            {time}
+          </span>
         )}
       </div>
     </div>
   );
 }
 
-function TypingBubble() {
+function UserBubble({ children, time }: { children: ReactNode; time?: string }) {
   return (
-    <div className="flex items-end gap-2">
-      <div className="w-6 h-6 rounded-full bg-[#25D366] flex items-center justify-center flex-shrink-0">
-        <MessageCircle className="w-3 h-3 text-white" strokeWidth={2.4} />
-      </div>
-      <div className="rounded-2xl rounded-bl-sm bg-white/10 px-3 py-2.5 flex items-center gap-1">
-        <Dot delay={0} />
-        <Dot delay={150} />
-        <Dot delay={300} />
+    <div className="flex justify-end">
+      <div
+        className="relative max-w-[82%] rounded-lg rounded-tr-sm px-2.5 py-1.5 text-[12.5px] leading-snug shadow-[0_1px_0.5px_rgba(0,0,0,0.13)]"
+        style={{ backgroundColor: WHATSAPP_USER_BUBBLE, color: WHATSAPP_TEXT }}
+      >
+        <div className="pr-12">{children}</div>
+        {time && (
+          <span
+            className="absolute bottom-1 right-2 text-[9.5px] tabular-nums inline-flex items-center gap-0.5"
+            style={{ color: WHATSAPP_META }}
+          >
+            {time}
+            <DoubleCheck />
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-function Dot({ delay }: { delay: number }) {
+function DoubleCheck() {
   return (
-    <span
-      className="w-1.5 h-1.5 rounded-full bg-white/70"
-      style={{ animation: `lc-pulse-dot 1.2s ease-in-out ${delay}ms infinite` }}
-    />
+    <span className="relative inline-flex items-center" style={{ color: '#53BDEB' }}>
+      <Check className="w-3 h-3" strokeWidth={2.6} />
+      <Check className="w-3 h-3 -ml-2" strokeWidth={2.6} />
+    </span>
+  );
+}
+
+function ReceiptBubble() {
+  return (
+    <div className="flex justify-end">
+      <div
+        className="relative rounded-lg rounded-tr-sm p-1.5 shadow-[0_1px_0.5px_rgba(0,0,0,0.13)]"
+        style={{ backgroundColor: WHATSAPP_USER_BUBBLE }}
+      >
+        <div className="rounded-md bg-black/[0.04] border border-black/5 px-2.5 py-2 flex items-center gap-2 w-[210px]">
+          <div className="w-9 h-9 rounded-md bg-[#25D366]/15 flex items-center justify-center flex-shrink-0">
+            <FileText className="w-4 h-4 text-[#0B7A3B]" strokeWidth={2.2} />
+          </div>
+          <div className="min-w-0">
+            <p
+              className="text-[11.5px] font-semibold leading-tight truncate"
+              style={{ color: WHATSAPP_TEXT }}
+            >
+              comprovante-pix.pdf
+            </p>
+            <p className="text-[10px] mt-0.5" style={{ color: WHATSAPP_META }}>
+              PDF · 128 KB
+            </p>
+          </div>
+        </div>
+        <div
+          className="text-[9.5px] mt-0.5 mr-1 text-right tabular-nums inline-flex items-center gap-0.5 justify-end w-full"
+          style={{ color: WHATSAPP_META }}
+        >
+          20:14
+          <DoubleCheck />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -133,12 +275,14 @@ function SidecarHeader({ children }: { children: ReactNode }) {
 function SidecarItem({
   label,
   value,
+  mt,
 }: {
   label: string;
   value: ReactNode;
+  mt?: boolean;
 }) {
   return (
-    <div className="py-1.5 border-t border-white/5 first:border-t-0">
+    <div className={`py-1.5 border-t border-white/5 ${mt ? 'mt-2' : ''}`}>
       <p className="text-[10px] text-white/40 uppercase tracking-wide">{label}</p>
       <p className="text-[11.5px] text-white mt-0.5 leading-tight">{value}</p>
     </div>
