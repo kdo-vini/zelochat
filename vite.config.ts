@@ -1,9 +1,28 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+// Resolved once at build time and baked into the bundle. The backend reads the
+// SAME env at process start (server/router.ts → /api/version), so Dokploy
+// deploys both with one PUBLIC_APP_VERSION value (typically a commit SHA) and
+// they match. Without an override, a per-build timestamp guarantees that any
+// rebuild produces a new version string — the polling banner will then notify
+// every open tab. Keep this resolution stable: do NOT call Date.now() inside
+// the response handler, that would make every request look like a new release.
+const buildVersion =
+  process.env.PUBLIC_APP_VERSION ||
+  process.env.VITE_PUBLIC_APP_VERSION ||
+  process.env.SOURCE_COMMIT ||
+  process.env.GIT_COMMIT_SHA ||
+  `${pkg.version}-${Date.now()}`;
+
 export default defineConfig({
+  define: {
+    __ZELO_BUILD_VERSION__: JSON.stringify(buildVersion),
+  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

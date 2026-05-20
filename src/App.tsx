@@ -9,6 +9,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import OAuthCallbackPage from './pages/OAuthCallbackPage';
 import OnboardingPage from './pages/OnboardingPage';
 import AppShell from './AppShell';
+import { UpdateAvailableBanner } from './components/shared/UpdateAvailableBanner';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
           } />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <UpdateAvailableBanner />
         </ToastProvider>
       </AuthProvider>
     </BrowserRouter>

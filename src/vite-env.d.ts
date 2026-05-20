@@ -10,3 +10,5 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+declare const __ZELO_BUILD_VERSION__: string;
+

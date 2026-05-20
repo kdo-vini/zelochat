@@ -83,6 +83,10 @@ app.use(slowRequestLogger);
  */
 const PAYWALL_EXEMPT_EXACT = new Set<string>([
   '/api/healthz',
+  // Build-version probe usado pelo banner "atualização disponível". Precisa
+  // responder mesmo pra empresas com assinatura inativa — caso contrário o
+  // operador na aba aberta não recebe o aviso de redeploy.
+  '/api/version',
   '/api/bind-empresa',
   '/api/status',
   // Onboarding welcome roda ANTES do usuário ter qualquer assinatura — não tem

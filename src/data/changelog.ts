@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-20',
+    category: 'minor',
+    title: 'Aviso quando o ZeloChat for atualizado',
+    description: 'Sempre que lançarmos uma nova versão, um aviso discreto aparece no canto da tela com o botão "Atualizar agora". Assim você sempre roda a versão mais recente sem precisar lembrar de recarregar.',
+  },
+  {
     date: '2026-05-19',
     category: 'hotfix',
     title: 'Mensagens manuais voltaram a sair pelo WhatsApp',

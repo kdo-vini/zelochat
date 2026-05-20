@@ -535,6 +535,8 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpenUp, setMenuOpenUp] = useState(false);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const [dragX, setDragX] = useState(0);
   const touchStartX = useRef<number>(0);
   const dragging = useRef(false);
@@ -552,9 +554,30 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   const deleteMenuButton = isOutgoing && message.waMessageId && onDelete ? (
     <div className="absolute right-1 top-1 z-30">
       <button
+        ref={menuTriggerRef}
         type="button"
         onClick={(event) => {
           event.stopPropagation();
+          if (!menuOpen) {
+            // Measure available space below the trigger within the nearest
+            // scrollable ancestor; flip the menu upward if it would otherwise
+            // be clipped behind the chat scroll bottom / composer.
+            const trigger = menuTriggerRef.current;
+            if (trigger) {
+              const triggerRect = trigger.getBoundingClientRect();
+              let scrollContainer: HTMLElement | null = trigger.parentElement;
+              while (scrollContainer) {
+                const overflowY = window.getComputedStyle(scrollContainer).overflowY;
+                if (overflowY === 'auto' || overflowY === 'scroll') break;
+                scrollContainer = scrollContainer.parentElement;
+              }
+              const containerBottom = scrollContainer
+                ? scrollContainer.getBoundingClientRect().bottom
+                : window.innerHeight;
+              const spaceBelow = containerBottom - triggerRect.bottom;
+              setMenuOpenUp(spaceBelow < 80);
+            }
+          }
           setMenuOpen((open) => !open);
         }}
         disabled={isDeleting}
@@ -575,7 +598,11 @@ const MessageBubbleInner = React.memo(function MessageBubble({
             className="fixed inset-0 z-20 cursor-default"
             onClick={() => setMenuOpen(false)}
           />
-          <div className="absolute right-0 top-7 z-40 w-56 overflow-hidden rounded-lg border border-black/5 bg-white py-1 shadow-lg">
+          <div
+            className={`absolute right-0 z-40 w-56 overflow-hidden rounded-lg border border-black/5 bg-white py-1 shadow-lg ${
+              menuOpenUp ? 'bottom-7' : 'top-7'
+            }`}
+          >
             <button
               type="button"
               onClick={(event) => {

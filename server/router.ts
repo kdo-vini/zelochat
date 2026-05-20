@@ -845,6 +845,32 @@ router.get('/api/healthz', (_req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/version — Returns this backend's build version.
+ *
+ * The frontend polls this and compares against the version baked into its
+ * own bundle. When they differ (Dokploy rolled out a new build), the
+ * UpdateAvailableBanner prompts the operator to refresh. Resolved ONCE at
+ * module load — do NOT compute on every request, that would make the
+ * frontend think every poll is a new release.
+ *
+ * Cache-busted aggressively so a CDN/proxy in front of the API never serves
+ * a stale version string after a deploy.
+ */
+const BUILD_VERSION =
+  process.env.PUBLIC_APP_VERSION ||
+  process.env.VITE_PUBLIC_APP_VERSION ||
+  process.env.SOURCE_COMMIT ||
+  process.env.GIT_COMMIT_SHA ||
+  `dev-${Date.now()}`;
+
+router.get('/api/version', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.json({ version: BUILD_VERSION, checkedAt: new Date().toISOString() });
+});
+
+/**
  * GET /api/status — Returns this empresa's WhatsApp connection status.
  *
  * Multi-tenant: requires auth and queries Whatsmiau for THIS empresa's
