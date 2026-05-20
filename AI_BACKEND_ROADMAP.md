@@ -72,7 +72,7 @@ Usar o bloco "Backlog ativo" abaixo como proxima fila. A proxima fatia recomenda
 
 ## Deferred ate escala multi-replica
 
-Nao fazer enquanto o deploy continuar single-node Railway:
+Nao fazer enquanto o deploy continuar single-node (Dokploy atual, container único):
 
 - P1.16: `recordAiFailure` em memoria.
 - P1.17: estado operacional/cache entre replicas.

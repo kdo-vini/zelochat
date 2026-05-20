@@ -182,10 +182,10 @@ When this happens, recover with:
 ```bash
 curl -X POST "https://api.whatsmiau.dev/webhook/set/Comercial_d3c6ca80" \
   -H "apikey: $WHATSMIAU_API_KEY" -H "Content-Type: application/json" \
-  -d '{"webhook":{"enabled":true,"url":"https://zelochat-production.up.railway.app/webhook","webhookByEvents":false,"webhookBase64":true,"events":["MESSAGES_UPSERT","MESSAGES_UPDATE","MESSAGES_DELETE","CONNECTION_UPDATE","CONTACTS_UPSERT"]}}'
+  -d '{"webhook":{"enabled":true,"url":"https://chat.zelopdv.com.br/webhook","webhookByEvents":false,"webhookBase64":true,"events":["MESSAGES_UPSERT","MESSAGES_UPDATE","MESSAGES_DELETE","CONNECTION_UPDATE","CONTACTS_UPSERT"]}}'
 ```
 
-A Railway redeploy also fixes it (prod re-registers its own URL on startup).
+A Dokploy redeploy also fixes it (prod re-registers its own URL on startup).
 
 **Before running any local dev command that boots the backend** (`npm run dev:server`, `npm run dev:all`, `npx tsx server/index.ts`, integration tests that import `server/whatsapp.ts`):
 
