@@ -13,8 +13,8 @@ export async function getProdutos(params: {
   token: string;
   onlyVisible?: boolean;
 }): Promise<Produto[]> {
-  // Chamamos o proxy no Railway para evitar bloqueio de CORS no browser.
-  // O Railway repassa para https://www.zelopdv.com.br/api/produtos server-to-server.
+  // Chamamos o proxy no backend para evitar bloqueio de CORS no browser.
+  // O backend repassa para https://www.zelopdv.com.br/api/produtos server-to-server.
   const url = new URL(apiUrl('/api/produtos'));
   url.searchParams.set('onlyVisible', String(params.onlyVisible ?? true));
 

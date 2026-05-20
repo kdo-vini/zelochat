@@ -251,7 +251,7 @@ If you change ANY of these three layers, manually walk through the duplicate-ord
 
 The `.env` checked into the repo may point at a production Whatsmiau instance. On startup, `server/whatsapp.ts` calls `setWebhook` (single-tenant) or `setWebhookForInstance` (multi-tenant) with the local server's public URL — in dev that's a Cloudflare tunnel from `scripts/tunnel.js`. This **silently overwrites the production webhook URL on Whatsmiau**, redirecting all real customers' inbound messages to the dev machine. Outbound sends still work (they hit Whatsmiau directly), so the symptom is "app sends but receives nothing in prod" — not an obvious failure.
 
-When this happens, a Railway redeploy fixes it (prod re-registers its own URL on startup with the correct `?token=`).
+When this happens, a Dokploy redeploy of the backend fixes it (prod re-registers its own URL on startup with the correct `?token=`).
 
 **Before running any local dev command that boots the backend** (`npm run dev:server`, `npm run dev:all`, `npx tsx server/index.ts`, integration tests that import `server/whatsapp.ts`):
 
@@ -259,7 +259,7 @@ When this happens, a Railway redeploy fixes it (prod re-registers its own URL on
 - Alternative: use a separate sandbox Whatsmiau instance + API key for dev — do not reuse the prod ones.
 - Alternative: temporarily clear `WHATSMIAU_API_KEY` / `WHATSMIAU_INSTANCE` before booting the local server.
 
-In production (Railway), leave `WHATSMIAU_DISABLE_WEBHOOK_REGISTER` unset (or `0`) so the deploy registers its own webhook URL on startup.
+In production (Dokploy), leave `WHATSMIAU_DISABLE_WEBHOOK_REGISTER` unset (or `0`) so the deploy registers its own webhook URL on startup. Also set `PUBLIC_APP_URL=https://chat.zelopdv.com.br` (or `WEBHOOK_PUBLIC_URL`) so `getPublicWebhookUrl()` resolves to the public domain — without it, the backend falls back to `http://localhost:3001` and Whatsmiau registrations fail.
 
 ## Billing — Stripe paywall (R$97/mês plano `chat`)
 
@@ -271,7 +271,7 @@ ZeloChat compartilha conta Stripe e tabela `subscriptions` com ZeloPDV. Webhook 
 
 Source: `server/billing.ts`. Front: `SubscriptionPaywall` + `BillingManagementCard` em `SettingsView.tsx`. AppShell detecta `?billing=success|canceled|portal-return` e força sync + refresh.
 
-**Env vars no Railway** (backend) — runbook completo em `BILLING.md`:
+**Env vars no Dokploy** (backend) — runbook completo em `BILLING.md`:
 - `STRIPE_SECRET_KEY` (obrigatório, mesma do ZeloPDV)
 - `PUBLIC_APP_URL=https://chat.zelopdv.com.br` (obrigatório, return URLs)
 - `STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE` (obrigatórios; sem fallback hardcoded para evitar usar price de produção em dev)

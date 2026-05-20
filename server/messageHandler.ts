@@ -17,7 +17,7 @@ import {
 // auto-escalated and the customer receives a plain-language explanation.
 //
 // SINGLE-REPLICA CONCERN: this counter is in-memory only. On a horizontally
-// scaled deployment (multiple Railway replicas), each replica keeps its own
+// scaled deployment (multiple replicas), each replica keeps its own
 // counter and the effective threshold becomes N × TRANSCRIPTION_FAILURE_THRESHOLD.
 // Acceptable for the current single-node deployment; if we go multi-replica,
 // migrate to a Redis counter or a Supabase row with row-level locking.
@@ -470,7 +470,7 @@ function resolveCustomerPhone(rows: SessionRow[], fallbackJid: string): string {
 
 function formatClock(value: string | Date): string {
   const date = value instanceof Date ? value : new Date(value);
-  // Always render in Brasília time regardless of where the server runs (Railway/Render
+  // Always render in Brasília time regardless of where the server runs (Dokploy/Render
   // run UTC; local dev runs whatever the OS is set to). Without this pin, deploys
   // shift bubble timestamps by the server's UTC offset.
   return date.toLocaleTimeString('pt-BR', {
@@ -692,7 +692,7 @@ function extractText(msg: any): string | null {
       : '[Mídia recebida não suportada]';
   }
 
-  // P2.17 — log unknown message types so they surface in Railway logs and can be
+  // P2.17 — log unknown message types so they surface in production logs and can be
   // added to the allowlist above when Whatsmiau introduces new payload shapes.
   const unknownMessageType = 'unknown';
   const remoteJid: string = msg.key?.remoteJid ?? 'unknown';
@@ -712,7 +712,7 @@ function extractText(msg: any): string | null {
  */
 // P1.9 — cap em tamanho de mídia entrante. Whatsmiau base64 chega no
 // payload do webhook; sem cap, um vídeo de 50MB vira ~75MB de Buffer no
-// event loop do Node, e múltiplos paralelos = OOM (Railway crash).
+// event loop do Node, e múltiplos paralelos = OOM (container crash).
 // 25MB é generoso pra fotos e áudios normais; vídeos grandes recebem
 // placeholder e o operador é informado via [MÍDIA GRANDE — pedir reenvio].
 const MAX_INBOUND_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -1639,7 +1639,7 @@ export async function getSessionsPage(
   // "recent conversations" list without pulling old chats upward.
   //
   // CHUNKED: heavy tenants can have hundreds of sessions. A single PostgREST
-  // `.in(session_id, [...])` URL can exceed undici/Railway limits and fail
+  // `.in(session_id, [...])` URL can exceed undici limits and fail
   // before Supabase even receives it. Batches keep each URL small and bounded.
   const allSessionIds = rows.map(r => r.id);
   const latestActivityBySessionId = new Map<string, LatestSessionActivity>();

@@ -1,0 +1,17 @@
+node_modules
+dist
+build
+coverage
+.git
+.github
+.DS_Store
+*.log
+.env*
+.vercel
+playwright-report
+test-results
+auth_info_baileys
+.tunnel-url
+docs
+tests
+scripts

@@ -16,7 +16,7 @@ const READ_DELAY_MS = parseInt(process.env.AI_DEBOUNCE_READ_MS || '3000', 10);
 const TYPING_DELAY_MS = parseInt(process.env.AI_DEBOUNCE_TYPING_MS || '3000', 10);
 const REPLY_DELAY_MS = parseInt(process.env.AI_DEBOUNCE_REPLY_MS || '4000', 10);
 
-// Kill switch — set in Railway to revert to legacy single-timer behavior
+// Kill switch — set in prod env to revert to legacy single-timer behavior
 // without a redeploy. When disabled, no read/typing presence is sent; just a
 // 1500ms debounce before fire (matching pre-2026-05 behavior).
 const DEBOUNCE_DISABLED = process.env.AI_DEBOUNCE_DISABLED === '1';

@@ -1,20 +1,34 @@
 /**
  * Central API base URL configuration.
- * - In production (Vercel): uses VITE_API_URL → Railway backend
- * - In dev: same-origin or explicit hostname:3001
+ * - In production (Dokploy, same-origin): no VITE_API_URL needed; uses window.location.origin
+ * - In container/self-hosted production with VITE_API_URL set: routes there
+ * - In dev: explicit hostname:3001
  */
 const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
+const isLocalDevHost =
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.port === '3000';
+
+const originApiBase = window.location.origin.replace(/\/$/, '');
+const directDevApiBase = `http://${window.location.hostname}:3001`;
 
 export const API_BASE: string =
   envUrl && envUrl.length > 0
     ? envUrl
-    : `http://${window.location.hostname}:3001`;
+    : isLocalDevHost
+      ? directDevApiBase
+      : originApiBase;
 
 export const WS_URL: string = (() => {
   if (envUrl) {
     return envUrl.replace(/^http/, 'ws') + '/ws';
   }
-  return `ws://${window.location.hostname}:3001/ws`;
+  if (isLocalDevHost) {
+    return `ws://${window.location.hostname}:3001/ws`;
+  }
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${window.location.host}/ws`;
 })();
 
 /** Prefixes a relative `/api/...` path with the API base. */
@@ -22,7 +36,7 @@ export const apiUrl = (path: string): string =>
   `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 
 /**
- * Thrown when the backend (Railway/WhatsApp server) is unreachable —
+ * Thrown when the backend (Dokploy/WhatsApp server) is unreachable —
  * usually because the server is offline, the domain isn't configured,
  * or CORS is blocking the request.
  */
@@ -41,7 +55,7 @@ export class WaServerOfflineError extends Error {
  * online immediately.
  *
  * Failures here are *transport-level* only (TypeError / network / CORS-block /
- * Railway edge dropping the connection). HTTP 4xx/5xx responses are NOT a
+ * reverse-proxy dropping the connection). HTTP 4xx/5xx responses are NOT a
  * health signal — they mean the backend is alive and is choosing to reject.
  */
 const BACKEND_OFFLINE_THRESHOLD = 3;

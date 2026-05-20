@@ -5,11 +5,11 @@
 ## Arquitetura
 
 ```
-   Browser ──▶ chat.zelopdv.com.br      (Vercel — frontend SPA)
+   Browser ──▶ chat.zelopdv.com.br      (Dokploy — nginx serve SPA + reverse-proxy /api)
                        │
-                       │ /api/billing/{checkout,portal,sync}
+                       │ /api/billing/{checkout,portal,sync}   (same-origin)
                        ▼
-              zelochat-production.up.railway.app   (Railway — backend Express)
+              chat.zelopdv.com.br (backend container — Express)
                        │
                        │ stripe.checkout.sessions.create
                        │ stripe.billingPortal.sessions.create
@@ -34,7 +34,7 @@
 
 ## Variáveis de ambiente
 
-Coloque as quatro obrigatórias no **Railway** (`zelochat-production`):
+Coloque as quatro obrigatórias no **Dokploy** (serviço `zelochat-backend`):
 
 | Variável                                   | Valor                                                    | Obrigatória? |
 | ------------------------------------------ | -------------------------------------------------------- | ------------ |
@@ -44,31 +44,13 @@ Coloque as quatro obrigatórias no **Railway** (`zelochat-production`):
 | `STRIPE_PRICE_BUNDLE`                      | `price_…` do pacote Chat + PDV na conta Stripe correta            | ✅ Sim      |
 | `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`   | `bpc_…` (se quiser portal customizado)                  | ⚪ Não      |
 
-**No Vercel não precisa nada novo** — o frontend só chama `/api/billing/*` no Railway via `VITE_API_URL`, que já está configurado.
+**Frontend (mesmo Dokploy)**: como roda same-origin via nginx, o frontend NÃO precisa de `VITE_API_URL` em build — `src/config.ts` cai automaticamente em `window.location.origin`. Se quiser override (ex.: separar frontend/backend em domínios diferentes), passe `VITE_API_URL` como build-arg no `Dockerfile.frontend`.
 
-## Comandos para subir as envs no Railway (manual, uma vez)
+## Como editar envs no Dokploy
 
-Como o Railway CLI exige login interativo, rode você mesmo:
+Abra o serviço backend no painel Dokploy → aba **Environment** → cole as variáveis no editor (uma por linha, `KEY=value`) e clique em **Save**. Em seguida **Redeploy** para o container pegar os novos valores.
 
-```bash
-# 1. Login (abre o browser)
-railway login
-
-# 2. Conecta ao projeto
-cd C:/Users/Vinicius/Desktop/Code/zelochat/zelochat
-railway link    # selecione o projeto zelochat-production
-
-# 3. Sobe as envs (substitua o sk_live_… pela chave real do ZeloPDV)
-railway variables --set "STRIPE_SECRET_KEY=sk_live_REPLACE_ME"
-railway variables --set "PUBLIC_APP_URL=https://chat.zelopdv.com.br"
-railway variables --set "STRIPE_PRICE_CHAT=price_REPLACE_ME"
-railway variables --set "STRIPE_PRICE_BUNDLE=price_REPLACE_ME"
-
-# 4. Re-deploy para o backend pegar as novas envs
-railway redeploy
-```
-
-Alternativa: abra `https://railway.app/project/.../service/.../variables` e cole no UI — cada uma das três linhas acima vira uma variável no Dashboard.
+Alternativa via SSH na VPS: as envs ficam materializadas no docker-compose gerado pelo Dokploy; nunca edita lá diretamente — o painel sobrescreve.
 
 ## Webhook do Stripe (já está configurado pelo ZeloPDV)
 
@@ -132,4 +114,4 @@ Numa conta de teste:
 6. Cancela no portal → volta → vê "Cancela em DD/MM" ✓
 7. (Opcional) No Stripe Dashboard → cancela imediatamente → vê paywall em ~10s ✓
 
-Se algum passo falhar, cheque logs do Railway (`railway logs --tail`) e Stripe Dashboard → Developers → Events.
+Se algum passo falhar, cheque logs do Dokploy (painel do serviço → aba **Logs** ou `docker logs -f <container>` via SSH) e Stripe Dashboard → Developers → Events.

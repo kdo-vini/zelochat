@@ -215,7 +215,7 @@ export async function createInstance(empresaId: string): Promise<string> {
  *
  * Solução: in-memory promise map. Segunda chamada concorrente await na
  * promise da primeira em vez de criar nova. Multi-node deploys precisariam
- * de Postgres advisory lock — single-node Railway atual é OK com mutex
+ * de Postgres advisory lock — single-node atual é OK com mutex
  * em memória.
  */
 const inFlightInstanceLookups = new Map<string, Promise<string>>();

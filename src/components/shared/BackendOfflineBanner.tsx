@@ -6,7 +6,7 @@ const PROBE_INTERVAL_MS = 15_000;
 
 /**
  * Top-of-screen banner shown when 3+ consecutive backend calls have failed
- * with a network-level error (Railway down, edge dropped the connection,
+ * with a network-level error (backend down, reverse proxy dropped the connection,
  * device offline). Probes `/api/healthz` while shown so it auto-dismisses
  * the moment the backend recovers — no operator action needed.
  *

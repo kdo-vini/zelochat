@@ -20,7 +20,7 @@ import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
 
-// PORT: production platforms (Railway/Render/Fly/Heroku) inject via PORT env var.
+// PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
 const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || '3001', 10);
 
@@ -136,7 +136,7 @@ createWsServer(httpServer);
  * Cap: MAX_AI_REPLIES_PER_WINDOW replies per RATE_LIMIT_WINDOW_MS per contact.
  *
  * SINGLE-REPLICA CONCERN: this state is in-memory only. If the process is
- * horizontally scaled across multiple Railway replicas, each replica keeps its
+ * horizontally scaled across multiple replicas, each replica keeps its
  * own counter and the effective cap becomes N × MAX_AI_REPLIES_PER_WINDOW.
  * Acceptable for the current single-node deployment; if we ever go multi-replica,
  * migrate to a Redis sorted-set or Supabase row with row-level locking.
@@ -295,7 +295,7 @@ httpServer.listen(PORT, () => {
         });
 
         // Watch for tunnel URL changes — re-register the bootstrap instance webhook
-        // when the cloudflared URL rotates (dev) or RAILWAY_PUBLIC_DOMAIN changes.
+        // when the cloudflared URL rotates (dev) or PUBLIC_APP_URL changes.
         let lastKnownUrl = getPublicWebhookUrl();
         setInterval(() => {
           const current = getPublicWebhookUrl();

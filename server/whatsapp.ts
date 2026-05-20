@@ -38,7 +38,7 @@ const API_KEY = process.env.WHATSMIAU_API_KEY || '';
 // Whatsmiau message IDs sent by this server process — used to skip the fromMe
 // webhook echo that Whatsmiau fires for every outbound API send.
 //
-// P1.7 — TTL ampliado de 30s → 10min. Redeploys da Railway demoram ~2-3min
+// P1.7 — TTL ampliado de 30s → 10min. Redeploys demoram ~2-3min
 // e Whatsmiau às vezes atrasa o echo (queue lag). Com 30s, qualquer atraso
 // >30s fazia o echo ser tratado como mensagem orgânica do operador →
 // duplicate row em zelochat_messages.
@@ -191,12 +191,12 @@ function readTunnelUrl(): string | null {
 
 export function getPublicWebhookUrl(): string {
   // Priority:
-  // 1. Explicit WEBHOOK_PUBLIC_URL (manual override)
-  // 2. RAILWAY_PUBLIC_DOMAIN (auto-injected by Railway)
+  // 1. Explicit WEBHOOK_PUBLIC_URL (manual override — set this in Dokploy)
+  // 2. PUBLIC_APP_URL (already used for Stripe return URLs — same domain serves WS)
   // 3. Cloudflared tunnel file (dev)
   // 4. Localhost (dev fallback)
   if (process.env.WEBHOOK_PUBLIC_URL) return process.env.WEBHOOK_PUBLIC_URL.replace(/\/$/, '');
-  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  if (process.env.PUBLIC_APP_URL) return process.env.PUBLIC_APP_URL.replace(/\/$/, '');
   const tunnelUrl = readTunnelUrl();
   if (tunnelUrl) return tunnelUrl.replace(/\/$/, '');
   return 'http://localhost:3001';

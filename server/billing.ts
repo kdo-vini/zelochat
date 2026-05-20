@@ -51,7 +51,7 @@ function stripeObjectId(value: string | { id?: string } | null | undefined): str
 // STRIPE_PRICE_CHAT / STRIPE_PRICE_BUNDLE set would silently use the production
 // price IDs and potentially charge real customers. Keep validation at billing
 // action time (not module load) so a missing Stripe price never takes down
-// WhatsApp/AI or Railway's healthcheck.
+// WhatsApp/AI or the platform's healthcheck.
 //
 // Local dev must set them in .env (use test-mode price IDs from Stripe dashboard).
 function getRequiredStripePrice(name: 'STRIPE_PRICE_CHAT' | 'STRIPE_PRICE_BUNDLE'): string {

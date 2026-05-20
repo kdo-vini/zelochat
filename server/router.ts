@@ -835,9 +835,9 @@ router.post('/api/billing/sync', syncFromStripe);
 router.post('/api/billing/change-plan', changePlan);
 
 /**
- * GET /api/healthz — Always-200 liveness probe. Used by Railway's health
- * checker (railway.json `healthcheckPath`) — must NOT require auth or do
- * any DB / upstream calls so the container can be marked healthy as soon
+ * GET /api/healthz — Always-200 liveness probe. Used by Dokploy's healthcheck
+ * (and any other platform via Dockerfile HEALTHCHECK) — must NOT require auth
+ * or do any DB / upstream calls so the container can be marked healthy as soon
  * as it can answer HTTP.
  */
 router.get('/api/healthz', (_req: Request, res: Response) => {
@@ -2346,7 +2346,7 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
 // endpoint Whatsmiau como enumerador grátis de telefones em WhatsApp.
 // Limite agora: 200 números/empresa/hora. Sliding window simples em
 // memória; multi-node deploy precisaria de Redis, mas single-replica
-// Railway atual é OK.
+// atual é OK.
 const validateNumbersUsage = new Map<string, { count: number; resetAt: number }>();
 const VALIDATE_NUMBERS_HOURLY_CAP = 200;
 const VALIDATE_NUMBERS_WINDOW_MS = 60 * 60 * 1000;
@@ -2505,7 +2505,7 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
 // `/api/cron/onboarding-followup` — Bearer CRON_SECRET, gatilho manual da
 // rotina diária (Day 3, 7, 14, 21, 28). O loop in-process já roda automático
 // via startOnboardingFollowupLoop(); essa rota existe pra debugging e pra
-// permitir cron externo se um dia trocarmos de Railway pra outra plataforma.
+// permitir cron externo se um dia precisarmos.
 
 router.post('/api/onboarding/welcome', async (req: Request, res: Response) => {
   try {
