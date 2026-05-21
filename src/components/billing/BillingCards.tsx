@@ -20,7 +20,7 @@ interface PixModalProps {
 }
 
 export const PixPaymentModal = ({ open, onClose, token, initialPlan, hasPdvOnly, onSuccess }: PixModalProps) => {
-  const [step, setStep] = useState<PixStep>(initialPlan ? 'qr' : 'plan');
+  const [step, setStep] = useState<PixStep>('plan');
   const [selectedPlan, setSelectedPlan] = useState<'chat' | 'bundle'>(initialPlan ?? 'chat');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export const PixPaymentModal = ({ open, onClose, token, initialPlan, hasPdvOnly,
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const reset = useCallback(() => {
-    setStep(initialPlan ? 'qr' : 'plan');
+    setStep('plan');
     setSelectedPlan(initialPlan ?? 'chat');
     setLoading(false);
     setError(null);
