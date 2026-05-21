@@ -6,7 +6,7 @@ function getApiKey(): string {
   return key;
 }
 
-function buildUrl(path: string, searchParams?: Record<string, string>): string {
+export function buildUrl(path: string, searchParams?: Record<string, string>): string {
   const base = process.env.ABACATEPAY_BASE_URL ?? 'https://api.abacatepay.com/v2';
   const normalizedBase = base.endsWith('/') ? base : `${base}/`;
   const url = new URL(path, normalizedBase);
@@ -114,7 +114,7 @@ export async function createPixCharge(opts: PixChargeOpts): Promise<PixChargeRes
 
 type UpstreamStatus = 'PENDING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
 
-const STATUS_MAP: Record<string, UpstreamStatus> = {
+export const STATUS_MAP: Record<string, UpstreamStatus> = {
   ACTIVE: 'PENDING',
   PENDING: 'PENDING',
   PAID: 'COMPLETED',

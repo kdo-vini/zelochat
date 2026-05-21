@@ -14,7 +14,7 @@ function getPlanPrice(planTier: 'chat' | 'bundle'): number {
   return parseInt(raw, 10) / 100;
 }
 
-function safeEqualStr(a: string, b: string): boolean {
+export function safeEqualStr(a: string, b: string): boolean {
   const aBuf = Buffer.from(a);
   const bBuf = Buffer.from(b);
   if (aBuf.length !== bBuf.length) return false;
@@ -241,7 +241,7 @@ export async function handleAbacatePayWebhook(req: Request, res: Response): Prom
   }
 }
 
-function extractTransparentId(payload: Record<string, unknown>): string | undefined {
+export function extractTransparentId(payload: Record<string, unknown>): string | undefined {
   const transparent = (payload.data as { transparent?: { id?: string } } | undefined)?.transparent;
   return (
     transparent?.id ??

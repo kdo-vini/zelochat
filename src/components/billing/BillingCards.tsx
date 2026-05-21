@@ -124,7 +124,7 @@ export const PixPaymentModal = ({ open, onClose, token, initialPlan, hasPdvOnly,
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full sm:max-w-sm bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 sm:p-6 mx-0 sm:mx-4">
+      <div className="relative z-10 w-full sm:max-w-sm bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 sm:p-6 mx-0 sm:mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full bg-green-50 flex items-center justify-center">

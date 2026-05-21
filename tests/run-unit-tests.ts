@@ -20,6 +20,7 @@ const tests = [
   'tests/aiToolPlan.test.ts',
   'tests/aiPromptGuardrails.test.ts',
   'tests/routerWebhookGuardrails.test.ts',
+  'tests/billingPix.test.ts',
 ];
 
 if (!existsSync(tsxCli)) {
