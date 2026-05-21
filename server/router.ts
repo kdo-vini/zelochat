@@ -852,7 +852,7 @@ router.post('/api/webhooks/abacatepay', handleAbacatePayWebhook);
  * as it can answer HTTP.
  */
 router.get('/api/healthz', (_req: Request, res: Response) => {
-  res.json({ ok: true });
+  res.json({ ok: true, build: 'pix-v1' });
 });
 
 /**
