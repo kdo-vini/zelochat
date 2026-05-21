@@ -113,6 +113,16 @@ function nextOrderStatus(status: Order['status']): Order['status'] {
   return 'delivered';
 }
 
+function orderStatusBadge(status: Order['status']): { label: string; bg: string; color: string } {
+  switch (status) {
+    case 'pending':          return { label: 'Aguardando preparo', bg: '#fef3c7', color: '#92400e' };
+    case 'preparing':        return { label: 'Em preparo',         bg: '#dbeafe', color: '#1e40af' };
+    case 'ready':            return { label: 'Pronto',             bg: '#d1fae5', color: '#065f46' };
+    case 'out_for_delivery': return { label: 'Saiu p/ entrega',    bg: '#ede9fe', color: '#5b21b6' };
+    case 'delivered':        return { label: 'Entregue',           bg: '#f3f4f6', color: '#6b7280' };
+  }
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2091,7 +2101,6 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                             isDeleting={deletingMessageId === message.id}
                             onOpenOrder={onOpenOrder}
                             onReply={message.waMessageId ? setReplyingTo : undefined}
-                            isAiMessage={message.role === 'assistant'}
                           />
                         </motion.div>
                       );
@@ -2117,6 +2126,39 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                   )}
                 </AnimatePresence>
               </div>
+
+              {/* Order action strip — always visible, primary CTA on mobile */}
+              {activeDetectedOrder && (
+                <div className="flex-shrink-0 border-t border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 flex items-center gap-2">
+                  {(() => {
+                    const badge = orderStatusBadge(activeDetectedOrder.status);
+                    return (
+                      <span
+                        className="flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                        style={{ backgroundColor: badge.bg, color: badge.color }}
+                      >
+                        {badge.label}
+                      </span>
+                    );
+                  })()}
+                  <span className="text-[12px] text-[var(--color-ink-faint)] truncate flex-1">
+                    {activeDetectedOrder.items.length === 1
+                      ? `${activeDetectedOrder.items[0].quantity}× ${activeDetectedOrder.items[0].product}`
+                      : `${activeDetectedOrder.items.length} itens`}
+                    {' '}· R$ {activeDetectedOrder.total.toFixed(2).replace('.', ',')}
+                  </span>
+                  {activeDetectedOrder.status !== 'delivered' && (
+                    <button
+                      type="button"
+                      onClick={() => handleAdvanceOrderStatus(activeDetectedOrder)}
+                      className="flex-shrink-0 flex items-center gap-1 rounded-lg bg-[var(--color-brand)] px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-[var(--color-brand-deep)] transition-colors"
+                    >
+                      {nextOrderActionLabel(activeDetectedOrder.status)}
+                      <ArrowRight className="w-3 h-3" strokeWidth={2.5} />
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Input bar */}
               <div className="relative flex-shrink-0 bg-[var(--color-wa-panel)]/80 backdrop-blur-sm border-t border-[var(--color-line)] p-3">
