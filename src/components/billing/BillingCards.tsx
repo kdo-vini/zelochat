@@ -223,7 +223,7 @@ export const PixPaymentModal = ({ open, onClose, token, initialPlan, hasPdvOnly,
             {pixQrCode && !expired ? (
               <div className="flex justify-center">
                 <img
-                  src={`data:image/png;base64,${pixQrCode}`}
+                  src={pixQrCode.startsWith('data:') ? pixQrCode : `data:image/png;base64,${pixQrCode}`}
                   alt="QR Code Pix"
                   className="w-44 h-44 rounded-xl border border-[var(--color-line)]"
                 />
