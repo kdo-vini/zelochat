@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-21',
+    category: 'big',
+    title: 'Pagamento da assinatura por Pix',
+    description: 'Agora dá pra pagar a mensalidade do ZeloChat por Pix, além do cartão. Em Configurações, escolha o plano, gere o QR Code (ou use o copia-e-cola) e o acesso é liberado na hora assim que o pagamento cai. Sem precisar de cartão de crédito.',
+  },
+  {
+    date: '2026-05-21',
     category: 'medium',
     title: 'Painel do pedido direto na conversa',
     description: 'Ao abrir uma conversa, o painel lateral agora mostra o pedido em andamento do cliente: itens, total, endereço e se o PIX foi validado. Dá pra avançar o pedido pro preparo (ou marcar como pronto, saiu pra entrega, entregue) sem precisar abrir o Kanban. Também exibe quantos pedidos o cliente já fez e o ticket médio.',
