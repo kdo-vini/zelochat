@@ -1188,6 +1188,9 @@ export default function AppShell() {
             onOpenOrder={handleOpenOrderFromChat}
             escalationRefetchKey={lastEscalation?.event.id ?? null}
             lastTagsUpdate={lastTagsUpdate}
+            orders={state.orders}
+            onUpdateOrderStatus={updateOrderStatus}
+            empresaName={empresa?.nome_exibicao}
           />
         ) : (
           /* ── Other views (lazy-loaded) ──────────────────────────── */

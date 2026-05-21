@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Archive,
   ArrowLeft,
+  ArrowRight,
   Bot,
   Calendar,
   Check,
@@ -22,6 +23,7 @@ import {
   Phone,
   Pin,
   PinOff,
+  Printer,
   Plus,
   Search,
   Send,
@@ -40,6 +42,7 @@ import {
   formatDateSeparatorLabel,
   startOfDayKey,
   normalizePhoneNumber,
+  buildContactKey,
   maskBrazilianPhone,
   maskTime24h,
 } from '../../domain/chat';
@@ -51,6 +54,7 @@ import {
   type ManualOrderDraftSuggestion,
 } from '../../services/openaiService';
 import type { ChatAttachment, ChatListFilter, ChatMessage, ChatSession, Order, QuickResponse, Tag } from '../../types';
+import { useCustomerStats } from '../../hooks/useCustomerStats';
 import { useTags } from '../../hooks/useTags';
 import { getSessionTagsMap, applyTagToSession, removeTagFromSession } from '../../services/waApi';
 import { MessageBubble } from './MessageBubble';
@@ -84,6 +88,29 @@ function formatAttachmentSize(sizeBytes?: number): string {
   if (!sizeBytes) return 'Arquivo';
   if (sizeBytes < 1024 * 1024) return `${Math.max(sizeBytes / 1024, 1).toFixed(0)} KB`;
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function escHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function nextOrderActionLabel(status: Order['status']): string {
+  if (status === 'pending') return 'Enviar para preparo';
+  if (status === 'preparing') return 'Marcar como pronto';
+  if (status === 'ready') return 'Saiu para entrega';
+  if (status === 'out_for_delivery') return 'Marcar como entregue';
+  return 'Avançar';
+}
+
+function nextOrderStatus(status: Order['status']): Order['status'] {
+  if (status === 'pending') return 'preparing';
+  if (status === 'preparing') return 'ready';
+  if (status === 'ready') return 'out_for_delivery';
+  return 'delivered';
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -476,6 +503,9 @@ export interface ChatViewProps {
   escalationRefetchKey?: string | number | null;
   /** Last session_tags_updated WS event — used to sync sessionTagsMap in real time. */
   lastTagsUpdate?: { sessionId: string; tags: { id: string; name: string; color: string; aiInstructions: string | null; empresaId: string; createdAt: string }[]; ts: number } | null;
+  orders?: Order[];
+  onUpdateOrderStatus?: (id: string, status: Order['status']) => void;
+  empresaName?: string;
 }
 
 /* ─── Component ───────────────────────────────────────────────── */
@@ -513,6 +543,9 @@ export function ChatView({
   onOpenOrder,
   escalationRefetchKey,
   lastTagsUpdate,
+  orders = [],
+  onUpdateOrderStatus,
+  empresaName,
 }: ChatViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [ownerInput, setOwnerInput] = useState('');
@@ -726,6 +759,19 @@ export function ChatView({
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   );
+
+  const { stats: activeCustomerStats } = useCustomerStats(activeSession?.customerPhone);
+
+  const activeDetectedOrder = useMemo(() => {
+    if (!activeSession?.customerPhone || !orders.length) return null;
+    const sessionKey = buildContactKey(activeSession.customerPhone);
+    return orders
+      .filter(o =>
+        ['pending', 'preparing', 'ready', 'out_for_delivery'].includes(o.status) &&
+        buildContactKey(o.customerPhone) === sessionKey,
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null;
+  }, [activeSession?.customerPhone, orders]);
 
   const filteredSessions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1075,6 +1121,43 @@ export function ChatView({
       await escalateManually(activeSession.id);
     } catch (err) {
       setChatActionError(err instanceof Error ? err.message : 'Falha ao escalar conversa.');
+    }
+  };
+
+  const handleAdvanceOrderStatus = (order: Order) => {
+    if (!onUpdateOrderStatus || order.status === 'delivered') return;
+    onUpdateOrderStatus(order.id, nextOrderStatus(order.status));
+  };
+
+  const handlePrintTicket = (order: Order) => {
+    const date = new Date(order.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const itemsHtml = order.items
+      .map(item => `<p>${item.quantity}&times; ${escHtml(item.product)}</p>`)
+      .join('');
+    const content = `<html><head><meta charset="utf-8"><style>
+body{font-family:monospace;width:280px;margin:0;padding:8px}
+h2{text-align:center;font-size:14px;margin:0 0 4px}
+p{margin:2px 0;font-size:12px}
+.line{border-top:1px dashed #000;margin:6px 0}
+.row{display:flex;justify-content:space-between}
+.total{font-weight:bold;font-size:14px}
+</style></head><body>
+<h2>${escHtml(empresaName ?? 'Pedido')}</h2>
+<p style="text-align:center;font-size:11px">${escHtml(date)}</p>
+<div class="line"></div>
+${itemsHtml}
+<div class="line"></div>
+<div class="row total"><span>TOTAL</span><span>R$ ${order.total.toFixed(2).replace('.', ',')}</span></div>
+${order.paymentMethod ? `<p>Pagamento: ${escHtml(order.paymentMethod)}</p>` : ''}
+${order.deliveryAddress ? `<p>Endere&ccedil;o: ${escHtml(order.deliveryAddress)}</p>` : ''}
+${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
+</body></html>`;
+    const win = window.open('', '_blank', 'width=320,height=500');
+    if (win) {
+      win.document.write(content);
+      win.document.close();
+      win.print();
+      win.close();
     }
   };
 
@@ -2008,6 +2091,7 @@ export function ChatView({
                             isDeleting={deletingMessageId === message.id}
                             onOpenOrder={onOpenOrder}
                             onReply={message.waMessageId ? setReplyingTo : undefined}
+                            isAiMessage={message.role === 'assistant'}
                           />
                         </motion.div>
                       );
@@ -2500,6 +2584,93 @@ export function ChatView({
                 </div>
               )}
             </div>
+
+            {/* Customer stats */}
+            {activeCustomerStats && activeCustomerStats.orderCount > 0 && (
+              <div className="px-4 py-3 border-b border-[var(--color-line)]">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2 text-center">
+                    <p className="text-[18px] font-bold text-[var(--color-ink)]">{activeCustomerStats.orderCount}</p>
+                    <p className="text-[10px] text-[var(--color-ink-faint)] mt-0.5">pedidos</p>
+                  </div>
+                  <div className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2 text-center">
+                    <p className="text-[18px] font-bold text-[var(--color-ink)]">
+                      R${activeCustomerStats.avgTicket.toFixed(0)}
+                    </p>
+                    <p className="text-[10px] text-[var(--color-ink-faint)] mt-0.5">ticket médio</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Pedido detectado */}
+            {activeDetectedOrder && (
+              <>
+                <div className="px-4 py-3 border-b border-[var(--color-line)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)] mb-2">Pedido detectado</p>
+                  <div className="flex flex-col gap-0.5 mb-2">
+                    {activeDetectedOrder.items.map((item, i) => (
+                      <div key={i} className="flex items-baseline justify-between text-[12.5px]">
+                        <span className="text-[var(--color-ink)]">{item.quantity}× {item.product}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between border-t border-[var(--color-line)] pt-1.5">
+                    <span className="text-[12px] font-semibold text-[var(--color-brand-deep)]">Total</span>
+                    <span className="text-[14px] font-bold text-[var(--color-brand-deep)]">
+                      R$ {activeDetectedOrder.total.toFixed(2).replace('.', ',')}
+                    </span>
+                  </div>
+                  {activeDetectedOrder.deliveryAddress && (
+                    <div className="flex items-center gap-1.5 mt-2 text-[12px] text-[var(--color-ink-muted)]">
+                      <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+                      <span className="truncate">{activeDetectedOrder.deliveryAddress}</span>
+                    </div>
+                  )}
+                  {activeDetectedOrder.paymentMethod && (
+                    <div className="mt-2">
+                      {activeDetectedOrder.paymentMethod.toLowerCase().includes('pix') ? (
+                        activeDetectedOrder.pixReceiptApproved ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[#d1fae5] px-2 py-0.5 text-[11px] font-semibold text-[#065f46]">
+                            <Check className="w-3 h-3" strokeWidth={2.5} /> PIX validado
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--color-ink-muted)]">
+                            PIX pendente
+                          </span>
+                        )
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--color-ink-muted)]">
+                          {activeDetectedOrder.paymentMethod}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Próxima ação */}
+                <div className="px-4 py-3 border-b border-[var(--color-line)] flex flex-col gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)]">Próxima ação</p>
+                  {activeDetectedOrder.status !== 'delivered' && (
+                    <button
+                      type="button"
+                      onClick={() => handleAdvanceOrderStatus(activeDetectedOrder)}
+                      className="flex items-center justify-center gap-1.5 w-full rounded-xl bg-[var(--color-brand)] px-3 py-2.5 text-[13px] font-semibold text-white hover:bg-[var(--color-brand-deep)] transition-colors"
+                    >
+                      {nextOrderActionLabel(activeDetectedOrder.status)}
+                      <ArrowRight className="w-3.5 h-3.5" strokeWidth={2} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handlePrintTicket(activeDetectedOrder)}
+                    className="flex items-center justify-center gap-1.5 w-full rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] transition-colors"
+                  >
+                    <Printer className="w-3.5 h-3.5" strokeWidth={1.8} /> Imprimir ticket
+                  </button>
+                </div>
+              </>
+            )}
 
             {/* Tags section in details panel */}
             <div className="px-4 py-3 border-b border-[var(--color-line)]">

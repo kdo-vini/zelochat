@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-21',
+    category: 'medium',
+    title: 'Painel do pedido direto na conversa',
+    description: 'Ao abrir uma conversa, o painel lateral agora mostra o pedido em andamento do cliente: itens, total, endereço e se o PIX foi validado. Dá pra avançar o pedido pro preparo (ou marcar como pronto, saiu pra entrega, entregue) sem precisar abrir o Kanban. Também exibe quantos pedidos o cliente já fez e o ticket médio.',
+  },
+  {
     date: '2026-05-20',
     category: 'minor',
     title: 'Aviso quando o ZeloChat for atualizado',

@@ -517,6 +517,7 @@ export interface MessageBubbleProps {
   isDeleting?: boolean;
   onOpenOrder?: (request: OrderFocusRequest) => void;
   onReply?: (message: ChatMessage) => void;
+  isAiMessage?: boolean;
 }
 
 const DRAG_THRESHOLD = 60;
@@ -531,6 +532,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   isDeleting = false,
   onOpenOrder,
   onReply,
+  isAiMessage = false,
 }: MessageBubbleProps) {
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
@@ -930,6 +932,11 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           <div style={{
             padding: message.kind === 'text' ? '6px 7px 8px 9px' : '3px 7px 8px 9px',
           }}>
+            {isAiMessage && (
+              <span className="flex items-center gap-0.5 text-[10px] font-semibold text-[#2d7a52] mb-1 select-none">
+                <Sparkles className="w-2.5 h-2.5" strokeWidth={2} /> IA
+              </span>
+            )}
             {message.quotedPreview && (
               <QuotedPreview
                 preview={message.quotedPreview}

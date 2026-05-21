@@ -169,6 +169,7 @@ export interface Order {
   status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered';
   total: number;
   createdAt: string;
+  pixReceiptApproved?: boolean;
 }
 
 export interface QuickResponse {

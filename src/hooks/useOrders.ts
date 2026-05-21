@@ -11,7 +11,7 @@ type NewOrder = Omit<Order, 'id' | 'createdAt'>;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const ORDER_LOOKBACK_DAYS = 14;
 const ORDER_LIST_LIMIT = 1000;
-const ORDER_COLUMNS = 'id, customer_name, customer_phone, items, pickup_date, pickup_time, delivery_address, driver_id, payment_method, observations, status, total, created_at';
+const ORDER_COLUMNS = 'id, customer_name, customer_phone, items, pickup_date, pickup_time, delivery_address, driver_id, payment_method, observations, status, total, created_at, pix_receipt_analysis';
 
 function saoPauloDateKey(offsetDays = 0): string {
   const date = new Date(Date.now() + offsetDays * MS_PER_DAY);
@@ -39,9 +39,10 @@ function rowToOrder(row: Record<string, unknown>): Order {
     driverId:        (row.driver_id as string | null) ?? undefined,
     paymentMethod:   (row.payment_method as string | null) ?? undefined,
     observations:    (row.observations as string | null) ?? undefined,
-    status:          row.status as Order['status'],
-    total:           Number(row.total),
-    createdAt:       row.created_at as string,
+    status:              row.status as Order['status'],
+    total:               Number(row.total),
+    createdAt:           row.created_at as string,
+    pixReceiptApproved:  row.pix_receipt_analysis != null,
   };
 }
 
