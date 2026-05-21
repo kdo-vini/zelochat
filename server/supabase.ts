@@ -340,6 +340,10 @@ export function getBoundEmpresaId(): string | null {
   return boundEmpresaId;
 }
 
+export function invalidateSubscriptionCache(userId: string): void {
+  subscriptionCache.delete(userId);
+}
+
 /**
  * Uploads received media (incoming messages) to Supabase Storage.
  *

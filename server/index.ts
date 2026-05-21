@@ -50,13 +50,17 @@ app.use(cors({
 // - /api/ai/complete (512kb for chat history payloads)
 // - /webhook/* (Whatsmiau media arrives as base64 JSON; messageHandler enforces
 //   the real decoded-media cap before persistence)
+// - /api/webhooks/abacatepay (raw body required for HMAC-SHA256 verification;
+//   must be parsed BEFORE the global json() middleware so the Buffer is preserved)
 // Without these skips, the global parser consumes/rejects the body before the
 // per-route override can run.
+app.use('/api/webhooks/abacatepay', express.raw({ type: '*/*' }));
 app.use((req, res, next) => {
   if (req.path === '/api/send' || req.path === '/api/ai/complete') return next();
   if (req.path === '/webhook' || req.path.startsWith('/webhook/')) {
     return express.json({ limit: '40mb' })(req, res, next);
   }
+  if (req.path === '/api/webhooks/abacatepay') return next(); // already parsed above
   return express.json({ limit: '100kb' })(req, res, next);
 });
 
@@ -96,7 +100,7 @@ const PAYWALL_EXEMPT_EXACT = new Set<string>([
   // Cron interno autenticado por CRON_SECRET, não usa JWT de empresa.
   '/api/cron/onboarding-followup',
 ]);
-const PAYWALL_EXEMPT_PREFIXES = ['/api/billing/'];
+const PAYWALL_EXEMPT_PREFIXES = ['/api/billing/', '/api/webhooks/'];
 
 app.use(async (req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();

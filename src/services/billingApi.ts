@@ -88,3 +88,62 @@ export async function startCheckout(
 export async function openPortal(token: string): Promise<PortalResult> {
   return callBilling<PortalResult>('portal', token);
 }
+
+export interface PixChargeResponse {
+  paymentId: string;
+  pixCopyPaste: string;
+  pixQrCode: string;
+  amount: number;
+  expiresAt: string;
+}
+
+export interface PixStatusResponse {
+  status: 'pending' | 'completed' | 'failed' | 'expired';
+  pixCopyPaste?: string;
+  expiresAt?: string;
+}
+
+export async function createPixCharge(
+  token: string,
+  planTier: 'chat' | 'bundle',
+): Promise<PixChargeResponse> {
+  let response: Response;
+  try {
+    response = await apiFetch(apiUrl('/api/billing/pix/create'), {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ planTier }),
+    });
+  } catch (err) {
+    if (err instanceof WaServerOfflineError) throw new BillingError(err.message);
+    throw new BillingError('Falha ao conectar no servidor. Tente novamente.');
+  }
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    const e = data as { error?: string; code?: string };
+    throw new BillingError(e.error || `HTTP ${response.status}`, { code: e.code, status: response.status });
+  }
+  return data as unknown as PixChargeResponse;
+}
+
+export async function getPixStatus(
+  token: string,
+  paymentId: string,
+): Promise<PixStatusResponse> {
+  let response: Response;
+  try {
+    response = await apiFetch(apiUrl(`/api/billing/pix/status/${encodeURIComponent(paymentId)}`), {
+      method: 'GET',
+      headers: authHeaders(token),
+    });
+  } catch (err) {
+    if (err instanceof WaServerOfflineError) throw new BillingError(err.message);
+    throw new BillingError('Falha ao conectar no servidor. Tente novamente.');
+  }
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    const e = data as { error?: string };
+    throw new BillingError(e.error || `HTTP ${response.status}`, { status: response.status });
+  }
+  return data as unknown as PixStatusResponse;
+}

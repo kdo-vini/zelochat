@@ -107,6 +107,7 @@ import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscri
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
 import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
+import { handleCreatePixCharge, handleGetPixStatus, handleAbacatePayWebhook } from './billingPix.js';
 import { cancelPendingReply } from './replyDebouncer.js';
 import type { ChatAttachment } from '../src/types.js';
 import {
@@ -833,6 +834,16 @@ router.post('/api/billing/checkout', createCheckoutSession);
 router.post('/api/billing/portal', createPortalSession);
 router.post('/api/billing/sync', syncFromStripe);
 router.post('/api/billing/change-plan', changePlan);
+
+/**
+ * AbacatePay — Pix one-time charges (cobrança transparente).
+ * No Stripe subscription involved: each payment activates 30 days of access.
+ * Webhook at /api/webhooks/abacatepay is exempt from the paywall middleware
+ * (AbacatePay has no JWT) and receives the raw body for HMAC verification.
+ */
+router.post('/api/billing/pix/create', handleCreatePixCharge);
+router.get('/api/billing/pix/status/:paymentId', handleGetPixStatus);
+router.post('/api/webhooks/abacatepay', handleAbacatePayWebhook);
 
 /**
  * GET /api/healthz — Always-200 liveness probe. Used by Dokploy's healthcheck
