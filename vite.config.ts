@@ -12,12 +12,17 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 // rebuild produces a new version string — the polling banner will then notify
 // every open tab. Keep this resolution stable: do NOT call Date.now() inside
 // the response handler, that would make every request look like a new release.
+// Filter out unexpanded shell variables like "${SOURCE_COMMIT}" passed literally
+// by some CI/CD systems (e.g. Dokploy with unresolved variable interpolation).
+const resolvedEnv = (s: string | undefined) =>
+  s && !s.startsWith('${') ? s : undefined;
+
 const buildVersion =
-  process.env.PUBLIC_APP_VERSION ||
-  process.env.VITE_PUBLIC_APP_VERSION ||
-  process.env.SOURCE_COMMIT ||
-  process.env.GIT_COMMIT_SHA ||
-  `${pkg.version}-${Date.now()}`;
+  resolvedEnv(process.env.PUBLIC_APP_VERSION) ||
+  resolvedEnv(process.env.VITE_PUBLIC_APP_VERSION) ||
+  resolvedEnv(process.env.SOURCE_COMMIT) ||
+  resolvedEnv(process.env.GIT_COMMIT_SHA) ||
+  pkg.version;
 
 export default defineConfig({
   define: {

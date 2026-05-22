@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import express from 'express';
 import axios from 'axios';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions.js';
 import { broadcast } from './ws.js';
 import {
@@ -867,12 +868,20 @@ router.get('/api/healthz', (_req: Request, res: Response) => {
  * Cache-busted aggressively so a CDN/proxy in front of the API never serves
  * a stale version string after a deploy.
  */
+const _resolvedEnv = (s: string | undefined) =>
+  s && !s.startsWith('${') ? s : undefined;
+
+let _pkgVersion = 'unknown';
+try {
+  _pkgVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+} catch { /* ignore */ }
+
 const BUILD_VERSION =
-  process.env.PUBLIC_APP_VERSION ||
-  process.env.VITE_PUBLIC_APP_VERSION ||
-  process.env.SOURCE_COMMIT ||
-  process.env.GIT_COMMIT_SHA ||
-  `dev-${Date.now()}`;
+  _resolvedEnv(process.env.PUBLIC_APP_VERSION) ||
+  _resolvedEnv(process.env.VITE_PUBLIC_APP_VERSION) ||
+  _resolvedEnv(process.env.SOURCE_COMMIT) ||
+  _resolvedEnv(process.env.GIT_COMMIT_SHA) ||
+  _pkgVersion;
 
 router.get('/api/version', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
