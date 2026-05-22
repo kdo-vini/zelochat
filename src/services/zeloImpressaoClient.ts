@@ -3,7 +3,7 @@ const TOKEN_KEY = 'zelo_impressao_token_v1';
 const TIMEOUT_MS = 1800;
 
 export const ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL = 'https://zelopdv.com.br/zelo-impressao';
-export const ZELO_IMPRESSAO_DOWNLOADS_BASE_URL = 'https://downloads.zelopdv.com.br/zelo-impressao';
+export const ZELO_IMPRESSAO_DOWNLOADS_BASE_URL = 'https://zelopdv.com.br/downloads/zelo-impressao';
 export const ZELO_IMPRESSAO_INSTALLER_FILENAME = 'Zelo-Impressao-Setup.exe';
 export const ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL = `${ZELO_IMPRESSAO_DOWNLOADS_BASE_URL}/latest/${ZELO_IMPRESSAO_INSTALLER_FILENAME}`;
 
