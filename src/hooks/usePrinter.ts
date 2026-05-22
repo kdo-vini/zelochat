@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  clearLocalPrintPairing,
   getLocalPrintStatus,
   getZeloImpressaoFriendlyMessage,
   isPrinterSupported,
@@ -8,6 +9,8 @@ import {
   printDayReport,
 } from '../services/printerService';
 import type { Order } from '../types';
+
+const POLL_INTERVAL_MS = 20_000;
 
 export interface UsePrinterReturn {
   supported: boolean;
@@ -47,6 +50,19 @@ export function usePrinter(): UsePrinterReturn {
     return () => { mountedRef.current = false; };
   }, []);
 
+  // Silent auto-detect on mount
+  useEffect(() => {
+    if (!supported) return;
+    void refresh();
+  }, [supported]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll while disconnected so we auto-connect when the desktop app opens
+  useEffect(() => {
+    if (!supported || connected) return;
+    const id = setInterval(() => { void refresh(); }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [supported, connected, refresh]);
+
   const connect = useCallback(async () => {
     setConnecting(true);
     setError(null);
@@ -60,10 +76,13 @@ export function usePrinter(): UsePrinterReturn {
   }, [refresh]);
 
   const disconnect = useCallback(() => {
+    clearLocalPrintPairing();
     setConnected(false);
     setDeviceName(null);
     setError(null);
-  }, []);
+    // Immediately re-check so the UI shows the correct pairing prompt
+    void refresh();
+  }, [refresh]);
 
   const pair = useCallback(async (code: string) => {
     setConnecting(true);
@@ -89,11 +108,13 @@ export function usePrinter(): UsePrinterReturn {
       const msg = getZeloImpressaoFriendlyMessage(err);
       console.error('[printer] print falhou:', err);
       setError(msg);
+      // Token was rejected — re-check so the pairing UI shows
+      void refresh();
       throw err;
     } finally {
       setPrinting(false);
     }
-  }, []);
+  }, [refresh]);
 
   const printDay = useCallback(async (dateLabel: string, orders: Order[], businessName?: string) => {
     setPrinting(true);
@@ -105,11 +126,12 @@ export function usePrinter(): UsePrinterReturn {
       const msg = getZeloImpressaoFriendlyMessage(err);
       console.error('[printer] printDay falhou:', err);
       setError(msg);
+      void refresh();
       throw err;
     } finally {
       setPrinting(false);
     }
-  }, []);
+  }, [refresh]);
 
   return {
     supported,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL, ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '../services/zeloImpressaoClient';
 import { Loader2, Printer, PrinterCheck } from 'lucide-react';
 import type { UsePrinterReturn } from '../hooks/usePrinter';
@@ -14,6 +14,16 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
   const { supported, connected, connecting, printing, deviceName, error, connect } = printer;
   const [pairCode, setPairCode] = useState('');
   const [pairing, setPairing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const needsPairing = !!error?.includes('código');
+
+  // Autofocus the pairing input when it becomes visible
+  useEffect(() => {
+    if (needsPairing && expanded) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [needsPairing, expanded]);
 
   if (!supported) return null;
 
@@ -34,12 +44,19 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
         role="button"
         tabIndex={0}
         onClick={connect}
-        title={!expanded ? 'Conectar impressora' : undefined}
+        title={!expanded ? (error ? 'Impressora: ação necessária' : 'Conectar impressora') : undefined}
         className={`w-full flex items-center rounded-[10px] transition-all text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] ${
           expanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
         }`}
       >
-        <Printer className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={1.8} />
+        {/* Icon with badge in collapsed mode */}
+        <div className="relative flex-shrink-0">
+          <Printer className="w-[18px] h-[18px]" strokeWidth={1.8} />
+          {!expanded && error && (
+            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400 border border-[var(--color-surface)]" />
+          )}
+        </div>
+
         {expanded && (
           <div className="flex-1 text-left overflow-hidden">
             <p className="text-[13.5px] font-medium leading-tight">
@@ -48,32 +65,44 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
             {error && (
               <p className="text-[11px] text-red-400 truncate mt-[-1px]">{error}</p>
             )}
-            {error?.includes('código') && (
-              <div className="mt-2 flex gap-1.5">
-                <input
-                  value={pairCode}
-                  onChange={(event) => setPairCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="Código"
-                  inputMode="numeric"
-                  className="min-w-0 flex-1 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-1 text-[12px] text-[var(--color-ink)]"
-                />
-                <button
-                  type="button"
-                  onClick={(event) => { event.stopPropagation(); void submitPair(); }}
-                  disabled={pairing || pairCode.length < 6}
-                  className="rounded-md bg-[var(--color-brand)] px-2 py-1 text-[12px] font-semibold text-white disabled:opacity-50"
-                >
-                  {pairing ? '...' : 'OK'}
-                </button>
+
+            {/* Pairing flow */}
+            {needsPairing && (
+              <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                <p className="text-[11px] text-[var(--color-ink-muted)] mb-1.5 leading-snug">
+                  Abra o Zelo Impressão — o código aparece na tela inicial.
+                </p>
+                <div className="flex gap-1.5">
+                  <input
+                    ref={inputRef}
+                    value={pairCode}
+                    onChange={(e) => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onFocus={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void submitPair(); }}
+                    placeholder="Código"
+                    inputMode="numeric"
+                    className="min-w-0 flex-1 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-1 text-[12px] text-[var(--color-ink)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void submitPair(); }}
+                    disabled={pairing || pairCode.length < 6}
+                    className="rounded-md bg-[var(--color-brand)] px-2 py-1 text-[12px] font-semibold text-white disabled:opacity-50"
+                  >
+                    {pairing ? '...' : 'OK'}
+                  </button>
+                </div>
               </div>
             )}
-            {error && !error.includes('código') && (
+
+            {/* App not installed */}
+            {error && !needsPairing && (
               <div className="mt-2 flex flex-wrap gap-2">
                 <a
                   href={ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL}
                   target="_blank"
                   rel="noreferrer"
-                  onClick={(event) => event.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                   className="rounded-md bg-[var(--color-brand)] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:opacity-90"
                 >
                   Baixar app
@@ -82,7 +111,7 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
                   href={ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL}
                   target="_blank"
                   rel="noreferrer"
-                  onClick={(event) => event.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                   className="rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--color-ink)] hover:bg-[var(--color-surface)]"
                 >
                   Como instalar
@@ -91,9 +120,10 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
             )}
           </div>
         )}
+
         {!expanded && (
           <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-md bg-[var(--color-ink)] px-2.5 py-1.5 text-[12px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-            Impressão automática
+            {error ? 'Impressora: ação necessária' : 'Impressão automática'}
           </span>
         )}
       </div>
@@ -130,10 +160,18 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
           )}
           {testOrder && !printing && (
             <button
-              onClick={() => { void printer.print(testOrder).catch(() => { /* erro já está em printer.error */ }); }}
+              onClick={() => { void printer.print(testOrder).catch(() => {}); }}
               className="text-[11px] text-[var(--color-brand)] hover:underline mt-[-1px]"
             >
               Imprimir teste
+            </button>
+          )}
+          {!printing && (
+            <button
+              onClick={() => printer.disconnect()}
+              className="block text-[11px] text-[var(--color-ink-muted)] hover:text-red-400 mt-0.5 transition-colors"
+            >
+              Desconectar
             </button>
           )}
         </div>

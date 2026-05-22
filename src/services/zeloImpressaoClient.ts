@@ -128,6 +128,10 @@ async function request(
     const code =
       (data?.code as string) ||
       (response.status === 401 ? 'PAIRING_REQUIRED' : 'ZELO_IMPRESSAO_ERROR');
+    if (code === 'PAIRING_REQUIRED') {
+      // Stale token rejected — wipe it so the pairing UI shows immediately
+      try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    }
     const message =
       code === 'PAIRING_REQUIRED'
         ? 'Conecte este navegador ao Zelo Impressão usando o código exibido no aplicativo.'

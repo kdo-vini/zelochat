@@ -1,4 +1,5 @@
 import {
+  clearZeloImpressaoPairing,
   detectZeloImpressao,
   fallbackToBrowserPrint,
   getConfig as getZeloImpressaoConfig,
@@ -8,6 +9,8 @@ import {
   sendTestPrint,
 } from './zeloImpressaoClient';
 import type { Order } from '../types';
+
+export { clearZeloImpressaoPairing as clearLocalPrintPairing };
 
 const LINE_WIDTH = 32;
 
@@ -67,6 +70,10 @@ export function buildOrderText(order: Order, businessName = 'ZeloChat'): string 
     rows.push('Entrega:', order.deliveryAddress.slice(0, LINE_WIDTH));
   } else {
     rows.push(`Retirada: ${order.pickupTime || '-'}`);
+  }
+
+  if (order.observations) {
+    rows.push(sep(), `Obs: ${order.observations}`.slice(0, LINE_WIDTH));
   }
 
   return `${rows.join('\n')}\n\n\n`;
@@ -166,7 +173,7 @@ export async function printDayReport(
   try {
     await sendPrintJob({
       source: 'zelochat',
-      type: 'kitchen_order',
+      type: 'receipt',
       timestamp: new Date().toISOString(),
       content: { format: 'text', text },
       metadata: { report: 'day', dateLabel, orderCount: orders.length },
