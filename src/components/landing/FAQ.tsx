@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
+import { ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '@zelo/impressao-client';
 import { ZeloPDVLink } from './ZeloPDVLink';
 
 interface QAItem {
@@ -55,7 +56,15 @@ const FAQS: QAItem[] = [
   },
   {
     q: 'Preciso instalar algum programa para imprimir os pedidos?',
-    a: 'É recomendado instalar o Zelo Impressão no computador da operação. Depois disso, você conecta uma única vez clicando em "Conectar impressora" na barra lateral. Pronto: todo pedido criado entra na impressão automática da cozinha.',
+    a: (
+      <>
+        Sim. Para a impressão automática funcionar você precisa{' '}
+        <a href={ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL} target="_blank" rel="noreferrer" className="text-[#0B7A3B] font-medium hover:underline">
+          baixar e instalar o Zelo Impressão
+        </a>
+        {' '}no computador da operação. Depois disso, conecte uma única vez clicando em "Impressão automática" na barra lateral. Pronto: todo pedido criado sai automaticamente na cozinha.
+      </>
+    ),
   },
   {
     q: 'Tem contrato de fidelidade ou multa?',

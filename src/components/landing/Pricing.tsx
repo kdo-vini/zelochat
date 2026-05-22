@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Check } from 'lucide-react';
+import { ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '@zelo/impressao-client';
 import { ZeloPDVLink } from './ZeloPDVLink';
 import { PRICING } from '../../data/pricing';
 import { BorderBeam } from './ui/BorderBeam';
@@ -20,7 +21,13 @@ const INCLUDED: ReactNode[] = [
     <ZeloPDVLink className="text-white font-medium hover:underline" />{' '}
     (se você usa)
   </>,
-  'Impressão automática na cozinha (sem instalar nada)',
+  <>
+    Impressão automática na cozinha —{' '}
+    <a href={ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:opacity-80">
+      instale o Zelo Impressão
+    </a>
+    {' '}no computador
+  </>,
   'Resumos e histórico completo por cliente',
   'Gestão de entregadores',
   'Suporte em português, sem robô',
