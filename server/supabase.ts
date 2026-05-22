@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 import { randomBytes } from 'crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
 
 let serviceClient: SupabaseClient | null = null;
 let boundEmpresaId: string | null = null;
@@ -31,6 +32,8 @@ export function getServiceSupabase(): SupabaseClient {
         autoRefreshToken: false,
         persistSession: false,
       },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      realtime: { transport: ws as any },
     });
   }
 
