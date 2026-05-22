@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
-import { ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '@zelo/impressao-client';
+import { ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '../../services/zeloImpressaoClient';
 import { ZeloPDVLink } from './ZeloPDVLink';
 
 interface QAItem {

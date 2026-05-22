@@ -6,7 +6,7 @@ import {
   pairZeloImpressao,
   sendPrintJob,
   sendTestPrint,
-} from '@zelo/impressao-client';
+} from './zeloImpressaoClient';
 import type { Order } from '../types';
 
 const LINE_WIDTH = 32;

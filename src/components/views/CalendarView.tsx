@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL, ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '@zelo/impressao-client';
+import { ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL, ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '../../services/zeloImpressaoClient';
 import { ConfirmModal } from '../ConfirmModal';
 import { useToast } from '../../contexts/ToastContext';
 import { AnimatePresence, motion } from 'motion/react';

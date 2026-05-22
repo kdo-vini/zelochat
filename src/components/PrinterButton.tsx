@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL, ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '@zelo/impressao-client';
+import { ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL, ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '../services/zeloImpressaoClient';
 import { Loader2, Printer, PrinterCheck } from 'lucide-react';
 import type { UsePrinterReturn } from '../hooks/usePrinter';
 import type { Order } from '../types';
