@@ -4,11 +4,12 @@ WhatsApp-native customer service platform for Brazilian lanchonetes. All user-fa
 
 ## 📖 Required reading before any non-trivial change
 
-This repo has THREE companion docs at the project root that capture context not visible from the code alone. **Read them before touching anything customer-facing or anything tagged "CRITICAL":**
+This repo has FOUR companion docs at the project root that capture context not visible from the code alone. **Read them before touching anything customer-facing or anything tagged "CRITICAL":**
 
 1. **[CODE_REVIEW.md](./CODE_REVIEW.md)** — Senior-tier audit of the codebase (24 P0 / 47 P1 / 38 P2 / 24 P3). Each finding has file:line, repro steps, customer impact, and proposed fix. This is the source-of-truth catalog of known issues.
 2. **[FIXES_PROGRESS.md](./FIXES_PROGRESS.md)** — Live tracker of which audit findings are SHIPPED, DRAFTED, BLOCKED, or PENDING. Every fix entry links to the files that changed. Update this whenever you ship a fix or draft a migration.
 3. **[BILLING.md](./BILLING.md)** — Stripe/Asaas runbook. Subscription state, plan tiers, the cross-product (ZeloPDV) shared `subscriptions` table.
+4. **[INCIDENTS.md](./INCIDENTS.md)** — Outage runbook. Symptoms → known root causes → recovery steps for every production incident we've already fixed. **First stop when something looks broken in prod.** Update after every new outage so the next person doesn't re-debug it.
 
 Plus the two §sections in this file ("Shared database with ZeloPDV" and "Critical functions — touch with extreme care") — those are non-obvious tribal knowledge that breaking will cost real customer money.
 
