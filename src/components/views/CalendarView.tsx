@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL, ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '@zelo/impressao-client';
 import { ConfirmModal } from '../ConfirmModal';
 import { useToast } from '../../contexts/ToastContext';
 import { AnimatePresence, motion } from 'motion/react';
@@ -537,7 +538,27 @@ export const CalendarView = ({
       <ConfirmModal
         open={confirmPrinterConnect}
         title="Impressora não conectada"
-        message="Deseja conectar a impressora agora?"
+        message="Deseja conectar a impressora agora? Se o Zelo Impressão ainda não estiver instalado neste computador, baixe e instale primeiro."
+        helperContent={(
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg bg-[var(--color-brand)] px-3 py-2 text-[12px] font-semibold text-white hover:opacity-90"
+            >
+              Baixar Zelo Impressão
+            </a>
+            <a
+              href={ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg border border-[var(--color-line)] px-3 py-2 text-[12px] font-semibold text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]"
+            >
+              Ver instruções
+            </a>
+          </div>
+        )}
         onClose={() => setConfirmPrinterConnect(false)}
         onConfirm={async () => { await printer.connect(); }}
         confirmLabel="Conectar"

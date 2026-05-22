@@ -109,6 +109,7 @@ const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', '
 const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers', 'catalog']);
 const ACTIVE_SESSION_STORAGE_KEY = 'zelochat_active_session_id';
 const BOOT_MARK_PREFIX = 'zelochat:boot';
+const AUTO_PRINT_DEDUPE_WINDOW_MS = 60_000;
 
 function readStoredActiveSessionId(): string | null {
   try {
@@ -336,6 +337,23 @@ export default function AppShell() {
     deleteTrigger: deleteTriggerRequest,
   } = useTriggers(token, { enabled: shouldLoadTriggers });
   const printer = usePrinter();
+  const autoPrintedOrdersRef = useRef(new Map<string, number>());
+  const autoPrintOrder = useCallback((order: Order) => {
+    const now = Date.now();
+    for (const [orderId, ts] of autoPrintedOrdersRef.current) {
+      if (now - ts > AUTO_PRINT_DEDUPE_WINDOW_MS) autoPrintedOrdersRef.current.delete(orderId);
+    }
+
+    const previousTs = autoPrintedOrdersRef.current.get(order.id);
+    if (previousTs && now - previousTs < AUTO_PRINT_DEDUPE_WINDOW_MS) return;
+    autoPrintedOrdersRef.current.set(order.id, now);
+
+    printer.print(order, state.businessInfo.name || 'ZeloChat').catch((err) => {
+      autoPrintedOrdersRef.current.delete(order.id);
+      console.error('[printer] auto-print falhou para pedido', order.id, err);
+      toast.error('Não consegui imprimir o pedido automaticamente. Verifique a impressora.');
+    });
+  }, [printer, state.businessInfo.name, toast]);
 
   const {
     orders: supabaseOrders,
@@ -344,12 +362,7 @@ export default function AppShell() {
     updateOrderStatus: updateOrderStatusInSupabase,
     updateOrder: updateOrderInSupabase,
     deleteOrder: deleteOrderInSupabase,
-  } = useOrders(session, (order) => {
-    printer.print(order, state.businessInfo.name || 'ZeloChat').catch((err) => {
-      console.error('[printer] auto-print falhou para pedido', order.id, err);
-      toast.error('Não consegui imprimir o pedido automaticamente. Verifique a impressora.');
-    });
-  }, { enabled: shouldLoadOrders });
+  } = useOrders(session, autoPrintOrder, { enabled: shouldLoadOrders });
   const {
     items: quickResponses,
     add: addQuickResponse,
@@ -808,13 +821,14 @@ export default function AppShell() {
     try {
       const order = await addOrderToSupabase(payload);
       setState((prev) => ({ ...prev, orders: [order, ...prev.orders] }));
-      toast.success('Pedido adicionado.');
+      autoPrintOrder(order);
+      toast.success('Pedido adicionado e enviado para impressão.');
     } catch (err) {
       console.error('[App] handleAddOrder failed:', err);
       toast.error('Não consegui adicionar o pedido. Tente de novo.');
       throw err; // let the modal show its own form error too
     }
-  }, [addOrderToSupabase, toast]);
+  }, [addOrderToSupabase, autoPrintOrder, toast]);
 
   const handleEditOrder = useCallback(async (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => {
     const prevOrders = state.orders;

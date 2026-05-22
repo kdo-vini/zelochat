@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { Modal, useModalTitleId } from './Modal';
 
@@ -11,6 +11,7 @@ type Props = {
   confirmLabel?: string;
   confirmLoadingLabel?: string;
   destructive?: boolean;
+  helperContent?: ReactNode;
 };
 
 export function ConfirmModal({
@@ -22,6 +23,7 @@ export function ConfirmModal({
   confirmLabel = 'Confirmar',
   confirmLoadingLabel = 'Aguarde...',
   destructive = true,
+  helperContent,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -71,6 +73,7 @@ export function ConfirmModal({
         </div>
         <div className="p-5">
           <p className="text-sm text-gray-700">{message}</p>
+          {helperContent ? <div className="mt-3">{helperContent}</div> : null}
           {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
           <div className="mt-6 flex items-center justify-end gap-2">
             <button

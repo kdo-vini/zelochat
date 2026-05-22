@@ -72,7 +72,7 @@ const SUPPORTING_FEATURES: Feature[] = [
     icon: Printer,
     title: 'Impressão na cozinha',
     description:
-      'Impressora térmica USB plugada no computador, sem instalar nada. Pedido confirmado = ticket sai automático.',
+      'Zelo Impressão instalado no computador, conexão simples e ticket automático a cada pedido criado.',
   },
   {
     icon: Link2,

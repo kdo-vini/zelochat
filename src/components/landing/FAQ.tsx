@@ -55,7 +55,7 @@ const FAQS: QAItem[] = [
   },
   {
     q: 'Preciso instalar algum programa para imprimir os pedidos?',
-    a: 'Não. Você liga sua impressora térmica direto ao computador e conecta uma única vez clicando em "Conectar impressora" na barra lateral. Pronto: todo pedido confirmado pelo WhatsApp é impresso automaticamente na cozinha — sem instalar nada.',
+    a: 'É recomendado instalar o Zelo Impressão no computador da operação. Depois disso, você conecta uma única vez clicando em "Conectar impressora" na barra lateral. Pronto: todo pedido criado entra na impressão automática da cozinha.',
   },
   {
     q: 'Tem contrato de fidelidade ou multa?',

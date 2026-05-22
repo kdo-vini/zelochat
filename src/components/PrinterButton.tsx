@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL, ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL } from '@zelo/impressao-client';
 import { Loader2, Printer, PrinterCheck } from 'lucide-react';
 import type { UsePrinterReturn } from '../hooks/usePrinter';
 import type { Order } from '../types';
@@ -64,6 +65,28 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
                 >
                   {pairing ? '...' : 'OK'}
                 </button>
+              </div>
+            )}
+            {error && !error.includes('código') && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <a
+                  href={ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  className="rounded-md bg-[var(--color-brand)] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:opacity-90"
+                >
+                  Baixar app
+                </a>
+                <a
+                  href={ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  className="rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--color-ink)] hover:bg-[var(--color-surface)]"
+                >
+                  Como instalar
+                </a>
               </div>
             )}
           </div>

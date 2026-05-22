@@ -160,8 +160,13 @@ export function useOrders(
           (payload) => {
             if (payload.eventType === 'INSERT') {
               const order = rowToOrder(payload.new as Record<string, unknown>);
-              setOrders((prev) => [order, ...prev]);
-              onNewOrderRef.current?.(order);
+              let inserted = false;
+              setOrders((prev) => {
+                if (prev.some((existing) => existing.id === order.id)) return prev;
+                inserted = true;
+                return [order, ...prev];
+              });
+              if (inserted) onNewOrderRef.current?.(order);
             } else if (payload.eventType === 'UPDATE') {
               setOrders((prev) =>
                 prev.map((o) =>
