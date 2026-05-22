@@ -1,201 +1,187 @@
+import {
+  detectZeloImpressao,
+  fallbackToBrowserPrint,
+  getConfig as getZeloImpressaoConfig,
+  getZeloImpressaoFriendlyMessage,
+  pairZeloImpressao,
+  sendPrintJob,
+  sendTestPrint,
+} from '@zelo/impressao-client';
 import type { Order } from '../types';
 
 const LINE_WIDTH = 32;
 
-class EscPosBuilder {
-  private buf: number[] = [];
-
-  init()               { this.buf.push(0x1B, 0x40); return this; }
-  center()             { this.buf.push(0x1B, 0x61, 0x01); return this; }
-  left()               { this.buf.push(0x1B, 0x61, 0x00); return this; }
-  bold(on: boolean)    { this.buf.push(0x1B, 0x45, on ? 0x01 : 0x00); return this; }
-  double(on: boolean)  { this.buf.push(0x1B, 0x21, on ? 0x30 : 0x00); return this; }
-  feed(n = 3)          { for (let i = 0; i < n; i++) this.buf.push(0x0A); return this; }
-  cut()                { this.buf.push(0x1D, 0x56, 0x41, 0x00); return this; }
-
-  text(str: string) {
-    new TextEncoder().encode(str).forEach((b) => this.buf.push(b));
-    return this;
-  }
-
-  line(str = '') { return this.text(str + '\n'); }
-
-  sep(char = '-') { return this.line(char.repeat(LINE_WIDTH)); }
-
-  row(label: string, value: string) {
-    const gap = LINE_WIDTH - label.length - value.length;
-    return this.line(label + (gap > 0 ? ' '.repeat(gap) : ' ') + value);
-  }
-
-  build() { return new Uint8Array(this.buf); }
-}
-
 function fmtMoney(n: number): string {
-  return `R$${n.toFixed(2).replace('.', ',')}`;
+  return `R$ ${Number(n || 0).toFixed(2).replace('.', ',')}`;
 }
 
-const BUSY_RX = /access denied|already.*claimed|busy|in use/i;
-
-function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
-
-async function safeClose(device: USBDevice): Promise<void> {
-  try { if (device.opened) await device.close(); } catch { /* ignore */ }
+function line(value = ''): string {
+  return value.slice(0, LINE_WIDTH);
 }
 
-/**
- * Abre o device, seleciona configuração, detecta endpoint OUT bulk e claima.
- * Tenta até 4× (1 inicial + 3 retries com 200/500/1000ms) se outro app estiver
- * usando o device — convive com o Zelo PDV, que também faz "lease per job".
- */
-async function claimDevice(device: USBDevice): Promise<{ ep: number; iface: number }> {
-  const delays = [200, 500, 1000];
-  let lastErr: unknown = null;
+function sep(char = '-'): string {
+  return char.repeat(LINE_WIDTH);
+}
 
-  for (let attempt = 0; attempt <= delays.length; attempt++) {
-    try {
-      if (!device.opened) await device.open();
-      if (device.configuration === null) await device.selectConfiguration(1);
+function row(label: string, value: string): string {
+  const left = String(label || '');
+  const right = String(value || '');
+  const gap = Math.max(1, LINE_WIDTH - left.length - right.length);
+  return `${left}${' '.repeat(gap)}${right}`;
+}
 
-      for (const iface of device.configuration!.interfaces) {
-        for (const alt of iface.alternates) {
-          const ep = alt.endpoints.find((e) => e.direction === 'out' && e.type === 'bulk');
-          if (ep) {
-            await device.claimInterface(iface.interfaceNumber);
-            return { ep: ep.endpointNumber, iface: iface.interfaceNumber };
-          }
-        }
-      }
+function browserHtmlFromText(text: string): string {
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    @page { margin: 3mm; }
+    body { margin: 0; font: 12px/1.3 "Courier New", monospace; color: #000; background: #fff; }
+    pre { white-space: pre-wrap; margin: 0; }
+  </style></head><body><pre>${escaped}</pre><script>window.onload=function(){setTimeout(function(){window.print()},80)}</script></body></html>`;
+}
 
-      await safeClose(device);
-      throw new Error('Impressora não suportada — nenhum endpoint de saída encontrado.');
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      const isBusy = BUSY_RX.test(msg);
-      await safeClose(device);
-      if (!isBusy || attempt === delays.length) break;
-      await sleep(delays[attempt]);
+export function buildOrderText(order: Order, businessName = 'ZeloChat'): string {
+  const shortId = order.id.slice(-8).toUpperCase();
+  const rows = [
+    line(businessName.toUpperCase()),
+    sep('='),
+    `PEDIDO #${shortId}`,
+    `Cliente: ${order.customerName}`,
+    `Tel: ${order.customerPhone || '-'}`,
+    sep(),
+  ];
+
+  for (const item of order.items) {
+    rows.push(`${item.quantity}x ${item.product}`.slice(0, LINE_WIDTH));
+  }
+
+  rows.push(
+    sep(),
+    row('TOTAL:', fmtMoney(order.total)),
+    `Pagamento: ${order.paymentMethod || '-'}`,
+  );
+
+  if (order.deliveryAddress) {
+    rows.push('Entrega:', order.deliveryAddress.slice(0, LINE_WIDTH));
+  } else {
+    rows.push(`Retirada: ${order.pickupTime || '-'}`);
+  }
+
+  return `${rows.join('\n')}\n\n\n`;
+}
+
+export function buildDayReportText(dateLabel: string, orders: Order[], businessName = 'ZeloChat'): string {
+  const rows = [
+    line(businessName.toUpperCase()),
+    sep('='),
+    'PEDIDOS DO DIA',
+    dateLabel,
+    `Total de pedidos: ${orders.length}`,
+    sep(),
+  ];
+
+  let totalGeral = 0;
+  for (const order of orders) {
+    const shortId = order.id.slice(-8).toUpperCase();
+    rows.push(`[${order.pickupTime || '--:--'}] ${order.customerName}`.slice(0, LINE_WIDTH));
+    rows.push(`Ped #${shortId} | ${order.status}`.slice(0, LINE_WIDTH));
+    for (const item of order.items) {
+      rows.push(`  ${item.quantity}x ${item.product}`.slice(0, LINE_WIDTH));
     }
+    if (order.deliveryAddress) rows.push('  Entrega');
+    rows.push(row('  Total:', fmtMoney(order.total)), sep('-'));
+    totalGeral += Number(order.total || 0);
   }
 
-  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-  if (BUSY_RX.test(msg)) {
-    throw new Error(
-      'A impressora está sendo usada por outro app (provavelmente o Zelo PDV). ' +
-      'Aguarde alguns segundos — o sistema libera automaticamente após cada impressão.',
-    );
+  rows.push(row('TOTAL GERAL:', fmtMoney(totalGeral)));
+  return `${rows.join('\n')}\n\n\n`;
+}
+
+export async function getLocalPrintStatus(): Promise<{
+  supported: boolean;
+  connected: boolean;
+  deviceName: string | null;
+  error: string | null;
+}> {
+  const detection = await detectZeloImpressao();
+  if (!detection.running) {
+    return {
+      supported: true,
+      connected: false,
+      deviceName: null,
+      error: detection.message || 'Zelo Impressão indisponível.',
+    };
   }
-  throw lastErr instanceof Error ? lastErr : new Error(msg);
+
+  try {
+    const config = detection.paired ? await getZeloImpressaoConfig() : null;
+    return {
+      supported: true,
+      connected: detection.paired,
+      deviceName: config?.selectedPrinterName || 'Zelo Impressão',
+      error: detection.paired ? null : 'Conecte este navegador ao Zelo Impressão usando o código exibido no aplicativo.',
+    };
+  } catch (error) {
+    return {
+      supported: true,
+      connected: false,
+      deviceName: null,
+      error: getZeloImpressaoFriendlyMessage(error),
+    };
+  }
 }
 
 export function isPrinterSupported(): boolean {
-  return typeof navigator !== 'undefined' && 'usb' in navigator;
+  return typeof window !== 'undefined' && typeof fetch === 'function';
 }
 
-export async function connectPrinter(): Promise<USBDevice> {
-  // Class 7 = printer; 0xFF = vendor-specific (covers many thermal printers)
-  return navigator.usb.requestDevice({
-    filters: [{ classCode: 7 }, { classCode: 0xFF }],
+export async function pairLocalPrint(code: string): Promise<void> {
+  await pairZeloImpressao(code);
+}
+
+export async function printOrder(order: Order, businessName = 'ZeloChat'): Promise<void> {
+  const text = buildOrderText(order, businessName);
+  await sendPrintJob({
+    source: 'zelochat',
+    type: 'kitchen_order',
+    timestamp: new Date().toISOString(),
+    content: { format: 'text', text },
+    metadata: {
+      orderId: order.id,
+      status: order.status,
+      customerPhone: order.customerPhone,
+    },
   });
 }
 
-export async function getStoredPrinter(): Promise<USBDevice | null> {
-  const devices = await navigator.usb.getDevices();
-  return devices[0] ?? null;
-}
-
-export async function printOrder(
-  device: USBDevice,
-  order: Order,
-  businessName = 'ZeloChat',
-): Promise<void> {
-  const { ep, iface } = await claimDevice(device);
-
-  try {
-    const shortId = order.id.slice(-8).toUpperCase();
-    const b = new EscPosBuilder()
-      .init()
-      .center().bold(true).double(true)
-      .line(businessName.slice(0, 16).toUpperCase())
-      .double(false).bold(false)
-      .sep('=')
-      .left()
-      .line(`Pedido #${shortId}`)
-      .line(`Cliente: ${order.customerName}`)
-      .line(`Tel: ${order.customerPhone || '-'}`)
-      .sep();
-
-    for (const item of order.items) {
-      b.line(`${item.quantity}x ${item.product}`);
-    }
-
-    b.sep()
-      .bold(true).row('TOTAL:', fmtMoney(order.total)).bold(false)
-      .line(`Pagamento: ${order.paymentMethod || '-'}`);
-
-    if (order.deliveryAddress) {
-      b.line(`Entrega:`).line(`  ${order.deliveryAddress}`);
-    } else {
-      b.line(`Retirada: ${order.pickupTime}`);
-    }
-
-    b.feed(4).cut();
-
-    await device.transferOut(ep, b.build());
-  } finally {
-    await device.releaseInterface(iface);
-    await device.close();
-  }
-}
-
 export async function printDayReport(
-  device: USBDevice,
   dateLabel: string,
   orders: Order[],
   businessName = 'ZeloChat',
+  options: { browserFallback?: boolean } = {},
 ): Promise<void> {
-  const { ep, iface } = await claimDevice(device);
-
+  const text = buildDayReportText(dateLabel, orders, businessName);
   try {
-    const b = new EscPosBuilder()
-      .init()
-      .center().bold(true).double(true)
-      .line(businessName.slice(0, 16).toUpperCase())
-      .double(false).bold(false)
-      .sep('=')
-      .line('PEDIDOS DO DIA')
-      .line(dateLabel)
-      .line(`Total de pedidos: ${orders.length}`)
-      .sep()
-      .left();
-
-    let totalGeral = 0;
-
-    for (const order of orders) {
-      const shortId = order.id.slice(-8).toUpperCase();
-      b.bold(true).line(`[${order.pickupTime}] ${order.customerName.slice(0, 20)}`).bold(false)
-       .line(`Ped #${shortId} | ${order.status}`);
-      
-      for (const item of order.items) {
-        b.line(`  ${item.quantity}x ${item.product.slice(0, 26)}`);
-      }
-      
-      if (order.deliveryAddress) {
-        b.line(`  📍 Entrega`);
-      }
-      
-      b.row('  Total:', fmtMoney(order.total))
-       .sep('-');
-       
-      totalGeral += order.total;
+    await sendPrintJob({
+      source: 'zelochat',
+      type: 'kitchen_order',
+      timestamp: new Date().toISOString(),
+      content: { format: 'text', text },
+      metadata: { report: 'day', dateLabel, orderCount: orders.length },
+    });
+  } catch (error) {
+    if (options.browserFallback) {
+      await fallbackToBrowserPrint(browserHtmlFromText(text));
+      return;
     }
-
-    b.bold(true).row('TOTAL GERAL:', fmtMoney(totalGeral)).bold(false)
-     .feed(4).cut();
-
-    await device.transferOut(ep, b.build());
-  } finally {
-    await device.releaseInterface(iface);
-    await device.close();
+    throw error;
   }
 }
+
+export async function printTest(): Promise<void> {
+  await sendTestPrint();
+}
+
+export { getZeloImpressaoFriendlyMessage };

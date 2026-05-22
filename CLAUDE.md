@@ -39,6 +39,12 @@ Categories:
 - `minor` — small polish, copy change, or UX tweak
 - `hotfix` — urgent bug fix that broke something in production
 
+## Deploy
+
+Production runs on **Dokploy**, linked directly to the `main` branch on GitHub (`kdo-vini/zelochat`). **Every push to `main` triggers an automatic redeploy** — no manual step needed, no GitHub Actions required. Docker build + container restart typically takes 2–5 minutes after the push lands. Do not tell the user to "manually trigger Dokploy" — it happens automatically on push.
+
+URL: `https://chat.zelopdv.com.br`
+
 ## Commands
 
 ```bash

@@ -1,4 +1,5 @@
-import { Loader2, Printer, PrinterCheck, WifiOff } from 'lucide-react';
+import { useState } from 'react';
+import { Loader2, Printer, PrinterCheck } from 'lucide-react';
 import type { UsePrinterReturn } from '../hooks/usePrinter';
 import type { Order } from '../types';
 
@@ -10,12 +11,27 @@ interface PrinterButtonProps {
 
 export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonProps) {
   const { supported, connected, connecting, printing, deviceName, error, connect } = printer;
+  const [pairCode, setPairCode] = useState('');
+  const [pairing, setPairing] = useState(false);
 
   if (!supported) return null;
 
+  async function submitPair() {
+    if (!pairCode.trim()) return;
+    setPairing(true);
+    try {
+      await printer.pair(pairCode.trim());
+      setPairCode('');
+    } finally {
+      setPairing(false);
+    }
+  }
+
   if (!connected && !connecting) {
     return (
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={connect}
         title={!expanded ? 'Conectar impressora' : undefined}
         className={`w-full flex items-center rounded-[10px] transition-all text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] ${
@@ -26,19 +42,38 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
         {expanded && (
           <div className="flex-1 text-left overflow-hidden">
             <p className="text-[13.5px] font-medium leading-tight">
-              {error ? 'Erro — tentar novamente' : 'Conectar impressora'}
+              {error ? 'Zelo Impressão offline' : 'Impressão automática'}
             </p>
             {error && (
               <p className="text-[11px] text-red-400 truncate mt-[-1px]">{error}</p>
+            )}
+            {error?.includes('código') && (
+              <div className="mt-2 flex gap-1.5">
+                <input
+                  value={pairCode}
+                  onChange={(event) => setPairCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Código"
+                  inputMode="numeric"
+                  className="min-w-0 flex-1 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-1 text-[12px] text-[var(--color-ink)]"
+                />
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); void submitPair(); }}
+                  disabled={pairing || pairCode.length < 6}
+                  className="rounded-md bg-[var(--color-brand)] px-2 py-1 text-[12px] font-semibold text-white disabled:opacity-50"
+                >
+                  {pairing ? '...' : 'OK'}
+                </button>
+              </div>
             )}
           </div>
         )}
         {!expanded && (
           <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-md bg-[var(--color-ink)] px-2.5 py-1.5 text-[12px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-            Conectar impressora
+            Impressão automática
           </span>
         )}
-      </button>
+      </div>
     );
   }
 
@@ -48,7 +83,7 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
         expanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
       }`}>
         <Loader2 className="w-[18px] h-[18px] flex-shrink-0 animate-spin" strokeWidth={1.8} />
-        {expanded && <p className="text-[13.5px] font-medium">Conectando...</p>}
+        {expanded && <p className="text-[13.5px] font-medium">Verificando...</p>}
       </div>
     );
   }
@@ -65,7 +100,7 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
       {expanded && (
         <div className="flex-1 overflow-hidden">
           <p className="text-[13.5px] font-medium leading-tight text-[var(--color-ink)] truncate">
-            {printing ? 'Imprimindo…' : (deviceName ?? 'Impressora')}
+            {printing ? 'Imprimindo…' : (deviceName ?? 'Zelo Impressão')}
           </p>
           {error && !printing && (
             <p className="text-[11px] text-red-400 mt-[-1px] line-clamp-2" title={error}>{error}</p>

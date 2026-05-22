@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  connectPrinter,
-  getStoredPrinter,
+  getLocalPrintStatus,
+  getZeloImpressaoFriendlyMessage,
   isPrinterSupported,
+  pairLocalPrint,
   printOrder,
   printDayReport,
 } from '../services/printerService';
@@ -16,67 +17,77 @@ export interface UsePrinterReturn {
   deviceName: string | null;
   error: string | null;
   connect: () => Promise<void>;
+  pair: (code: string) => Promise<void>;
   disconnect: () => void;
   print: (order: Order, businessName?: string) => Promise<void>;
   printDay: (dateLabel: string, orders: Order[], businessName?: string) => Promise<void>;
 }
 
 export function usePrinter(): UsePrinterReturn {
-  const [device, setDevice] = useState<USBDevice | null>(null);
+  const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [deviceName, setDeviceName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const deviceRef = useRef<USBDevice | null>(null);
+  const mountedRef = useRef(true);
 
   const supported = isPrinterSupported();
 
-  // Try to reconnect to a previously authorized device on mount
-  useEffect(() => {
+  const refresh = useCallback(async () => {
     if (!supported) return;
-    getStoredPrinter().then((d) => {
-      if (d) {
-        setDevice(d);
-        deviceRef.current = d;
-      }
-    }).catch(() => {/* no stored device */});
+    const status = await getLocalPrintStatus();
+    if (!mountedRef.current) return;
+    setConnected(status.connected);
+    setDeviceName(status.deviceName);
+    setError(status.error);
   }, [supported]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void refresh();
+    return () => { mountedRef.current = false; };
+  }, [refresh]);
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setError(null);
     try {
-      const d = await connectPrinter();
-      setDevice(d);
-      deviceRef.current = d;
+      await refresh();
     } catch (err) {
-      if (err instanceof Error && err.name !== 'NotFoundError') {
-        setError(err.message);
-      }
-      // NotFoundError = user closed the dialog without selecting — not an error
+      setError(getZeloImpressaoFriendlyMessage(err));
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [refresh]);
 
   const disconnect = useCallback(() => {
-    setDevice(null);
-    deviceRef.current = null;
+    setConnected(false);
+    setDeviceName(null);
     setError(null);
   }, []);
 
-  const print = useCallback(async (order: Order, businessName?: string) => {
-    const d = deviceRef.current;
-    if (!d) {
-      const msg = 'Impressora não conectada.';
-      setError(msg);
-      throw new Error(msg);
+  const pair = useCallback(async (code: string) => {
+    setConnecting(true);
+    setError(null);
+    try {
+      await pairLocalPrint(code);
+      await refresh();
+    } catch (err) {
+      setError(getZeloImpressaoFriendlyMessage(err));
+      throw err;
+    } finally {
+      setConnecting(false);
     }
+  }, [refresh]);
+
+  const print = useCallback(async (order: Order, businessName?: string) => {
     setPrinting(true);
     setError(null);
     try {
-      await printOrder(d, order, businessName);
+      await printOrder(order, businessName);
+      setConnected(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Erro ao imprimir.';
+      const msg = getZeloImpressaoFriendlyMessage(err);
       console.error('[printer] print falhou:', err);
       setError(msg);
       throw err;
@@ -86,18 +97,13 @@ export function usePrinter(): UsePrinterReturn {
   }, []);
 
   const printDay = useCallback(async (dateLabel: string, orders: Order[], businessName?: string) => {
-    const d = deviceRef.current;
-    if (!d) {
-      const msg = 'Impressora não conectada.';
-      setError(msg);
-      throw new Error(msg);
-    }
     setPrinting(true);
     setError(null);
     try {
-      await printDayReport(d, dateLabel, orders, businessName);
+      await printDayReport(dateLabel, orders, businessName, { browserFallback: true });
+      setConnected(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Erro ao imprimir relatório.';
+      const msg = getZeloImpressaoFriendlyMessage(err);
       console.error('[printer] printDay falhou:', err);
       setError(msg);
       throw err;
@@ -106,18 +112,15 @@ export function usePrinter(): UsePrinterReturn {
     }
   }, []);
 
-  const deviceName = device
-    ? (device.productName || device.manufacturerName || 'Impressora')
-    : null;
-
   return {
     supported,
-    connected: device !== null,
+    connected,
     connecting,
     printing,
     deviceName,
     error,
     connect,
+    pair,
     disconnect,
     print,
     printDay,

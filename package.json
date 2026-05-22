@@ -23,6 +23,7 @@
     "@supabase/supabase-js": "^2.57.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "@zelo/impressao-client": "file:../zeloprinter/packages/client",
     "axios": "^1.15.2",
     "cors": "^2.8.6",
     "date-fns": "^4.1.0",
