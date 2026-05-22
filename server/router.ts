@@ -67,7 +67,7 @@ import {
 } from './ai.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
-import { redactInstance } from './redact.js';
+import { redactInstance, redactJid } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
 import { recordAiUsage } from './aiUsage.js';
@@ -324,17 +324,25 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
   const event: string = (body?.event ?? '').toLowerCase().replace(/_/g, '.');
   const data = body?.data;
 
-  if (!data) return;
+  console.log(`[WebhookTrace] process start empresa=${empresaId} event=${event || '<empty>'} hasData=${!!data}`);
+
+  if (!data) {
+    console.warn(`[WebhookTrace] skip empresa=${empresaId} event=${event || '<empty>'} reason=no_data`);
+    return;
+  }
 
   if (event === 'messages.upsert') {
-    if (!data.message) return;
+    if (!data.message) {
+      console.warn(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=no_message`);
+      return;
+    }
 
     // Block processing for empresas without an active subscription — inbound
     // messages trigger AI inference and Supabase writes, both of which cost money.
     // Fail-open on DB errors so a transient outage never silences a paying customer.
     const subscriptionActive = await isEmpresaSubscriptionActive(empresaId);
     if (!subscriptionActive) {
-      console.warn(`[Webhook] messages.upsert bloqueado — empresa ${empresaId} sem assinatura ativa`);
+      console.warn(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=subscription_inactive`);
       return;
     }
 
@@ -342,11 +350,21 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     // conversation history stays complete. Skip multi-device protocol artifacts and
     // any message already saved by /api/send (identified by its Whatsmiau key id).
     if (data.key?.fromMe) {
-      if (data.message?.deviceSentMessage) return;
+      if (data.message?.deviceSentMessage) {
+        console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=from_me_device_sent`);
+        return;
+      }
       const msgId: string = data.key?.id ?? '';
-      if (msgId && wasSentByServer(msgId) && await messageExistsByWhatsAppId(empresaId, msgId)) return;
+      if (msgId && wasSentByServer(msgId) && await messageExistsByWhatsAppId(empresaId, msgId)) {
+        console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=from_me_echo_known messageId=${msgId}`);
+        return;
+      }
       const remoteJid: string = data.key?.remoteJid ?? '';
-      if (!remoteJid.endsWith('@s.whatsapp.net')) return;
+      if (!remoteJid.endsWith('@s.whatsapp.net')) {
+        console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} jid=${redactJid(remoteJid)} reason=from_me_non_individual`);
+        return;
+      }
+      console.log(`[WebhookTrace] from_me_persist empresa=${empresaId} jid=${redactJid(remoteJid)} messageId=${msgId || '<missing>'}`);
       handleOutboundMessage(data, empresaId).catch((err) =>
         console.error('[Webhook] fromMe persist failed:', err),
       );
@@ -354,14 +372,34 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     }
 
     // Secondary guard: outbound messages wrapped by multi-device protocol
-    if (data.message?.deviceSentMessage) return;
+    if (data.message?.deviceSentMessage) {
+      console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=device_sent_message`);
+      return;
+    }
     const remoteJid: string = data.key?.remoteJid ?? '';
-    if (remoteJid === 'status@broadcast') return;
-    if (remoteJid.endsWith('@g.us')) return;   // ignore group messages
-    if (remoteJid.endsWith('@broadcast')) return; // ignore broadcast lists
-    if (!remoteJid.endsWith('@s.whatsapp.net')) return; // only individual chats
+    if (remoteJid === 'status@broadcast') {
+      console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=status_broadcast`);
+      return;
+    }
+    if (remoteJid.endsWith('@g.us')) {
+      console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} jid=${redactJid(remoteJid)} reason=group_message`);
+      return;
+    }
+    if (remoteJid.endsWith('@broadcast')) {
+      console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} jid=${redactJid(remoteJid)} reason=broadcast_list`);
+      return;
+    }
+    if (!remoteJid.endsWith('@s.whatsapp.net')) {
+      console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} jid=${redactJid(remoteJid)} reason=non_individual_jid`);
+      return;
+    }
     const botJid = getOwnJid();
-    if (botJid && remoteJid === botJid) return;
+    if (botJid && remoteJid === botJid) {
+      console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} jid=${redactJid(remoteJid)} reason=own_jid`);
+      return;
+    }
+
+    console.log(`[WebhookTrace] inbound_candidate empresa=${empresaId} jid=${redactJid(remoteJid)} messageId=${data.key?.id ?? '<missing>'}`);
 
     // Reactions: update the target message's reactions array instead of saving as text
     const reactionMsg = data.message?.reactionMessage;
@@ -370,6 +408,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       const emoji: string = reactionMsg.text ?? '';
       const fromMe: boolean = reactionMsg.key?.fromMe ?? false;
       if (targetId) {
+        console.log(`[WebhookTrace] reaction empresa=${empresaId} jid=${redactJid(remoteJid)} targetId=${targetId} fromMe=${fromMe}`);
         updateMessageReaction({ empresaId, targetWaMessageId: targetId, emoji, fromMe }).catch(
           (err) => console.error('[Webhook] reaction update failed:', err),
         );
@@ -556,14 +595,20 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     // Suppress any further duplicate events within 5 seconds of a button action
     const handledTs = recentlyHandled.get(`${empresaId}:${remoteJid}`);
     if (handledTs) {
-      if (Date.now() - handledTs < 5000) return; // duplicate — skip AI
+      if (Date.now() - handledTs < 5000) {
+        console.log(`[WebhookTrace] skip empresa=${empresaId} jid=${redactJid(remoteJid)} reason=recently_handled ageMs=${Date.now() - handledTs}`);
+        return;
+      }
       recentlyHandled.delete(`${empresaId}:${remoteJid}`);
     }
 
+    console.log(`[WebhookTrace] dispatchIncomingMessage empresa=${empresaId} jid=${redactJid(remoteJid)} messageId=${data.key?.id ?? '<missing>'}`);
     dispatchIncomingMessage(data, empresaId);
   } else if (event === 'connection.update') {
+    console.log(`[WebhookTrace] connection.update empresa=${empresaId} state=${data?.state ?? data?.instance?.state ?? '<unknown>'}`);
     handleConnectionUpdate(data, empresaId);
   } else if (event === 'messages.update') {
+    console.log(`[WebhookTrace] messages.update empresa=${empresaId} count=${Array.isArray(data) ? data.length : 1}`);
     // Delivery / read receipts — broadcast to frontend so it can update message ticks.
     // P2.16 — Guard: only broadcast if the payload carries a remoteJid that indicates
     // this update belongs to the resolved empresa. The empresaId itself is already
@@ -596,6 +641,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       );
     }
   } else if (event === 'messages.delete') {
+    console.log(`[WebhookTrace] messages.delete empresa=${empresaId} count=${Array.isArray(data) ? data.length : 1}`);
     const deletions = Array.isArray(data) ? data : [data];
     for (const d of deletions) {
       const messageId = d?.id ?? d?.key?.id ?? d?.messageId;
@@ -608,6 +654,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       });
     }
   } else if (event === 'contacts.upsert') {
+    console.log(`[WebhookTrace] contacts.upsert empresa=${empresaId} count=${Array.isArray(data) ? data.length : 1}`);
     const contacts = Array.isArray(data) ? data : [data];
     for (const c of contacts) {
       const remoteJid: string = c?.remoteJid ?? '';
@@ -627,6 +674,8 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
         }
       }
     }
+  } else {
+    console.warn(`[WebhookTrace] unhandled event empresa=${empresaId} event=${event || '<empty>'}`);
   }
 }
 
@@ -680,13 +729,17 @@ router.post('/webhook', async (_req: Request, res: Response) => {
  */
 router.post('/webhook/:instance', async (req: Request, res: Response) => {
   const instance = req.params.instance?.trim();
+  const bodyEvent = String(req.body?.event ?? '').toLowerCase().replace(/_/g, '.');
+  const bodyMessageId = req.body?.data?.key?.id ?? req.body?.data?.id ?? '<missing>';
+  console.log(`[WebhookTrace] received instance=${redactInstance(instance)} event=${bodyEvent || '<empty>'} messageId=${bodyMessageId}`);
   if (!instance) {
+    console.warn('[WebhookTrace] reject reason=missing_instance');
     res.status(400).json({ error: 'missing instance' });
     return;
   }
   const ctx = await getEmpresaAndTokenForInstance(instance);
   if (!ctx) {
-    console.warn(`[Webhook] 404 — instance "${redactInstance(instance)}" has no empresa assigned`);
+    console.warn(`[WebhookTrace] reject instance=${redactInstance(instance)} event=${bodyEvent || '<empty>'} reason=unknown_instance`);
     res.status(404).json({ error: 'unknown instance' });
     return;
   }
@@ -709,17 +762,17 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   let authStatus: 'token_match' | 'token_missing' | 'token_mismatch';
   if (headerToken) {
     if (!safeEqualString(headerToken, webhookToken)) {
-      console.warn(`[Webhook] 401 — token mismatch for instance "${redactInstance(instance)}"`);
+      console.warn(`[WebhookTrace] reject instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} reason=token_mismatch`);
       res.status(401).json({ error: 'invalid webhook token' });
       return;
     }
     authStatus = 'token_match';
   } else if (requireToken) {
-    console.warn(`[Webhook] 401 — missing token for instance "${redactInstance(instance)}"`);
+    console.warn(`[WebhookTrace] reject instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} reason=token_missing_strict`);
     res.status(401).json({ error: 'webhook token required' });
     return;
   } else {
-    console.warn(`[Webhook] token missing for known instance "${redactInstance(instance)}"; accepting during webhook registration rollout`);
+    console.warn(`[WebhookTrace] token missing for known instance=${redactInstance(instance)} empresa=${empresaId}; accepting during webhook registration rollout`);
     authStatus = 'token_missing';
   }
 
@@ -728,6 +781,7 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   // hundreds of ms. Holding the response open here is what triggered prior
   // double-deliveries.
   res.json({ ok: true });
+  console.log(`[WebhookTrace] ack instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} auth=${authStatus}`);
 
   // Defense layer: persist the raw payload BEFORE processing. If
   // processWebhookEvent (or any helper it calls) regresses again like the
@@ -738,6 +792,7 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   // The auth_status column captures whether the apikey header was present
   // and matched, so we can verify Whatsmiau adoption before flipping strict.
   const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus);
+  console.log(`[WebhookTrace] raw_event_saved empresa=${empresaId} rawEventId=${rawEventId ?? '<none>'}`);
 
   let processingError: unknown = null;
   try {

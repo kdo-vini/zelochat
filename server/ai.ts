@@ -40,6 +40,7 @@ import {
 import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
 import { getOpenAIClient } from './openaiClient.js';
 import { isSupportedPixReceiptAttachment, validatePixReceipt } from './pixReceiptValidator.js';
+import { redactJid } from './redact.js';
 import {
   classifyConfirmationIntent,
   isLikelyPaymentProofMessage,
@@ -2746,10 +2747,12 @@ export async function generateAndSendReply(
   jid: string,
   empresaId: string,
 ): Promise<string | null> {
+  const startedAt = Date.now();
+  console.log(`[AiTrace] start empresa=${empresaId || '<missing>'} jid=${redactJid(jid)}`);
   // P0.2 — empresaId is REQUIRED. Previously fell back to getBoundEmpresaId()
   // which is null/stale in multi-tenant deploys.
   if (!empresaId) {
-    console.warn('[AI] Cannot generate reply — empresaId is required for jid:', jid);
+    console.warn(`[AiTrace] skip empresa=<missing> jid=${redactJid(jid)} reason=empresa_required`);
     return null;
   }
   const resolvedEmpresaId = empresaId;
@@ -2760,21 +2763,25 @@ export async function generateAndSendReply(
   // until the next message retries hydration. See configStore.ts for the rationale.
   await ensureAiSettingsHydrated(resolvedEmpresaId);
   if (!isAiGloballyEnabledNow(resolvedEmpresaId)) {
-    console.log(`[AI] Global AI disabled or not hydrated for empresa ${resolvedEmpresaId} — skipping reply to ${jid}`);
+    console.log(`[AiTrace] skip empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=global_ai_disabled_or_not_hydrated`);
     return null;
   }
 
   const audioWait = await waitForPendingAudioTranscriptions(resolvedEmpresaId, jid);
   if (audioWait.status === 'timeout') {
-    console.warn(`[AI] Skipping auto-reply while audio transcription is still pending for empresa=${resolvedEmpresaId} jid=${jid} pending=${audioWait.pendingMessageIds.join(',')} waited=${audioWait.waitedMs}ms`);
+    console.warn(`[AiTrace] skip empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=audio_transcription_pending pending=${audioWait.pendingMessageIds.join(',')} waited=${audioWait.waitedMs}ms`);
     return null;
   }
   if (audioWait.waitedMs >= 1000) {
-    console.log(`[AI] Waited ${audioWait.waitedMs}ms for audio transcription before replying to empresa=${resolvedEmpresaId} jid=${jid}`);
+    console.log(`[AiTrace] audio_wait empresa=${resolvedEmpresaId} jid=${redactJid(jid)} waited=${audioWait.waitedMs}ms`);
   }
 
   const session = await getSession(jid, resolvedEmpresaId);
-  if (!session) return null;
+  if (!session) {
+    console.warn(`[AiTrace] skip empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=session_not_found`);
+    return null;
+  }
+  console.log(`[AiTrace] session_loaded empresa=${resolvedEmpresaId} jid=${redactJid(jid)} messages=${session.messages.length} status=${session.status} autoReply=${session.autoReply} elapsedMs=${Date.now() - startedAt}`);
   const aiConfig = getConfig(resolvedEmpresaId);
   const isGeneralMode = aiConfig.zelochatMode === 'general';
 
@@ -3059,6 +3066,7 @@ export async function generateAndSendReply(
       ...trimmedHistory.map((m) => buildRuntimeMessageForOpenAI(m, imageMessageIds)),
     ];
 
+    console.log(`[AiTrace] openai_request empresa=${resolvedEmpresaId} jid=${redactJid(jid)} model=${OPENAI_MODEL} history=${trimmedHistory.length} tools=${isGeneralMode ? 'dispatch_trigger' : 'order+consult+dispatch'} forceCreate=${forceCreateOrderFromObservationAck}`);
     const response = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: OPENAI_CHAT_TEMPERATURE,
@@ -3068,6 +3076,7 @@ export async function generateAndSendReply(
         : [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
       tool_choice: 'auto',
     });
+    console.log(`[AiTrace] openai_response empresa=${resolvedEmpresaId} jid=${redactJid(jid)} finish=${response.choices[0]?.finish_reason ?? '<none>'} usage=${response.usage?.total_tokens ?? '<none>'} elapsedMs=${Date.now() - startedAt}`);
     recordAiUsage({
       empresaId: resolvedEmpresaId,
       feature: 'ai_auto_reply',
@@ -3090,13 +3099,13 @@ export async function generateAndSendReply(
     try {
       const freshSession = await getSession(jid, resolvedEmpresaId);
       if (freshSession && (!freshSession.autoReply || freshSession.status === 'escalated')) {
-        console.log(`[ai] aborted reply: auto_reply turned off mid-flight for empresa=${resolvedEmpresaId} jid=${jid}`);
+        console.log(`[AiTrace] abort empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=auto_reply_off_mid_flight status=${freshSession.status} autoReply=${freshSession.autoReply}`);
         return null;
       }
     } catch (recheckErr) {
       // If the re-check itself fails, fail-closed: abort. We'd rather miss one
       // reply than send an unwanted AI message into an escalated conversation.
-      console.warn('[AI] auto_reply re-check failed — aborting reply as a precaution:', recheckErr);
+      console.warn(`[AiTrace] abort empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=auto_reply_recheck_failed:`, recheckErr);
       return null;
     }
 

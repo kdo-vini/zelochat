@@ -2,6 +2,7 @@ import { broadcast } from './ws.js';
 import { getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import { transcribeAudio } from './transcription.js';
 import { sendTextMessage } from './whatsapp.js';
+import { redactJid } from './redact.js';
 import type { AudioTranscriptStatus, ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
 import {
   buildAttachmentPreview,
@@ -2002,11 +2003,14 @@ export async function updateSessionName(
  */
 export async function handleIncomingMessage(msg: any, empresaId: string): Promise<boolean> {
   if (!empresaId) {
-    console.warn('[MessageHandler] Ignoring inbound message — empresaId is required.');
+    console.warn('[InboundTrace] message_handler_skip reason=empresa_required');
     return false;
   }
   const jid = msg.key.remoteJid;
-  if (!jid) return false;
+  if (!jid) {
+    console.warn(`[InboundTrace] message_handler_skip empresa=${empresaId} reason=no_jid`);
+    return false;
+  }
   return serializeForJid(jid, () => _handleIncomingMessage(msg, empresaId));
 }
 
@@ -2029,7 +2033,7 @@ function sanitizeFileName(raw: string | null | undefined, fallback: string): str
 
 async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<boolean> {
   const jid = msg.key.remoteJid;
-  console.log(`[MessageHandler] Incoming message — JID: ${jid} | pushName: ${msg.pushName}`);
+  console.log(`[InboundTrace] message_handler_start empresa=${resolvedEmpresaId} jid=${redactJid(jid)} messageId=${msg.key?.id ?? '<missing>'} hasPushName=${!!msg.pushName}`);
 
   const phone = phoneFromJid(jid);
   const pushName = msg.pushName || formatPhone(phone);
@@ -2097,7 +2101,10 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     attachment,
   });
 
-  if (!preview) return false;
+  if (!preview) {
+    console.warn(`[InboundTrace] message_handler_skip empresa=${resolvedEmpresaId} jid=${redactJid(jid)} messageId=${msg.key?.id ?? '<missing>'} reason=empty_preview`);
+    return false;
+  }
 
   const existing = await fetchSessionFamily(resolvedEmpresaId, jid);
 
@@ -2166,12 +2173,12 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       quotedPreview,
     });
     if (!upserted) {
-      console.log(`[MessageHandler] dedup: skip retry of wa_message_id=${waMessageId} for ${jid}`);
+      console.log(`[InboundTrace] message_handler_dedup empresa=${resolvedEmpresaId} jid=${redactJid(jid)} waMessageId=${waMessageId}`);
       return false;
     }
     storedMsg = upserted;
   } else {
-    console.warn('[MessageHandler] inbound message missing key.id — falling back to non-dedup insert. JID:', jid);
+    console.warn(`[InboundTrace] message_handler_missing_wa_id empresa=${resolvedEmpresaId} jid=${redactJid(jid)} fallback=non_dedup_insert`);
     storedMsg = await insertMessage({
       empresaId: resolvedEmpresaId,
       sessionId: sessionRow.id,
@@ -2186,6 +2193,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // layer); for the same message redelivered, the early-return above prevents
   // re-entry entirely.
   await getServiceSupabase().rpc('zelochat_increment_unread', { p_session_id: sessionRow.id });
+  console.log(`[InboundTrace] message_handler_persisted empresa=${resolvedEmpresaId} jid=${redactJid(jid)} dbMessageId=${storedMsg.id} waMessageId=${waMessageId ?? '<missing>'} autoReplyCandidate=${shouldTriggerAutoReply} attachment=${attachment?.type ?? 'none'}`);
 
   const family = await fetchSessionFamily(resolvedEmpresaId, jid);
   const mappedSession = family
@@ -2218,6 +2226,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     },
     resolvedEmpresaId,
   );
+  console.log(`[InboundTrace] message_handler_broadcast empresa=${resolvedEmpresaId} jid=${redactJid(jid)} sessionId=${mappedSession.id} autoReply=${mappedSession.autoReply}`);
 
   // Fire-and-forget audio transcription. Kicked off AFTER the message broadcast
   // so the frontend has the message in state before our 'pending' message_update
@@ -2230,6 +2239,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // customer receives a PT-BR explanation. Non-audio messages reset the counter
   // (see the else branch below).
   if (attachment?.type === 'audio') {
+    console.log(`[InboundTrace] audio_transcription_start empresa=${resolvedEmpresaId} jid=${redactJid(jid)} dbMessageId=${storedMsg.id}`);
     const transcriptionJob = transcribeAudioWithFailureTracking({
       empresaId: resolvedEmpresaId,
       jid,
@@ -2252,6 +2262,9 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // in `index.ts`. Duplicate webhook deliveries return false above; reactions
   // and poll-vote events return false here so the AI does not infer intent from
   // a placeholder.
+  if (!shouldTriggerAutoReply) {
+    console.log(`[InboundTrace] message_handler_return_false empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=not_auto_reply_trigger`);
+  }
   return shouldTriggerAutoReply;
 }
 

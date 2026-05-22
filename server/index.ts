@@ -25,6 +25,7 @@ import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
+import { redactJid } from './redact.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -211,30 +212,63 @@ async function scheduleAutoReplyIfAllowed(params: {
   reason: 'inbound' | 'audio_transcription_settled';
 }): Promise<void> {
   const { empresaId, jid, messageId } = params;
+  console.log(`[AutoReplyTrace] evaluate empresa=${empresaId} jid=${redactJid(jid)} reason=${params.reason} messageId=${messageId ?? '<none>'}`);
   const session = await getSession(jid, empresaId);
-  if (!session?.autoReply) return;
-  if (session.status === 'escalated') return;
+  if (!session) {
+    console.warn(`[AutoReplyTrace] skip empresa=${empresaId} jid=${redactJid(jid)} reason=session_not_found`);
+    return;
+  }
+  if (!session.autoReply) {
+    console.log(`[AutoReplyTrace] skip empresa=${empresaId} jid=${redactJid(jid)} reason=session_auto_reply_off status=${session.status}`);
+    return;
+  }
+  if (session.status === 'escalated') {
+    console.log(`[AutoReplyTrace] skip empresa=${empresaId} jid=${redactJid(jid)} reason=session_escalated`);
+    return;
+  }
 
   await ensureAiSettingsHydrated(empresaId);
-  if (!isAiGloballyEnabledNow(empresaId)) return;
-  if (!process.env.OPENAI_API_KEY) return;
+  if (!isAiGloballyEnabledNow(empresaId)) {
+    console.log(`[AutoReplyTrace] skip empresa=${empresaId} jid=${redactJid(jid)} reason=global_ai_disabled`);
+    return;
+  }
+  if (!process.env.OPENAI_API_KEY) {
+    console.error(`[AutoReplyTrace] skip empresa=${empresaId} jid=${redactJid(jid)} reason=openai_key_missing`);
+    return;
+  }
 
+  console.log(`[AutoReplyTrace] scheduled empresa=${empresaId} jid=${redactJid(jid)} messageId=${messageId ?? '<none>'}`);
   scheduleReply({
     empresaId,
     jid,
     messageId,
     fire: async () => {
+      console.log(`[AutoReplyTrace] fire empresa=${empresaId} jid=${redactJid(jid)} messageId=${messageId ?? '<none>'}`);
       const freshSession = await getSession(jid, empresaId);
-      if (!freshSession?.autoReply) return;
-      if (freshSession.status === 'escalated') return;
-      if (!isAiGloballyEnabledNow(empresaId)) return;
+      if (!freshSession) {
+        console.warn(`[AutoReplyTrace] fire_skip empresa=${empresaId} jid=${redactJid(jid)} reason=session_not_found`);
+        return;
+      }
+      if (!freshSession.autoReply) {
+        console.log(`[AutoReplyTrace] fire_skip empresa=${empresaId} jid=${redactJid(jid)} reason=session_auto_reply_off status=${freshSession.status}`);
+        return;
+      }
+      if (freshSession.status === 'escalated') {
+        console.log(`[AutoReplyTrace] fire_skip empresa=${empresaId} jid=${redactJid(jid)} reason=session_escalated`);
+        return;
+      }
+      if (!isAiGloballyEnabledNow(empresaId)) {
+        console.log(`[AutoReplyTrace] fire_skip empresa=${empresaId} jid=${redactJid(jid)} reason=global_ai_disabled`);
+        return;
+      }
 
       if (!checkAutoReplyRateLimit(empresaId, jid)) return;
 
       try {
-        await generateAndSendReply(jid, empresaId);
+        const result = await generateAndSendReply(jid, empresaId);
+        console.log(`[AutoReplyTrace] fire_done empresa=${empresaId} jid=${redactJid(jid)} result=${result ? 'reply_or_action' : 'no_reply'}`);
       } catch (err) {
-        console.error('[AutoReply] Error:', err);
+        console.error(`[AutoReplyTrace] fire_error empresa=${empresaId} jid=${redactJid(jid)}:`, err);
       }
     },
   });
@@ -263,9 +297,10 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // resolved via `getBoundEmpresaId()`. If we don't know the empresa, drop.
   const empresaId = empresaIdFromWebhook;
   if (!empresaId) {
-    console.warn('[AutoReply] dropping incoming message — webhook did not resolve an empresaId');
+    console.warn('[InboundTrace] dropping incoming message — webhook did not resolve an empresaId');
     return;
   }
+  console.log(`[InboundTrace] received empresa=${empresaId} jid=${redactJid(msg?.key?.remoteJid)} messageId=${msg?.key?.id ?? '<missing>'}`);
 
   // 1. Normalize and store the message — pass empresaId explicitly so the handler
   // doesn't fall back to the global singleton.
@@ -279,13 +314,20 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   try {
     persisted = await handleIncomingMessage(msg, empresaId);
   } catch (error) {
-    console.error('[Server] Failed to persist incoming message:', error);
+    console.error(`[InboundTrace] persist_error empresa=${empresaId} jid=${redactJid(msg?.key?.remoteJid)} messageId=${msg?.key?.id ?? '<missing>'}:`, error);
   }
-  if (!persisted) return;
+  if (!persisted) {
+    console.log(`[InboundTrace] persisted=false empresa=${empresaId} jid=${redactJid(msg?.key?.remoteJid)} messageId=${msg?.key?.id ?? '<missing>'}`);
+    return;
+  }
+  console.log(`[InboundTrace] persisted=true empresa=${empresaId} jid=${redactJid(msg?.key?.remoteJid)} messageId=${msg?.key?.id ?? '<missing>'}`);
 
   // 2. Auto-reply if enabled for this session
   const jid = msg.key?.remoteJid;
-  if (!jid) return;
+  if (!jid) {
+    console.warn(`[InboundTrace] skip_auto_reply empresa=${empresaId} reason=no_jid_after_persist`);
+    return;
+  }
 
   await scheduleAutoReplyIfAllowed({
     empresaId,

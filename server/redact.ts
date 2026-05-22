@@ -41,6 +41,18 @@ export function redactToken(token: string | null | undefined): string {
 }
 
 /**
+ * Redact a WhatsApp JID/phone for logs.
+ * `5514999998888@s.whatsapp.net` → `***8888@s.whatsapp.net`
+ */
+export function redactJid(jid: string | null | undefined): string {
+  if (!jid) return '<unknown-jid>';
+  const [local, domain] = String(jid).split('@');
+  const digits = (local || '').replace(/\D/g, '');
+  const tail = digits ? digits.slice(-4) : String(local || '').slice(-4);
+  return `***${tail}${domain ? `@${domain}` : ''}`;
+}
+
+/**
  * Redact a customer email address for LGPD-compliant logging.
  * `someone@example.com` → `so***@***.com`
  * Keeps the first 2 chars of the local-part and the TLD of the domain.

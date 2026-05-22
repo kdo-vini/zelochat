@@ -200,6 +200,16 @@ function allowLocalWebhookRegister(): boolean {
   return v === '1' || v === 'true' || v === 'yes';
 }
 
+function redactWebhookUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    url.search = url.searchParams.has('token') ? '?token=***' : '';
+    return url.toString();
+  } catch {
+    return '<invalid-webhook-url>';
+  }
+}
+
 function readTunnelUrl(): string | null {
   try {
     if (!existsSync(TUNNEL_URL_FILE)) return null;
@@ -242,6 +252,7 @@ export async function registerWebhook(force = false): Promise<boolean> {
   }
 
   const webhookUrl = await buildWebhookUrl(INSTANCE_NAME);
+  console.log(`[WhatsmiauTrace] register_legacy_start instance=${redactInstance(INSTANCE_NAME)} webhook=${redactWebhookUrl(webhookUrl)}`);
   if (isLocalWebhookUrl(webhookUrl) && !allowLocalWebhookRegister()) {
     console.warn('[whatsapp] refusing to register local webhook URL. Set WEBHOOK_PUBLIC_URL/PUBLIC_APP_URL, use a tunnel, or set WHATSMIAU_ALLOW_LOCAL_WEBHOOK_REGISTER=1 for an isolated sandbox.');
     return false;
@@ -299,10 +310,10 @@ export async function registerWebhook(force = false): Promise<boolean> {
     }
 
     lastRegisteredWebhook = webhookUrl;
-    console.log(`[WhatsApp] Webhook registered → ${webhookUrl}`);
+    console.log(`[WhatsmiauTrace] register_legacy_done instance=${redactInstance(INSTANCE_NAME)} webhook=${redactWebhookUrl(webhookUrl)}`);
     return true;
   } catch (err) {
-    console.error('[WhatsApp] Error registering webhook:', err instanceof Error ? err.message : err);
+    console.error(`[WhatsmiauTrace] register_legacy_error instance=${redactInstance(INSTANCE_NAME)} webhook=${redactWebhookUrl(webhookUrl)}:`, err instanceof Error ? err.message : err);
     return false;
   }
 }
@@ -673,6 +684,7 @@ export async function setWebhookForInstance(instanceName: string): Promise<void>
   if (isWebhookRegisterDisabled()) return;
   if (!instanceName) return;
   const webhookUrl = await buildWebhookUrl(instanceName);
+  console.log(`[WhatsmiauTrace] register_instance_start instance=${redactInstance(instanceName)} webhook=${redactWebhookUrl(webhookUrl)}`);
   if (isLocalWebhookUrl(webhookUrl) && !allowLocalWebhookRegister()) {
     console.warn(`[WhatsApp] refusing to register local webhook URL for instance "${redactInstance(instanceName)}". Set WEBHOOK_PUBLIC_URL/PUBLIC_APP_URL or WHATSMIAU_ALLOW_LOCAL_WEBHOOK_REGISTER=1 for an isolated sandbox.`);
     return;
@@ -708,9 +720,9 @@ export async function setWebhookForInstance(instanceName: string): Promise<void>
       // Non-fatal — the /webhook/set call above already enables it. The /v2/instance/update
       // is a redundancy belt that's only needed for media base64 propagation.
     }
-    console.log(`[WhatsApp] webhook registered for instance "${redactInstance(instanceName)}"`);
+    console.log(`[WhatsmiauTrace] register_instance_done instance=${redactInstance(instanceName)} webhook=${redactWebhookUrl(webhookUrl)}`);
   } catch (err) {
-    console.error(`[WhatsApp] setWebhookForInstance(${redactInstance(instanceName)}) failed:`, err instanceof Error ? err.message : err);
+    console.error(`[WhatsmiauTrace] register_instance_error instance=${redactInstance(instanceName)} webhook=${redactWebhookUrl(webhookUrl)}:`, err instanceof Error ? err.message : err);
   }
 }
 
