@@ -195,7 +195,7 @@ export const CalendarView = ({
       await printer.printDay(dateLabel, orders, businessName);
     } catch (err) {
       console.error('Print error:', err);
-      toast.error('Erro ao imprimir na impressora USB. Verifique a conexão.');
+      toast.error('Erro ao imprimir. Verifique se o Zelo Impressão está aberto e a impressora está ligada.');
     }
   };
 

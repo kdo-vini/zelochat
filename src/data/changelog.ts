@@ -319,7 +319,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-04-27',
     category: 'big',
     title: 'Impressão automática de pedidos',
-    description: 'Conecte sua impressora térmica USB diretamente no navegador — sem instalar nada. A cada pedido confirmado pelo WhatsApp, o ticket é impresso automaticamente. Clique em "Conectar impressora" na barra lateral para parear.',
+    description: 'Instale o Zelo Impressão no computador da operação e conecte uma única vez na barra lateral. A partir daí, todo pedido criado é impresso automaticamente na cozinha — sem precisar fazer nada.',
   },
   {
     date: '2026-04-27',
