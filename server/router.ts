@@ -666,9 +666,9 @@ router.post('/webhook', async (_req: Request, res: Response) => {
  *      headers on delivery. Webhook registration now includes the token in
  *      the configured URL, so the route fails closed by default.
  *
- * Emergency rollout lever: WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT=1 can
- * temporarily restore validate-if-present behavior while Whatsmiau configs are
- * being re-registered. Keep it off in normal production.
+ * Emergency rollout lever: WEBHOOK_REQUIRE_TOKEN=1 enforces strict token auth.
+ * While the fleet is being re-registered, missing tokens are accepted for a
+ * known instance, but mismatched tokens are always rejected.
  *
  * BUTTERFLY EFFECT: changes here cascade to (a) the AI dispatch — a forged
  * webhook can inject prompts into the AI; (b) the order pipeline — fake
@@ -703,8 +703,8 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     ''
   ).trim();
 
-  const allowMissingDuringRollout = (process.env.WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT ?? '').toLowerCase();
-  const canAllowMissing = allowMissingDuringRollout === '1' || allowMissingDuringRollout === 'true' || allowMissingDuringRollout === 'yes';
+  const strictWebhookToken = (process.env.WEBHOOK_REQUIRE_TOKEN ?? '').toLowerCase();
+  const requireToken = strictWebhookToken === '1' || strictWebhookToken === 'true' || strictWebhookToken === 'yes';
 
   let authStatus: 'token_match' | 'token_missing' | 'token_mismatch';
   if (headerToken) {
@@ -714,13 +714,13 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
       return;
     }
     authStatus = 'token_match';
-  } else if (canAllowMissing) {
-    console.warn(`[Webhook] token missing but allowed by WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT for instance "${redactInstance(instance)}"`);
-    authStatus = 'token_missing';
-  } else {
+  } else if (requireToken) {
     console.warn(`[Webhook] 401 — missing token for instance "${redactInstance(instance)}"`);
     res.status(401).json({ error: 'webhook token required' });
     return;
+  } else {
+    console.warn(`[Webhook] token missing for known instance "${redactInstance(instance)}"; accepting during webhook registration rollout`);
+    authStatus = 'token_missing';
   }
 
   // Ack the webhook FIRST — Whatsmiau's retry timer starts the moment we

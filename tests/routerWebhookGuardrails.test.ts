@@ -11,6 +11,14 @@ function indexOfOrFail(text: string): number {
 
 await runSuite('Router webhook/order guardrails', [
   {
+    name: 'known webhook instance accepts missing token during registration rollout',
+    run: () => {
+      assertIncludes(router, "const strictWebhookToken = (process.env.WEBHOOK_REQUIRE_TOKEN ?? '').toLowerCase();", 'strict token flag is opt-in');
+      assertIncludes(router, "res.status(401).json({ error: 'webhook token required' });", 'strict missing-token rejection still exists');
+      assertIncludes(router, "accepting during webhook registration rollout", 'missing token is accepted for known instances while webhooks are repaired');
+    },
+  },
+  {
     name: 'hard button path returns before dispatching to AI',
     run: () => {
       const hardStart = indexOfOrFail('const isHardConfirm = buttonId ===');

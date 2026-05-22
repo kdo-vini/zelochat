@@ -178,6 +178,27 @@ function requireWhatsmiauMessageId(data: any, context: string): string {
 
 const TUNNEL_URL_FILE = resolve('.tunnel-url');
 let lastRegisteredWebhook = '';
+const PRODUCTION_WEBHOOK_URL = 'https://chat.zelopdv.com.br';
+
+function isLocalWebhookUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname.endsWith('.local')
+    );
+  } catch {
+    return true;
+  }
+}
+
+function allowLocalWebhookRegister(): boolean {
+  const v = (process.env.WHATSMIAU_ALLOW_LOCAL_WEBHOOK_REGISTER || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
 
 function readTunnelUrl(): string | null {
   try {
@@ -194,11 +215,13 @@ export function getPublicWebhookUrl(): string {
   // 1. Explicit WEBHOOK_PUBLIC_URL (manual override — set this in Dokploy)
   // 2. PUBLIC_APP_URL (already used for Stripe return URLs — same domain serves WS)
   // 3. Cloudflared tunnel file (dev)
-  // 4. Localhost (dev fallback)
+  // 4. Production fallback — fail toward the real public app, never localhost
+  // 5. Localhost only when explicitly allowed for an isolated sandbox
   if (process.env.WEBHOOK_PUBLIC_URL) return process.env.WEBHOOK_PUBLIC_URL.replace(/\/$/, '');
   if (process.env.PUBLIC_APP_URL) return process.env.PUBLIC_APP_URL.replace(/\/$/, '');
   const tunnelUrl = readTunnelUrl();
   if (tunnelUrl) return tunnelUrl.replace(/\/$/, '');
+  if (!allowLocalWebhookRegister()) return PRODUCTION_WEBHOOK_URL;
   return 'http://localhost:3001';
 }
 
@@ -219,6 +242,10 @@ export async function registerWebhook(force = false): Promise<boolean> {
   }
 
   const webhookUrl = await buildWebhookUrl(INSTANCE_NAME);
+  if (isLocalWebhookUrl(webhookUrl) && !allowLocalWebhookRegister()) {
+    console.warn('[whatsapp] refusing to register local webhook URL. Set WEBHOOK_PUBLIC_URL/PUBLIC_APP_URL, use a tunnel, or set WHATSMIAU_ALLOW_LOCAL_WEBHOOK_REGISTER=1 for an isolated sandbox.');
+    return false;
+  }
 
   if (!force && webhookUrl === lastRegisteredWebhook) return true;
 
@@ -646,6 +673,10 @@ export async function setWebhookForInstance(instanceName: string): Promise<void>
   if (isWebhookRegisterDisabled()) return;
   if (!instanceName) return;
   const webhookUrl = await buildWebhookUrl(instanceName);
+  if (isLocalWebhookUrl(webhookUrl) && !allowLocalWebhookRegister()) {
+    console.warn(`[WhatsApp] refusing to register local webhook URL for instance "${redactInstance(instanceName)}". Set WEBHOOK_PUBLIC_URL/PUBLIC_APP_URL or WHATSMIAU_ALLOW_LOCAL_WEBHOOK_REGISTER=1 for an isolated sandbox.`);
+    return;
+  }
   try {
     await axios.post(
       `${BASE_URL}/webhook/set/${instanceName}`,

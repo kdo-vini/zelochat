@@ -44,9 +44,8 @@ export function usePrinter(): UsePrinterReturn {
 
   useEffect(() => {
     mountedRef.current = true;
-    void refresh();
     return () => { mountedRef.current = false; };
-  }, [refresh]);
+  }, []);
 
   const connect = useCallback(async () => {
     setConnecting(true);

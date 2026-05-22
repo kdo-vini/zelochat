@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-22',
+    category: 'hotfix',
+    title: 'Atendimento automático voltou a receber mensagens',
+    description: 'Corrigimos a conexão que recebe mensagens dos clientes para evitar que ela aponte para um endereço local por engano, mantendo a IA respondendo normalmente.',
+  },
+  {
     date: '2026-05-21',
     category: 'big',
     title: 'Pagamento da assinatura por Pix',
