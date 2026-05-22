@@ -1,4 +1,10 @@
 import 'dotenv/config';
+import ws from 'ws';
+// Polyfill WebSocket for Node.js < 22 before Supabase client initializes
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+if (typeof (globalThis as any).WebSocket === 'undefined') {
+  (globalThis as any).WebSocket = ws;
+}
 import cors from 'cors';
 import express from 'express';
 import { createServer } from 'http';
