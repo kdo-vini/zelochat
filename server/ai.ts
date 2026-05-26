@@ -26,7 +26,7 @@ import {
   type PixReceiptAnalysis,
 } from '../src/domain/pixReceipt.js';
 import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
-import { getSessionTagsFull, type TagRecord } from './tags.js';
+import { getSessionTagsFull, listTags, applyTagToSession, type TagRecord } from './tags.js';
 import { broadcast } from './ws.js';
 import { recordAiUsage } from './aiUsage.js';
 import {
@@ -1963,6 +1963,30 @@ ${lines}
 (Essas instruções se somam às REGRAS OPERACIONAIS DA EMPRESA acima. Em caso de conflito, prevalecem as regras obrigatórias do sistema.)`;
 }
 
+/**
+ * Lists the empresa's "auto-tags" (tags whose owner wrote a plain-Portuguese
+ * `autoApplyCondition`) so the model can call `aplicar_tag` when the condition
+ * occurs. Mirrors the GATILHOS block: the AI evaluates the condition semantically
+ * and tags the conversation. `appliedTagIds` are the tags already on this session
+ * — marked so the model doesn't re-apply them every turn.
+ */
+function buildAutoTagsBlock(autoTags: TagRecord[], appliedTagIds: Set<string>): string {
+  const candidates = autoTags.filter((t) => t.autoApplyCondition?.trim());
+  if (candidates.length === 0) return '';
+  const lines = candidates
+    .map((t) => {
+      const applied = appliedTagIds.has(t.id) ? ' (JÁ APLICADA — não chame de novo)' : '';
+      return `- id=${t.id} "${safeForPrompt(t.name, 80)}"${applied}: ${safeForPrompt(t.autoApplyCondition!, 500)}`;
+    })
+    .join('\n');
+  return `\nTAGS AUTOMÁTICAS (chame aplicar_tag com o id da tag quando a condição dela ocorrer na conversa):
+${lines}
+
+INSTRUÇÕES DE TAG:
+- Chame aplicar_tag NO MÁXIMO UMA VEZ por tag. NUNCA chame para uma tag marcada como "JÁ APLICADA".
+- Marcar a conversa é uma ação interna e silenciosa: continue o atendimento normalmente.`;
+}
+
 export function buildSystemInstruction(
   empresaId: string,
   customerPhone: string,
@@ -1971,6 +1995,7 @@ export function buildSystemInstruction(
   activeOrdersBlock: string,
   customerProfile?: string | null,
   sessionTags?: TagRecord[],
+  autoTags?: TagRecord[],
 ): string {
   const cfg = getConfig(empresaId);
 
@@ -1980,6 +2005,10 @@ export function buildSystemInstruction(
   const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
   const ownerStylePreferences = buildOwnerStylePreferences(cfg.aiInstructions);
   const tagsBlock = buildTagsBlock(sessionTags ?? []);
+  const autoTagsBlock = buildAutoTagsBlock(
+    autoTags ?? [],
+    new Set((sessionTags ?? []).map((t) => t.id)),
+  );
   const safeCustomerProfile = customerProfile ? safeForPrompt(customerProfile, 2000).trim() : '';
 
   const blockedDates = getBlockedDates(empresaId);
@@ -2177,7 +2206,7 @@ INSTRUÇÕES DE GATILHO:
 - Se for escalate_human, você NÃO escreve mais nada — o sistema cuida do handoff com o cliente.
 - Se for notify_manager, continue a conversa normalmente após a notificação.
 
-${ownerStylePreferences}${tagsBlock}
+${ownerStylePreferences}${tagsBlock}${autoTagsBlock}
 
 ${cfg.deliveryConfig?.enabled && cfg.deliveryConfig.neighborhoods.length > 0 ? `ENTREGA (DELIVERY):
 - A lanchonete aceita pedidos de entrega nos seguintes bairros:
@@ -2290,6 +2319,22 @@ export const DISPATCH_TRIGGER_TOOL: ChatCompletionTool = {
   },
 };
 
+export const APPLY_TAG_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'aplicar_tag',
+    description: 'Marca esta conversa com uma das TAGS AUTOMÁTICAS configuradas pelo dono, quando a condição da tag ocorre. Ação interna e silenciosa — não muda sua resposta ao cliente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tag_id: { type: 'string', description: 'ID da tag a aplicar (use exatamente o id listado em TAGS AUTOMÁTICAS)' },
+        reason: { type: 'string', description: 'Resumo curto do que na conversa disparou a tag' },
+      },
+      required: ['tag_id', 'reason'],
+    },
+  },
+};
+
 export type AiToolCall = {
   id: string;
   type: 'function';
@@ -2377,6 +2422,7 @@ export function planToolCallsForTurn(
   if (createOrderCalls.length > 0) {
     const safePrefixCalls = calls.filter((toolCall) =>
       toolCall.function.name === 'consultar_pedido' ||
+      toolCall.function.name === 'aplicar_tag' ||
       (
         toolCall.function.name === 'dispatch_trigger' &&
         resolveTriggerFromToolCall(toolCall, triggers).trig?.kind === 'notify_manager'
@@ -2393,7 +2439,8 @@ export function planToolCallsForTurn(
 
   const supportedNonTerminal = calls.filter((toolCall) =>
     toolCall.function.name === 'consultar_pedido' ||
-    toolCall.function.name === 'dispatch_trigger'
+    toolCall.function.name === 'dispatch_trigger' ||
+    toolCall.function.name === 'aplicar_tag'
   );
 
   if (supportedNonTerminal.length === 0) {
@@ -2405,6 +2452,39 @@ export function planToolCallsForTurn(
     mode: supportedNonTerminal.length > 1 ? 'sequential_non_terminal' : 'single_terminal',
     reason: `safe non-terminal tool calls; original tool order: ${names}`,
   };
+}
+
+/**
+ * Handles an `aplicar_tag` tool call: validates the tag belongs to the empresa's
+ * auto-tags, applies it to the session, and broadcasts `session_tags_updated` so
+ * the operator's inbox updates live (same event the manual tag route emits).
+ *
+ * NEVER throws — tagging is a side action and must not interfere with the order
+ * flow. On any failure it returns a benign tool-result string.
+ */
+async function applyAutoTag(
+  empresaId: string,
+  jid: string,
+  toolCall: AiToolCall,
+  autoTags: TagRecord[],
+): Promise<{ result: string; tag: TagRecord | null }> {
+  const parsed = parseToolCallArguments<{ tag_id?: string }>(toolCall);
+  const tagId = typeof parsed.tag_id === 'string' ? parsed.tag_id : '';
+  const tag = autoTags.find((t) => t.id === tagId) ?? null;
+  if (!tag) {
+    console.warn(`[AI] aplicar_tag: unknown/ineligible tag_id from model: ${tagId}`);
+    return { result: `Erro: tag ${tagId} não encontrada`, tag: null };
+  }
+  try {
+    await applyTagToSession(empresaId, jid, tagId);
+    const updatedTags = await getSessionTagsFull(empresaId, jid);
+    broadcast({ type: 'session_tags_updated', data: { sessionId: jid, tags: updatedTags } }, empresaId);
+    console.log(`[AI] aplicar_tag: marked ${redactJid(jid)} with "${tag.name}" (empresa=${empresaId})`);
+    return { result: `Conversa marcada com a tag "${tag.name}".`, tag };
+  } catch (err) {
+    console.warn('[AI] aplicar_tag failed (non-fatal):', err instanceof Error ? err.message : err);
+    return { result: `Não foi possível aplicar a tag "${tag.name}" agora.`, tag };
+  }
 }
 
 function buildRuntimeMessageForOpenAI(
@@ -2982,12 +3062,17 @@ export async function generateAndSendReply(
     return sendBusinessHoursReply(jid, resolvedEmpresaId, businessHoursIssueFromMessage);
   }
 
-  const [customerHistory, triggers, activeOrdersBlock, sessionTags] = await Promise.all([
+  const [customerHistory, triggers, activeOrdersBlock, sessionTags, allTags] = await Promise.all([
     isGeneralMode ? Promise.resolve('Modo geral: sem histórico de pedidos.') : fetchCustomerHistory(resolvedEmpresaId, session.customerPhone),
     fetchActiveTriggers(resolvedEmpresaId),
     isGeneralMode ? Promise.resolve('Modo geral: sem consulta de pedidos ativos.') : fetchActiveOrdersForCustomer(resolvedEmpresaId, session.customerPhone),
     getSessionTagsFull(resolvedEmpresaId, session.id),
+    listTags(resolvedEmpresaId),
   ]);
+
+  // Auto-tags = tags whose owner wrote a plain-Portuguese `autoApplyCondition`.
+  // Only these are offered to the model (and only outside general mode for now).
+  const autoTags = isGeneralMode ? [] : allTags.filter((t) => t.autoApplyCondition?.trim());
 
   const systemInstruction = buildSystemInstruction(
     resolvedEmpresaId,
@@ -2997,6 +3082,7 @@ export async function generateAndSendReply(
     activeOrdersBlock,
     session.customerProfile,
     sessionTags,
+    autoTags,
   );
   // Two-layer detection: the legacy `shouldForceCreateOrderAfterObservationPrompt`
   // requires the AI summary message to contain product/payment tokens, which
@@ -3066,14 +3152,16 @@ export async function generateAndSendReply(
       ...trimmedHistory.map((m) => buildRuntimeMessageForOpenAI(m, imageMessageIds)),
     ];
 
-    console.log(`[AiTrace] openai_request empresa=${resolvedEmpresaId} jid=${redactJid(jid)} model=${OPENAI_MODEL} history=${trimmedHistory.length} tools=${isGeneralMode ? 'dispatch_trigger' : 'order+consult+dispatch'} forceCreate=${forceCreateOrderFromObservationAck}`);
+    const tools: ChatCompletionTool[] = isGeneralMode
+      ? [DISPATCH_TRIGGER_TOOL]
+      : [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL];
+    if (autoTags.length > 0) tools.push(APPLY_TAG_TOOL);
+    console.log(`[AiTrace] openai_request empresa=${resolvedEmpresaId} jid=${redactJid(jid)} model=${OPENAI_MODEL} history=${trimmedHistory.length} tools=${tools.map((t) => (t.type === 'function' ? t.function.name : t.type)).join('+')} forceCreate=${forceCreateOrderFromObservationAck}`);
     const response = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: OPENAI_CHAT_TEMPERATURE,
       messages,
-      tools: isGeneralMode
-        ? [DISPATCH_TRIGGER_TOOL]
-        : [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
+      tools,
       tool_choice: 'auto',
     });
     console.log(`[AiTrace] openai_response empresa=${resolvedEmpresaId} jid=${redactJid(jid)} finish=${response.choices[0]?.finish_reason ?? '<none>'} usage=${response.usage?.total_tokens ?? '<none>'} elapsedMs=${Date.now() - startedAt}`);
@@ -3203,6 +3291,12 @@ export async function generateAndSendReply(
             await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
             toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any);
           }
+
+          if (toolCall.function.name === 'aplicar_tag') {
+            const { result } = await applyAutoTag(resolvedEmpresaId, jid, toolCall, autoTags);
+            await addToolMessage(jid, result, toolCall.id, resolvedEmpresaId);
+            toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result } as any);
+          }
         }
 
         const followUp = await openai.chat.completions.create({
@@ -3310,6 +3404,11 @@ export async function generateAndSendReply(
               console.warn('[AI] notify_manager triggered before terminal tool but managerPhone not configured.');
             }
             await addToolMessage(jid, 'Gerente notificado', prefixCall.id, resolvedEmpresaId);
+          }
+
+          if (prefixCall.function.name === 'aplicar_tag') {
+            const { result } = await applyAutoTag(resolvedEmpresaId, jid, prefixCall, autoTags);
+            await addToolMessage(jid, result, prefixCall.id, resolvedEmpresaId);
           }
         }
 
@@ -3697,6 +3796,52 @@ export async function generateAndSendReply(
         }
         await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
         console.log(`[AI] consultar_pedido answered for ${jid}`);
+        return cleanFollow;
+      }
+
+      if (toolCall.type === 'function' && toolCall.function.name === 'aplicar_tag') {
+        const { result, tag } = await applyAutoTag(resolvedEmpresaId, jid, toolCall, autoTags);
+
+        // Complete the tool call within the SAME OpenAI request — H3 invariant.
+        // If the applied tag carries behavior instructions ("o que o robô faz
+        // depois"), inject them so the behavior (e.g. redirect to outro número)
+        // takes effect on THIS reply, not only on the next message.
+        const followUpMessages: ChatCompletionMessageParam[] = [
+          ...messages,
+          selectedToolCallMessage,
+          { role: 'tool', tool_call_id: toolCall.id, content: result } as any,
+        ];
+        if (tag?.aiInstructions?.trim()) {
+          followUpMessages.push({
+            role: 'system',
+            content: `INSTRUÇÃO DA TAG "${safeForPrompt(tag.name, 80)}" (aplica-se agora a esta conversa): ${safeForPrompt(tag.aiInstructions, 2000)}`,
+          } as any);
+        }
+        const followUp = await openai.chat.completions.create({
+          model: OPENAI_MODEL,
+          temperature: OPENAI_CHAT_TEMPERATURE,
+          messages: followUpMessages,
+        });
+        recordAiUsage({
+          empresaId: resolvedEmpresaId,
+          feature: 'ai_auto_followup',
+          model: OPENAI_MODEL,
+          status: 'success',
+          usage: followUp.usage,
+        });
+
+        // Persist the audit trail. Order matters: assistant(tool_calls) → tool → assistant(text).
+        await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+        await addToolMessage(jid, result, toolCall.id, resolvedEmpresaId);
+
+        const followText = followUp.choices[0]?.message?.content?.trim()
+          || 'Perfeito! Como posso te ajudar?';
+        const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'aplicar_tag follow-up'))) {
+          return null;
+        }
+        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
+        console.log(`[AI] aplicar_tag answered for ${jid}`);
         return cleanFollow;
       }
 

@@ -34,7 +34,7 @@ export function useTags(token: string | null, options: { enabled?: boolean } = {
     void refresh();
   }, [enabled, refresh]);
 
-  const createTag = useCallback(async (data: { name: string; color: string; aiInstructions: string | null }) => {
+  const createTag = useCallback(async (data: { name: string; color: string; aiInstructions: string | null; autoApplyCondition?: string | null }) => {
     if (!token) throw new Error('Faça login para criar tags.');
     const tag = await createTagRequest(token, data);
     setTags((prev) => [...prev, tag]);
@@ -43,7 +43,7 @@ export function useTags(token: string | null, options: { enabled?: boolean } = {
 
   const updateTag = useCallback(async (
     tagId: string,
-    patch: Partial<{ name: string; color: string; aiInstructions: string | null }>,
+    patch: Partial<{ name: string; color: string; aiInstructions: string | null; autoApplyCondition: string | null }>,
   ) => {
     if (!token) throw new Error('Faça login para editar tags.');
     const tag = await updateTagRequest(token, tagId, patch);

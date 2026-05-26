@@ -6,6 +6,7 @@ export interface TagRecord {
   name: string;
   color: string;
   aiInstructions: string | null;
+  autoApplyCondition: string | null;
   createdAt: string;
 }
 
@@ -15,6 +16,7 @@ type TagRow = {
   name: string;
   color: string;
   ai_instructions: string | null;
+  auto_apply_condition: string | null;
   created_at: string;
 };
 
@@ -25,11 +27,12 @@ function mapTag(row: TagRow): TagRecord {
     name: row.name,
     color: row.color,
     aiInstructions: row.ai_instructions,
+    autoApplyCondition: row.auto_apply_condition,
     createdAt: row.created_at,
   };
 }
 
-const SELECT_COLS = 'id, empresa_id, name, color, ai_instructions, created_at';
+const SELECT_COLS = 'id, empresa_id, name, color, ai_instructions, auto_apply_condition, created_at';
 const TAG_RELATION = 'zelochat_tags!zelochat_session_tags_tag_empresa_fk';
 
 export class TagTenantMismatchError extends Error {
@@ -88,11 +91,18 @@ export async function createTag(
   name: string,
   color: string,
   aiInstructions: string | null,
+  autoApplyCondition: string | null = null,
 ): Promise<TagRecord> {
   const sb = getServiceSupabase();
   const { data, error } = await sb
     .from('zelochat_tags')
-    .insert({ empresa_id: empresaId, name: name.trim(), color, ai_instructions: aiInstructions || null })
+    .insert({
+      empresa_id: empresaId,
+      name: name.trim(),
+      color,
+      ai_instructions: aiInstructions || null,
+      auto_apply_condition: autoApplyCondition?.trim() || null,
+    })
     .select(SELECT_COLS)
     .single();
   if (error) throw error;
@@ -102,13 +112,14 @@ export async function createTag(
 export async function updateTag(
   empresaId: string,
   tagId: string,
-  patch: Partial<{ name: string; color: string; aiInstructions: string | null }>,
+  patch: Partial<{ name: string; color: string; aiInstructions: string | null; autoApplyCondition: string | null }>,
 ): Promise<TagRecord | null> {
   const sb = getServiceSupabase();
   const update: Record<string, unknown> = {};
   if (patch.name !== undefined) update.name = patch.name.trim();
   if (patch.color !== undefined) update.color = patch.color;
   if (patch.aiInstructions !== undefined) update.ai_instructions = patch.aiInstructions || null;
+  if (patch.autoApplyCondition !== undefined) update.auto_apply_condition = patch.autoApplyCondition?.trim() || null;
 
   const { data, error } = await sb
     .from('zelochat_tags')
