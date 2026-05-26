@@ -1838,8 +1838,8 @@ router.get('/api/tags', async (req: Request, res: Response) => {
 });
 
 router.post('/api/tags', async (req: Request, res: Response) => {
-  const { name, color, aiInstructions } = (req.body ?? {}) as {
-    name?: string; color?: string; aiInstructions?: string | null;
+  const { name, color, aiInstructions, autoApplyCondition } = (req.body ?? {}) as {
+    name?: string; color?: string; aiInstructions?: string | null; autoApplyCondition?: string | null;
   };
   if (!name?.trim()) {
     res.status(400).json({ error: 'Nome da tag é obrigatório.' });
@@ -1852,6 +1852,7 @@ router.post('/api/tags', async (req: Request, res: Response) => {
       name,
       color || '#6366f1',
       aiInstructions ?? null,
+      autoApplyCondition ?? null,
     );
     res.status(201).json({ tag });
   } catch (error: unknown) {

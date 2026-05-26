@@ -15,6 +15,7 @@ export interface Tag {
   name: string;
   color: string;
   aiInstructions: string | null;
+  autoApplyCondition: string | null;
   createdAt: string;
 }
 

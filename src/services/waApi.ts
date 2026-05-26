@@ -507,7 +507,7 @@ export async function listTags(token: string): Promise<Tag[]> {
 
 export async function createTag(
   token: string,
-  data: { name: string; color: string; aiInstructions: string | null },
+  data: { name: string; color: string; aiInstructions: string | null; autoApplyCondition?: string | null },
 ): Promise<Tag> {
   const response = await apiFetch(apiUrl('/api/tags'), {
     method: 'POST',
@@ -521,7 +521,7 @@ export async function createTag(
 export async function updateTag(
   token: string,
   tagId: string,
-  patch: Partial<{ name: string; color: string; aiInstructions: string | null }>,
+  patch: Partial<{ name: string; color: string; aiInstructions: string | null; autoApplyCondition: string | null }>,
 ): Promise<Tag> {
   const response = await apiFetch(apiUrl(`/api/tags/${encodeURIComponent(tagId)}`), {
     method: 'PUT',

@@ -117,11 +117,34 @@ export const AIConfigsView = ({
   const builtinTriggers = useBuiltinTriggers(token);
   const { tags, createTag, updateTag: updateTagFn, deleteTag: deleteTagFn } = useTags(token);
   const toast = useToast();
-  const [tagForm, setTagForm] = useState<{ name: string; color: string; aiInstructions: string } | null>(null);
+  const [tagForm, setTagForm] = useState<{ name: string; color: string; aiInstructions: string; autoApplyCondition: string } | null>(null);
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [tagBusy, setTagBusy] = useState(false);
   const [deletingTag, setDeletingTag] = useState<Tag | null>(null);
   const TAG_COLORS = ['#6366f1', '#ec4899', '#f97316', '#22c55e', '#0ea5e9', '#eab308', '#8b5cf6', '#64748b'];
+
+  // Modelos prontos de tag automática. Clicar abre o formulário já preenchido —
+  // nada é aplicado até o dono clicar em "Criar".
+  const AUTO_TAG_TEMPLATES: { name: string; color: string; autoApplyCondition: string; aiInstructions: string }[] = [
+    {
+      name: 'Delivery',
+      color: '#0ea5e9',
+      autoApplyCondition: 'O cliente pede entrega, fala em "delivery", "entregar", ou diz que é de outra cidade / de fora.',
+      aiInstructions: '',
+    },
+    {
+      name: 'Retirada',
+      color: '#22c55e',
+      autoApplyCondition: 'O cliente vai retirar no balcão / buscar no local, ou diz que é aqui da cidade.',
+      aiInstructions: '',
+    },
+    {
+      name: 'Trailer',
+      color: '#f97316',
+      autoApplyCondition: 'O cliente diz que é do trailer, que quer o trailer, ou que é de Lagoa.',
+      aiInstructions: '',
+    },
+  ];
   const [aiHealth, setAiHealth] = useState<AiHealthReport | null>(null);
   const [aiHealthLoading, setAiHealthLoading] = useState(false);
   const [aiHealthError, setAiHealthError] = useState<string | null>(null);
@@ -984,10 +1007,10 @@ export const AIConfigsView = ({
           <SectionHeader
             icon={TagIcon}
             title="Tags de atendimento"
-            subtitle="Classifique contatos e defina instruções específicas de IA para cada perfil"
+            subtitle="Classifique conversas e deixe o robô marcar sozinho por tipo de cliente (ex: delivery, retirada)"
             action={
               <button
-                onClick={() => { setEditingTag(null); setTagForm({ name: '', color: TAG_COLORS[0], aiInstructions: '' }); }}
+                onClick={() => { setEditingTag(null); setTagForm({ name: '', color: TAG_COLORS[0], aiInstructions: '', autoApplyCondition: '' }); }}
                 className="h-7 px-2.5 bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] rounded-md text-[12px] font-semibold flex items-center gap-1 hover:bg-[var(--color-line)] transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" /> Nova tag
@@ -997,6 +1020,21 @@ export const AIConfigsView = ({
           <div className="p-3 space-y-2">
             {tags.length === 0 && !tagForm && (
               <p className="text-[13px] text-center text-[var(--color-ink-faint)] py-4">Nenhuma tag criada. Crie tags para classificar clientes por perfil.</p>
+            )}
+            {!tagForm && !editingTag && AUTO_TAG_TEMPLATES.some((tpl) => !tags.some((t) => t.name.toLowerCase() === tpl.name.toLowerCase())) && (
+              <div className="flex flex-wrap items-center gap-1.5 pb-1">
+                <span className="text-[11px] text-[var(--color-ink-faint)] mr-0.5">Modelos prontos:</span>
+                {AUTO_TAG_TEMPLATES.filter((tpl) => !tags.some((t) => t.name.toLowerCase() === tpl.name.toLowerCase())).map((tpl) => (
+                  <button
+                    key={tpl.name}
+                    onClick={() => { setEditingTag(null); setTagForm({ name: tpl.name, color: tpl.color, aiInstructions: tpl.aiInstructions, autoApplyCondition: tpl.autoApplyCondition }); }}
+                    className="h-6 px-2 rounded-full border border-[var(--color-line)] bg-[var(--color-surface-muted)] text-[11.5px] font-medium text-[var(--color-ink-soft)] flex items-center gap-1 hover:border-[var(--color-brand)] transition-colors"
+                  >
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: tpl.color }} />
+                    {tpl.name}
+                  </button>
+                ))}
+              </div>
             )}
             {tags.map((tag) => (
               editingTag?.id === tag.id ? (
@@ -1021,14 +1059,27 @@ export const AIConfigsView = ({
                       ))}
                     </div>
                   </div>
-                  <div className="relative">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-[var(--color-ink-soft)]">Marcar automaticamente quando… (opcional)</label>
+                    <textarea
+                      value={tagForm?.autoApplyCondition ?? tag.autoApplyCondition ?? ''}
+                      onChange={(e) => setTagForm((f) => f ? { ...f, autoApplyCondition: e.target.value } : null)}
+                      rows={2}
+                      maxLength={500}
+                      className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
+                      placeholder="Ex: o cliente disser que é de Lagoa ou que quer o trailer"
+                    />
+                    <p className="text-[10.5px] text-[var(--color-ink-faint)]">Descreva com suas palavras. Deixe em branco para marcar só na mão.</p>
+                  </div>
+                  <div className="relative space-y-1">
+                    <label className="text-[11px] font-semibold text-[var(--color-ink-soft)]">O que o robô faz quando a conversa tem esta tag (opcional)</label>
                     <textarea
                       value={tagForm?.aiInstructions ?? tag.aiInstructions ?? ''}
                       onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
                       rows={3}
                       maxLength={1000}
                       className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
-                      placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
+                      placeholder="Ex: avisar que pedidos do trailer são feitos no outro número e mandar o link"
                     />
                     <span className="absolute bottom-1.5 right-2 text-[10px] text-[var(--color-ink-faint)]">
                       {(tagForm?.aiInstructions ?? tag.aiInstructions ?? '').length}/1000
@@ -1045,7 +1096,7 @@ export const AIConfigsView = ({
                         if (!tagForm?.name?.trim()) return;
                         setTagBusy(true);
                         try {
-                          await updateTagFn(tag.id, { name: tagForm.name, color: tagForm.color, aiInstructions: tagForm.aiInstructions || null });
+                          await updateTagFn(tag.id, { name: tagForm.name, color: tagForm.color, aiInstructions: tagForm.aiInstructions || null, autoApplyCondition: tagForm.autoApplyCondition || null });
                           toast.success('Tag atualizada.');
                           setEditingTag(null); setTagForm(null);
                         } catch { toast.error('Erro ao salvar tag.'); }
@@ -1062,14 +1113,22 @@ export const AIConfigsView = ({
                 <div key={tag.id} className="group flex items-start gap-2.5 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg p-2.5">
                   <span className="w-3 h-3 rounded-full flex-shrink-0 mt-0.5" style={{ backgroundColor: tag.color }} />
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-semibold text-[var(--color-ink)]">{tag.name}</p>
+                    <p className="text-[13px] font-semibold text-[var(--color-ink)] flex items-center gap-1.5">
+                      {tag.name}
+                      {tag.autoApplyCondition && (
+                        <span className="text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--color-brand)]/10 text-[var(--color-brand)]">auto</span>
+                      )}
+                    </p>
+                    {tag.autoApplyCondition && (
+                      <p className="text-[11px] text-[var(--color-ink-faint)] truncate">Marca quando: {tag.autoApplyCondition}</p>
+                    )}
                     {tag.aiInstructions && (
                       <p className="text-[11.5px] text-[var(--color-ink-muted)] truncate">{tag.aiInstructions}</p>
                     )}
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
-                      onClick={() => { setEditingTag(tag); setTagForm({ name: tag.name, color: tag.color, aiInstructions: tag.aiInstructions ?? '' }); }}
+                      onClick={() => { setEditingTag(tag); setTagForm({ name: tag.name, color: tag.color, aiInstructions: tag.aiInstructions ?? '', autoApplyCondition: tag.autoApplyCondition ?? '' }); }}
                       className="p-1 rounded-md text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] hover:bg-[var(--color-line)]"
                     ><Save className="w-3.5 h-3.5" /></button>
                     <button
@@ -1106,14 +1165,27 @@ export const AIConfigsView = ({
                     <XIcon className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <div className="relative">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[var(--color-ink-soft)]">Marcar automaticamente quando… (opcional)</label>
+                  <textarea
+                    value={tagForm.autoApplyCondition}
+                    onChange={(e) => setTagForm((f) => f ? { ...f, autoApplyCondition: e.target.value } : null)}
+                    rows={2}
+                    maxLength={500}
+                    className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
+                    placeholder="Ex: o cliente disser que é de Lagoa ou que quer o trailer"
+                  />
+                  <p className="text-[10.5px] text-[var(--color-ink-faint)]">Descreva com suas palavras. Deixe em branco para marcar só na mão.</p>
+                </div>
+                <div className="relative space-y-1">
+                  <label className="text-[11px] font-semibold text-[var(--color-ink-soft)]">O que o robô faz quando a conversa tem esta tag (opcional)</label>
                   <textarea
                     value={tagForm.aiInstructions}
                     onChange={(e) => setTagForm((f) => f ? { ...f, aiInstructions: e.target.value } : null)}
                     rows={3}
                     maxLength={1000}
                     className="w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-md px-2 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 resize-none"
-                    placeholder="Instruções para a IA quando um cliente tiver esta tag (opcional)..."
+                    placeholder="Ex: avisar que pedidos do trailer são feitos no outro número e mandar o link"
                   />
                   <span className="absolute bottom-1.5 right-2 text-[10px] text-[var(--color-ink-faint)]">
                     {tagForm.aiInstructions.length}/1000
@@ -1130,7 +1202,7 @@ export const AIConfigsView = ({
                       if (!tagForm.name.trim()) return;
                       setTagBusy(true);
                       try {
-                        await createTag({ name: tagForm.name, color: tagForm.color, aiInstructions: tagForm.aiInstructions || null });
+                        await createTag({ name: tagForm.name, color: tagForm.color, aiInstructions: tagForm.aiInstructions || null, autoApplyCondition: tagForm.autoApplyCondition || null });
                         toast.success(`Tag "${tagForm.name}" criada.`);
                         setTagForm(null);
                       } catch { toast.error('Erro ao criar tag.'); }
