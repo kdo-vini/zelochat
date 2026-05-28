@@ -297,6 +297,13 @@ export const AIConfigsView = ({
         "O cliente vai retirar no balcão / buscar no local, ou diz que é aqui da cidade.",
       aiInstructions: "",
     },
+    {
+      name: "Trailer",
+      color: "#f97316",
+      autoApplyCondition:
+        "O cliente diz que é do trailer, que quer o trailer, ou que é de Lagoa.",
+      aiInstructions: "",
+    },
   ];
   const [aiHealth, setAiHealth] = useState<AiHealthReport | null>(null);
   const [aiHealthLoading, setAiHealthLoading] = useState(false);
