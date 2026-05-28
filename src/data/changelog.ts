@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-28',
+    category: 'medium',
+    title: 'Envie várias fotos e arquivos de uma vez',
+    description: 'Selecione, arraste ou cole até 10 imagens ou arquivos juntos. A legenda que você digitar vai junto com o primeiro, exatamente como no WhatsApp.',
+  },
+  {
+    date: '2026-05-28',
     category: 'minor',
     title: 'Cole imagens e arquivos direto no chat',
     description: 'Agora você pode usar Ctrl+V (ou Cmd+V no Mac) para colar uma imagem do print ou um arquivo copiado direto na conversa, sem precisar salvar antes.',

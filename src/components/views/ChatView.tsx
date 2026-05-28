@@ -678,8 +678,9 @@ export function ChatView({
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
-  const [pendingAttachment, setPendingAttachment] = useState<ChatAttachment | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
+  const MAX_ATTACHMENTS = 10;
   const [editingName, setEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -1189,78 +1190,60 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
 
   /* ─── Handlers ──────────────────────────────────────────────── */
 
+  const addAttachments = async (files: File[], typeHint?: ChatAttachment['type']) => {
+    if (!files.length) return;
+    if (pendingAttachments.length + files.length > MAX_ATTACHMENTS) {
+      setChatActionError(`Você pode enviar no máximo ${MAX_ATTACHMENTS} arquivos por vez.`);
+      return;
+    }
+    setAttachmentLoading(true);
+    setChatActionError(null);
+    try {
+      const added: ChatAttachment[] = [];
+      for (const file of files) {
+        const type: ChatAttachment['type'] = typeHint ?? (
+          file.type.startsWith('video/') ? 'video' :
+          file.type.startsWith('image/') ? 'image' : 'document'
+        );
+        if (type === 'video' && file.size > 50 * 1024 * 1024) {
+          setChatActionError(`Vídeo muito grande (${file.name}). O limite é 50 MB.`);
+          continue;
+        }
+        const dataUrl = await readFileAsDataUrl(file);
+        added.push({
+          type,
+          mimeType: file.type || (type === 'image' ? 'image/jpeg' : 'application/octet-stream'),
+          fileName: file.name,
+          sizeBytes: file.size,
+          dataUrl,
+        });
+      }
+      if (added.length) setPendingAttachments(prev => [...prev, ...added]);
+    } catch (error) {
+      setChatActionError(error instanceof Error ? error.message : 'Não foi possível carregar o arquivo.');
+    } finally {
+      setAttachmentLoading(false);
+    }
+  };
+
   const handleAttachmentSelect = async (
     event: React.ChangeEvent<HTMLInputElement>,
     type: ChatAttachment['type'],
   ) => {
-    const file = event.target.files?.[0];
+    const files = Array.from<File>(event.target.files ?? []);
     event.target.value = '';
-    if (!file) return;
-    if (type === 'video' && file.size > 50 * 1024 * 1024) {
-      setChatActionError('Vídeo muito grande. O limite é 50 MB.');
-      return;
-    }
-    setAttachmentLoading(true);
-    setChatActionError(null);
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setPendingAttachment({
-        type,
-        mimeType: file.type || (type === 'image' ? 'image/jpeg' : 'application/octet-stream'),
-        fileName: file.name,
-        sizeBytes: file.size,
-        dataUrl,
-      });
-    } catch (error) {
-      setChatActionError(error instanceof Error ? error.message : 'Não foi possível carregar o arquivo.');
-    } finally {
-      setAttachmentLoading(false);
-    }
-  };
-
-  const handleDroppedFile = async (file: File, type: ChatAttachment['type']) => {
-    if (type === 'video' && file.size > 50 * 1024 * 1024) {
-      setChatActionError('Vídeo muito grande. O limite é 50 MB.');
-      return;
-    }
-    setAttachmentLoading(true);
-    setChatActionError(null);
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setPendingAttachment({
-        type,
-        mimeType: file.type || (type === 'image' ? 'image/jpeg' : 'application/octet-stream'),
-        fileName: file.name,
-        sizeBytes: file.size,
-        dataUrl,
-      });
-    } catch (error) {
-      setChatActionError(error instanceof Error ? error.message : 'Não foi possível carregar o arquivo.');
-    } finally {
-      setAttachmentLoading(false);
-    }
+    await addAttachments(files, type);
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = Array.from<DataTransferItem>(e.clipboardData.items);
-    const fileItem = items.find(item => item.kind === 'file');
-    if (!fileItem) return;
-
-    const file = fileItem.getAsFile();
-    if (!file) return;
-
+    const files = items
+      .filter(item => item.kind === 'file')
+      .map(item => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (!files.length) return;
     e.preventDefault();
-
-    if (pendingAttachment) {
-      setChatActionError('Você já tem um arquivo aguardando envio. Envie ou cancele primeiro.');
-      return;
-    }
-
-    const type: ChatAttachment['type'] =
-      file.type.startsWith('video/') ? 'video' :
-      file.type.startsWith('image/') ? 'image' : 'document';
-
-    void handleDroppedFile(file, type);
+    void addAttachments(files);
   };
 
   const handleSendContact = async () => {
@@ -1316,7 +1299,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
         const dataUrl = await readFileAsDataUrl(new File([blob], `audio.${mimeType.split('/')[1].split(';')[0]}`, { type: mimeType }));
-        setPendingAttachment({ type: 'audio', mimeType, fileName: `audio.${mimeType.split('/')[1].split(';')[0]}`, sizeBytes: blob.size, dataUrl });
+        setPendingAttachments([{ type: 'audio', mimeType, fileName: `audio.${mimeType.split('/')[1].split(';')[0]}`, sizeBytes: blob.size, dataUrl }]);
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
@@ -1333,11 +1316,11 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
 
   const handleOwnerSend = async () => {
     const text = ownerInput.trim();
-    if (!text && !pendingAttachment) return;
+    if (!text && pendingAttachments.length === 0) return;
     if (isSending) return;
     setChatActionError(null);
 
-    if (!pendingAttachment && text.startsWith('/')) {
+    if (pendingAttachments.length === 0 && text.startsWith('/')) {
       const cmd = text.slice(1).toUpperCase();
       const qr = quickResponses.find((r) => r.trigger === cmd);
       if (qr) {
@@ -1368,9 +1351,19 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
             previewText: replyingTo.preview,
           }
         : null;
-      await send(activeSessionId, { text, attachment: pendingAttachment ?? undefined, quoted });
+      if (pendingAttachments.length > 0) {
+        for (let i = 0; i < pendingAttachments.length; i++) {
+          await send(activeSessionId, {
+            text: i === 0 ? text : undefined,
+            attachment: pendingAttachments[i],
+            quoted: i === 0 ? quoted : null,
+          });
+        }
+      } else {
+        await send(activeSessionId, { text, quoted });
+      }
       setOwnerInput('');
-      setPendingAttachment(null);
+      setPendingAttachments([]);
       setReplyingTo(null);
     } catch (e) {
       setChatActionError(getFriendlyErrorMessage(e) || 'Não foi possível enviar.');
@@ -1918,12 +1911,9 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
             e.preventDefault();
             setIsDragging(false);
             if (!activeSession) return;
-            const file = e.dataTransfer.files[0];
-            if (!file) return;
-            const type: ChatAttachment['type'] =
-              file.type.startsWith('video/') ? 'video' :
-              file.type.startsWith('image/') ? 'image' : 'document';
-            await handleDroppedFile(file, type);
+            const files = Array.from<File>(e.dataTransfer.files);
+            if (!files.length) return;
+            await addAttachments(files);
           }}
         >
           {isDragging && activeSession && (
@@ -1938,6 +1928,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                 ref={imageInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 className="hidden"
                 onChange={(event) => void handleAttachmentSelect(event, 'image')}
               />
@@ -1945,6 +1936,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                 ref={documentInputRef}
                 type="file"
                 accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv"
+                multiple
                 className="hidden"
                 onChange={(event) => void handleAttachmentSelect(event, 'document')}
               />
@@ -1952,6 +1944,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                 ref={videoInputRef}
                 type="file"
                 accept="video/*"
+                multiple
                 className="hidden"
                 onChange={(event) => void handleAttachmentSelect(event, 'video')}
               />
@@ -2185,7 +2178,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
               {/* Input bar */}
               <div className="relative flex-shrink-0 bg-[var(--color-wa-panel)]/80 backdrop-blur-sm border-t border-[var(--color-line)] p-3">
                 <AnimatePresence>
-                  {!pendingAttachment && ownerInput.startsWith('/') && (
+                  {pendingAttachments.length === 0 && ownerInput.startsWith('/') && (
                     <motion.div
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -2236,49 +2229,93 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                   </div>
                 )}
 
-                {pendingAttachment && (
-                  <div className="mb-3 flex items-start gap-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]/92 p-3 shadow-[var(--shadow-card)]">
-                    {pendingAttachment.type === 'image' ? (
-                      <img
-                        src={pendingAttachment.dataUrl}
-                        alt={pendingAttachment.fileName}
-                        className="h-16 w-16 rounded-xl object-cover"
-                      />
-                    ) : pendingAttachment.type === 'video' ? (
-                      <video
-                        src={pendingAttachment.dataUrl}
-                        className="h-16 w-16 rounded-xl object-cover"
-                        muted
-                      />
-                    ) : pendingAttachment.type === 'audio' ? (
-                      <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
-                        <Mic className="h-6 w-6" strokeWidth={1.8} />
+                {pendingAttachments.length === 1 && (() => {
+                  const att = pendingAttachments[0];
+                  return (
+                    <div className="mb-3 flex items-start gap-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]/92 p-3 shadow-[var(--shadow-card)]">
+                      {att.type === 'image' ? (
+                        <img src={att.dataUrl} alt={att.fileName} className="h-16 w-16 rounded-xl object-cover" />
+                      ) : att.type === 'video' ? (
+                        <video src={att.dataUrl} className="h-16 w-16 rounded-xl object-cover" muted />
+                      ) : att.type === 'audio' ? (
+                        <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+                          <Mic className="h-6 w-6" strokeWidth={1.8} />
+                        </div>
+                      ) : (
+                        <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+                          <FileText className="h-6 w-6" strokeWidth={1.8} />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-[var(--color-ink)]">
+                          {att.type === 'audio' ? 'Áudio gravado' : att.fileName}
+                        </p>
+                        <p className="text-[12px] text-[var(--color-ink-muted)]">
+                          {att.type === 'image'
+                            ? `Imagem pronta para envio • ${formatAttachmentSize(att.sizeBytes)}`
+                            : att.type === 'video'
+                            ? `Vídeo pronto para envio • ${formatAttachmentSize(att.sizeBytes)}`
+                            : att.type === 'audio'
+                            ? 'Pronto para envio'
+                            : `Documento pronto para envio • ${formatAttachmentSize(att.sizeBytes)}`}
+                        </p>
                       </div>
-                    ) : (
-                      <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
-                        <FileText className="h-6 w-6" strokeWidth={1.8} />
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-[var(--color-ink)]">
-                        {pendingAttachment.type === 'audio' ? 'Áudio gravado' : pendingAttachment.fileName}
-                      </p>
-                      <p className="text-[12px] text-[var(--color-ink-muted)]">
-                        {pendingAttachment.type === 'image'
-                          ? `Imagem pronta para envio • ${formatAttachmentSize(pendingAttachment.sizeBytes)}`
-                          : pendingAttachment.type === 'video'
-                          ? `Vídeo pronto para envio • ${formatAttachmentSize(pendingAttachment.sizeBytes)}`
-                          : pendingAttachment.type === 'audio'
-                          ? 'Pronto para envio'
-                          : `Documento pronto para envio • ${formatAttachmentSize(pendingAttachment.sizeBytes)}`}
-                      </p>
+                      <button
+                        onClick={() => setPendingAttachments([])}
+                        className="rounded-lg p-1.5 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
+                      >
+                        <X className="h-4 w-4" strokeWidth={1.8} />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => setPendingAttachment(null)}
-                      className="rounded-lg p-1.5 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
-                    >
-                      <X className="h-4 w-4" strokeWidth={1.8} />
-                    </button>
+                  );
+                })()}
+
+                {pendingAttachments.length > 1 && (
+                  <div className="mb-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]/92 p-3 shadow-[var(--shadow-card)]">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-[12px] font-semibold text-[var(--color-ink)]">
+                        {pendingAttachments.length} arquivos prontos
+                        <span className="ml-1 font-normal text-[var(--color-ink-muted)]">• legenda vai no primeiro</span>
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setPendingAttachments([])}
+                        className="text-[11px] font-medium text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] transition-colors"
+                      >
+                        Limpar todos
+                      </button>
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {pendingAttachments.map((att, i) => (
+                        <div key={i} className="relative flex-shrink-0">
+                          {att.type === 'image' ? (
+                            <img src={att.dataUrl} alt={att.fileName} className="h-16 w-16 rounded-xl object-cover" />
+                          ) : att.type === 'video' ? (
+                            <video src={att.dataUrl} className="h-16 w-16 rounded-xl object-cover" muted />
+                          ) : att.type === 'audio' ? (
+                            <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+                              <Mic className="h-5 w-5" strokeWidth={1.8} />
+                            </div>
+                          ) : (
+                            <div className="flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded-xl bg-[var(--color-brand-soft)] px-1 text-[var(--color-brand-deep)]">
+                              <FileText className="h-5 w-5" strokeWidth={1.8} />
+                              <span className="w-full truncate text-center text-[9px] font-medium leading-tight">{att.fileName}</span>
+                            </div>
+                          )}
+                          {i === 0 && (
+                            <span className="absolute -top-1 -left-1 rounded-full bg-[var(--color-brand)] px-1.5 py-0.5 text-[9px] font-bold text-white shadow-sm">1º</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setPendingAttachments(prev => prev.filter((_, j) => j !== i))}
+                            className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-ink)] text-white shadow-md transition-transform hover:scale-110"
+                            title="Remover"
+                          >
+                            <X className="h-3 w-3" strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -2403,11 +2440,11 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                       }}
                       onPaste={handlePaste}
                       disabled={isSending || aiAssistLoading !== null}
-                      placeholder={pendingAttachment ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /atalho'}
+                      placeholder={pendingAttachments.length > 0 ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /atalho'}
                       className="w-full resize-none overflow-y-auto max-h-[160px] bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-12 disabled:opacity-60 disabled:cursor-not-allowed leading-[1.5]"
                     />
                     <div className="absolute right-3 bottom-2.5">
-                      {pendingAttachment ? (
+                      {pendingAttachments.length > 0 ? (
                         <Paperclip className="h-4 w-4 text-[var(--color-brand)]" strokeWidth={1.8} />
                       ) : (
                         <>
@@ -2489,7 +2526,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                   </div>
                   <button
                     onClick={isRecording ? handleStopRecording : handleStartRecording}
-                    disabled={attachmentLoading || !!pendingAttachment || isSending}
+                    disabled={attachmentLoading || pendingAttachments.length > 0 || isSending}
                     className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl shadow-[var(--shadow-card)] transition-colors disabled:opacity-50 ${
                       isRecording
                         ? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
@@ -2501,11 +2538,11 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                   </button>
                   <button
                     onClick={() => void handleOwnerSend()}
-                    disabled={isSending || (!ownerInput.trim() && !pendingAttachment)}
+                    disabled={isSending || (!ownerInput.trim() && pendingAttachments.length === 0)}
                     className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all flex-shrink-0 ${
                       isSending
                         ? 'bg-[var(--color-brand)] text-white shadow-[var(--shadow-card)] cursor-not-allowed'
-                        : ownerInput || pendingAttachment
+                        : ownerInput || pendingAttachments.length > 0
                           ? 'bg-[var(--color-brand)] text-white shadow-[var(--shadow-card)] hover:bg-[var(--color-brand-deep)]'
                           : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-faint)]'
                     }`}
