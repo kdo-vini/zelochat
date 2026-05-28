@@ -297,10 +297,6 @@ Produtos com `controlar_estoque = true` exibem badge de estoque colorido na `Cat
 
 Para memória cross-conversation da IA, a abordagem planejada é: manter um campo de resumo minimalista no perfil do cliente (provavelmente em `zelochat_sessions` ou nova tabela) com até X caracteres, que a IA sobrepõe/atualiza incrementalmente a cada conversa. Não é um log completo — é um "perfil vivo" comprimido. Ainda não implementado.
 
-## Bug conhecido: 413 ao gerar resposta IA manual em conversa longa
-
-Quando o contexto da conversa é muito longo (histórico extenso), ao tentar gerar uma resposta com IA manualmente no chat (`/api/ai/complete` ou equivalente), o servidor retorna HTTP 413 (payload too large). Isso acontece porque o histórico completo é enviado no body da requisição sem truncamento. Fix: truncar o histórico antes de enviar ao modelo, ou usar o mesmo sistema de janela de contexto que a IA automática já usa em `server/ai.ts`.
-
 ## UI conventions
 
 - **Nunca usar dados mockados** em placeholders ou textos visíveis — use padrões genéricos como `(XX) XXXXX-XXXX`

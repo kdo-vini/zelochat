@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Bot,
   Calendar,
+  Camera,
   Check,
   CheckCheck,
   CheckSquare,
@@ -762,6 +763,7 @@ export function ChatView({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1933,6 +1935,14 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                 onChange={(event) => void handleAttachmentSelect(event, 'image')}
               />
               <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(event) => void handleAttachmentSelect(event, 'image')}
+              />
+              <input
                 ref={documentInputRef}
                 type="file"
                 accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv"
@@ -1955,7 +1965,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                 <button
                   onClick={() => setActiveSessionId(null)}
                   aria-label="Voltar"
-                  className="md:hidden flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)]/70 transition-colors"
+                  className="md:hidden flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)]/70 transition-colors"
                 >
                   <ArrowLeft className="h-5 w-5" strokeWidth={2} />
                 </button>
@@ -2012,7 +2022,8 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                   <div className="relative">
                     <button
                       onClick={() => setChatMenuOpen((v) => !v)}
-                      className="rounded-lg p-1.5 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
+                      aria-label="Mais opções"
+                      className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
                     >
                       <MoreVertical className="h-4 w-4" strokeWidth={1.8} />
                     </button>
@@ -2372,11 +2383,19 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                           >
                             <button
                               type="button"
+                              onClick={() => { setAttachmentMenuOpen(false); cameraInputRef.current?.click(); }}
+                              className="flex w-full items-center gap-3 border-b border-[var(--color-line)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                            >
+                              <Camera className="h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
+                              <span className="text-[13px] font-medium text-[var(--color-ink)]">Câmera</span>
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => { setAttachmentMenuOpen(false); imageInputRef.current?.click(); }}
                               className="flex w-full items-center gap-3 border-b border-[var(--color-line)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
                             >
                               <ImagePlus className="h-4 w-4 flex-shrink-0 text-[var(--color-brand)]" strokeWidth={1.8} />
-                              <span className="text-[13px] font-medium text-[var(--color-ink)]">Imagem</span>
+                              <span className="text-[13px] font-medium text-[var(--color-ink)]">Galeria</span>
                             </button>
                             <button
                               type="button"
@@ -2456,7 +2475,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                             }}
                             disabled={aiAssistLoading !== null || isSending}
                             title="Sugestões de IA"
-                            className="flex h-7 w-7 items-center justify-center rounded-full transition-colors text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)]"
+                            className="flex h-8 w-8 items-center justify-center rounded-full transition-colors text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)]"
                           >
                             {aiAssistLoading ? (
                               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
