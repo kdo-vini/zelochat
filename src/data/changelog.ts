@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-28',
     category: 'medium',
+    title: 'Busca dentro da conversa',
+    description: 'Clique na lupa no topo de uma conversa para procurar uma palavra entre as mensagens. Use Enter (ou as setinhas) para pular de um resultado para o próximo.',
+  },
+  {
+    date: '2026-05-28',
+    category: 'medium',
     title: 'Envie várias fotos e arquivos de uma vez',
     description: 'Selecione, arraste ou cole até 10 imagens ou arquivos juntos. A legenda que você digitar vai junto com o primeiro, exatamente como no WhatsApp.',
   },

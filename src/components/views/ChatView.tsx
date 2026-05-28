@@ -702,6 +702,9 @@ export function ChatView({
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadFromScroll, setUnreadFromScroll] = useState(0);
   const isAtBottomRef = useRef(true);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [chatSearchIdx, setChatSearchIdx] = useState(0);
   const [editingName, setEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -1228,7 +1231,28 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
     isAtBottomRef.current = true;
     setIsAtBottom(true);
     setUnreadFromScroll(0);
+    setChatSearchOpen(false);
+    setChatSearchQuery('');
   }, [activeSessionId]);
+
+  const chatSearchMatches = useMemo(() => {
+    const q = chatSearchQuery.trim().toLowerCase();
+    if (!q) return [] as string[];
+    return activeSessionMessages
+      .filter(m => (m.content || '').toLowerCase().includes(q))
+      .map(m => m.id);
+  }, [activeSessionMessages, chatSearchQuery]);
+
+  const chatSearchMatchSet = useMemo(() => new Set(chatSearchMatches), [chatSearchMatches]);
+  const currentChatSearchMatchId = chatSearchMatches[chatSearchIdx] ?? null;
+
+  useEffect(() => { setChatSearchIdx(0); }, [chatSearchQuery]);
+
+  useEffect(() => {
+    if (!currentChatSearchMatchId) return;
+    const el = scrollRef.current?.querySelector(`[data-msg-id="${currentChatSearchMatchId}"]`);
+    if (el) (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [currentChatSearchMatchId]);
 
   useEffect(() => {
     setReplyingTo(null);
@@ -2070,6 +2094,15 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                       IA
                     </button>
                   </div>
+                  <button
+                    onClick={() => setChatSearchOpen((v) => !v)}
+                    aria-label="Buscar nesta conversa"
+                    className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] ${
+                      chatSearchOpen ? 'bg-[var(--color-surface-muted)] text-[var(--color-ink)]' : 'text-[var(--color-ink-muted)]'
+                    }`}
+                  >
+                    <Search className="h-4 w-4" strokeWidth={1.8} />
+                  </button>
                   <div className="relative">
                     <button
                       onClick={() => setChatMenuOpen((v) => !v)}
@@ -2100,6 +2133,72 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                   </div>
                 </div>
               </div>
+
+              <AnimatePresence initial={false}>
+                {chatSearchOpen && (
+                  <motion.div
+                    key="chat-search-bar"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="overflow-hidden border-b border-[var(--color-line)] bg-[var(--color-wa-panel)]/80 backdrop-blur-sm"
+                  >
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <Search className="h-4 w-4 flex-shrink-0 text-[var(--color-ink-faint)]" strokeWidth={1.8} />
+                      <input
+                        autoFocus
+                        type="text"
+                        value={chatSearchQuery}
+                        onChange={(e) => setChatSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') { setChatSearchOpen(false); setChatSearchQuery(''); }
+                          else if (e.key === 'Enter') {
+                            if (chatSearchMatches.length === 0) return;
+                            const delta = e.shiftKey ? -1 : 1;
+                            setChatSearchIdx(i => (i + delta + chatSearchMatches.length) % chatSearchMatches.length);
+                          }
+                        }}
+                        placeholder="Buscar nesta conversa"
+                        className="flex-1 min-w-0 bg-transparent text-[13px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-faint)] outline-none"
+                      />
+                      {chatSearchQuery.trim() && (
+                        <span className="flex-shrink-0 text-[11.5px] font-medium text-[var(--color-ink-muted)]">
+                          {chatSearchMatches.length === 0
+                            ? 'Sem resultados'
+                            : `${chatSearchIdx + 1} de ${chatSearchMatches.length}`}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setChatSearchIdx(i => (i - 1 + chatSearchMatches.length) % Math.max(1, chatSearchMatches.length))}
+                        disabled={chatSearchMatches.length === 0}
+                        aria-label="Anterior"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] disabled:opacity-40"
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5 rotate-90" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatSearchIdx(i => (i + 1) % Math.max(1, chatSearchMatches.length))}
+                        disabled={chatSearchMatches.length === 0}
+                        aria-label="Próximo"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] disabled:opacity-40"
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5 -rotate-90" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setChatSearchOpen(false); setChatSearchQuery(''); }}
+                        aria-label="Fechar busca"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
+                      >
+                        <X className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Messages */}
               <div className="relative flex-1 min-h-0">
@@ -2161,12 +2260,20 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                         return true;
                       })();
 
+                      const isMatch = chatSearchMatchSet.has(message.id);
+                      const isActiveMatch = currentChatSearchMatchId === message.id;
                       return (
                         <motion.div
                           key={item.key}
+                          data-msg-id={message.id}
                           initial={{ opacity: 0, y: 4 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.15 }}
+                          className={[
+                            'rounded-xl transition-shadow',
+                            isMatch ? 'ring-1 ring-amber-400/60' : '',
+                            isActiveMatch ? '!ring-2 !ring-amber-500' : '',
+                          ].filter(Boolean).join(' ')}
                         >
                           <MessageBubble
                             message={message}
