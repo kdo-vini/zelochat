@@ -177,7 +177,7 @@ Selected highlights — full list in agent reports. Most are hardening / cosmeti
 
 # Cross-cutting themes
 
-1. **Singletons + in-memory state assume one replica.** `boundEmpresaId`, `justConfirmedMap`, `consecutiveFailures`, `recentlyHandled`, `recentSentIds`, `configStore`, `hydratedAiSettings` — every one of these breaks correctness (not just performance) the moment Railway scales beyond a single instance. Document "must run single-replica" as a deployment invariant OR move them to Redis/DB.
+1. **Singletons + in-memory state assume one replica.** `boundEmpresaId`, `justConfirmedMap`, `consecutiveFailures`, `recentlyHandled`, `recentSentIds`, `configStore`, `hydratedAiSettings` — every one of these breaks correctness (not just performance) the moment the backend scales beyond a single instance. Document "must run single-replica" as a deployment invariant OR move them to Redis/DB.
 2. **Service-role client + missing `.eq('empresa_id')` is a recurring leak class.** Service key bypasses RLS, so EVERY query needs explicit empresa-scoping. Two confirmed leaks (`ai.ts:415`, `escalation.ts:299/337`). Add a lint rule: any `getServiceSupabase().from(...)` chain MUST be followed by `.eq('empresa_id', ...)`.
 3. **Errors silently swallowed everywhere on the frontend.** `void X.catch(()=>{})` in triggers, quick responses, drag-and-drop, sync-config, order delete. CLAUDE.md says "Never show raw errors — interpret them first" but the current code shows *nothing*.
 4. **Schema drift between code and migrations.** Core tables, role CHECK widening, UNIQUE constraints, RPC function — all referenced in code but never committed as SQL. Bus factor 1.
@@ -188,7 +188,7 @@ Selected highlights — full list in agent reports. Most are hardening / cosmeti
 
 # Recommended fix sequence
 
-Priority order assumes a small team and single-replica Railway today.
+Priority order assumes a small team and single-replica backend today.
 
 **Sprint 1 — revenue + correctness (1-3 days)**
 1. P0.15, P0.16 — paywall middleware on `/api/*` + frontend gate → stop the revenue leak.
@@ -223,7 +223,7 @@ Priority order assumes a small team and single-replica Railway today.
 # What I didn't audit
 
 - Tests folder — assumed coverage is light per CLAUDE.md tone.
-- Vercel/Railway deployment configs beyond `vercel.json` and `railway.json` headers.
+- Deployment configs beyond the app-level Docker/Dokploy setup.
 - ZeloPDV's webhook handler at `zelopdv.com.br/api/billing/webhook` — out of repo scope, but it OWNS your subscription state. Recommend a reconciler cron that scans `subscriptions` rows and re-fetches from Stripe every 15 min to detect divergence.
 - The Stripe Billing Portal configuration — `STRIPE_BILLING_PORTAL_CONFIGURATION_ID` controls whether users can self-pause/cancel. Audit in Stripe Dashboard, not in code.
 - Production DB state — recommend running a one-shot script that asserts every `zelochat_*` table has RLS enabled and at least one policy scoped by `auth.uid()`.

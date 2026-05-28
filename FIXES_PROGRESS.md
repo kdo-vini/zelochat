@@ -14,7 +14,7 @@
 | **P2** | 38 | 24 | 14 | 0 | 63% |
 | **P3** | 24 | 5 | 19 | 0 | 21% |
 
-**P1 status:** todos os P1 acionáveis estão fechados. Restam apenas 3 deferred para quando sair do single-node Railway: P1.16, P1.17, P1.43.
+**P1 status:** todos os P1 acionáveis estão fechados. Restam apenas 3 deferred para quando sair do single-node backend: P1.16, P1.17, P1.43.
 
 **P2/P3 status:** a maioria dos P2 críticos de UX, segurança, áudio, billing e performance já foi fechada nas Sprints 21-27 e 39-43. Os P3 ainda são polimento/backlog leve.
 
@@ -138,7 +138,7 @@ These are out of scope or unsafe to change from this branch:
 
 ### Sprint 57 (2026-05-15) - Hotfix de escala para loja heavy-user
 
-- Conversas - carregamento inicial limita o payload de `zelochat_sessions`, remove `customer_profile` da lista e quebra a consulta de atividade recente em chunks menores para evitar `TypeError: fetch failed` no Railway - `server/messageHandler.ts`
+- Conversas - carregamento inicial limita o payload de `zelochat_sessions`, remove `customer_profile` da lista e quebra a consulta de atividade recente em chunks menores para evitar `TypeError: fetch failed` no backend - `server/messageHandler.ts`
 - Acoes em massa - marcar como lida e arquivar agora resolvem familias em lote por JID/telefone, evitando uma query dupla por conversa selecionada - `server/messageHandler.ts`
 - Dashboard - overview busca menos colunas de sessoes/mensagens, remove o texto completo das mensagens da metrica de primeira resposta e registra aviso se bater o teto defensivo de leitura - `server/dashboardMetrics.ts`
 - Pedidos - lista operacional carrega apenas pedidos ativos ou recentes, com colunas explicitas e limite defensivo para evitar historico inteiro no navegador - `src/hooks/useOrders.ts`
@@ -531,7 +531,7 @@ Saída do audit Sprint 35-41 (senior code reviewer):
 - Type-check ✅
 
 ### Sprint 9 (shipped 2026-04-29) — P1 batch 2
-- ✅ P1.7 — `wasSentByServer` TTL 30s → 10min. Cobre Railway redeploys (2-3min) + Whatsmiau queue lag. NOTA: ainda não sobrevive a process restart — solução completa via `wa_message_id` UNIQUE persisting fica TODO. Inline doc explica.
+- ✅ P1.7 — `wasSentByServer` TTL 30s → 10min. Cobre redeploys (2-3min) + Whatsmiau queue lag. NOTA: ainda não sobrevive a process restart — solução completa via `wa_message_id` UNIQUE persisting fica TODO. Inline doc explica.
 - ✅ P1.12 — cache de 5s na `/evolution/instances` list. Antes /api/status (polled @ 3s pelo card) gerava load no Whatsmiau + log da inventário completo de instâncias.
 - ✅ P1.19 — log warning quando OpenAI emite múltiplos tool_calls (raro). Refactor pra processar todos em sequência fica TODO.
 - ✅ P1.22 — `clearPendingOrder` em best-effort no catch do `criar_pedido`. Antes setPendingOrder podia ter sucesso e algo downstream falhar → pending row órfã, customer dizia "sim" e o soft-confirm rodava sobre order fantasma.
@@ -541,7 +541,7 @@ Saída do audit Sprint 35-41 (senior code reviewer):
 - 🔥 **HOTFIX 28dd528** — `upsert(..., { ignoreDuplicates: true })` do supabase-js NÃO retorna a row em insert fresco. Minha checagem `data.length === 0` interpretava todo insert como duplicate → 531 mensagens user esperadas, **0 persistidas com wa_message_id desde o deploy**. Casa dos Salgados estava perdendo TODA mensagem inbound (last_message do session row mascarava). Trocou pra INSERT puro com catch do código 23505 (Postgres unique_violation).
 - ✅ UX flicker WhatsApp `desconectado` por 3s ao trocar view: módulo-level cache de `lastKnownWaStatus` sobrevive remounts do `WhatsAppIntegrationCard`. Antes initial state hardcoded 'disconnected' fazia badge piscar vermelho até o /api/status responder.
 - ✅ P1.21 — soft-confirm regex agora não strip-digit ("10s" / "5min" não viram mais "s" / "min"). Mesma whitelist exact-match do P0.9/P0.10.
-- ✅ P1.9 — cap de 25MB em mídia inbound base64. Antes vídeo 50MB era decodado direto pra Buffer (~75MB) no event loop — múltiplos paralelos = OOM/Railway crash.
+- ✅ P1.9 — cap de 25MB em mídia inbound base64. Antes vídeo 50MB era decodado direto pra Buffer (~75MB) no event loop — múltiplos paralelos = OOM/backend crash.
 - ✅ P1.20 — conversation history capped em últimas 60 turnos antes de mandar pra OpenAI. Antes cliente que chateia há meses gerava prompt linearmente crescente, escalando custo + latência sem teto.
 - ✅ P1.15 — hard-button regex agora normaliza accent + emoji + punct + case e match por token "confirmar"/"cancelar". Antes exact-match "✅ Confirmar" perdia variantes ("✅Confirmar", "Confirmar ✅", "CONFIRMAR", VS16) que caíam no AI como freeform → duplicate-order risk.
 - ✅ P1.6 — per-empresa in-flight mutex em `getOrCreateOwnInstanceForEmpresa`. Duas abas abrindo /api/qr simultaneamente não criam mais instâncias órfãs no Whatsmiau. Multi-node deploy precisaria de advisory lock — flagged inline.
@@ -568,7 +568,7 @@ Saída do audit Sprint 35-41 (senior code reviewer):
 
 ## Operational notes for the live customer
 
-- The paywall middleware will return **402** on previously-open routes. Watch Railway logs for `[paywall] gate error` and customer-support tickets in the first hour after deploy.
+- The paywall middleware will return **402** on previously-open routes. Watch Dokploy/backend logs for `[paywall] gate error` and customer-support tickets in the first hour after deploy.
 - The fail-closed subscription cache means a Supabase outage will lock out users whose cache hasn't been seeded. First request after deploy warms the cache.
 - The order-confirm DB lookup adds one extra Supabase round-trip per `criar_pedido` tool call — single-digit ms.
 - The frontend logout now wipes `localStorage` keys — users will lose UI prefs (sidebar width, calendar mode) on next login. Acceptable tradeoff for the cross-tenant data leak.

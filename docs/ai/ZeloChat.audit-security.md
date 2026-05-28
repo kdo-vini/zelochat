@@ -133,7 +133,7 @@ Evidence:
   - `server/ai.ts:1841-1845` shows that payload includes customer/order fields.
   - `server/ai.ts:3800-3801` logs raw upstream AI error data.
 - Why the evidence supports the finding:
-  - Railway/application logs become a secondary plaintext store of customer/order data.
+  - Application logs become a secondary plaintext store of customer/order data.
 
 Why this matters:
 - Technical impact:
