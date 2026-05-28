@@ -27,7 +27,13 @@ self.addEventListener('push', (event) => {
     data: { url: data.url || '/', sessionId: data.sessionId || null },
     requireInteraction: false,
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil((async () => {
+    // Skip the OS banner when a ZeloChat tab is already visible — the
+    // operator is looking at the app and the in-app unread badge is enough.
+    const focused = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (focused.some((c) => c.visibilityState === 'visible')) return;
+    await self.registration.showNotification(title, options);
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {

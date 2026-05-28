@@ -68,6 +68,7 @@ import { ConfirmModal } from '../ConfirmModal';
 import { ContactAvatar } from '../ContactAvatar';
 import { Modal, useModalTitleId } from '../Modal';
 import { getFriendlyErrorMessage } from '../../services/errorMessages';
+import { PushPermissionBanner } from '../PushPermissionBanner';
 import { sendContact } from '../../services/waApi';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
 
@@ -1723,6 +1724,8 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
               />
             </div>
           </div>
+
+          <PushPermissionBanner token={token} />
 
           <div className="px-3 py-2 border-b border-[var(--color-line)] flex-shrink-0 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
             {([

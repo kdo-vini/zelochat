@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-28',
+    category: 'big',
+    title: 'Alertas no celular mesmo com o ZeloChat fechado',
+    description: 'Toque em "Ativar" no aviso amarelo no topo das conversas e o navegador vai te avisar de cada nova mensagem mesmo se a aba estiver fechada. Funciona melhor ainda se você adicionar o ZeloChat na tela inicial do celular.',
+  },
+  {
+    date: '2026-05-28',
     category: 'medium',
     title: 'Busca dentro da conversa',
     description: 'Clique na lupa no topo de uma conversa para procurar uma palavra entre as mensagens. Use Enter (ou as setinhas) para pular de um resultado para o próximo.',

@@ -18,6 +18,7 @@ import {
 } from './messageHandler.js';
 import { generateAndSendReply } from './ai.js';
 import router from './router.js';
+import { pushRouter, sendPushToEmpresa } from './push.js';
 import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscription } from './supabase.js';
 import { ensureAiSettingsHydrated, isAiGloballyEnabledNow } from './configStore.js';
 import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
@@ -134,6 +135,7 @@ app.use(async (req, res, next) => {
 });
 
 app.use(router);
+app.use(pushRouter);
 
 const httpServer = createServer(app);
 createWsServer(httpServer);
@@ -321,6 +323,26 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
     return;
   }
   console.log(`[InboundTrace] persisted=true empresa=${empresaId} jid=${redactJid(msg?.key?.remoteJid)} messageId=${msg?.key?.id ?? '<missing>'}`);
+
+  // Fire-and-forget Web Push. The SW shows the notification only when no
+  // ZeloChat tab is focused (handled inside the SW's push handler), so we
+  // always trigger here and let the client decide. Errors never propagate.
+  void (async () => {
+    try {
+      const pushJid = msg.key?.remoteJid;
+      if (!pushJid) return;
+      const session = await getSession(pushJid, empresaId);
+      if (!session) return;
+      await sendPushToEmpresa(empresaId, {
+        title: session.customerName || 'Nova mensagem',
+        body: session.lastMessage || 'Nova mensagem no WhatsApp',
+        sessionId: pushJid,
+        url: '/',
+      });
+    } catch (err) {
+      console.warn('[push] inbound dispatch failed', err);
+    }
+  })();
 
   // 2. Auto-reply if enabled for this session
   const jid = msg.key?.remoteJid;

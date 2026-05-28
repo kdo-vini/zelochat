@@ -297,6 +297,17 @@ Produtos com `controlar_estoque = true` exibem badge de estoque colorido na `Cat
 
 Para memória cross-conversation da IA, a abordagem planejada é: manter um campo de resumo minimalista no perfil do cliente (provavelmente em `zelochat_sessions` ou nova tabela) com até X caracteres, que a IA sobrepõe/atualiza incrementalmente a cada conversa. Não é um log completo — é um "perfil vivo" comprimido. Ainda não implementado.
 
+## Web Push / PWA notifications
+
+Service worker em `public/sw.js`, registrado pelo `src/main.tsx` apenas em build prod. Inscrições ficam em `zelochat_push_subscriptions` (uma linha por browser/dispositivo opt-in). Disparos saem do `server/push.ts → sendPushToEmpresa()`, chamado pelo `server/index.ts` logo após `handleIncomingMessage()` resolver `persisted=true`. O SW só mostra o banner se nenhuma aba ZeloChat está visível — a checagem é dentro do `push` handler.
+
+**Setup em produção (uma vez)**:
+1. Gerar par VAPID: `npx web-push generate-vapid-keys`
+2. Set no Dokploy backend: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT=mailto:contato@zelopdv.com.br`
+3. Aplicar migração `supabase/migrations/039_zelochat_push_subscriptions.sql` no Supabase
+
+Sem essas envs, `/api/push/vapid-public-key` retorna `{enabled:false}` e o banner some — degradação silenciosa, nada quebra.
+
 ## UI conventions
 
 - **Nunca usar dados mockados** em placeholders ou textos visíveis — use padrões genéricos como `(XX) XXXXX-XXXX`
