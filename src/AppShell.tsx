@@ -980,7 +980,10 @@ export default function AppShell() {
   );
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-canvas)]">
+    <div
+      className="flex flex-col overflow-hidden bg-[var(--color-canvas)]"
+      style={{ height: 'var(--vvh, 100vh)' }}
+    >
       {/* ── Subscription / WhatsApp banner ─────────────────────────── */}
       {token && !subscriptionLoading && !subscriptionActive ? (
         <div className="flex items-center justify-between gap-3 bg-[var(--color-brand-deep)] text-white px-4 py-2.5 text-[13px] font-medium flex-shrink-0 z-50">
