@@ -19,3 +19,4 @@ playwright-report/
 # keep it in a folder you add explicitly here.
 
 .env*.local
+*.local.md
