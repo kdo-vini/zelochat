@@ -63,6 +63,8 @@ await runSuite('AI prompt guardrails', [
       assertIncludes(prompt, 'NUNCA confirme que o pagamento "caiu"', 'Pix receipt overclaim guard is present');
       assertIncludes(prompt, 'CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO', 'create-order terminal rule is present');
       assertIncludes(prompt, 'PROIBIDO gerar texto de resumo do pedido', 'duplicate summary rule is present');
+      assertIncludes(prompt, 'Se for redirect_contact', 'redirect trigger rule is present');
+      assertIncludes(prompt, 'encerra este turno', 'redirect trigger is terminal for the turn');
       assert(!prompt.includes('Produto Oculto'), 'unavailable products are not exposed in the prompt');
     },
   },
@@ -126,6 +128,7 @@ await runSuite('AI prompt guardrails', [
       assertIncludes(prompt, 'Não fale de cardápio, criação de pedido, cozinha', 'general mode blocks menu/order topics');
       assertIncludes(prompt, 'A única ferramenta permitida neste modo é dispatch_trigger', 'general mode forbids order tools');
       assertIncludes(prompt, 'Não invente recursos, integrações, preços', 'general mode blocks business hallucinations');
+      assertIncludes(prompt, 'Se for redirect_contact', 'general mode documents redirect trigger');
     },
   },
 ]);

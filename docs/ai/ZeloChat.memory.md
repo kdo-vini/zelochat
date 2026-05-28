@@ -92,6 +92,7 @@
   - `supabase/migrations/033_zelochat_session_tags_tenant_enforcement.sql`
   - `supabase/migrations/034_zelochat_outbound_message_lifecycle.sql`
   - `supabase/migrations/035_zelochat_sessions_pagination_indexes.sql`
+  - `supabase/migrations/038_zelochat_trigger_redirect_contact.sql`
 - Logs / observability:
   - `server/observability.ts`
   - `server/webhookLog.ts`
@@ -147,6 +148,12 @@
   - Trigger path from AI: `server/ai.ts` through triggers and `recordAiFailure()`
   - UI banner and resolve action: `src/components/views/ChatView.tsx`
 
+6a. AI redirects customer to another WhatsApp line
+  - Custom trigger kind: `redirect_contact` in `zelochat_triggers`.
+  - Config fields: `redirect_phone` and optional `redirect_message` with `{link}` placeholder.
+  - Runtime path: OpenAI emits the existing `dispatch_trigger`; `server/ai.ts` treats `redirect_contact` as turn-terminal after `escalate_human` and before `criar_pedido`.
+  - Side effects: sends and persists a WhatsApp text with `https://wa.me/<number>` plus a tool audit row only. It does not call `escalateSession()`, create escalation events, create/confirm orders, or flip `auto_reply`.
+
 7. Tags created/applied/removed/filtered
   - Tag CRUD: `server/tags.ts`
   - Tag routes: `server/router.ts`
@@ -188,6 +195,10 @@
   - Pending order confirmation/edit flow used by `server/ai.ts`.
 - `zelochat_tags`
   - Tag metadata per empresa, including `ai_instructions`.
+- `zelochat_triggers`
+  - Operator-defined AI triggers per empresa.
+  - Supported kinds: `notify_manager`, `escalate_human`, `redirect_contact`.
+  - `redirect_contact` uses `redirect_phone` and optional `redirect_message` to send a wa.me handoff link while keeping the session in AI mode for future messages.
 - `zelochat_session_tags`
   - Junction between sessions and tags.
   - Confirmed risk: current schema does not enforce tenant consistency between `empresa_id`, `session_id`, and `tag_id`.

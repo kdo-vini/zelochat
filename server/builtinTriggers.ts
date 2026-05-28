@@ -18,6 +18,8 @@ export const BUILTIN_TRIGGERS: TriggerRecord[] = [
       'O cliente está fazendo uma reclamação clara, demonstrando insatisfação, frustração ou raiva — exemplos: "quero reclamar", "estou insatisfeito", "veio errado", "veio sem recheio", "atendimento péssimo", "demorou demais".',
     naturalInput: '[gatilho do sistema] Reclamações e clientes insatisfeitos',
     active: true,
+    redirectPhone: null,
+    redirectMessage: null,
     createdAt: FAR_PAST,
   },
   {
@@ -29,6 +31,8 @@ export const BUILTIN_TRIGGERS: TriggerRecord[] = [
       'O cliente está pedindo explicitamente para falar com um humano, atendente, gerente ou pessoa real — exemplos: "quero falar com atendente", "chama um humano", "atendente por favor", "quero falar com o gerente", "fala com gente de verdade".',
     naturalInput: '[gatilho do sistema] Pedido explícito de atendimento humano',
     active: true,
+    redirectPhone: null,
+    redirectMessage: null,
     createdAt: FAR_PAST,
   },
   {
@@ -40,6 +44,8 @@ export const BUILTIN_TRIGGERS: TriggerRecord[] = [
       'O cliente está usando linguagem ofensiva, palavrões, xingamentos, ameaças ou comportamento agressivo.',
     naturalInput: '[gatilho do sistema] Linguagem ofensiva',
     active: true,
+    redirectPhone: null,
+    redirectMessage: null,
     createdAt: FAR_PAST,
   },
 ];

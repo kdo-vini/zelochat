@@ -3,7 +3,7 @@
 **Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-05-19 Sprint 59):** Hotfix de envio manual: chamadas de saída agora mandam telefone em dígitos para o Whatsmiau (não JID completo) e só marcam a bolha como enviada quando a resposta upstream traz ID de mensagem; respostas ambíguas viram `failed` no ciclo `sending/sent/failed`.
+**Latest execution note (2026-05-26 Sprint 60):** Feature de encaminhamento por IA: gatilhos personalizados agora aceitam `redirect_contact`, com telefone dedicado e mensagem opcional; quando acionado, a IA envia um link `wa.me` para outro número e encerra o turno sem escalar, sem criar evento de escalação e sem desligar o autoatendimento.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,14 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 60 (2026-05-26) - Encaminhar cliente para outra linha
+
+- Gatilhos personalizados - novo tipo `redirect_contact` com telefone dedicado e mensagem opcional para encaminhar clientes para delivery, trailer ou outra unidade - `server/triggers.ts`, `server/router.ts`, `src/components/views/AIConfigsView.tsx`, `supabase/migrations/038_zelochat_trigger_redirect_contact.sql`
+- Fluxo seguro da IA - `redirect_contact` usa a tool existente `dispatch_trigger`, perde para escalação humana, vence criação de pedido no mesmo turno e só envia/persiste a mensagem com link `wa.me`, mantendo `auto_reply` ativo - `server/ai.ts`, `tests/aiToolPlan.test.ts`, `tests/aiPromptGuardrails.test.ts`
+- Banco - migration `zelochat_trigger_redirect_contact` aplicada em prod via Supabase MCP em 2026-05-26 e verificada com `redirect_phone`, `redirect_message` e CHECK de `kind` atualizado.
+- Novidades - entrada curta para operador sobre encaminhar clientes para outro WhatsApp - `src/data/changelog.ts`
+- Verificação - `npx tsx tests/aiToolPlan.test.ts`, `npx tsx tests/aiPromptGuardrails.test.ts`, `npx tsc --noEmit -p server/tsconfig.json`, `npm run lint` e `npm run build` passaram.
 
 ### Sprint 59 (2026-05-19) - Hotfix envio manual WhatsApp
 

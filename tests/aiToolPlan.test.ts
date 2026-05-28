@@ -21,6 +21,8 @@ const notifyTrigger: TriggerRecord = {
   conditionDescription: 'Pedido grande',
   naturalInput: 'Avise o gerente quando tiver pedido grande',
   active: true,
+  redirectPhone: null,
+  redirectMessage: null,
   createdAt: '2026-05-17T00:00:00.000Z',
 };
 
@@ -30,6 +32,16 @@ const escalateTrigger: TriggerRecord = {
   kind: 'escalate_human',
   name: 'Chamar atendente',
   conditionDescription: 'Cliente pediu humano',
+};
+
+const redirectTrigger: TriggerRecord = {
+  ...notifyTrigger,
+  id: 'redirect-contact',
+  kind: 'redirect_contact',
+  name: 'Trailer Lagoa',
+  conditionDescription: 'Cliente quer atendimento do trailer em Lagoa',
+  redirectPhone: '5584999991234',
+  redirectMessage: 'Fale com o trailer por aqui: {link}',
 };
 
 await runSuite('AI tool-call planner', [
@@ -48,13 +60,39 @@ await runSuite('AI tool-call planner', [
       const plan = planToolCallsForTurn([
         tool('consultar_pedido'),
         tool('criar_pedido', { customerName: 'Vini' }, 'create-1'),
+        tool('dispatch_trigger', { trigger_id: redirectTrigger.id }, 'redirect-1'),
         tool('dispatch_trigger', { trigger_id: escalateTrigger.id }, 'escalate-1'),
         tool('dispatch_trigger', { trigger_id: notifyTrigger.id }, 'notify-1'),
-      ], [notifyTrigger, escalateTrigger]);
+      ], [notifyTrigger, escalateTrigger, redirectTrigger]);
       assert(plan !== null, 'planner returns a plan');
       assertEqual(plan?.mode, 'single_terminal', 'escalation is terminal');
       assertEqual(plan?.calls.length, 1, 'only escalation call is kept');
       assertEqual(plan?.calls[0]?.id, 'escalate-1', 'kept call is the escalation trigger');
+    },
+  },
+  {
+    name: 'redirect_contact wins over order creation and notifications',
+    run: () => {
+      const plan = planToolCallsForTurn([
+        tool('consultar_pedido', {}, 'consult-1'),
+        tool('dispatch_trigger', { trigger_id: notifyTrigger.id }, 'notify-1'),
+        tool('criar_pedido', { customerName: 'Vini' }, 'create-1'),
+        tool('dispatch_trigger', { trigger_id: redirectTrigger.id }, 'redirect-1'),
+      ], [notifyTrigger, redirectTrigger]);
+      assert(plan !== null, 'planner returns a plan');
+      assertEqual(plan?.mode, 'single_terminal', 'redirect is terminal');
+      assertEqual(plan?.calls.length, 1, 'only redirect call is kept');
+      assertEqual(plan?.calls[0]?.id, 'redirect-1', 'kept call is the redirect trigger');
+    },
+  },
+  {
+    name: 'redirect_contact alone is terminal',
+    run: () => {
+      const plan = planToolCallsForTurn([
+        tool('dispatch_trigger', { trigger_id: redirectTrigger.id }, 'redirect-1'),
+      ], [redirectTrigger]);
+      assertEqual(plan?.mode, 'single_terminal', 'redirect-only plan is terminal');
+      assertEqual(plan?.calls.map((c) => c.id).join(','), 'redirect-1', 'only redirect runs');
     },
   },
   {

@@ -355,13 +355,17 @@ ALTER TABLE public.zelochat_pending_orders ENABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS public.zelochat_triggers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   empresa_id uuid NOT NULL REFERENCES public.empresa_perfil(id) ON DELETE CASCADE,
-  kind text NOT NULL CHECK (kind IN ('notify_manager', 'escalate_human')),
+  kind text NOT NULL CHECK (kind IN ('notify_manager', 'escalate_human', 'redirect_contact')),
   name text NOT NULL,
   condition_description text NOT NULL,
   natural_input text NOT NULL,
   active boolean NOT NULL DEFAULT true,
+  redirect_phone text,
+  redirect_message text,
   created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
+  CONSTRAINT zelochat_triggers_redirect_phone_required
+    CHECK (kind <> 'redirect_contact' OR nullif(btrim(redirect_phone), '') IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_zelochat_triggers_empresa_active

@@ -40,11 +40,16 @@ export function useTriggers(token: string | null, options: { enabled?: boolean }
     void refresh();
   }, [enabled, refresh]);
 
-  const createTrigger = useCallback(async (naturalInput: string, kind: TriggerKind) => {
+  const createTrigger = useCallback(async (
+    naturalInput: string,
+    kind: TriggerKind,
+    redirectPhone?: string | null,
+    redirectMessage?: string | null,
+  ) => {
     if (!token) throw new Error('Faça login para criar gatilhos.');
     setError(null);
     try {
-      const trig = await createTriggerRequest(token, naturalInput, kind);
+      const trig = await createTriggerRequest(token, naturalInput, kind, redirectPhone, redirectMessage);
       setTriggers((prev) => sortTriggers([...prev, trig]));
       return trig;
     } catch (err) {
@@ -56,7 +61,14 @@ export function useTriggers(token: string | null, options: { enabled?: boolean }
 
   const updateTrigger = useCallback(async (
     id: string,
-    patch: { name?: string; conditionDescription?: string; active?: boolean; kind?: TriggerKind },
+    patch: {
+      name?: string;
+      conditionDescription?: string;
+      active?: boolean;
+      kind?: TriggerKind;
+      redirectPhone?: string | null;
+      redirectMessage?: string | null;
+    },
   ) => {
     if (!token) throw new Error('Faça login para editar gatilhos.');
     setError(null);

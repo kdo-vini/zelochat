@@ -3,7 +3,7 @@ import { getAI } from './ai.js';
 import { mergeWithBuiltins } from './builtinTriggers.js';
 import { recordAiUsage } from './aiUsage.js';
 
-export type TriggerKind = 'notify_manager' | 'escalate_human';
+export type TriggerKind = 'notify_manager' | 'escalate_human' | 'redirect_contact';
 
 /**
  * Keywords that describe an *escalation-worthy customer state*. When the prose
@@ -28,6 +28,8 @@ export interface TriggerRecord {
   conditionDescription: string;
   naturalInput: string;
   active: boolean;
+  redirectPhone: string | null;
+  redirectMessage: string | null;
   createdAt: string;
 }
 
@@ -39,6 +41,8 @@ type TriggerRow = {
   condition_description: string;
   natural_input: string;
   active: boolean;
+  redirect_phone: string | null;
+  redirect_message: string | null;
   created_at: string;
 };
 
@@ -51,16 +55,27 @@ function mapTrigger(row: TriggerRow): TriggerRecord {
     conditionDescription: row.condition_description,
     naturalInput: row.natural_input,
     active: row.active,
+    redirectPhone: row.redirect_phone ?? null,
+    redirectMessage: row.redirect_message ?? null,
     createdAt: row.created_at,
   };
 }
 
-const SELECT_COLS = 'id, empresa_id, kind, name, condition_description, natural_input, active, created_at';
+const SELECT_COLS = 'id, empresa_id, kind, name, condition_description, natural_input, active, redirect_phone, redirect_message, created_at';
 
 function assertValidKind(kind: string): asserts kind is TriggerKind {
-  if (kind !== 'notify_manager' && kind !== 'escalate_human') {
+  if (kind !== 'notify_manager' && kind !== 'escalate_human' && kind !== 'redirect_contact') {
     throw new Error('INVALID_TRIGGER_KIND');
   }
+}
+
+export function normalizeRedirectPhone(input: string | null | undefined): string | null {
+  const digits = String(input ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  if ((digits.length === 10 || digits.length === 11) && !digits.startsWith('55')) {
+    return `55${digits}`;
+  }
+  return digits;
 }
 
 export async function parseTriggerProse(
@@ -71,6 +86,7 @@ export async function parseTriggerProse(
   kind: TriggerKind;
   name: string;
   condition_description: string;
+  redirect_phone?: string | null;
 }> {
   const input = prose.trim();
   if (!input) throw new Error('INVALID_TRIGGER_PAYLOAD');
@@ -86,7 +102,7 @@ export async function parseTriggerProse(
       {
         role: 'system',
         content: `Você converte instruções em português de um dono de lanchonete em um gatilho estruturado.
-Responda APENAS em JSON válido com as chaves: kind, name, condition_description.
+Responda APENAS em JSON válido com as chaves: kind, name, condition_description, redirect_phone.
 
 REGRA CRÍTICA — classifique pela CONDIÇÃO do cliente, não pelo verbo do dono:
 - Mesmo que o dono diga "avise o gerente quando o cliente reclamar", isso é escalate_human
@@ -105,6 +121,12 @@ kind = "notify_manager" APENAS quando é alerta operacional sem interromper o at
   - cliente VIP mencionado por nome
   - eventos rotineiros que o gerente quer acompanhar (ex: novo pedido, primeira compra)
   A IA continua a conversa normalmente após avisar.
+
+kind = "redirect_contact" quando o dono quer mandar o cliente para outro WhatsApp/linha/unidade/trailer/filial:
+  - outra cidade, outra unidade, trailer, delivery separado, número secundário
+  - a IA envia um link wa.me para o número configurado e encerra aquele turno.
+  Se houver número no texto, coloque redirect_phone em formato internacional só com dígitos, sem "+", ex: "5584999991234".
+  Se não houver número no texto, use redirect_phone = null.
 
 name: rótulo curto até 40 caracteres.
 condition_description: frase imperativa em 1 linha que a IA de atendimento vai usar para decidir se dispara o gatilho. Seja específico.`,
@@ -130,7 +152,7 @@ condition_description: frase imperativa em 1 linha que a IA de atendimento vai u
   });
 
   const raw = response.choices[0]?.message?.content ?? '';
-  let parsed: { kind?: string; name?: string; condition_description?: string };
+  let parsed: { kind?: string; name?: string; condition_description?: string; redirect_phone?: string | null };
   try {
     parsed = JSON.parse(raw);
   } catch {
@@ -165,7 +187,12 @@ condition_description: frase imperativa em 1 linha que a IA de atendimento vai u
     }
   }
 
-  return { kind, name, condition_description: condition };
+  return {
+    kind,
+    name,
+    condition_description: condition,
+    redirect_phone: normalizeRedirectPhone(parsed.redirect_phone),
+  };
 }
 
 export async function listTriggers(empresaId: string): Promise<TriggerRecord[]> {
@@ -232,11 +259,19 @@ export async function createTrigger(
   empresaId: string,
   prose: string,
   kindOverride?: TriggerKind,
+  redirectPhone?: string | null,
+  redirectMessage?: string | null,
 ): Promise<TriggerRecord> {
   const naturalInput = prose.trim();
   if (!naturalInput) throw new Error('INVALID_TRIGGER_PAYLOAD');
 
   const parsed = await parseTriggerProse(empresaId, naturalInput, kindOverride);
+  const normalizedRedirectPhone = normalizeRedirectPhone(redirectPhone) ?? parsed.redirect_phone ?? null;
+  const normalizedRedirectMessage = redirectMessage?.trim() || null;
+
+  if (parsed.kind === 'redirect_contact' && !normalizedRedirectPhone) {
+    throw new Error('REDIRECT_PHONE_REQUIRED');
+  }
 
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
@@ -248,6 +283,8 @@ export async function createTrigger(
       condition_description: parsed.condition_description,
       natural_input: naturalInput,
       active: true,
+      redirect_phone: parsed.kind === 'redirect_contact' ? normalizedRedirectPhone : null,
+      redirect_message: parsed.kind === 'redirect_contact' ? normalizedRedirectMessage : null,
     })
     .select(SELECT_COLS)
     .single();
@@ -259,7 +296,14 @@ export async function createTrigger(
 export async function updateTrigger(
   empresaId: string,
   triggerId: string,
-  patch: { name?: string; conditionDescription?: string; active?: boolean; kind?: TriggerKind },
+  patch: {
+    name?: string;
+    conditionDescription?: string;
+    active?: boolean;
+    kind?: TriggerKind;
+    redirectPhone?: string | null;
+    redirectMessage?: string | null;
+  },
 ): Promise<TriggerRecord | null> {
   const nextPatch: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -281,6 +325,18 @@ export async function updateTrigger(
   if (patch.kind !== undefined) {
     assertValidKind(patch.kind);
     nextPatch.kind = patch.kind;
+    if (patch.kind !== 'redirect_contact') {
+      nextPatch.redirect_phone = null;
+      nextPatch.redirect_message = null;
+    }
+  }
+  if (patch.redirectPhone !== undefined) {
+    const phone = normalizeRedirectPhone(patch.redirectPhone);
+    if (!phone) throw new Error('REDIRECT_PHONE_REQUIRED');
+    nextPatch.redirect_phone = phone;
+  }
+  if (patch.redirectMessage !== undefined) {
+    nextPatch.redirect_message = patch.redirectMessage?.trim() || null;
   }
 
   const supabase = getServiceSupabase();

@@ -186,7 +186,7 @@ export interface DeliveryDriver {
   status: 'available' | 'busy' | 'offline';
 }
 
-export type TriggerKind = 'notify_manager' | 'escalate_human';
+export type TriggerKind = 'notify_manager' | 'escalate_human' | 'redirect_contact';
 
 export interface Trigger {
   id: string;
@@ -196,6 +196,8 @@ export interface Trigger {
   conditionDescription: string;
   naturalInput: string;
   active: boolean;
+  redirectPhone?: string | null;
+  redirectMessage?: string | null;
   createdAt: string;
 }
 

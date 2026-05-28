@@ -25,7 +25,7 @@ import {
   isPixReceiptConfigActive,
   type PixReceiptAnalysis,
 } from '../src/domain/pixReceipt.js';
-import { fetchActiveTriggers, type TriggerRecord } from './triggers.js';
+import { fetchActiveTriggers, normalizeRedirectPhone, type TriggerRecord } from './triggers.js';
 import { getSessionTagsFull, listTags, applyTagToSession, type TagRecord } from './tags.js';
 import { broadcast } from './ws.js';
 import { recordAiUsage } from './aiUsage.js';
@@ -71,6 +71,49 @@ async function sendAndPersistText(
     ...options,
     waMessageId,
   });
+}
+
+const DEFAULT_REDIRECT_CONTACT_MESSAGE =
+  'Para este tipo de pedido, entre em contato pelo nosso outro número: {link} 😊';
+
+function buildRedirectContactMessage(trig: TriggerRecord): { phone: string; text: string } | null {
+  const phone = normalizeRedirectPhone(trig.redirectPhone);
+  if (!phone) return null;
+
+  const link = `https://wa.me/${phone}`;
+  const template = trig.redirectMessage?.trim() || DEFAULT_REDIRECT_CONTACT_MESSAGE;
+  const text = template.includes('{link}')
+    ? template.split('{link}').join(link)
+    : `${template}\n${link}`;
+  return { phone, text };
+}
+
+async function sendRedirectContactReply(
+  jid: string,
+  empresaId: string,
+  trig: TriggerRecord,
+  toolCall: AiToolCall,
+  persistAssistantToolCall: boolean,
+): Promise<string | null> {
+  if (persistAssistantToolCall) {
+    await addAssistantMessage(jid, null, [toolCall], empresaId);
+  }
+
+  const redirect = buildRedirectContactMessage(trig);
+  if (!redirect) {
+    console.warn(`[AI] redirect_contact trigger ${trig.id} sem redirectPhone configurado.`);
+    await addToolMessage(
+      jid,
+      'Encaminhamento configurado sem número — ignorado.',
+      toolCall.id,
+      empresaId,
+    );
+    return null;
+  }
+
+  await addToolMessage(jid, `Encaminhado para ${redirect.phone}`, toolCall.id, empresaId);
+  await sendAndPersistText(jid, redirect.text, empresaId, { responseSource: 'ai_auto' });
+  return redirect.text;
 }
 
 /**
@@ -2111,6 +2154,7 @@ INSTRUÇÕES DE GATILHO:
 - Chame dispatch_trigger NO MÁXIMO UMA VEZ por condição que ocorrer na conversa.
 - Se for escalate_human, você NÃO escreve mais nada; o sistema cuida do handoff.
 - Se for notify_manager, continue a conversa normalmente após a notificação.
+- Se for redirect_contact, o sistema envia o link do outro WhatsApp e encerra este turno. Não continue com pedido ou atendimento normal após redirecionar.
 
 ${ownerStylePreferences}${tagsBlock}
 
@@ -2205,6 +2249,7 @@ INSTRUÇÕES DE GATILHO:
 - Chame dispatch_trigger NO MÁXIMO UMA VEZ por condição que ocorrer na conversa.
 - Se for escalate_human, você NÃO escreve mais nada — o sistema cuida do handoff com o cliente.
 - Se for notify_manager, continue a conversa normalmente após a notificação.
+- Se for redirect_contact, o sistema envia o link do outro WhatsApp e encerra este turno. Não continue com pedido ou atendimento normal após redirecionar.
 
 ${ownerStylePreferences}${tagsBlock}${autoTagsBlock}
 
@@ -2411,6 +2456,21 @@ export function planToolCallsForTurn(
       calls: [escalationCall],
       mode: 'single_terminal',
       reason: `human handoff wins; original tool order: ${names}`,
+    };
+  }
+
+  // Redirecting to another WhatsApp line is terminal for this turn. It must
+  // happen before order creation so mixed "trailer + pedido" turns do not open
+  // a pending order on the wrong line. Human handoff above still has priority.
+  const redirectCall = calls.find((toolCall) => {
+    if (toolCall.function.name !== 'dispatch_trigger') return false;
+    return resolveTriggerFromToolCall(toolCall, triggers).trig?.kind === 'redirect_contact';
+  });
+  if (redirectCall) {
+    return {
+      calls: [redirectCall],
+      mode: 'single_terminal',
+      reason: `redirect_contact is turn-terminal; original tool order: ${names}`,
     };
   }
 
@@ -3272,6 +3332,21 @@ export async function generateAndSendReply(
               return handoffMessageFor(reasonCategory);
             }
 
+            if (trig.kind === 'redirect_contact') {
+              const redirectText = await sendRedirectContactReply(
+                jid,
+                resolvedEmpresaId,
+                trig,
+                toolCall,
+                false,
+              );
+              if (redirectText) {
+                resetAiFailureCounter(resolvedEmpresaId, jid);
+                return redirectText;
+              }
+              continue;
+            }
+
             const cfg = getConfig(resolvedEmpresaId);
             const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
             if (managerJid) {
@@ -3386,6 +3461,21 @@ export async function generateAndSendReply(
               });
               resetAiFailureCounter(resolvedEmpresaId, jid);
               return handoffMessageFor(reasonCategory);
+            }
+
+            if (trig.kind === 'redirect_contact') {
+              const redirectText = await sendRedirectContactReply(
+                jid,
+                resolvedEmpresaId,
+                trig,
+                prefixCall,
+                false,
+              );
+              if (redirectText) {
+                resetAiFailureCounter(resolvedEmpresaId, jid);
+                return redirectText;
+              }
+              continue;
             }
 
             const cfg = getConfig(resolvedEmpresaId);
@@ -3904,6 +3994,21 @@ export async function generateAndSendReply(
 
           resetAiFailureCounter(resolvedEmpresaId, jid);
           return handoffMessageFor(reasonCategory);
+        }
+
+        if (trig.kind === 'redirect_contact') {
+          const redirectText = await sendRedirectContactReply(
+            jid,
+            resolvedEmpresaId,
+            trig,
+            toolCall,
+            true,
+          );
+          if (redirectText) {
+            console.log(`[AI] Dispatched redirect_contact (${trig.name}) for ${jid}`);
+            resetAiFailureCounter(resolvedEmpresaId, jid);
+          }
+          return redirectText;
         }
 
         // notify_manager — alert and continue the conversation
