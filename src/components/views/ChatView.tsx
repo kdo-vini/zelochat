@@ -124,6 +124,22 @@ function orderStatusBadge(status: Order['status']): { label: string; bg: string;
   }
 }
 
+const WA_MARKDOWN_RE = /[*_~`]/;
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderWhatsAppMarkdown(text: string): string {
+  let s = escapeHtml(text);
+  s = s.replace(/```([^`]+)```/g, '<code>$1</code>');
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,!?;:)]|$)/g, '$1<strong>$2</strong>');
+  s = s.replace(/(^|[\s(])_([^_\n]+)_(?=[\s.,!?;:)]|$)/g, '$1<em>$2</em>');
+  s = s.replace(/(^|[\s(])~([^~\n]+)~(?=[\s.,!?;:)]|$)/g, '$1<del>$2</del>');
+  return s.replace(/\n/g, '<br>');
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2352,6 +2368,16 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                     />
                   )}
                 </AnimatePresence>
+
+                {ownerInput.trim() && WA_MARKDOWN_RE.test(ownerInput) && (
+                  <div className="mb-2 flex items-start gap-2 rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface)]/70 px-3 py-2">
+                    <span className="mt-0.5 flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)]">Prévia</span>
+                    <p
+                      className="flex-1 break-words text-[13px] leading-snug text-[var(--color-ink)] wa-md-preview"
+                      dangerouslySetInnerHTML={{ __html: renderWhatsAppMarkdown(ownerInput) }}
+                    />
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2">
                   <div className="relative flex-shrink-0">
