@@ -1241,6 +1241,28 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
     }
   };
 
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from<DataTransferItem>(e.clipboardData.items);
+    const fileItem = items.find(item => item.kind === 'file');
+    if (!fileItem) return;
+
+    const file = fileItem.getAsFile();
+    if (!file) return;
+
+    e.preventDefault();
+
+    if (pendingAttachment) {
+      setChatActionError('Você já tem um arquivo aguardando envio. Envie ou cancele primeiro.');
+      return;
+    }
+
+    const type: ChatAttachment['type'] =
+      file.type.startsWith('video/') ? 'video' :
+      file.type.startsWith('image/') ? 'image' : 'document';
+
+    void handleDroppedFile(file, type);
+  };
+
   const handleSendContact = async () => {
     if (!activeSession || !contactName.trim() || !contactPhone.trim() || !token) return;
     setIsSending(true);
@@ -2379,6 +2401,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                           }
                         }
                       }}
+                      onPaste={handlePaste}
                       disabled={isSending || aiAssistLoading !== null}
                       placeholder={pendingAttachment ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /atalho'}
                       className="w-full resize-none overflow-y-auto max-h-[160px] bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-12 disabled:opacity-60 disabled:cursor-not-allowed leading-[1.5]"

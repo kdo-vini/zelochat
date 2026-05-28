@@ -16,6 +16,18 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-28',
+    category: 'minor',
+    title: 'Cole imagens e arquivos direto no chat',
+    description: 'Agora você pode usar Ctrl+V (ou Cmd+V no Mac) para colar uma imagem do print ou um arquivo copiado direto na conversa, sem precisar salvar antes.',
+  },
+  {
+    date: '2026-05-26',
+    category: 'medium',
+    title: 'IA encaminha clientes para outro WhatsApp',
+    description: 'Agora você pode criar um gatilho para a IA mandar o cliente direto para outra linha, como delivery, trailer ou outra unidade, sem desligar o atendimento automático da conversa.',
+  },
+  {
     date: '2026-05-22',
     category: 'hotfix',
     title: 'Atendimento automático voltou a receber mensagens',
