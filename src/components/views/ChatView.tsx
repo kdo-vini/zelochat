@@ -70,7 +70,7 @@ import { Modal, useModalTitleId } from '../Modal';
 import { getFriendlyErrorMessage } from '../../services/errorMessages';
 import { PushPermissionBanner } from '../PushPermissionBanner';
 import { compressImage } from '../../services/imageCompress';
-import { sendContact } from '../../services/waApi';
+import { sendContact, sendPresence } from '../../services/waApi';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
@@ -791,6 +791,7 @@ export function ChatView({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const lastPresenceAtRef = useRef(0);
   const chatTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const activeSession = useMemo(
@@ -2628,9 +2629,17 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                       rows={1}
                       value={ownerInput}
                       onChange={(e) => {
-                        setOwnerInput(e.target.value);
+                        const val = e.target.value;
+                        setOwnerInput(val);
                         e.target.style.height = 'auto';
                         e.target.style.height = `${e.target.scrollHeight}px`;
+                        if (val.trim() && token && activeSessionId) {
+                          const now = Date.now();
+                          if (now - lastPresenceAtRef.current > 2500) {
+                            lastPresenceAtRef.current = now;
+                            void sendPresence(token, activeSessionId, 'composing');
+                          }
+                        }
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {

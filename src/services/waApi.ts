@@ -151,6 +151,23 @@ export async function sendMessage(
   await parseResponse(response);
 }
 
+export async function sendPresence(
+  token: string,
+  jid: string,
+  presence: 'composing' | 'available',
+): Promise<void> {
+  try {
+    await fetch(apiUrl('/api/presence'), {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ jid, presence }),
+      keepalive: true,
+    });
+  } catch {
+    // best-effort
+  }
+}
+
 export async function sendContact(
   token: string,
   to: string,
@@ -277,11 +294,13 @@ export async function createTrigger(
   token: string,
   naturalInput: string,
   kind: TriggerKind,
+  redirectPhone?: string | null,
+  redirectMessage?: string | null,
 ): Promise<Trigger> {
   const response = await apiFetch(apiUrl('/api/triggers'), {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({ naturalInput, kind }),
+    body: JSON.stringify({ naturalInput, kind, redirectPhone, redirectMessage }),
   });
   const body = await parseResponse<{ trigger: Trigger }>(response);
   return body.trigger;
@@ -290,7 +309,14 @@ export async function createTrigger(
 export async function updateTrigger(
   token: string,
   id: string,
-  patch: { name?: string; conditionDescription?: string; active?: boolean; kind?: TriggerKind },
+  patch: {
+    name?: string;
+    conditionDescription?: string;
+    active?: boolean;
+    kind?: TriggerKind;
+    redirectPhone?: string | null;
+    redirectMessage?: string | null;
+  },
 ): Promise<Trigger> {
   const response = await apiFetch(apiUrl(`/api/triggers/${encodeURIComponent(id)}`), {
     method: 'PATCH',

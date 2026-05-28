@@ -12,6 +12,7 @@ import {
   disconnectWhatsApp,
   reconnectWhatsApp,
   sendTextMessage,
+  sendPresence,
   sendMediaMessage,
   sendWhatsAppAudio,
   sendContactMessage,
@@ -919,6 +920,11 @@ function sendTriggerError(res: Response, error: unknown): void {
     return;
   }
 
+  if (message === 'REDIRECT_PHONE_REQUIRED') {
+    res.status(400).json({ error: 'Informe o número para encaminhar o cliente.' });
+    return;
+  }
+
   res.status(500).json({ error: message });
 }
 
@@ -1773,18 +1779,34 @@ router.get('/api/triggers', async (req: Request, res: Response) => {
 });
 
 router.post('/api/triggers', async (req: Request, res: Response) => {
-  const { naturalInput, kind } = (req.body ?? {}) as { naturalInput?: string; kind?: string };
+  const { naturalInput, kind, redirectPhone, redirectMessage } = (req.body ?? {}) as {
+    naturalInput?: string;
+    kind?: string;
+    redirectPhone?: string | null;
+    redirectMessage?: string | null;
+  };
   if (!naturalInput?.trim()) {
     res.status(400).json({ error: 'Descreva o gatilho em português.' });
     return;
   }
-  if (kind !== undefined && kind !== 'notify_manager' && kind !== 'escalate_human') {
+  if (
+    kind !== undefined &&
+    kind !== 'notify_manager' &&
+    kind !== 'escalate_human' &&
+    kind !== 'redirect_contact'
+  ) {
     res.status(400).json({ error: 'Tipo de gatilho inválido.' });
     return;
   }
   try {
     const empresaId = await requireEmpresaId(req);
-    const trigger = await createTrigger(empresaId, naturalInput, kind as TriggerKind | undefined);
+    const trigger = await createTrigger(
+      empresaId,
+      naturalInput,
+      kind as TriggerKind | undefined,
+      redirectPhone,
+      redirectMessage,
+    );
     res.status(201).json({ trigger });
   } catch (error) {
     sendTriggerError(res, error);
@@ -2683,6 +2705,30 @@ router.post('/api/cron/onboarding-followup', async (req: Request, res: Response)
   } catch (error) {
     console.error('[cron/onboarding-followup] error:', error);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
+/**
+ * POST /api/presence — operator typing indicator.
+ * Fire-and-forget: failures never bubble to the client. Body:
+ *   { jid: string, presence: 'composing' | 'available' }
+ */
+router.post('/api/presence', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const { jid, presence } = (req.body || {}) as { jid?: string; presence?: 'composing' | 'available' };
+    if (!jid || (presence !== 'composing' && presence !== 'available')) {
+      res.status(400).json({ error: 'invalid_payload' });
+      return;
+    }
+    void sendPresence(jid, presence, presence === 'composing' ? 3000 : 0, empresaId);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, err);
+      return;
+    }
+    res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
   }
 });
 
