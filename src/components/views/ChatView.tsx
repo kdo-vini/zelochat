@@ -69,6 +69,7 @@ import { ContactAvatar } from '../ContactAvatar';
 import { Modal, useModalTitleId } from '../Modal';
 import { getFriendlyErrorMessage } from '../../services/errorMessages';
 import { PushPermissionBanner } from '../PushPermissionBanner';
+import { compressImage } from '../../services/imageCompress';
 import { sendContact } from '../../services/waApi';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
 
@@ -1278,15 +1279,16 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
     setChatActionError(null);
     try {
       const added: ChatAttachment[] = [];
-      for (const file of files) {
+      for (const rawFile of files) {
         const type: ChatAttachment['type'] = typeHint ?? (
-          file.type.startsWith('video/') ? 'video' :
-          file.type.startsWith('image/') ? 'image' : 'document'
+          rawFile.type.startsWith('video/') ? 'video' :
+          rawFile.type.startsWith('image/') ? 'image' : 'document'
         );
-        if (type === 'video' && file.size > 50 * 1024 * 1024) {
-          setChatActionError(`Vídeo muito grande (${file.name}). O limite é 50 MB.`);
+        if (type === 'video' && rawFile.size > 50 * 1024 * 1024) {
+          setChatActionError(`Vídeo muito grande (${rawFile.name}). O limite é 50 MB.`);
           continue;
         }
+        const file = type === 'image' ? await compressImage(rawFile).catch(() => rawFile) : rawFile;
         const dataUrl = await readFileAsDataUrl(file);
         added.push({
           type,
