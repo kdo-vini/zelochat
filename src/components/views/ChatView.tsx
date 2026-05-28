@@ -8,6 +8,7 @@ import {
   Calendar,
   Camera,
   Check,
+  ChevronDown,
   CheckCheck,
   CheckSquare,
   CreditCard,
@@ -698,6 +699,9 @@ export function ChatView({
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const MAX_ATTACHMENTS = 10;
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [unreadFromScroll, setUnreadFromScroll] = useState(0);
+  const isAtBottomRef = useRef(true);
   const [editingName, setEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -1028,6 +1032,15 @@ export function ChatView({
 
   const handleMessagesScroll = useCallback(() => {
     const currentContainer = scrollRef.current;
+    if (currentContainer) {
+      const distance = currentContainer.scrollHeight - currentContainer.scrollTop - currentContainer.clientHeight;
+      const nowAtBottom = distance < 80;
+      if (nowAtBottom !== isAtBottomRef.current) {
+        isAtBottomRef.current = nowAtBottom;
+        setIsAtBottom(nowAtBottom);
+        if (nowAtBottom) setUnreadFromScroll(0);
+      }
+    }
     if (
       currentContainer &&
       activeSession?.id &&
@@ -1190,10 +1203,32 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
     }
   };
 
+  const scrollToBottom = useCallback((smooth = true) => {
+    const c = scrollRef.current;
+    if (!c) return;
+    c.scrollTo({ top: c.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
+    setUnreadFromScroll(0);
+  }, []);
+
   useEffect(() => {
     if (preservingOlderScrollRef.current) return;
-    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [activeSessionId, activeSessionMessages]);
+    if (isAtBottomRef.current) {
+      scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
+      setUnreadFromScroll(0);
+    } else {
+      setUnreadFromScroll(prev => prev + 1);
+    }
+  }, [activeSessionMessages]);
+
+  useEffect(() => {
+    const c = scrollRef.current;
+    if (c) c.scrollTo(0, c.scrollHeight);
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
+    setUnreadFromScroll(0);
+  }, [activeSessionId]);
 
   useEffect(() => {
     setReplyingTo(null);
@@ -2165,6 +2200,29 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                         {stickyLabel}
                       </span>
                     </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {!isAtBottom && (
+                    <motion.button
+                      key="scroll-to-bottom"
+                      type="button"
+                      onClick={() => scrollToBottom(true)}
+                      initial={{ opacity: 0, scale: 0.85, y: 8 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.85, y: 8 }}
+                      transition={{ duration: 0.15 }}
+                      aria-label="Rolar para a última mensagem"
+                      className="absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] backdrop-blur-sm hover:text-[var(--color-ink)]"
+                    >
+                      <ChevronDown className="h-5 w-5" strokeWidth={2} />
+                      {unreadFromScroll > 0 && (
+                        <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--color-brand)] px-1 text-[10px] font-bold text-white shadow-sm">
+                          {unreadFromScroll > 99 ? '99+' : unreadFromScroll}
+                        </span>
+                      )}
+                    </motion.button>
                   )}
                 </AnimatePresence>
               </div>

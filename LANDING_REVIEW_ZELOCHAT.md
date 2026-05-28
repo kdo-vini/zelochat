@@ -27,7 +27,7 @@ R$97/mês**. As correções abaixo são quase todas baratas e desbloqueiam isso.
 | --- | --- | --- |
 | **UI / visual** | 7,5 | Premium, coeso, paleta WhatsApp consistente, mockup do chat (recém-refeito) ficou tier-A. Perde meio ponto em hierarquia/respiração no mobile e StatStrip apertado. |
 | **Copy** | 7,0 | Personalidade boa, sal na ferida em vários pontos. Perde no first-fold (subhead genérica após o último corte), dissonância "não substitui × fecha pedido", e FAQ ainda com tom defensivo na seção-título. |
-| **SEO técnico/on-page** | 7,0 | Meta básica + 4 JSON-LD presentes, sitemap+robots+manifest OK. Perde porque description está estourada (>200 chars), FAQPage schema está desatualizado em relação à copy, featureList não cita PIX/kanban, `llms.txt` ainda diz Railway/Vercel (já migrou pro Dokploy). |
+| **SEO técnico/on-page** | 7,0 | Meta básica + 4 JSON-LD presentes, sitemap+robots+manifest OK. Perde porque description está estourada (>200 chars), FAQPage schema está desatualizado em relação à copy, featureList não cita PIX/kanban, `llms.txt` ainda citava infra antiga (já migrou pro Dokploy). |
 | **Conversão / CRO** | 6,0 | First-fold convence em hook mas não em substância. Prova social no fold é ausente. Diferencial PIX+kanban está enterrado. Mobile sem sticky CTA. Footer com links mortos quebra confiança. |
 
 ---
@@ -50,7 +50,7 @@ R$97/mês**. As correções abaixo são quase todas baratas e desbloqueiam isso.
 | P1-1 | `Hero.tsx` StatStrip | No mobile, 3 cards em coluna empilhados + parágrafo de fontes ocupam ~1 dobra inteira **antes** do IntegrationStrip. Visitante mobile rola muito sem ver prova/feature. | Bounce mobile. | Compactar StatStrip no mobile (sub menor + esconder rodapé "Fontes:" em <md) e mover para depois de IntegrationStrip. Parcialmente implementado (compactação). |
 | P1-2 | `Footer.tsx` | "Sobre", "Blog", "Contato", "Central de ajuda", "Suporte" todos `href="#"`. "Analytics" como ícone social? Quebra confiança. | Click em link morto = "esse site não é sério". | Remover links mortos; "Contato" e "Suporte" viram link pro WhatsApp existente; remover ícone Analytics; adicionar CNPJ. Implementado. |
 | P1-3 | `index.html` SoftwareApplication featureList | Lista 8 features mas **nenhuma menciona PIX-OCR, leitura de comprovante, kanban com drag-and-drop, atualizações automáticas no WhatsApp**. | Schema é leitura primária de LLM-search e Google Knowledge. Sem PIX/kanban no schema, o ZeloChat sai dos search-LLM como "chatbot genérico". | Atualizar featureList. Implementado. |
-| P1-4 | `public/llms.txt` | Linha 52: "Hospedagem: Railway (backend) + Vercel (frontend)" — desatualizada (commit `66d6d6f` migrou pro Dokploy). | LLM-search cita infra errada; quem audita o produto via LLM acha que a info é desleixada. | Trocar para "Dokploy" ou tirar a linha. Implementado. |
+| P1-4 | `public/llms.txt` | Linha 52 citava a hospedagem antiga, mas a operação migrou para Dokploy. | LLM-search cita infra errada; quem audita o produto via LLM acha que a info é desleixada. | Trocar para "Dokploy" ou tirar a linha. Implementado. |
 | P1-5 | `FAQ.tsx` H2 da seção | "O que a gente promete (e o que não promete)" — agora dissona com a primeira resposta que é assertiva ("Dá, e bem"). Título promete ressalva, conteúdo entrega venda. | Visitante confunde. | "Perguntas que os donos sempre fazem". Implementado. |
 | P1-6 | `BottomCTA.tsx` | "Se em 30 dias não fizer diferença, cancela com 2 cliques — sem multa, sem ligação de retenção, sem ressentimento" — soa como garantia formal de 30 dias / money-back. Não existe essa garantia (não tem trial, devolução ou refund explícito). | Risco de reclamação legal/CDC + quebra de confiança se cliente cobrar. | Substituir por "Sem fidelidade. Cancele direto no painel, sem ligação de retenção". Implementado. |
 | P1-7 | A11y — ícones Lucide decorativos | Nenhum `aria-hidden="true"` nos ícones que são pura decoração (StatCard, FeatureCard, IntegrationStrip pills, etc). Leitor de tela lê o nome do ícone (e às vezes lê "ícone genérico"). | Score Lighthouse + LCP/AAA. | Adicionar `aria-hidden`. Aplicado em ícones decorativos principais. |
@@ -94,7 +94,7 @@ R$97/mês**. As correções abaixo são quase todas baratas e desbloqueiam isso.
 - JSON-LD `FAQPage` atualizado pra refletir a copy real da página (nova pergunta principal "A IA dá conta de atender meus clientes?").
 - JSON-LD novo: `HowTo` com os 5 passos da seção "Do 'oi' ao pedido pronto".
 - Google Fonts → carregamento não-blocking (`media=print` + `onload`).
-- `llms.txt` corrigido (Railway/Vercel → Dokploy).
+- `llms.txt` corrigido para Dokploy.
 
 ### Copy
 - Hero subhead reescrita pra carregar PIX + kanban + WhatsApp end-to-end.
