@@ -107,8 +107,8 @@ import {
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
-import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
-import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan } from './billing.js';
+import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState, deleteInstance } from './instanceManager.js';
+import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan, cancelStripeSubscriptionForUser } from './billing.js';
 import { handleCreatePixCharge, handleGetPixStatus, handleAbacatePayWebhook } from './billingPix.js';
 import { cancelPendingReply } from './replyDebouncer.js';
 import type { ChatAttachment } from '../src/types.js';
@@ -2186,6 +2186,61 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     await deleteSession(req.params.jid, empresaId);
+    res.json({ ok: true });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * DELETE /api/account — Self-service account deletion (LGPD Art. 18, III).
+ * Irreversibly removes the user's account and ALL data across ZeloChat + Zelo PDV
+ * (shared DB). Order: stop billing → revoke WhatsApp → purge storage → purge DB.
+ * The destructive DB work is the service_role-only `delete_account` RPC.
+ */
+router.delete('/api/account', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+
+    // 1) Stop billing (cancel Stripe subscription immediately, if any).
+    try {
+      await cancelStripeSubscriptionForUser(userId);
+    } catch (err) {
+      console.error('[account/delete] Stripe cancel failed:', err);
+      res.status(502).json({ error: 'Não foi possível cancelar a assinatura. Tente novamente.' });
+      return;
+    }
+
+    // 2) Revoke WhatsApp — delete the Whatsmiau instance (best-effort).
+    try {
+      await deleteInstance(empresaId);
+    } catch (err) {
+      console.warn('[account/delete] deleteInstance failed (continuing):', err);
+    }
+
+    // 3) Storage cleanup (best-effort — authoritative PII lives in the DB).
+    try {
+      const supabase = getServiceSupabase();
+      for (const prefix of [`send/${empresaId}`, `received/${empresaId}`]) {
+        const { data } = await supabase.storage.from('zelochat-media').list(prefix, { limit: 1000 });
+        const paths = (data ?? []).filter((o) => o.id).map((o) => `${prefix}/${o.name}`);
+        if (paths.length) await supabase.storage.from('zelochat-media').remove(paths);
+      }
+    } catch (err) {
+      console.warn('[account/delete] storage cleanup failed (continuing):', err);
+    }
+
+    // 4) Purge all DB data + the auth identity (irreversible).
+    const { error } = await getServiceSupabase().rpc('delete_account', {
+      p_user_id: userId,
+      p_source: 'zelochat',
+    });
+    if (error) {
+      console.error('[account/delete] RPC error:', error);
+      res.status(500).json({ error: 'Falha ao apagar a conta. Nenhum dado foi removido.' });
+      return;
+    }
+
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, LogOut, Check, Loader2, X, Sparkles, Shield, UserCircle2, Database, Phone, MapPin, Camera, FileText } from 'lucide-react';
+import { ShieldCheck, LogOut, Check, Loader2, X, Sparkles, Shield, UserCircle2, Database, Phone, MapPin, Camera, FileText, Trash2 } from 'lucide-react';
 import { supabase } from '../../services/supabaseClient';
 import { ZeloState } from '../../types';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
@@ -9,6 +9,7 @@ import { signOut, updateUserPassword } from '../../services/authService';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { ConfirmModal } from '../ConfirmModal';
 import { SectionCard } from '../shared/SectionCard';
+import { apiUrl, apiFetch } from '../../config';
 import { BillingManagementCard } from '../billing/BillingCards';
 import { PlanChangeModal } from './PlanChangeModal';
 
@@ -73,6 +74,62 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
   // Logout state
   const [signingOut, setSigningOut] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+
+  // Apagar conta (LGPD) — fluxo com atrito: revelar → ciência → digitar nome → cooldown.
+  const [dangerOpen, setDangerOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
+  const [ackIrreversible, setAckIrreversible] = useState(false);
+  const [typedName, setTypedName] = useState('');
+  const [deleteCooldown, setDeleteCooldown] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const companyName = (empresa?.nome_exibicao ?? '').trim();
+  const nameMatches = companyName.length > 0 && typedName.trim().toLowerCase() === companyName.toLowerCase();
+  const canConfirmDelete = deleteStep === 2 && nameMatches && deleteCooldown <= 0 && !deleting;
+
+  const openDeleteModal = () => {
+    setDeleteOpen(true);
+    setDeleteStep(1);
+    setAckIrreversible(false);
+    setTypedName('');
+    setDeleteCooldown(0);
+    setDeleteError(null);
+  };
+  const goToConfirmStep = () => {
+    if (!ackIrreversible) return;
+    setDeleteStep(2);
+    setDeleteCooldown(5);
+  };
+  // Cooldown ticker — runs only while on step 2 with time remaining.
+  useEffect(() => {
+    if (deleteStep !== 2 || deleteCooldown <= 0) return;
+    const t = setTimeout(() => setDeleteCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [deleteStep, deleteCooldown]);
+
+  const handleDeleteAccount = async () => {
+    if (!canConfirmDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      if (!token) throw new Error('Sessão expirada. Faça login novamente.');
+      const res = await apiFetch(apiUrl('/api/account'), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || 'Falha ao apagar a conta.');
+      }
+      await signOut().catch(() => {});
+      navigate('/auth');
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Erro ao apagar a conta.');
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     if (!empresa) return;
@@ -529,6 +586,37 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
               </button>
             </div>
 
+            {/* Zona de perigo — recolhida por padrão */}
+            <div className="pt-2 border-t border-[var(--color-line)]">
+              {!dangerOpen ? (
+                <button
+                  onClick={() => setDangerOpen(true)}
+                  className="text-[12px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] transition-colors"
+                >
+                  Opções avançadas da conta
+                </button>
+              ) : (
+                <div className="rounded-xl border border-[var(--color-alert)]/25 bg-[var(--color-alert-soft)] p-4 space-y-2">
+                  <div className="flex items-start gap-3">
+                    <Trash2 className="w-5 h-5 text-[var(--color-alert)] flex-shrink-0 mt-0.5" strokeWidth={1.8} />
+                    <div className="flex-1">
+                      <p className="text-[13.5px] font-semibold text-[var(--color-alert)]">Apagar conta e todos os dados</p>
+                      <p className="text-[12px] text-[var(--color-alert)]/70 mt-0.5">
+                        Remove permanentemente sua conta, conversas, pedidos e dados do Zelo PDV,
+                        e cancela sua assinatura. Esta ação é irreversível.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={openDeleteModal}
+                    className="w-full bg-[var(--color-alert)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+                  >
+                    Apagar minha conta…
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Version line */}
             <div className="pt-3 border-t border-[var(--color-line)]">
               <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center">ZeloChat · v1.4.2-beta</p>
@@ -536,6 +624,87 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
           </div>
         </SectionCard>
       </div>
+
+      {deleteOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60">
+          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] border border-[var(--color-alert)]/30 shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-[var(--color-line)]">
+              <h3 className="text-[16px] font-bold text-[var(--color-alert)]">Apagar conta</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              {deleteStep === 1 ? (
+                <>
+                  <p className="text-[13.5px] leading-relaxed text-[var(--color-ink)]">
+                    Você vai apagar <strong>todos os dados</strong>
+                    {companyName ? <> de <strong>{companyName}</strong></> : null}: conversas,
+                    pedidos, clientes e os dados do Zelo PDV. Sua assinatura será cancelada.
+                  </p>
+                  <p className="text-[13.5px] font-semibold text-[var(--color-alert)]">
+                    Isto é irreversível — não há como recuperar depois.
+                  </p>
+                  <label className="flex items-start gap-2 text-[13px] cursor-pointer text-[var(--color-ink)]">
+                    <input
+                      type="checkbox"
+                      checked={ackIrreversible}
+                      onChange={(e) => setAckIrreversible(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>Entendo que esta ação é permanente e apagará todos os meus dados.</span>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <p className="text-[13.5px] leading-relaxed text-[var(--color-ink)]">
+                    Para confirmar, digite o nome da sua empresa: <strong>{companyName}</strong>
+                  </p>
+                  <input
+                    type="text"
+                    value={typedName}
+                    onChange={(e) => setTypedName(e.target.value)}
+                    placeholder={companyName}
+                    autoComplete="off"
+                    className={`${FIELD} ${nameMatches ? 'border-[var(--color-brand)]' : ''}`}
+                  />
+                </>
+              )}
+              {deleteError && (
+                <p className="text-[12.5px] text-[var(--color-alert)]">{deleteError}</p>
+              )}
+            </div>
+            <div className="px-6 py-4 bg-[var(--color-surface-muted)] border-t border-[var(--color-line)] flex justify-end gap-3">
+              <button
+                onClick={() => !deleting && setDeleteOpen(false)}
+                disabled={deleting}
+                className="px-4 py-2 text-[13.5px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              {deleteStep === 1 ? (
+                <button
+                  onClick={goToConfirmStep}
+                  disabled={!ackIrreversible}
+                  className="px-4 py-2 rounded-lg text-[13.5px] font-semibold text-white bg-[var(--color-alert)] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Continuar
+                </button>
+              ) : (
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={!canConfirmDelete}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-[13.5px] font-semibold text-white bg-[var(--color-alert)] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {deleting
+                    ? 'Apagando…'
+                    : deleteCooldown > 0
+                      ? `Aguarde ${deleteCooldown}s…`
+                      : 'Apagar definitivamente'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         open={confirmLogout}
