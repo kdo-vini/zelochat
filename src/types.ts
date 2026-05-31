@@ -260,7 +260,7 @@ export interface ZeloState {
 
 export type MessageRole = 'user' | 'assistant' | 'tool' | 'system';
 
-export type ChatAttachmentType = 'image' | 'document' | 'audio' | 'video';
+export type ChatAttachmentType = 'image' | 'document' | 'audio' | 'video' | 'sticker';
 
 export type MessageStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 

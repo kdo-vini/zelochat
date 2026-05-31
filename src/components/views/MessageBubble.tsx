@@ -701,12 +701,14 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   }
 
   /* ── Bubble wrapper styles (WhatsApp-accurate) ── */
+  const isSticker = message.kind === 'sticker';
   const bubbleStyle: React.CSSProperties = {
-    backgroundColor: isOutgoing ? '#d9fdd3' : '#ffffff',
+    // Figurinhas aparecem sem balão (igual ao WhatsApp): fundo e sombra transparentes.
+    backgroundColor: isSticker ? 'transparent' : isOutgoing ? '#d9fdd3' : '#ffffff',
     borderRadius: hasTail
       ? isOutgoing ? '7.5px 7.5px 0 7.5px' : '7.5px 7.5px 7.5px 0'
       : '7.5px',
-    boxShadow: '0 1px 0.5px rgba(11,20,26,0.13)',
+    boxShadow: isSticker ? 'none' : '0 1px 0.5px rgba(11,20,26,0.13)',
     maxWidth: message.kind === 'image' || message.kind === 'video' ? 330 : 300,
     position: 'relative',
   };
@@ -772,9 +774,35 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           onTouchEnd={handleTouchEnd}
         >
           {/* Tail */}
-          {hasTail && (isOutgoing ? <TailOut /> : <TailIn />)}
+          {hasTail && !isSticker && (isOutgoing ? <TailOut /> : <TailIn />)}
 
           {deleteMenuButton}
+
+          {/* ── Sticker ── */}
+          {message.kind === 'sticker' && (
+            <div style={{ margin: 3 }}>
+              {message.attachment?.dataUrl ? (
+                <button
+                  onClick={() => setLightbox({ type: 'image', src: message.attachment!.dataUrl! })}
+                  className="block cursor-pointer focus:outline-none"
+                >
+                  <img
+                    src={message.attachment.dataUrl}
+                    alt={message.attachment.fileName}
+                    className="object-contain"
+                    style={{ width: 128, height: 128, display: 'block' }}
+                  />
+                </button>
+              ) : (
+                <div
+                  className="flex items-center justify-center"
+                  style={{ width: 128, height: 128, background: '#f0f2f5', borderRadius: 8 }}
+                >
+                  <ImageOff className="w-8 h-8" strokeWidth={1.5} style={{ color: '#8696a0' }} />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Image ── */}
           {message.kind === 'image' && (

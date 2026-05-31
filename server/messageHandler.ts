@@ -760,6 +760,7 @@ function getInboundBase64Raw(msg: any): string | undefined {
     message?.audioMessage?.base64,
     message?.documentMessage?.base64,
     message?.videoMessage?.base64,
+    message?.stickerMessage?.base64,
   );
 }
 
@@ -772,6 +773,7 @@ function getInboundMediaUrlRaw(msg: any): string | undefined {
     message?.audioMessage?.mediaUrl,
     message?.documentMessage?.mediaUrl,
     message?.videoMessage?.mediaUrl,
+    message?.stickerMessage?.mediaUrl,
   );
 }
 
@@ -2092,12 +2094,26 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
         : undefined,
       dataUrl: await extractAttachmentDataUrl(msg, mime, fileName, resolvedEmpresaId),
     };
+  } else if (msg.message?.stickerMessage) {
+    const mime = msg.message.stickerMessage.mimetype || 'image/webp';
+    attachment = {
+      type: 'sticker',
+      mimeType: mime,
+      fileName: 'figurinha.webp',
+      sizeBytes: msg.message.stickerMessage.fileLength
+        ? Number(msg.message.stickerMessage.fileLength)
+        : undefined,
+      dataUrl: await extractAttachmentDataUrl(msg, mime, 'figurinha.webp', resolvedEmpresaId),
+    };
   }
 
+  // Figurinhas não carregam legenda no WhatsApp — não propagamos o placeholder
+  // "[Figurinha recebida]" como texto do balão (ele viraria caption visível).
+  const captionText = attachment?.type === 'sticker' ? '' : (incomingText || '');
   const preview =
-    attachment ? buildAttachmentPreview(attachment, incomingText || '') : incomingText;
+    attachment ? buildAttachmentPreview(attachment, captionText) : incomingText;
   const storedContent = serializeStructuredMessage({
-    text: incomingText || '',
+    text: captionText,
     attachment,
   });
 

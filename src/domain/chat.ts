@@ -93,6 +93,10 @@ export function buildAttachmentPreview(
     return trimmed ? `[Imagem] ${trimmed}` : '[Imagem]';
   }
 
+  if (attachment.type === 'sticker') {
+    return '[Figurinha]';
+  }
+
   if (attachment.type === 'audio') {
     return '[Áudio]';
   }

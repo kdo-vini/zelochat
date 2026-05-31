@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-05-31',
+    category: 'minor',
+    title: 'Figurinhas aparecem na conversa',
+    description: 'Quando o cliente manda uma figurinha, agora ela aparece na conversa como imagem, em vez de mostrar só o aviso "Figurinha recebida".',
+  },
+  {
     date: '2026-05-28',
     category: 'big',
     title: 'Alertas no celular mesmo com o ZeloChat fechado',
