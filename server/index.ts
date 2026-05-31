@@ -23,6 +23,7 @@ import { setBoundEmpresaId, getServiceSupabase, requireActiveZelochatSubscriptio
 import { ensureAiSettingsHydrated, isAiGloballyEnabledNow } from './configStore.js';
 import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
+import { startAccountDeletionSweepLoop } from './accountDeletionSweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
@@ -430,6 +431,11 @@ httpServer.listen(PORT, () => {
   // then every 24h. Deletes rows where expires_at < NOW() - 7 days. Non-critical:
   // errors are swallowed and never crash the process.
   startPendingOrderSweeper();
+
+  // Self-service account deletion — purges accounts whose 14-day grace period
+  // elapsed (delete_account RPC + Whatsmiau + storage). Runs 3 min after startup,
+  // then hourly. Idempotent.
+  startAccountDeletionSweepLoop();
 
   // Onboarding follow-up — Day 3, 7, 14, 21, 28 nutrition + conversion sequence
   // (Day 0 fires synchronously via /api/onboarding/welcome). Idempotent: re-run

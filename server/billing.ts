@@ -47,6 +47,29 @@ function stripeObjectId(value: string | { id?: string } | null | undefined): str
 }
 
 /**
+ * Sets cancel_at_period_end on the user's Stripe subscription. Used by the account
+ * deletion grace period: true when scheduling deletion (reversible), false when the
+ * user reactivates. No-op for Pix-only customers / missing subscriptions.
+ */
+export async function setStripeCancelAtPeriodEnd(userId: string, cancel: boolean): Promise<void> {
+  const { data } = await getServiceSupabase()
+    .from('subscriptions')
+    .select('provider_subscription_id, payment_provider, status')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const sub = data as { provider_subscription_id?: string; payment_provider?: string; status?: string } | null;
+  if (!sub?.provider_subscription_id || sub.payment_provider !== 'stripe' || sub.status === 'canceled') return;
+  try {
+    await getStripe().subscriptions.update(sub.provider_subscription_id, { cancel_at_period_end: cancel });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (!/resource_missing|not.?found|no such/i.test(msg)) throw err;
+  }
+}
+
+/**
  * Cancels the user's active Stripe subscription immediately. Used by account
  * deletion — billing must stop when the account is destroyed. Best-effort:
  * swallows "already gone" Stripe errors. No-op when there is no Stripe

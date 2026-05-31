@@ -40,6 +40,8 @@ export interface EmpresaPerfil {
   notify_customer_preparing: boolean;
   notify_customer_ready: boolean;
   notify_customer_out_for_delivery: boolean;
+  /** Self-service deletion grace period — set when deletion is scheduled (ISO), null otherwise. */
+  deletion_scheduled_at: string | null;
 }
 
 interface UseEmpresaPerfilResult {
@@ -90,6 +92,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       'notify_customer_preparing',
       'notify_customer_ready',
       'notify_customer_out_for_delivery',
+      'deletion_scheduled_at',
     ].join(', ');
 
     const { data, error: dbError } = await supabase
@@ -157,6 +160,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       notify_customer_preparing: row.notify_customer_preparing ?? true,
       notify_customer_ready: row.notify_customer_ready ?? true,
       notify_customer_out_for_delivery: row.notify_customer_out_for_delivery ?? true,
+      deletion_scheduled_at: row.deletion_scheduled_at ?? null,
     });
     setLoading(false);
   }, [session?.user?.id]);

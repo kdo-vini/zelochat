@@ -238,6 +238,7 @@ export default function AppShell() {
   const { session, token, loading: authLoading } = useSupabaseSession();
   const { isActive: subscriptionActive, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
   const { empresa, save: saveEmpresa, refresh: refreshEmpresa } = useEmpresaPerfil(session);
+  const [reactivatingAccount, setReactivatingAccount] = useState(false);
   const zelochatMode = normalizeZeloChatMode(empresa?.zelochat_mode);
   const isGeneralMode = zelochatMode === 'general';
   const shouldLoadCatalog = !!session && !isGeneralMode && (
@@ -979,11 +980,48 @@ export default function AppShell() {
     ],
   );
 
+  // Self-service account deletion grace period — banner to reactivate.
+  const deletionScheduledAt = empresa?.deletion_scheduled_at ?? null;
+  const deletionDaysLeft = deletionScheduledAt
+    ? Math.max(0, Math.ceil((new Date(deletionScheduledAt).getTime() - Date.now()) / 86400000))
+    : 0;
+  const handleReactivateAccount = async () => {
+    if (!token) return;
+    setReactivatingAccount(true);
+    try {
+      await fetch(apiUrl('/api/account/reactivate'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await refreshEmpresa?.();
+    } catch {
+      /* ignore — banner stays, user can retry */
+    } finally {
+      setReactivatingAccount(false);
+    }
+  };
+
   return (
     <div
       className="flex flex-col overflow-hidden bg-[var(--color-canvas)]"
       style={{ height: 'var(--vvh, 100vh)' }}
     >
+      {/* ── Account deletion scheduled banner ──────────────────────── */}
+      {deletionScheduledAt && (
+        <div className="flex items-center justify-between gap-3 bg-amber-500 text-white px-4 py-2.5 text-[13px] font-medium flex-shrink-0 z-50">
+          <span>
+            🗑️ Sua conta será apagada em {deletionDaysLeft} {deletionDaysLeft === 1 ? 'dia' : 'dias'}. Nada foi apagado ainda.
+          </span>
+          <button
+            onClick={handleReactivateAccount}
+            disabled={reactivatingAccount}
+            className="underline underline-offset-2 hover:no-underline whitespace-nowrap flex-shrink-0 disabled:opacity-60"
+          >
+            {reactivatingAccount ? 'Reativando…' : 'Reativar conta →'}
+          </button>
+        </div>
+      )}
+
       {/* ── Subscription / WhatsApp banner ─────────────────────────── */}
       {token && !subscriptionLoading && !subscriptionActive ? (
         <div className="flex items-center justify-between gap-3 bg-[var(--color-brand-deep)] text-white px-4 py-2.5 text-[13px] font-medium flex-shrink-0 z-50">

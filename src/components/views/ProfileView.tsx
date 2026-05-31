@@ -85,9 +85,39 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [reactivating, setReactivating] = useState(false);
+  const [deletionScheduledAt, setDeletionScheduledAt] = useState<string | null>(empresa?.deletion_scheduled_at ?? null);
+
+  const SUPPORT_WHATSAPP_URL =
+    'https://wa.me/5514991537503?text=' +
+    encodeURIComponent('Olá! Preciso de ajuda com a minha conta no ZeloChat antes de decidir apagá-la.');
+
   const companyName = (empresa?.nome_exibicao ?? '').trim();
   const nameMatches = companyName.length > 0 && typedName.trim().toLowerCase() === companyName.toLowerCase();
   const canConfirmDelete = deleteStep === 2 && nameMatches && deleteCooldown <= 0 && !deleting;
+  const deletionDaysLeft = deletionScheduledAt
+    ? Math.max(0, Math.ceil((new Date(deletionScheduledAt).getTime() - Date.now()) / 86400000))
+    : 0;
+
+  const handleReactivate = async () => {
+    setReactivating(true);
+    try {
+      if (!token) throw new Error('Sessão expirada.');
+      const res = await apiFetch(apiUrl('/api/account/reactivate'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || 'Falha ao reativar.');
+      }
+      setDeletionScheduledAt(null);
+    } catch {
+      // best-effort; surface nothing intrusive
+    } finally {
+      setReactivating(false);
+    }
+  };
 
   const openDeleteModal = () => {
     setDeleteOpen(true);
@@ -133,6 +163,7 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
 
   useEffect(() => {
     if (!empresa) return;
+    setDeletionScheduledAt(empresa.deletion_scheduled_at ?? null);
     setDraftName(empresa.nome_exibicao ?? '');
     setDraftContato(empresa.contato ?? '');
     setDraftEndereco(empresa.endereco ?? '');
@@ -586,9 +617,24 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
               </button>
             </div>
 
-            {/* Zona de perigo — recolhida por padrão */}
+            {/* Zona de perigo / exclusão agendada */}
             <div className="pt-2 border-t border-[var(--color-line)]">
-              {!dangerOpen ? (
+              {deletionScheduledAt ? (
+                <div className="rounded-xl border border-[var(--color-warn,#b45309)]/30 bg-[var(--color-warn-soft,#fef3c7)] p-4 space-y-2">
+                  <p className="text-[13.5px] font-semibold text-[var(--color-ink)]">Exclusão agendada</p>
+                  <p className="text-[12.5px] text-[var(--color-ink-soft)]">
+                    Sua conta será apagada definitivamente em <strong>{deletionDaysLeft} {deletionDaysLeft === 1 ? 'dia' : 'dias'}</strong>.
+                    Até lá nada foi apagado — você pode voltar atrás.
+                  </p>
+                  <button
+                    onClick={handleReactivate}
+                    disabled={reactivating}
+                    className="w-full bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors disabled:opacity-50"
+                  >
+                    {reactivating ? 'Reativando…' : 'Reativar minha conta'}
+                  </button>
+                </div>
+              ) : !dangerOpen ? (
                 <button
                   onClick={() => setDangerOpen(true)}
                   className="text-[12px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] transition-colors"
@@ -596,23 +642,37 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
                   Opções avançadas da conta
                 </button>
               ) : (
-                <div className="rounded-xl border border-[var(--color-alert)]/25 bg-[var(--color-alert-soft)] p-4 space-y-2">
+                <div className="rounded-xl border border-[var(--color-alert)]/25 bg-[var(--color-alert-soft)] p-4 space-y-3">
                   <div className="flex items-start gap-3">
                     <Trash2 className="w-5 h-5 text-[var(--color-alert)] flex-shrink-0 mt-0.5" strokeWidth={1.8} />
                     <div className="flex-1">
                       <p className="text-[13.5px] font-semibold text-[var(--color-alert)]">Apagar conta e todos os dados</p>
                       <p className="text-[12px] text-[var(--color-alert)]/70 mt-0.5">
-                        Remove permanentemente sua conta, conversas, pedidos e dados do Zelo PDV,
-                        e cancela sua assinatura. Esta ação é irreversível.
+                        Remove permanentemente seus dados do ZeloChat (conversas, pedidos, clientes)
+                        e também os dados do Zelo PDV da mesma conta, e cancela sua assinatura.
+                      </p>
+                      <p className="text-[12px] text-[var(--color-ink-muted)] mt-1.5">
+                        Com dúvidas ou travado em algo? Fale com a nossa equipe antes — a gente
+                        resolve com você, sem precisar apagar nada.
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={openDeleteModal}
-                    className="w-full bg-[var(--color-alert)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
-                  >
-                    Apagar minha conta…
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <a
+                      href={SUPPORT_WHATSAPP_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 text-center bg-[#25D366] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+                    >
+                      Falar com a equipe
+                    </a>
+                    <button
+                      onClick={openDeleteModal}
+                      className="flex-1 bg-[var(--color-alert)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+                    >
+                      Apagar minha conta…
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -635,12 +695,14 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
               {deleteStep === 1 ? (
                 <>
                   <p className="text-[13.5px] leading-relaxed text-[var(--color-ink)]">
-                    Você vai apagar <strong>todos os dados</strong>
-                    {companyName ? <> de <strong>{companyName}</strong></> : null}: conversas,
-                    pedidos, clientes e os dados do Zelo PDV. Sua assinatura será cancelada.
+                    Você vai agendar a exclusão da conta
+                    {companyName ? <> <strong>{companyName}</strong></> : null}. Sua assinatura é
+                    cancelada e, após <strong>14 dias</strong>, todos os dados do ZeloChat (conversas,
+                    pedidos, clientes) e do Zelo PDV da mesma conta são apagados de forma definitiva.
                   </p>
-                  <p className="text-[13.5px] font-semibold text-[var(--color-alert)]">
-                    Isto é irreversível — não há como recuperar depois.
+                  <p className="text-[13.5px] leading-relaxed text-[var(--color-ink-soft)]">
+                    Durante esses 14 dias nada é apagado — é só entrar de novo e clicar em
+                    <strong> Reativar</strong>. Depois do prazo, <strong>não há como recuperar</strong>.
                   </p>
                   <label className="flex items-start gap-2 text-[13px] cursor-pointer text-[var(--color-ink)]">
                     <input
@@ -649,7 +711,7 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
                       onChange={(e) => setAckIrreversible(e.target.checked)}
                       className="mt-0.5"
                     />
-                    <span>Entendo que esta ação é permanente e apagará todos os meus dados.</span>
+                    <span>Entendo que após 14 dias a exclusão é permanente e apaga todos os meus dados.</span>
                   </label>
                 </>
               ) : (
@@ -695,10 +757,10 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
                 >
                   {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
                   {deleting
-                    ? 'Apagando…'
+                    ? 'Agendando…'
                     : deleteCooldown > 0
                       ? `Aguarde ${deleteCooldown}s…`
-                      : 'Apagar definitivamente'}
+                      : 'Agendar exclusão (14 dias)'}
                 </button>
               )}
             </div>
