@@ -58,7 +58,10 @@ export async function getClientResponse(
   history: ChatMessage[],
   userInput: string
 ) {
-  const availableProducts = state.products.filter(p => p.available).map(p => `${p.name} (R$ ${p.price.toFixed(2)})`).join(", ");
+  const availableProducts = state.products
+    .filter(p => p.available && (!p.stockControlled || Number(p.stockQuantity ?? 0) > 0))
+    .map(p => `${p.name} (R$ ${p.price.toFixed(2)}${p.stockControlled ? `; estoque atual: ${Math.max(0, Math.floor(Number(p.stockQuantity ?? 0)))}` : ''})`)
+    .join(", ");
   const blockedDatesStr = state.blockedDates.length > 0
     ? state.blockedDates.map(bd => `${bd.date} (Motivo: ${bd.reason})`).join(", ")
     : "Nenhuma data bloqueada no momento.";

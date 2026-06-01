@@ -4,6 +4,8 @@ export interface Product {
   price: number;
   available: boolean;
   unitBased?: boolean;
+  stockControlled?: boolean;
+  stockQuantity?: number;
   category: 'salgado' | 'doce' | 'bebida';
 }
 

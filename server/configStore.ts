@@ -34,7 +34,14 @@ import {
   type ZeloChatMode,
 } from '../src/domain/zelochatMode.js';
 
-export type CatalogProduct = { name: string; price: number; available: boolean; unitBased?: boolean };
+export type CatalogProduct = {
+  name: string;
+  price: number;
+  available: boolean;
+  unitBased?: boolean;
+  stockControlled?: boolean;
+  stockQuantity?: number;
+};
 
 export interface BusinessConfig {
   name: string;
@@ -208,16 +215,22 @@ function normalizeProductRow(row: unknown): (CatalogProduct & {
     id_subcategoria?: unknown;
     eh_item_por_unidade?: unknown;
     ocultar_no_pdv?: unknown;
+    controlar_estoque?: unknown;
+    estoque_atual?: unknown;
   };
   const name = normalizeText(product.nome);
   if (!name) return null;
   const idCategoria = product.id_categoria == null ? null : normalizeNumber(product.id_categoria);
   const idSubcategoria = product.id_subcategoria == null ? null : normalizeNumber(product.id_subcategoria);
+  const stockControlled = product.controlar_estoque === true;
+  const stockQuantity = normalizeNumber(product.estoque_atual);
   return {
     name,
     price: normalizeNumber(product.preco),
-    available: product.ocultar_no_pdv !== true,
+    available: product.ocultar_no_pdv !== true && (!stockControlled || stockQuantity > 0),
     unitBased: product.eh_item_por_unidade === true,
+    stockControlled,
+    stockQuantity,
     idCategoria,
     idSubcategoria,
   };
@@ -257,14 +270,28 @@ function buildCatalogHierarchy(
           nome: sub.nome,
           produtos: productsInCategory
             .filter((p) => p.idSubcategoria === sub.id)
-            .map(({ name, price, available, unitBased }) => ({ name, price, available, unitBased })),
+            .map(({ name, price, available, unitBased, stockControlled, stockQuantity }) => ({
+              name,
+              price,
+              available,
+              unitBased,
+              stockControlled,
+              stockQuantity,
+            })),
         }));
       return {
         nome,
         subcategorias: subs,
         produtosDireto: productsInCategory
           .filter((p) => p.idSubcategoria == null)
-          .map(({ name, price, available, unitBased }) => ({ name, price, available, unitBased })),
+          .map(({ name, price, available, unitBased, stockControlled, stockQuantity }) => ({
+            name,
+            price,
+            available,
+            unitBased,
+            stockControlled,
+            stockQuantity,
+          })),
       };
     })
     .filter((item): item is CatalogCategoriaGroup => item !== null);
@@ -428,7 +455,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
       .order('nome'),
     supabase
       .from('produtos')
-      .select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv')
+      .select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual')
       .eq('id_usuario', userId)
       .order('nome'),
   ]);
@@ -439,7 +466,14 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   const productsWithPlacement = (produtosRes.data ?? []).map(normalizeProductRow);
   const products = productsWithPlacement
     .filter((item): item is NonNullable<typeof item> => item !== null)
-    .map(({ name, price, available, unitBased }) => ({ name, price, available, unitBased }));
+    .map(({ name, price, available, unitBased, stockControlled, stockQuantity }) => ({
+      name,
+      price,
+      available,
+      unitBased,
+      stockControlled,
+      stockQuantity,
+    }));
 
   const patch: Partial<BusinessConfig> = {};
   patch.name = normalizeText(row.nome_exibicao);

@@ -27,7 +27,6 @@ Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA n�
 | P2.25 — foto de perfil expira sem refresh                | Atualiza naturalmente no próximo `CONTACTS_UPSERT`; impacto visual baixo                                                    | Reclamação de cliente ou infra de cache disponível          |
 | ~~P1.13 — Whatsmiau continua cobrado após cancelamento~~ | **RESOLVIDO** — `subscriptionSweeper.ts` deleta instância após 7 dias de grace (provider-agnostic: Stripe + AbacatePay/Pix) | —                                                           |
 | P1.4 — instance names aparecem em logs                   | Auth boundary é o sufixo de 64 bits, não o nome; logs são internos                                                          | Logs ficarem públicos ou acessíveis externamente            |
-| Stock availability não enforced na IA                    | IA pode sugerir produto sem estoque; dono corrige manualmente; fix requer coordenação com ZeloPDV (schema deles)            | Reclamação frequente de pedido de produto esgotado          |
 | `dailyContext` sem `safeForPrompt`                       | Operador controla o próprio `dailyContext`; risco de prompt injection é auto-infligido                                      | Multitenancy expandir ou campo virar editável por terceiros |
 
 ## Próximas fatias recomendadas
@@ -39,6 +38,7 @@ Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Fatias sugeridas:
 
 ## Decisões recentes
 
+- Estoque agora é regra operacional da IA: produto com `controlar_estoque=true` e `estoque_atual<=0` sai do cardápio da IA; pedido acima do estoque é bloqueado antes de abrir pendência (2026-06-01)
 - P1.13 fechado: grace period 7 dias para instâncias Whatsmiau após cancelamento de assinatura; provider-agnostic (Stripe + AbacatePay/Pix); auto-criação de instância ao renovar já funciona via `/api/qr` (2026-05-31)
 - Convenção de documentação AI-first adicionada ao CLAUDE.md (2026-05-31)
 - AbacatePay Pix adicionado ao lado do Stripe (2026-05-21)

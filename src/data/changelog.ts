@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-06-01',
+    category: 'medium',
+    title: 'IA respeita o estoque do cardápio',
+    description: 'Produtos sem estoque deixam de ser oferecidos pela IA, e pedidos acima da quantidade disponível são enviados para atendimento humano antes de finalizar.',
+  },
+  {
     date: '2026-05-31',
     category: 'minor',
     title: 'Aviso quando tem versão nova',

@@ -308,7 +308,17 @@ Quando o dono arrasta um card no Kanban, o cliente **já recebe WhatsApp automá
 
 ## Estoque no cardápio
 
-Produtos com `controlar_estoque = true` exibem badge de estoque colorido na `CatalogView`: verde (>5), âmbar (1–5), vermelho (0 = "Sem estoque"). Produtos sem controle de estoque não mostram nada. O campo `estoque_atual` já é lido pelo `useCatalog.ts`. A baixa de estoque quando um pedido do ZeloChat é confirmado **ainda não está implementada** — deve ser feita via RPC do ZeloPDV (coordenar com o repo do ZeloPDV antes de implementar, pois o schema de `produtos` é deles).
+Produtos com `controlar_estoque = true` exibem badge de estoque colorido na `CatalogView`: verde (>5), âmbar (1–5), vermelho (0 = "Sem estoque"). Produtos sem controle de estoque não mostram nada.
+
+A IA trata estoque como regra operacional:
+- `server/configStore.ts` lê `controlar_estoque` e `estoque_atual` das tabelas compartilhadas do ZeloPDV.
+- Produto com `controlar_estoque=true` e `estoque_atual<=0` não entra em `getAvailableProducts()` nem no prompt do cardápio.
+- Produto com estoque positivo entra no prompt com `estoque atual: N`.
+- Antes de abrir `zelochat_pending_orders`, `server/ai.ts` bloqueia qualquer `criar_pedido` com quantidade acima de `estoque_atual` e escala para humano.
+- Ao confirmar uma pendência, `confirmPendingOrder()` consulta o estoque atual no banco novamente antes de criar `zelochat_orders`, porque o estoque pode ter mudado entre o resumo da IA e o clique do cliente.
+- `/api/sync-config` não aceita catálogo do navegador como fonte de verdade para disponibilidade; o backend recarrega o catálogo direto do banco após o sync para evitar snapshot stale sem estoque.
+
+A baixa de estoque ao confirmar pedido é feita best-effort via RPC `zelochat_decrement_stock`. Se esse RPC falhar, o pedido continua confirmado e o log `[stock] decrement failed` precisa ser investigado com o ZeloPDV.
 
 ## Histórico do cliente (abordagem planejada, não implementada)
 

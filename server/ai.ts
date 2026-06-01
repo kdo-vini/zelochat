@@ -580,6 +580,24 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     return;
   }
 
+  const currentStockIssue = await findCurrentStockIssueForItems(pending.empresaId, pending.items);
+  if (currentStockIssue) {
+    console.warn(`[AI] confirmPendingOrder blocked by current stock: ${currentStockIssue}`);
+    await escalateSession(pending.empresaId, jid, {
+      triggerId: null,
+      triggerKind: 'escalate_human',
+      triggerName: 'Estoque insuficiente na confirmação',
+      reasonCategory: 'custom',
+      reasonText:
+        `O cliente confirmou um pedido, mas o estoque atual não cobre a quantidade: ${safeForPrompt(currentStockIssue, 240)}.\n` +
+        `Ajuste a quantidade, ofereça troca ou confirme reposição antes de finalizar.`,
+      customerMessageExcerpt: null,
+    });
+    const msg = `Antes de confirmar, vi que não temos essa quantidade em estoque agora (${currentStockIssue}). Vou chamar um atendente pra ajustar com você.`;
+    await sendAndPersistText(jid, msg, pending.empresaId);
+    return;
+  }
+
   // FIX H1: insert FIRST, delete only on success. If the insert fails the pending row
   // stays in place and the customer can click Confirmar again without re-entering data.
   let orderId: string;
@@ -1372,10 +1390,92 @@ async function sendBusinessHoursReply(
 
 export const getAI = getOpenAIClient;
 
-export type AvailableProduct = { name: string; price: number; available: boolean; unitBased?: boolean };
+export type AvailableProduct = {
+  name: string;
+  price: number;
+  available: boolean;
+  unitBased?: boolean;
+  stockControlled?: boolean;
+  stockQuantity?: number;
+};
 
 export function getAvailableProducts(empresaId: string): AvailableProduct[] {
-  return getConfig(empresaId).products.filter((p) => p.available);
+  return getConfig(empresaId).products.filter((p) => p.available && (!p.stockControlled || Number(p.stockQuantity ?? 0) > 0));
+}
+
+function formatProductForPrompt(product: AvailableProduct): string {
+  const stock = product.stockControlled
+    ? `; estoque atual: ${Math.max(0, Math.floor(Number(product.stockQuantity ?? 0)))}`
+    : '';
+  return `${product.name} (R$ ${product.price.toFixed(2)}${product.unitBased ? ' por unidade' : ''}${stock})`;
+}
+
+export function findStockIssue(
+  resolvedItems: Array<{ item: { product: string; quantity: number }; product: AvailableProduct | null }>,
+): string | null {
+  const totalsByProduct = new Map<string, { product: AvailableProduct; requested: number }>();
+  for (const resolved of resolvedItems) {
+    if (!resolved.product?.stockControlled) continue;
+    const requested = Number(resolved.item.quantity);
+    if (!Number.isFinite(requested) || requested <= 0) continue;
+    const existing = totalsByProduct.get(resolved.product.name);
+    totalsByProduct.set(resolved.product.name, {
+      product: resolved.product,
+      requested: (existing?.requested ?? 0) + requested,
+    });
+  }
+
+  for (const { product, requested } of totalsByProduct.values()) {
+    const available = Math.max(0, Math.floor(Number(product.stockQuantity ?? 0)));
+    if (requested > available) {
+      return `${product.name}: solicitado ${requested}, estoque atual ${available}`;
+    }
+  }
+  return null;
+}
+
+async function findCurrentStockIssueForItems(
+  empresaId: string,
+  items: Array<{ product: string; quantity: number }>,
+): Promise<string | null> {
+  const userId = await getEmpresaUserId(empresaId);
+  if (!userId) return null;
+
+  const totals = new Map<string, { displayName: string; quantity: number }>();
+  for (const item of items) {
+    const key = normalizeCatalogName(item.product);
+    if (!key) continue;
+    const quantity = Number(item.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) continue;
+    const existing = totals.get(key);
+    totals.set(key, {
+      displayName: existing?.displayName ?? item.product,
+      quantity: (existing?.quantity ?? 0) + quantity,
+    });
+  }
+  if (totals.size === 0) return null;
+
+  const { data, error } = await getServiceSupabase()
+    .from('produtos')
+    .select('nome, controlar_estoque, estoque_atual')
+    .eq('id_usuario', userId)
+    .in('nome', [...totals.values()].map((item) => item.displayName));
+  if (error) {
+    console.error('[AI] current stock check failed:', error);
+    return null;
+  }
+
+  for (const row of (data ?? []) as Array<{ nome?: string | null; controlar_estoque?: boolean | null; estoque_atual?: number | null }>) {
+    if (row.controlar_estoque !== true) continue;
+    const total = totals.get(normalizeCatalogName(row.nome ?? ''));
+    if (!total) continue;
+    const available = Math.max(0, Math.floor(Number(row.estoque_atual ?? 0)));
+    if (total.quantity > available) {
+      return `${row.nome ?? total.displayName}: solicitado ${total.quantity}, estoque atual ${available}`;
+    }
+  }
+
+  return null;
 }
 
 function normalizeCatalogName(value: string): string {
@@ -1970,12 +2070,12 @@ function buildCatalogHierarchyBlock(hierarchy: CatalogCategoriaGroup[] | undefin
     if (subs.length === 0 && direto.length === 0) continue;
     lines.push(`  • ${cat.nome}`);
     for (const prod of direto) {
-      lines.push(`    - ${prod.name} (R$ ${prod.price.toFixed(2)}${prod.unitBased ? ' por unidade' : ''})`);
+      lines.push(`    - ${formatProductForPrompt(prod)}`);
     }
     for (const sub of subs) {
       lines.push(`    ◦ ${sub.nome}`);
       for (const prod of sub.produtos.filter((p) => p.available)) {
-        lines.push(`      - ${prod.name} (R$ ${prod.price.toFixed(2)}${prod.unitBased ? ' por unidade' : ''})`);
+        lines.push(`      - ${formatProductForPrompt(prod)}`);
       }
     }
   }
@@ -2043,7 +2143,7 @@ export function buildSystemInstruction(
   const cfg = getConfig(empresaId);
 
   const availableProducts = getAvailableProducts(empresaId)
-    .map((p) => `${p.name} (R$ ${p.price.toFixed(2)}${p.unitBased ? ' por unidade' : ''})`).join(', ') || 'Cardápio não configurado';
+    .map(formatProductForPrompt).join(', ') || 'Cardápio não configurado';
 
   const catalogHierarchyStr = buildCatalogHierarchyBlock(cfg.catalogHierarchy);
   const ownerStylePreferences = buildOwnerStylePreferences(cfg.aiInstructions);
@@ -2278,6 +2378,11 @@ OBJETIVOS:
 5. ASSIM QUE tiver TODOS os dados COLETADOS e a observação confirmada, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO. NÃO repita o resumo do pedido nem faça a mesma pergunta de observação duas vezes seguidas.
 6. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
 ${pixReceiptObjective}
+
+REGRA OBRIGATÓRIA DE ESTOQUE:
+- Só ofereça e só coloque em pedido produtos listados no Cardápio disponível.
+- Produtos sem estoque ou ocultos não aparecem no Cardápio disponível: trate como indisponíveis, não sugira, não substitua por conta própria e ofereça chamar um atendente ou escolher outro item.
+- Quando um produto tiver "estoque atual: N", N é o limite máximo do pedido. Se o cliente pedir mais que N, informe que só temos N unidades e pergunte se ele quer ajustar a quantidade ou falar com um atendente. NUNCA chame criar_pedido acima do estoque atual.
 
 REGRAS DE ESTADO E SEGURANÇA (CRÍTICAS — não ignorar):
 - Se o cliente está perguntando sobre, comentando ou enviando comprovante de um pedido que já está em "PEDIDOS ATIVOS DESTE CLIENTE", NÃO recomece o fluxo desse pedido. Não pergunte produto, horário ou pagamento de novo daquele pedido. Você AINDA PODE atender se ele pedir um pedido NOVO/ADICIONAL claramente diferente — nesse caso siga o fluxo normal pra esse pedido novo.
@@ -3678,6 +3783,26 @@ export async function generateAndSendReply(
               triggerName: 'Quantidade ambígua no pedido',
               reasonCategory: 'custom',
               reasonText: `A IA não conseguiu confirmar com segurança a unidade/quantidade do pedido: ${safeForPrompt(reason, 300)}.`,
+              customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
+            });
+            resetAiFailureCounter(resolvedEmpresaId, jid);
+            return handoffMessageFor('custom');
+          }
+
+          const stockIssue = findStockIssue(resolvedItems);
+          if (stockIssue) {
+            console.log(`[AI] Stock availability blocked order; empresa=${resolvedEmpresaId} jid=${jid} reason=${stockIssue}`);
+            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+            await addToolMessage(jid, `Estoque insuficiente: ${stockIssue}`, toolCall.id, resolvedEmpresaId);
+            const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+            await escalateSession(resolvedEmpresaId, jid, {
+              triggerId: null,
+              triggerKind: 'escalate_human',
+              triggerName: 'Estoque insuficiente no pedido',
+              reasonCategory: 'custom',
+              reasonText:
+                `A IA bloqueou o pedido porque a quantidade excede o estoque atual: ${safeForPrompt(stockIssue, 240)}.\n` +
+                `Confirme com o cliente se deseja reduzir a quantidade, trocar o item ou aguardar reposição.`,
               customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
             });
             resetAiFailureCounter(resolvedEmpresaId, jid);

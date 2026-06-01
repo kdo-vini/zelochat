@@ -547,8 +547,10 @@ export default function AppShell() {
       id: String(p.id),
       name: p.nome,
       price: p.preco,
-      available: !p.ocultar_no_pdv,
+      available: !p.ocultar_no_pdv && (!p.controlar_estoque || p.estoque_atual > 0),
       unitBased: p.eh_item_por_unidade,
+      stockControlled: p.controlar_estoque,
+      stockQuantity: p.estoque_atual,
       category: inferCategoria(p.nome),
     }));
     setState((prev) => {
@@ -556,7 +558,7 @@ export default function AppShell() {
         prev.products.length === mapped.length &&
         prev.products.every((p, i) => {
           const n = mapped[i];
-          return n && p.id === n.id && p.name === n.name && p.price === n.price && p.available === n.available && p.unitBased === n.unitBased && p.category === n.category;
+          return n && p.id === n.id && p.name === n.name && p.price === n.price && p.available === n.available && p.unitBased === n.unitBased && p.stockControlled === n.stockControlled && p.stockQuantity === n.stockQuantity && p.category === n.category;
         });
       return same ? prev : { ...prev, products: mapped };
     });
@@ -648,11 +650,23 @@ export default function AppShell() {
             nome: sub.nome,
             produtos: prodsInCat
               .filter((p) => p.id_subcategoria === sub.id)
-              .map((p) => ({ name: p.nome, price: p.preco, available: !p.ocultar_no_pdv })),
+              .map((p) => ({
+                name: p.nome,
+                price: p.preco,
+                available: !p.ocultar_no_pdv && (!p.controlar_estoque || p.estoque_atual > 0),
+                stockControlled: p.controlar_estoque,
+                stockQuantity: p.estoque_atual,
+              })),
           })),
           produtosDireto: prodsInCat
             .filter((p) => p.id_subcategoria == null)
-            .map((p) => ({ name: p.nome, price: p.preco, available: !p.ocultar_no_pdv })),
+            .map((p) => ({
+              name: p.nome,
+              price: p.preco,
+              available: !p.ocultar_no_pdv && (!p.controlar_estoque || p.estoque_atual > 0),
+              stockControlled: p.controlar_estoque,
+              stockQuantity: p.estoque_atual,
+            })),
         };
       });
       const res = await fetch(apiUrl('/api/sync-config'), {

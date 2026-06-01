@@ -2558,10 +2558,10 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
-            products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
+            blockedDates, dailyContext, aiInstructions, managerPhone,
             aiEnabled, aiCanReengagePending, deliveryConfig, pixReceiptConfig } = req.body;
     setConfig(empresaId, { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
-                           products, catalogHierarchy, blockedDates, dailyContext, aiInstructions, managerPhone,
+                           blockedDates, dailyContext, aiInstructions, managerPhone,
                            ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}),
                            ...(typeof aiCanReengagePending === 'boolean' ? { aiCanReengagePending } : {}),
                            ...(deliveryConfig !== undefined ? { deliveryConfig } : {}),
@@ -2576,6 +2576,10 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
         console.warn('[Router] ai_can_reengage_pending persist failed (column missing?):', err);
       }
     }
+    // FIX 2026-06-01: browser snapshots do not own stock truth → reload the
+    // shared ZeloPDV catalog from DB so estoque_atual/controlar_estoque cannot
+    // be bypassed by a stale /api/sync-config payload.
+    await loadAiSettingsFromDb(empresaId);
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);

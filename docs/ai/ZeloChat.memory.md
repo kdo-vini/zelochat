@@ -284,7 +284,7 @@
 - Known prompt/business-rule risks confirmed by current audit:
   - `out_for_delivery` orders are omitted from active-order context.
   - customer history and active orders use small enterprise-wide slices before phone filtering.
-  - stock-controlled availability is not enforced in the AI runtime.
+  - stock-controlled availability is enforced in the AI runtime as of Sprint 62.
   - `dailyContext` is inserted into the system prompt without sanitization/cap in the current code path.
   - catalog prompt currently duplicates flat and hierarchical catalog text.
 
@@ -299,7 +299,7 @@
 | AI reply generation | `server/ai.ts`, `server/configStore.ts` | Hydrates runtime config, builds large prompt, calls OpenAI with tools | No | Partial | Catalog can dominate prompt size in larger tenants |
 | Tag filtering/search | `src/hooks/useTags.ts`, `src/components/views/ChatView.tsx`, `server/tags.ts` | Loads all tags and full session->tags map, filters client-side | No | No | Not suitable for very large inboxes |
 | Unread counts / last message preview | `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts` | Counts persist on sessions; last visible preview is rebuilt from message batches on refresh | No | N/A | Current preview computation adds extra queries |
-| Zelo PDV product/profile loading | `src/hooks/useCatalog.ts`, `src/hooks/useEmpresaPerfil.ts`, `server/configStore.ts` | Frontend loads entire shared catalog with caps; backend loads full shared catalog without limit | No | No | Current runtime can be overwritten by browser snapshot |
+| Zelo PDV product/profile loading | `src/hooks/useCatalog.ts`, `src/hooks/useEmpresaPerfil.ts`, `server/configStore.ts` | Frontend loads entire shared catalog with caps; backend loads full shared catalog without limit | No | No | `/api/sync-config` now reloads catalog from DB so browser snapshots do not override stock truth |
 
 ## Existing Risks / Known Pitfalls
 - Fixed in Sprint 58: cross-tenant tag attachment is blocked in service code and migration `033` enforces session/tag tenant consistency.
@@ -309,7 +309,7 @@
 - Fixed in Sprint 58: audio transcription completion re-arms the debounced AI reply when the audio remains the latest unanswered customer turn.
 - Fixed in Sprint 58: manual outbound sends persist `sending`/`sent`/`failed` lifecycle state and fromMe echo repair no longer skips missing DB rows.
 - Fixed in Sprint 59: outbound Whatsmiau send payloads use phone digits instead of full JIDs, and text/media/audio helpers require a returned provider message ID before the manual-send lifecycle can mark a message `sent`.
-- Confirmed: AI runtime ignores stock-controlled availability (`controlar_estoque`/`estoque_atual` not read in `configStore.ts`) and can be overwritten by stale browser snapshots through `/api/sync-config`.
+- Fixed in Sprint 62: AI runtime reads `controlar_estoque`/`estoque_atual`, removes zero-stock products from the prompt, exposes positive stock limits, blocks `criar_pedido` above stock, rechecks current stock before confirming a pending order, and reloads catalog from DB after `/api/sync-config`.
 - Confirmed: `out_for_delivery` orders are missing from AI active-order context. Root cause: `server/ai.ts:1778` queries `.in('status', ['pending','preparing','ready','dispatched'])` — `'dispatched'` is a non-existent status value (DB CHECK constraint uses `'out_for_delivery'`), making that filter term a dead no-op AND omitting the real status name. Two bugs in one line.
 - Confirmed: no persisted prompt/context snapshot exists for supportability; only aggregated AI usage is stored.
 - Confirmed: `dailyContext` entries are injected into the system prompt without `safeForPrompt()` sanitization or length cap (`server/ai.ts:2062-2064`). All other user-controlled fields use `safeForPrompt(value, maxLen)`. Accepted risk: operator controls their own `dailyContext`.
