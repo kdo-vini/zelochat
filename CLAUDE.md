@@ -287,6 +287,21 @@ Source: `server/billing.ts`. Front: `SubscriptionPaywall` + `BillingManagementCa
 
 `requireActiveZelochatSubscription()` em `server/supabase.ts` rejeita `'trialing'` propositalmente — política produto é "sem teste grátis".
 
+## Ciclo de vida de instâncias Whatsmiau (JÁ IMPLEMENTADO)
+
+Dois sweepers rodam em background e limpam instâncias órfãs automaticamente:
+
+**`server/subscriptionSweeper.ts`** — assinatura cancelada/expirada:
+- Roda 5min após startup + a cada 6h
+- Grace period: **7 dias** após expiração. Passado esse prazo, chama `deleteInstance()`.
+- Provider-agnostic: tanto Stripe quanto AbacatePay/Pix escrevem na mesma tabela `subscriptions`. O check é `status='active' AND current_period_end > now` — uma assinatura Pix expirada (status='active' mas period_end no passado) é capturada corretamente.
+- Dados do cliente (mensagens, sessões, pedidos) são preservados. Só a instância Whatsmiau some.
+- Se o cliente renovar depois do grace, `/api/qr` cria a instância nova automaticamente.
+
+**`server/accountDeletionSweeper.ts`** — deleção de conta:
+- Roda 3min após startup + a cada hora
+- Após 14 dias de grace (`DELETE /api/account` stampa `deletion_scheduled_at`): cancela Stripe (no-op para clientes Pix — cobrança única, sem recorrência), deleta instância Whatsmiau, limpa storage, executa RPC `delete_account` (purga tudo).
+
 ## Notificações de status de pedido (JÁ IMPLEMENTADO)
 
 Quando o dono arrasta um card no Kanban, o cliente **já recebe WhatsApp automático** — NÃO é um gap. As flags `notify_customer_preparing`, `notify_customer_ready` e `notify_customer_out_for_delivery` ficam em `empresa_perfil`. A lógica de envio está em `server/router.ts` na rota `PATCH /api/orders/:id/status` (~linha 1484). O texto enviado por status está hard-coded no mesmo bloco. As flags são configuráveis pelo Gerente IA via `SET_CUSTOMER_NOTIFICATION` em `server/managerAssistant.ts`.

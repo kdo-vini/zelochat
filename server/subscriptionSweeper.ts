@@ -5,16 +5,23 @@ import { redactInstance } from './redact.js';
 /**
  * Subscription sweeper — closes P1.13.
  *
- * When a customer churns (Stripe webhook in ZeloPDV repo flips status off
- * 'active' OR period_end elapses without renewal), the customer's Whatsmiau
- * instance keeps running on our bill until manually reaped. This sweeper
- * finds those orphans and calls `deleteInstance()` (which also clears
- * `empresa_perfil.whatsmiau_instance`).
+ * When a customer churns — Stripe webhook (in ZeloPDV repo) flips status off
+ * 'active', OR an AbacatePay/Pix charge's current_period_end elapses without
+ * a new payment — the customer's Whatsmiau instance keeps running on our bill
+ * until reaped. This sweeper finds those orphans and calls `deleteInstance()`
+ * (which also clears `empresa_perfil.whatsmiau_instance`).
  *
- * Conservative grace period (default 30 days) gives customers time to fix
- * billing issues. Customer data (messages, sessions, orders) is NOT touched —
- * only the Whatsmiau instance is reaped. If they renew within or after grace,
- * they re-scan QR to provision a new instance.
+ * Provider note: both Stripe and AbacatePay write to the same `subscriptions`
+ * table. Stripe sets status='canceled'/'inactive' explicitly; AbacatePay
+ * subscriptions expire naturally (status stays 'active' but current_period_end
+ * passes). The `isActive` check below handles both: it requires status='active'
+ * AND expiry > now, so an expired Pix subscription is caught correctly.
+ *
+ * Grace period (default 7 days) gives customers a window to fix billing issues
+ * or pay a new Pix before the instance is reaped. Customer data (messages,
+ * sessions, orders) is NOT touched — only the Whatsmiau instance is deleted.
+ * If they renew after grace, they re-scan QR and /api/qr auto-provisions a
+ * new instance.
  *
  * Schedule: kicked off from server/index.ts on startup (after 5min) + every 6h.
  * Idempotent: re-running after a successful sweep is a no-op.
@@ -22,7 +29,7 @@ import { redactInstance } from './redact.js';
  * Manual run / dry-run: `npx tsx scripts/sweep-canceled-subscriptions.ts [--dry-run]`
  */
 
-const DEFAULT_GRACE_DAYS = 30;
+const DEFAULT_GRACE_DAYS = 7;
 
 export interface SweepCandidate {
   empresaId: string;

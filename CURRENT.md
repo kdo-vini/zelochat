@@ -22,13 +22,13 @@
 
 Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA não deve re-investigar nem criar urgência em torno deles sem nova evidência.
 
-| Item | Por que aceito | Revisar quando |
-|---|---|---|
-| P2.25 — foto de perfil expira sem refresh | Atualiza naturalmente no próximo `CONTACTS_UPSERT`; impacto visual baixo | Reclamação de cliente ou infra de cache disponível |
-| P1.13 — Whatsmiau continua cobrado após cancelamento | Requer `deleteInstance` no webhook de cancelamento do Stripe; baixo volume atual | Churn aumentar ou custo Whatsmiau virar linha relevante |
-| P1.4 — instance names aparecem em logs | Auth boundary é o sufixo de 64 bits, não o nome; logs são internos | Logs ficarem públicos ou acessíveis externamente |
-| Stock availability não enforced na IA | IA pode sugerir produto sem estoque; dono corrige manualmente; fix requer coordenação com ZeloPDV (schema deles) | Reclamação frequente de pedido de produto esgotado |
-| `dailyContext` sem `safeForPrompt` | Operador controla o próprio `dailyContext`; risco de prompt injection é auto-infligido | Multitenancy expandir ou campo virar editável por terceiros |
+| Item                                                     | Por que aceito                                                                                                              | Revisar quando                                              |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| P2.25 — foto de perfil expira sem refresh                | Atualiza naturalmente no próximo `CONTACTS_UPSERT`; impacto visual baixo                                                    | Reclamação de cliente ou infra de cache disponível          |
+| ~~P1.13 — Whatsmiau continua cobrado após cancelamento~~ | **RESOLVIDO** — `subscriptionSweeper.ts` deleta instância após 7 dias de grace (provider-agnostic: Stripe + AbacatePay/Pix) | —                                                           |
+| P1.4 — instance names aparecem em logs                   | Auth boundary é o sufixo de 64 bits, não o nome; logs são internos                                                          | Logs ficarem públicos ou acessíveis externamente            |
+| Stock availability não enforced na IA                    | IA pode sugerir produto sem estoque; dono corrige manualmente; fix requer coordenação com ZeloPDV (schema deles)            | Reclamação frequente de pedido de produto esgotado          |
+| `dailyContext` sem `safeForPrompt`                       | Operador controla o próprio `dailyContext`; risco de prompt injection é auto-infligido                                      | Multitenancy expandir ou campo virar editável por terceiros |
 
 ## Próximas fatias recomendadas
 
@@ -39,6 +39,7 @@ Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Fatias sugeridas:
 
 ## Decisões recentes
 
+- P1.13 fechado: grace period 7 dias para instâncias Whatsmiau após cancelamento de assinatura; provider-agnostic (Stripe + AbacatePay/Pix); auto-criação de instância ao renovar já funciona via `/api/qr` (2026-05-31)
 - Convenção de documentação AI-first adicionada ao CLAUDE.md (2026-05-31)
 - AbacatePay Pix adicionado ao lado do Stripe (2026-05-21)
 - Grace period de 14 dias para deleção de conta (LGPD)

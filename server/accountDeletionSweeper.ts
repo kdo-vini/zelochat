@@ -10,7 +10,8 @@ import { cancelStripeSubscriptionForUser } from './billing.js';
  * does NOT purge immediately — it stamps `empresa_perfil.deletion_scheduled_at =
  * now() + 14d` and cancels billing at period end. The user can reactivate any time
  * before then. This sweeper finds rows whose schedule is due and, for each:
- *   1. cancels the Stripe subscription immediately
+ *   1. cancels the Stripe subscription immediately (no-op for Pix/AbacatePay
+ *      customers — those are one-time charges with no recurrence to cancel)
  *   2. deletes the Whatsmiau WhatsApp instance
  *   3. removes the account's storage objects (all buckets)
  *   4. calls the service_role `delete_account` RPC (purges PDV + ZeloChat data and
@@ -51,7 +52,7 @@ async function removePrefix(bucket: string, prefix: string): Promise<void> {
 }
 
 async function purgeAccount(acc: DueAccount): Promise<void> {
-  // 1) Stop billing.
+  // 1) Stop billing. No-op for Pix/AbacatePay users (one-time charges, nothing to cancel).
   await cancelStripeSubscriptionForUser(acc.userId);
   // 2) Revoke WhatsApp (no-op if no instance).
   try {

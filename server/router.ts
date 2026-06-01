@@ -2198,16 +2198,19 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
 /**
  * DELETE /api/account — Self-service account deletion (LGPD Art. 18, III).
  * SCHEDULES deletion with a 14-day grace period instead of purging immediately:
- * cancels the Stripe sub at period end (reversible) and stamps
- * empresa_perfil.deletion_scheduled_at. The deletion sweeper runs the irreversible
- * purge (delete_account RPC + Whatsmiau + storage) after the grace elapses.
+ * cancels the Stripe sub at period end if applicable (no-op for Pix/AbacatePay
+ * customers — their subscriptions are one-time charges with no recurrence) and
+ * stamps empresa_perfil.deletion_scheduled_at. The deletion sweeper runs the
+ * irreversible purge (delete_account RPC + Whatsmiau + storage) after grace.
  * The user can reactivate via POST /api/account/reactivate before then.
  */
 router.delete('/api/account', async (req: Request, res: Response) => {
   try {
     const { empresaId, userId } = await requireEmpresaAndUserId(req);
 
-    // Cancel Stripe at period end (reversible on reactivation).
+    // Cancel Stripe at period end (reversible on reactivation). No-op for
+    // Pix/AbacatePay customers — setStripeCancelAtPeriodEnd returns early when
+    // payment_provider !== 'stripe', so the 502 below never fires for them.
     try {
       await setStripeCancelAtPeriodEnd(userId, true);
     } catch (err) {
