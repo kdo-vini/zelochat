@@ -885,7 +885,9 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                   <FileAudio className="h-4 w-4 flex-shrink-0" strokeWidth={1.8} />
                   <span>Áudio indisponível</span>
                   <span style={{ fontSize: 10.5, color: '#a0aab2' }}>
-                    {estimateAudioDuration(message.attachment?.sizeBytes)}
+                    {message.attachment?.durationSeconds != null
+                      ? `${Math.floor(message.attachment.durationSeconds / 60)}:${String(message.attachment.durationSeconds % 60).padStart(2, '0')}`
+                      : estimateAudioDuration(message.attachment?.sizeBytes)}
                   </span>
                 </div>
               )}

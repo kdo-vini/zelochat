@@ -2,14 +2,16 @@
 
 WhatsApp-native customer service platform for Brazilian lanchonetes. All user-facing text, prompts, and seed data are in **Brazilian Portuguese**.
 
+> **Sprint atual / foco do momento:** ver [[CURRENT]] antes de qualquer tarefa.
+
 ## 📖 Required reading before any non-trivial change
 
 This repo has FOUR companion docs at the project root that capture context not visible from the code alone. **Read them before touching anything customer-facing or anything tagged "CRITICAL":**
 
-1. **[CODE_REVIEW.md](./CODE_REVIEW.md)** — Senior-tier audit of the codebase (24 P0 / 47 P1 / 38 P2 / 24 P3). Each finding has file:line, repro steps, customer impact, and proposed fix. This is the source-of-truth catalog of known issues.
-2. **[FIXES_PROGRESS.md](./FIXES_PROGRESS.md)** — Live tracker of which audit findings are SHIPPED, DRAFTED, BLOCKED, or PENDING. Every fix entry links to the files that changed. Update this whenever you ship a fix or draft a migration.
-3. **[BILLING.md](./BILLING.md)** — Stripe/Asaas runbook. Subscription state, plan tiers, the cross-product (ZeloPDV) shared `subscriptions` table.
-4. **[INCIDENTS.md](./INCIDENTS.md)** — Outage runbook. Symptoms → known root causes → recovery steps for every production incident we've already fixed. **First stop when something looks broken in prod.** Update after every new outage so the next person doesn't re-debug it.
+1. **[[CODE_REVIEW]]** — Senior-tier audit of the codebase (24 P0 / 47 P1 / 38 P2 / 24 P3). Each finding has file:line, repro steps, customer impact, and proposed fix. This is the source-of-truth catalog of known issues.
+2. **[[FIXES_PROGRESS]]** — Live tracker of which audit findings are SHIPPED, DRAFTED, BLOCKED, or PENDING. Every fix entry links to the files that changed. Update this whenever you ship a fix or draft a migration.
+3. **[[BILLING]]** — Stripe/Asaas runbook. Subscription state, plan tiers, the cross-product (ZeloPDV) shared `subscriptions` table.
+4. **[[INCIDENTS]]** — Outage runbook. Symptoms → known root causes → recovery steps for every production incident we've already fixed. **First stop when something looks broken in prod.** Update after every new outage so the next person doesn't re-debug it.
 
 Plus the two §sections in this file ("Shared database with ZeloPDV" and "Critical functions — touch with extreme care") — those are non-obvious tribal knowledge that breaking will cost real customer money.
 
@@ -321,3 +323,27 @@ Sem essas envs, `/api/push/vapid-public-key` retorna `{enabled:false}` e o banne
 - Never import Baileys/server code from the frontend — use REST API or WebSocket
 - All chat state mutations go through `useWhatsAppSessions` hook — never mutate `sessions` directly in `App.tsx`
 - Delete operations must hit the backend first (or optimistic update + rollback on error)
+
+## Documentação — convenção AI-first
+
+Toda IA que trabalhar neste repo **deve manter a documentação automaticamente**. Não é opcional — é o que permite que a próxima IA (ou dev) entre sem perguntar nada.
+
+### Após qualquer fix ou feature
+- **[[FIXES_PROGRESS]]**: adicionar entrada na sprint do dia. Formato: `- ✅ <ID> — <o que era> → <o que foi feito> — \`arquivo:linha\``
+- **[[CURRENT]]**: atualizar "Em aberto" se o fix fecha algo listado lá
+
+### Após fix crítico em prod (P0/P1 ou que causou outage visível)
+- **[[INCIDENTS]]**: nova entrada com: Sintoma (1 linha), Causa-raiz (1 frase), Fix (1 frase + arquivo:linha)
+- Comentário inline na função crítica: `// FIX YYYY-MM-DD: <causa em 1 frase> → <fix em 1 frase>`
+
+### Feature entregue
+- Deletar o arquivo de spec da feature (specs são temporários, o código é a verdade)
+- Se o comportamento for não-óbvio, documentar em CLAUDE.md ou no arquivo relevante
+
+### Início de qualquer sessão de trabalho
+1. Ler **[[CURRENT]]** — entender o foco atual
+2. Se o foco mudou, atualizar **[[CURRENT]]** antes de começar
+3. Para mudanças em funções listadas em "Critical functions", ler o inline docstring completo antes de tocar
+
+### Regra de ouro
+> Documentação que não existe não será lembrada. Se você fez algo não-óbvio, documenta agora — não depois.

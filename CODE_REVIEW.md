@@ -2,7 +2,9 @@
 
 **Date:** 2026-04-29
 **Scope:** entire repo at `zelochat/` — 6 parallel specialist passes (auth/multi-tenancy, WhatsApp + messaging, AI + order pipeline, Stripe billing, frontend/UX, DB/schema/RLS).
-**Total findings:** 24 P0, 47 P1, 38 P2, 24 P3.
+**Total findings:** 24 P0, 47 P1, 38 P2, 24 P3. Status de cada fix: [[FIXES_PROGRESS]].
+
+**Relatórios detalhados:** [[ZeloChat.audit-report]] · [[ZeloChat.audit-security]] · [[ZeloChat.audit-ai-engine]] · [[ZeloChat.audit-ux]] · [[ZeloChat.audit-reliability]] · [[ZeloChat.audit-performance]] · [[ZeloChat.audit-indexes]]
 
 ---
 

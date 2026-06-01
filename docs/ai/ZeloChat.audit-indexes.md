@@ -1,5 +1,7 @@
 # ZeloChat Index Audit
 
+> Ver também: [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]] · [[ZeloChat.audit-performance]]
+
 ## Current Confirmed Indexes In Repo
 - `supabase/migrations/000_zelochat_schema.sql`
   - `zelochat_sessions_empresa_remote_unique`

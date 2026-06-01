@@ -1,5 +1,7 @@
 # ZeloChat Security Audit
 
+> Ver também: [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]] · [[INCIDENTS]]
+
 ## Executive Summary
 - Tenant resolution and most explicit `empresa_id` filters are materially better than older docs suggested.
 - The current head still has one confirmed cross-tenant leak path and one partially unauthenticated webhook boundary.

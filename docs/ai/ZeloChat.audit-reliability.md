@@ -1,5 +1,7 @@
 # ZeloChat Reliability Audit
 
+> Ver também: [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]] · [[ZeloChat.audit-ai-engine]]
+
 ## Executive Summary
 - Reliability is stronger than the stale docs implied in three areas:
   - inbound dedupe by `wa_message_id`

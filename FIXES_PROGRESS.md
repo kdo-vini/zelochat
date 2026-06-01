@@ -1,6 +1,6 @@
 # ZeloChat — Fixes Progress Tracker
 
-**Source review:** [CODE_REVIEW.md](CODE_REVIEW.md) — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
+**Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
 **Latest execution note (2026-05-26 Sprint 60):** Feature de encaminhamento por IA: gatilhos personalizados agora aceitam `redirect_contact`, com telefone dedicado e mensagem opcional; quando acionado, a IA envia um link `wa.me` para outro número e encerra o turno sem escalar, sem criar evento de escalação e sem desligar o autoatendimento.
@@ -18,7 +18,7 @@
 
 **P2/P3 status:** a maioria dos P2 críticos de UX, segurança, áudio, billing e performance já foi fechada nas Sprints 21-27 e 39-43. Os P3 ainda são polimento/backlog leve.
 
-**Próximo trabalho recomendado:** seguir o backlog ativo do `AI_BACKEND_ROADMAP.md`, com a proxima fatia sugerida em audio, estados vazios e polimentos P2/P3.
+**Próximo trabalho recomendado:** seguir o backlog ativo do [[AI_BACKEND_ROADMAP]], com a proxima fatia sugerida em audio, estados vazios e polimentos P2/P3.
 
 Use this doc to know **at a glance** what's safe in production right now and what's still on fire. Each fix has a `Status`, the `Files touched`, and the `Risk` it eliminates. Fixes that need a prod migration are marked `BLOCKED — needs operator approval` until the user signs off on applying.
 
@@ -118,6 +118,15 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 61 (2026-05-31) — Docs AI-first + fixes P2 + Tags QA close
+
+- ✅ Tags feature — QA completo: lint OK, badges sidebar (`ChatView.tsx:1915`), cascade delete (migrations 031/032), AI injection por tag (`ai.ts` `buildTagsBlock()`). Arquivo de spec deletado.
+- ✅ P2.1 — `alert()` nativo trocado por toast em `ProfileView.tsx:191`
+- ✅ Áudio — `durationSeconds` capturado de `audioMessage.seconds` no webhook; fallback usa valor real quando disponível
+- ✅ Docs — Convenção AI-first adicionada ao CLAUDE.md; `docs/ai/` audit files adicionados ao vault Obsidian; HOME.md expandido com seção de auditorias detalhadas
+- ✅ P2.20 confirmed closed — `replyDebouncer.ts` staged 10s (verificado por subagent)
+- ✅ P2.18 confirmed closed — auto-escalate após 3 falhas Whisper (verificado por subagent)
 
 ### Sprint 60 (2026-05-26) - Encaminhar cliente para outra linha
 

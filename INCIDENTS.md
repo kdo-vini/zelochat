@@ -4,6 +4,8 @@ Knowledge base de causas-raiz já vistas em produção. Use como **primeira para
 quando algo quebra antes de abrir um ticket pro Whatsmiau, antes de subir um fix,
 antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
+> Ver também: [[BILLING]] · [[CODE_REVIEW]] · [[FIXES_PROGRESS]]
+
 > Triagem rápida em 5 segundos: olhe o "Sintoma" de cada bloco, encontre o mais
 > próximo do que você está vendo, leia a "Diagnose" e siga a "Recovery".
 

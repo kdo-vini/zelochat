@@ -1,5 +1,7 @@
 # ZeloChat Performance Audit
 
+> Ver também: [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]] · [[ZeloChat.audit-indexes]]
+
 ## Scope
 - Current HEAD only.
 - Focus: heavy users, session/contact loading, message pagination, unbounded queries, dashboard load, tags/search/filter behavior, catalog loading, indexes.

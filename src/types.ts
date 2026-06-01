@@ -270,6 +270,7 @@ export interface ChatAttachment {
   fileName: string;
   dataUrl?: string;
   sizeBytes?: number;
+  durationSeconds?: number;
 }
 
 export type AudioTranscriptStatus = 'pending' | 'done' | 'failed';

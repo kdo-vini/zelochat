@@ -20,3 +20,9 @@ playwright-report/
 
 .env*.local
 *.local.md
+
+# Obsidian — open the repo (or the memory dir) as a vault to browse the
+# markdown docs + [[wikilinks]] as a graph. The vault config is per-machine
+# app state, not source of truth, so it must NOT be tracked. The docs
+# themselves stay tracked above.
+.obsidian/

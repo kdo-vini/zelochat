@@ -1,7 +1,7 @@
 # Roadmap Interno - IA, Backend e Proximos Passos
 
 Data: 2026-05-04
-Origem: limpeza pos-Sprint 45. Este arquivo e o norte vivo de IA/backend; `FIXES_PROGRESS.md` continua sendo o tracker historico de auditoria e sprints.
+Origem: limpeza pos-Sprint 45. Este arquivo e o norte vivo de IA/backend; [[FIXES_PROGRESS]] continua sendo o tracker historico de auditoria e sprints.
 
 ## Status atual
 
@@ -111,7 +111,7 @@ Toda resposta relacionada a pedido deve passar por validacao antes de ir ao What
 
 ## Relacao com outros documentos
 
-- `CODE_REVIEW.md`: auditoria tecnica original, preservada como fonte historica.
-- `FIXES_PROGRESS.md`: tracker de sprints, status e verificacoes.
-- `BILLING.md`: runbook de cobranca e assinaturas.
-- `CLAUDE.md` / `AGENTS.md`: contexto critico do projeto, limites com ZeloPDV e funcoes sensiveis.
+- [[CODE_REVIEW]]: auditoria tecnica original, preservada como fonte historica.
+- [[FIXES_PROGRESS]]: tracker de sprints, status e verificacoes.
+- [[BILLING]]: runbook de cobranca e assinaturas.
+- [[CLAUDE]] / [[AGENTS]]: contexto critico do projeto, limites com ZeloPDV e funcoes sensiveis.

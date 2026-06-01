@@ -1,5 +1,7 @@
 # ZeloChat AI Engine Audit
 
+> Ver também: [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]] · [[ZeloChat.audit-reliability]]
+
 ## Executive Summary
 - The current AI engine has meaningful guardrails: pending-order confirmation logic, global AI kill-switch, escalation flow, audio transcription pipeline, business-hours blocking, and Pix receipt validation.
 - The main remaining risks are context correctness and operational fallback:

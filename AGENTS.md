@@ -6,14 +6,14 @@ WhatsApp-native customer service platform for Brazilian lanchonetes. All user-fa
 
 Three companion docs at the project root capture context not visible from the code alone. **Read them before touching anything customer-facing or anything tagged "CRITICAL":**
 
-1. **[CODE_REVIEW.md](./CODE_REVIEW.md)** — Senior-tier audit (24 P0 / 47 P1 / 38 P2 / 24 P3). Every finding has file:line, repro, customer impact, fix.
-2. **[FIXES_PROGRESS.md](./FIXES_PROGRESS.md)** — Live tracker: shipped vs drafted vs blocked. Update when shipping a fix.
-3. **[BILLING.md](./BILLING.md)** — Stripe/Asaas runbook + cross-product subscription details.
-4. **[CLAUDE.md](./CLAUDE.md)** — Project context. Has two non-negotiable sections: "Shared database with ZeloPDV" (what we MUSTN'T touch) and "Critical functions — touch with extreme care" (functions whose breakage cascades to customer money loss).
+1. **[[CODE_REVIEW]]** — Senior-tier audit (24 P0 / 47 P1 / 38 P2 / 24 P3). Every finding has file:line, repro, customer impact, fix.
+2. **[[FIXES_PROGRESS]]** — Live tracker: shipped vs drafted vs blocked. Update when shipping a fix.
+3. **[[BILLING]]** — Stripe/Asaas runbook + cross-product subscription details.
+4. **[[CLAUDE]]** — Project context. Has two non-negotiable sections: "Shared database with ZeloPDV" (what we MUSTN'T touch) and "Critical functions — touch with extreme care" (functions whose breakage cascades to customer money loss).
 
 ## Codex memory
 
-Before any deep ZeloChat task, read [docs/ai/ZeloChat.memory.md](./docs/ai/ZeloChat.memory.md) first. Keep findings evidence-based and update that memory when the repo's confirmed architecture or risks materially change.
+Before any deep ZeloChat task, read [[ZeloChat.memory]] first. Keep findings evidence-based and update that memory when the repo's confirmed architecture or risks materially change.
 
 Inline `🚨 CRITICAL` JSDoc-style blocks in the source code mark functions whose breakage has caused — or could cause — a customer-visible outage. Search for that emoji to find them.
 

@@ -1,5 +1,7 @@
 # ZeloChat UX Audit
 
+> Ver também: [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]] · [[ZeloChat.audit-performance]]
+
 ## Executive Summary
 - The chat UI already has meaningful quality work:
   - virtualized session list after 80 rows

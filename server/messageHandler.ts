@@ -2065,6 +2065,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       sizeBytes: msg.message.audioMessage.fileLength
         ? Number(msg.message.audioMessage.fileLength)
         : undefined,
+      durationSeconds: msg.message?.audioMessage?.seconds ?? undefined,
       dataUrl: await extractAttachmentDataUrl(msg, mime, 'audio-whatsapp.ogg', resolvedEmpresaId),
     };
   } else if (msg.message?.documentMessage) {
@@ -2315,6 +2316,7 @@ export async function handleOutboundMessage(data: any, empresaId: string): Promi
       mimeType: mime,
       fileName: 'audio-whatsapp.ogg',
       sizeBytes: data.message.audioMessage.fileLength ? Number(data.message.audioMessage.fileLength) : undefined,
+      durationSeconds: data.message?.audioMessage?.seconds ?? undefined,
       dataUrl: await extractAttachmentDataUrl(data, mime, 'audio-whatsapp.ogg', empresaId),
     };
   } else if (data.message?.documentMessage) {

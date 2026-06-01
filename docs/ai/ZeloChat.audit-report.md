@@ -1,5 +1,7 @@
 # ZeloChat Full Production Audit
 
+> Ver também: [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-security]] · [[ZeloChat.audit-ai-engine]] · [[ZeloChat.audit-ux]] · [[ZeloChat.audit-reliability]] · [[ZeloChat.audit-performance]] · [[ZeloChat.audit-indexes]]
+
 ## Executive Summary
 - Is ZeloChat ready for heavy users?
   - No. The inbox, dashboard, and message-history flows still rely on capped whole-tenant loads and incomplete pagination wiring.

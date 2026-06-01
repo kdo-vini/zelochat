@@ -12,6 +12,7 @@ import { SectionCard } from '../shared/SectionCard';
 import { apiUrl, apiFetch } from '../../config';
 import { BillingManagementCard } from '../billing/BillingCards';
 import { PlanChangeModal } from './PlanChangeModal';
+import { useToast } from '../../contexts/ToastContext';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -38,6 +39,7 @@ interface ProfileViewProps {
 
 export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: ProfileViewProps) => {
   const navigate = useNavigate();
+  const toast = useToast();
   const { session } = useSupabaseSession();
   const signedInEmail = session?.user?.email ?? null;
 
@@ -188,7 +190,7 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
     if (!file) return;
     if (!file.type.startsWith('image/')) return;
     if (file.size > 1.5 * 1024 * 1024) {
-      alert('Imagem muito grande. Use PNG ou JPG de até 1,5 MB.');
+      toast.error('Imagem muito grande. Use PNG ou JPG de até 1,5 MB.');
       return;
     }
     if (pendingLogoUrl) URL.revokeObjectURL(pendingLogoUrl);

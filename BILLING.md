@@ -2,6 +2,8 @@
 
 **Status:** prod-ready, sem operação manual no fluxo normal. Setup é uma vez.
 
+> Ver também: [[CLAUDE]] · [[FIXES_PROGRESS]] · [[INCIDENTS]]
+
 ## Arquitetura
 
 ```

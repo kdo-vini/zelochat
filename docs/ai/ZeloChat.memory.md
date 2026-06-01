@@ -1,5 +1,7 @@
 # ZeloChat Memory
 
+> Ver também: [[CLAUDE]] · [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]]
+
 ## Purpose
 - ZeloChat is a WhatsApp-native customer service platform for Brazilian small businesses, especially food businesses and lanchonetes.
 - It supports AI and manual attendance, sessions/conversations, contacts, messages, escalation, tags, quick responses, order support, and shared company/profile/product context.
