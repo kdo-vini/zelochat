@@ -95,6 +95,16 @@
   - `supabase/migrations/034_zelochat_outbound_message_lifecycle.sql`
   - `supabase/migrations/035_zelochat_sessions_pagination_indexes.sql`
   - `supabase/migrations/038_zelochat_trigger_redirect_contact.sql`
+- AI reply scheduling / debounce:
+  - `server/replyDebouncer.ts` — staged 3-phase debounce (read 3s → typing 3s → reply 4s); configurable via `AI_DEBOUNCE_*` env vars; `AI_DEBOUNCE_DISABLED=1` reverts to 1500ms legacy
+- Manager AI assistant:
+  - `server/managerAssistant.ts` — operator-facing AI chat for configuration changes (history capped at 100 persisted, 40 sent to model)
+- Web Push / PWA notifications:
+  - `server/push.ts` — sends push notifications to subscribed browsers after new inbound message; requires VAPID env vars
+- Pending order expiry sweep:
+  - `server/pendingOrderSweeper.ts` — deletes `zelochat_pending_orders` with `expires_at < NOW() - 7 days`; runs 2min after boot + every 24h
+- Payments (Pix via AbacatePay):
+  - `server/abacatepay.ts` — Pix payment integration alongside Stripe (added 2026-05-21)
 - Logs / observability:
   - `server/observability.ts`
   - `server/webhookLog.ts`
@@ -203,7 +213,7 @@
   - `redirect_contact` uses `redirect_phone` and optional `redirect_message` to send a wa.me handoff link while keeping the session in AI mode for future messages.
 - `zelochat_session_tags`
   - Junction between sessions and tags.
-  - Confirmed risk: current schema does not enforce tenant consistency between `empresa_id`, `session_id`, and `tag_id`.
+  - Tenant consistency enforced at DB level via migration `033_zelochat_session_tags_tenant_enforcement.sql` (Sprint 58).
 - `zelochat_escalation_events`
   - Escalation audit/event log.
 - `zelochat_response_events`
@@ -236,7 +246,7 @@
   - `000_zelochat_schema.sql` contains the current baseline snapshot.
   - `014_zelochat_rls_hardening.sql` contains additional hardening but is still marked draft/not applied in repo comments.
 - Known risky areas:
-  - `zelochat_session_tags` has service-layer ownership validation plus migration `033_zelochat_session_tags_tenant_enforcement.sql` for DB-level tenant consistency.
+  - `zelochat_session_tags` cross-tenant risk was fixed in Sprint 58: migration `033_zelochat_session_tags_tenant_enforcement.sql` enforces DB-level tenant consistency.
   - `/webhook/:instance` fails closed on missing token by default. `setWebhookForInstance()` registers tokenized webhook URLs because Whatsmiau custom headers have historically been unreliable. `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT=1` is the temporary emergency bypass.
   - Service-role usage is still common on backend hot paths, so explicit tenant filters remain critical.
 
@@ -299,9 +309,10 @@
 - Fixed in Sprint 58: audio transcription completion re-arms the debounced AI reply when the audio remains the latest unanswered customer turn.
 - Fixed in Sprint 58: manual outbound sends persist `sending`/`sent`/`failed` lifecycle state and fromMe echo repair no longer skips missing DB rows.
 - Fixed in Sprint 59: outbound Whatsmiau send payloads use phone digits instead of full JIDs, and text/media/audio helpers require a returned provider message ID before the manual-send lifecycle can mark a message `sent`.
-- Confirmed: AI runtime ignores stock-controlled availability and can be overwritten by stale browser snapshots through `/api/sync-config`.
-- Confirmed: `out_for_delivery` orders are missing from AI active-order context.
+- Confirmed: AI runtime ignores stock-controlled availability (`controlar_estoque`/`estoque_atual` not read in `configStore.ts`) and can be overwritten by stale browser snapshots through `/api/sync-config`.
+- Confirmed: `out_for_delivery` orders are missing from AI active-order context. Root cause: `server/ai.ts:1778` queries `.in('status', ['pending','preparing','ready','dispatched'])` — `'dispatched'` is a non-existent status value (DB CHECK constraint uses `'out_for_delivery'`), making that filter term a dead no-op AND omitting the real status name. Two bugs in one line.
 - Confirmed: no persisted prompt/context snapshot exists for supportability; only aggregated AI usage is stored.
+- Confirmed: `dailyContext` entries are injected into the system prompt without `safeForPrompt()` sanitization or length cap (`server/ai.ts:2062-2064`). All other user-controlled fields use `safeForPrompt(value, maxLen)`. Accepted risk: operator controls their own `dailyContext`.
 
 ## Historical Drift Notes
 - Current supported webhook route is `POST /webhook/:instance`; legacy `POST /webhook` now returns `410`.
@@ -321,11 +332,9 @@
 - Lint/typecheck: `npm run lint`
 - Server typecheck: `npx tsc --noEmit -p server/tsconfig.json`
 - Tests:
-  - `package.json` does not define a `test` script.
-  - Playwright specs exist under `tests/*.spec.ts`.
-  - Additional TypeScript test files exist under `tests/*.test.ts`.
+  - `package.json` defines: `npm test` → `npm run test:unit` → `tsx tests/run-unit-tests.ts`; also `npm run test:e2e` (Playwright) and `npm run test:e2e:ui`.
+  - Playwright specs: `tests/*.spec.ts`. Unit tests: `tests/*.test.ts`.
   - Sprint 58 guardrails: `npx tsx tests/audioTranscriptionRearm.test.ts` and `npx tsx tests/auditFixGuardrails.test.ts`
-  - Exact canonical test command is Unknown / not confirmed yet.
 - Database/migration commands: Unknown / not confirmed yet from this repo alone. Supabase migrations are stored under `supabase/migrations/`.
 
 ## Rules for Future Codex Sessions

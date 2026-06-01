@@ -15,8 +15,20 @@
 ## Em aberto
 
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
-- P2.1 — `alert()` nativo trocado por toast em `ProfileView.tsx:191` ✅
-- Áudio — captura de `durationSeconds` do webhook implementada ✅
+- `ai.ts:1778` — bug latente: query usa status `'dispatched'` (inexistente no DB) em vez de `'out_for_delivery'` → pedidos em entrega nunca aparecem no contexto da IA
+- `supabase/migrations/014_zelochat_rls_hardening.sql` — ainda marcado `DRAFT`, não aplicado em prod
+
+## Dívida técnica aceita (conhecido, não prioritário)
+
+Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA não deve re-investigar nem criar urgência em torno deles sem nova evidência.
+
+| Item | Por que aceito | Revisar quando |
+|---|---|---|
+| P2.25 — foto de perfil expira sem refresh | Atualiza naturalmente no próximo `CONTACTS_UPSERT`; impacto visual baixo | Reclamação de cliente ou infra de cache disponível |
+| P1.13 — Whatsmiau continua cobrado após cancelamento | Requer `deleteInstance` no webhook de cancelamento do Stripe; baixo volume atual | Churn aumentar ou custo Whatsmiau virar linha relevante |
+| P1.4 — instance names aparecem em logs | Auth boundary é o sufixo de 64 bits, não o nome; logs são internos | Logs ficarem públicos ou acessíveis externamente |
+| Stock availability não enforced na IA | IA pode sugerir produto sem estoque; dono corrige manualmente; fix requer coordenação com ZeloPDV (schema deles) | Reclamação frequente de pedido de produto esgotado |
+| `dailyContext` sem `safeForPrompt` | Operador controla o próprio `dailyContext`; risco de prompt injection é auto-infligido | Multitenancy expandir ou campo virar editável por terceiros |
 
 ## Próximas fatias recomendadas
 

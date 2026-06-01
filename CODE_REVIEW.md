@@ -8,17 +8,19 @@
 
 ---
 
-## TL;DR — what to fix this week
+## TL;DR — ⚠️ HISTÓRICO (auditoria de 2026-04-29 — todos os 7 itens abaixo estão fechados)
 
-These are **compound** risks: each one alone is bad; together they form the dominant blast-radius scenarios.
+> **Não usar como guia de trabalho atual.** Ver [[FIXES_PROGRESS]] para estado real e [[CURRENT]] para o foco do sprint. Esta seção é preservada apenas como registro de por que certas decisões foram tomadas.
 
-1. **Webhook is unauthenticated AND paywall is open AND there's no message-id idempotency.** Anyone who learns an instance name (`zelo-{first8}-{16hex}`) can replay/inject WhatsApp events into any tenant — leaking messages to operators, creating real `zelochat_orders` rows, spending OpenAI tokens on attacker-controlled prompts. The `webhook_token` column already exists (migration 009) but is never read.
-2. **Operational endpoints don't check subscription.** `/api/send`, `/api/ai/*`, `/api/drivers/*/dispatch`, etc. only require an `empresaId` — a cancelled customer keeps blasting messages and AI replies forever. Only `/api/qr` and `/api/qr/refresh` are gated. Frontend has no gate either, just a banner.
-3. **Affirmative/negative regex prematurely confirms or cancels orders.** `^(certo|isso|claro|...)`/`^(nao|n\b|...)` are not anchored to end-of-string. "**certo, mas troca a coca**" → confirms. "**não, prefiro de manhã**" → cancels. This fires on every customer message while a pending order is open. Five-line patch, biggest UX bug.
-4. **Core schema isn't in source control.** `empresa_perfil`, `zelochat_sessions`, `zelochat_messages`, `zelochat_orders`, `zelochat_pending_orders`, `zelochat_escalation_events` were created via dashboard. The `role` CHECK widening that prevents the documented duplicate-order bug isn't in `supabase/migrations/`. Bus factor: 1.
-5. **Logout doesn't clear `localStorage`.** Next user on the same browser sees the prior tenant's business name, address, PIX key, and persisted state. Cross-tenant data leak via shared device.
-6. **`isEmpresaSubscriptionActive` fails OPEN.** A Supabase blip silently re-enables every cancelled customer. There is no metric on this.
-7. **`zelochat-media` bucket is public, filenames are timestamp-prefixed.** Customer photos/audios across all tenants are world-readable and enumerable by guessing milliseconds.
+Os 7 riscos compostos identificados na auditoria original — todos resolvidos:
+
+1. ~~Webhook sem autenticação~~ → `webhook_token` + URL-as-secret implementado (P0.1 ✅)
+2. ~~Paywall bypassado em endpoints operacionais~~ → middleware em `/api/*` (P0.15/P0.16 ✅)
+3. ~~Regex de confirmação com partial match~~ → whitelist de tokens exatos (P0.9/P0.10 ✅)
+4. ~~Schema fora do controle de versão~~ → `000_zelochat_schema.sql` commitado (P0.23 ✅)
+5. ~~Logout não limpa localStorage~~ → `clearLocalAppState` wipa todas as chaves `zelochat_*` (P0.20 ✅)
+6. ~~`isEmpresaSubscriptionActive` falha aberto~~ → fail-closed com cache (P0.17 ✅)
+7. ~~Bucket público com nomes enumeráveis~~ → slugs aleatórios por empresa (P0.5 ✅)
 
 ---
 
