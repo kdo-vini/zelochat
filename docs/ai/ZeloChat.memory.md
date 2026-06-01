@@ -97,6 +97,9 @@
   - `supabase/migrations/038_zelochat_trigger_redirect_contact.sql`
 - AI reply scheduling / debounce:
   - `server/replyDebouncer.ts` — staged 3-phase debounce (read 3s → typing 3s → reply 4s); configurable via `AI_DEBOUNCE_*` env vars; `AI_DEBOUNCE_DISABLED=1` reverts to 1500ms legacy
+- Frontend update/loading:
+  - `src/components/shared/UpdateAvailableBanner.tsx` polls `/api/version`; refresh uses temporary `?appVersion=` cache-bust and removes it after mount.
+  - `nginx.frontend.conf` must serve `index.html` and SPA fallback with `Cache-Control: no-store`; only Vite hashed `/assets/*` should be `immutable`.
 - AI behavior rules:
   - `src/domain/conversationState.ts` owns deterministic WhatsApp-turn decisions before OpenAI for pending-order confirmation, cancellation, edits, no-observation replies, emoji consent, payment proof, and semantic product matching.
   - `tests/aiTurnDecision.test.ts` is the primary regression suite for behavior like `sem obs`, `não muda nada`, `sim, sem cebola`, `cancelar só a coca`, exact hard buttons, and enthusiasm emoji.

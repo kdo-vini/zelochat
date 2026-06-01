@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-01',
+    category: 'hotfix',
+    title: 'Atualização do app carrega sem Ctrl+F5',
+    description: 'O botão "Atualizar agora" passa a buscar a versão nova sem prender a tela em cache antigo e limpa o endereço depois de recarregar.',
+  },
+  {
+    date: '2026-06-01',
     category: 'medium',
     title: 'IA entende melhor confirmações e alterações',
     description: 'A IA agora diferencia melhor “pode confirmar” de ajustes como “sim, sem cebola” ou “cancelar só a coca”, evitando repetir resumo ou fechar pedido errado.',

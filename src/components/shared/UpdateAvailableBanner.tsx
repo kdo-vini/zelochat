@@ -14,6 +14,7 @@ const STORAGE_DEFERRED_VERSION = 'zelochat_update_deferred_version';
 const STORAGE_DEFERRED_UNTIL = 'zelochat_update_deferred_until';
 const SESSION_REFRESH_TARGET = 'zelochat_update_refresh_target';
 const SESSION_REFRESH_AT = 'zelochat_update_refresh_at';
+const URL_VERSION_PARAM = 'appVersion';
 
 function safeGet(storage: Storage, key: string): string | null {
   try { return storage.getItem(key); } catch { return null; }
@@ -40,6 +41,21 @@ function hasOpenModal(): boolean {
       'dialog[open], [aria-modal="true"], [data-update-blocking="true"]'
     )
   );
+}
+
+function removeRefreshVersionParam(): void {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(URL_VERSION_PARAM)) return;
+    url.searchParams.delete(URL_VERSION_PARAM);
+    window.history.replaceState(
+      window.history.state,
+      document.title,
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  } catch {
+    /* ignore malformed URL / unsupported history */
+  }
 }
 
 /**
@@ -76,6 +92,9 @@ export function UpdateAvailableBanner() {
       safeRemove(sessionStorage, SESSION_REFRESH_TARGET);
       safeRemove(sessionStorage, SESSION_REFRESH_AT);
     }
+    // appVersion is only a temporary cache-bust for the navigation request.
+    // Once the app is mounted, keep the operator's URL clean.
+    removeRefreshVersionParam();
 
     function wasRecentlyRefreshedFor(version: string): boolean {
       const target = safeGet(sessionStorage, SESSION_REFRESH_TARGET);
@@ -177,7 +196,7 @@ export function UpdateAvailableBanner() {
     safeSet(sessionStorage, SESSION_REFRESH_AT, String(Date.now()));
     bcRef.current?.postMessage({ type: 'refreshing', version: pendingVersion });
     const url = new URL(window.location.href);
-    url.searchParams.set('appVersion', pendingVersion.slice(0, 12));
+    url.searchParams.set(URL_VERSION_PARAM, pendingVersion.slice(0, 12));
     window.location.replace(url.toString());
   }
 

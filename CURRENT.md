@@ -38,6 +38,7 @@ Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Fatias sugeridas:
 
 ## Decisões recentes
 
+- Botão "Atualizar agora" agora depende de headers `no-store` no shell SPA e limpa `?appVersion=...` após carregar; assets Vite hashados continuam em cache longo (2026-06-01)
 - Comportamento geral da IA documentado no Obsidian: confirmações, observações, pending orders, hard buttons, emojis e estoque agora têm suíte determinística (`tests/aiTurnDecision.test.ts`) antes do prompt (2026-06-01)
 - Estoque agora é regra operacional da IA: produto com `controlar_estoque=true` e `estoque_atual<=0` sai do cardápio da IA; pedido acima do estoque é bloqueado antes de abrir pendência (2026-06-01)
 - P1.13 fechado: grace period 7 dias para instâncias Whatsmiau após cancelamento de assinatura; provider-agnostic (Stripe + AbacatePay/Pix); auto-criação de instância ao renovar já funciona via `/api/qr` (2026-05-31)

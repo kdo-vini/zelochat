@@ -21,6 +21,7 @@ const tests = [
   'tests/aiPromptGuardrails.test.ts',
   'tests/aiTurnDecision.test.ts',
   'tests/routerWebhookGuardrails.test.ts',
+  'tests/updateReloadGuardrails.test.ts',
   'tests/billingPix.test.ts',
 ];
 
