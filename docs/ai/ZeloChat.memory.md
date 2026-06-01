@@ -97,6 +97,10 @@
   - `supabase/migrations/038_zelochat_trigger_redirect_contact.sql`
 - AI reply scheduling / debounce:
   - `server/replyDebouncer.ts` — staged 3-phase debounce (read 3s → typing 3s → reply 4s); configurable via `AI_DEBOUNCE_*` env vars; `AI_DEBOUNCE_DISABLED=1` reverts to 1500ms legacy
+- AI behavior rules:
+  - `src/domain/conversationState.ts` owns deterministic WhatsApp-turn decisions before OpenAI for pending-order confirmation, cancellation, edits, no-observation replies, emoji consent, payment proof, and semantic product matching.
+  - `tests/aiTurnDecision.test.ts` is the primary regression suite for behavior like `sem obs`, `não muda nada`, `sim, sem cebola`, `cancelar só a coca`, exact hard buttons, and enthusiasm emoji.
+  - `obsidian/AI_BEHAVIOR_RULES.md` documents this as product behavior for future AI agents.
 - Manager AI assistant:
   - `server/managerAssistant.ts` — operator-facing AI chat for configuration changes (history capped at 100 persisted, 40 sent to model)
 - Web Push / PWA notifications:

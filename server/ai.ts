@@ -43,6 +43,7 @@ import { isSupportedPixReceiptAttachment, validatePixReceipt } from './pixReceip
 import { redactJid } from './redact.js';
 import {
   classifyConfirmationIntent,
+  classifyPendingOrderTurn,
   isLikelyPaymentProofMessage,
   textMentionsPaymentProof,
   pickActiveOrder,
@@ -3029,6 +3030,7 @@ export async function generateAndSendReply(
   console.log(`[AiTrace] session_loaded empresa=${resolvedEmpresaId} jid=${redactJid(jid)} messages=${session.messages.length} status=${session.status} autoReply=${session.autoReply} elapsedMs=${Date.now() - startedAt}`);
   const aiConfig = getConfig(resolvedEmpresaId);
   const isGeneralMode = aiConfig.zelochatMode === 'general';
+  let pendingEditInstruction: string | null = null;
 
   // GUARDRAIL: if a pending order exists and the customer sent text (not a button click),
   // route affirmatives → confirm directly, negatives → cancel directly, ambiguous → edit.
@@ -3036,7 +3038,10 @@ export async function generateAndSendReply(
   const pendingForEdit = isGeneralMode ? null : await getPendingOrder(jid, resolvedEmpresaId);
   if (pendingForEdit) {
     const lastMsg = session.messages.at(-1);
-    const lastText = (lastMsg?.content ?? '').toLowerCase().trim();
+    const lastText = (lastMsg
+      ? (buildContentForModel(lastMsg as any) || lastMsg.preview || lastMsg.content || '')
+      : '').trim();
+    const lastTextForLegacy = lastText.toLowerCase();
     const receiptRequired = pendingOrderRequiresPixReceipt(pendingForEdit);
     if (
       receiptRequired &&
@@ -3095,7 +3100,7 @@ export async function generateAndSendReply(
     // de manhã" auto-cancelled. We now normalize (strip accents + trailing punctuation
     // /emoji/whitespace) and check against a set of unambiguous tokens. Anything else
     // falls through to "ambiguous → edit", which is the correct behavior.
-    const normalized = normalizeIntentText(lastText);
+    const normalized = normalizeIntentText(lastTextForLegacy);
     const isAffirmative = AFFIRMATIVE_INTENTS.has(normalized);
     const isNegative = NEGATIVE_INTENTS.has(normalized);
 
@@ -3106,6 +3111,9 @@ export async function generateAndSendReply(
     // src/domain/conversationState picks them up; we only consult it when the
     // narrow whitelist is silent so the existing safe paths stay primary.
     const richIntent = classifyConfirmationIntent(lastText, {
+      lastAiQuestion: 'pending_button_confirm',
+    });
+    const pendingTurn = classifyPendingOrderTurn(lastText, {
       lastAiQuestion: 'pending_button_confirm',
     });
     const richIsAffirmative =
@@ -3124,16 +3132,28 @@ export async function generateAndSendReply(
       await cancelPendingOrder(jid, resolvedEmpresaId);
       return 'cancelled';
     }
-    if (receiptRequired) {
+    if (pendingTurn.action === 'edit_pending_order') {
+      console.log(`[AI] Pending order edit detected for ${jid}; clearing pending and processing the edit in the same AI turn.`);
+      await clearPendingOrder(jid, resolvedEmpresaId);
+      const pendingItems = pendingForEdit.items
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 80)}`)
+        .join(', ');
+      pendingEditInstruction =
+        `CONTEXTO DE EDIÇÃO DE PEDIDO PENDENTE: o cliente tinha um pedido aguardando confirmação e acabou de pedir alteração. ` +
+        `Pedido anterior: ${pendingItems}; data ${safeForPrompt(pendingForEdit.pickupDate, 20)} às ${safeForPrompt(pendingForEdit.pickupTime, 20)}; ` +
+        `pagamento ${safeForPrompt(pendingForEdit.paymentMethod || 'não informado', 40)}; total R$ ${pendingForEdit.total.toFixed(2)}. ` +
+        `Mensagem de alteração do cliente: "${safeForPrompt(pendingTurn.editText, 300)}". ` +
+        `Use o pedido anterior como base, aplique a alteração já informada sem pedir para o cliente repetir, e só pergunte algo se faltar informação essencial.`;
+    } else if (pendingTurn.action === 'clarify_pending_order') {
+      console.log(`[AI] Pending order ambiguous reply for ${jid}; preserving pending row and asking a short clarification.`);
+      const clarify = 'Só pra eu não confirmar errado: você quer confirmar esse pedido, cancelar, ou alterar alguma coisa?';
+      await sendAndPersistText(jid, clarify, resolvedEmpresaId, { responseSource: 'ai_auto' });
+      return clarify;
+    }
+    if (receiptRequired && pendingTurn.action !== 'edit_pending_order') {
       await sendPixReceiptRequiredMessage(jid, resolvedEmpresaId);
       return 'receipt_required';
     }
-    // Ambiguous text → treat as edit intent (clear pending, re-engage AI)
-    console.log(`[AI] Pending order detected as edit-intent for ${jid} — clearing and re-engaging.`);
-    await clearPendingOrder(jid, resolvedEmpresaId);
-    const editAck = 'Beleza, vamos ajustar! Me conta o que mudou. 😊';
-    await sendAndPersistText(jid, editAck, resolvedEmpresaId, { responseSource: 'ai_auto' });
-    return editAck;
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -3314,6 +3334,12 @@ export async function generateAndSendReply(
             content: 'ATENÇÃO DE FLUXO: você já perguntou sobre alterações/observações e o cliente respondeu apenas com agradecimento ou despedida, sem pedir nenhuma mudança nova. Interprete isso como observations: "". NÃO repita o resumo. CHAME criar_pedido AGORA e fique em silêncio.',
           }]
         : []),
+      ...(pendingEditInstruction
+        ? [{
+            role: 'system' as const,
+            content: pendingEditInstruction,
+          }]
+        : []),
       ...trimmedHistory.map((m) => buildRuntimeMessageForOpenAI(m, imageMessageIds)),
     ];
 
@@ -3327,7 +3353,9 @@ export async function generateAndSendReply(
       temperature: OPENAI_CHAT_TEMPERATURE,
       messages,
       tools,
-      tool_choice: 'auto',
+      tool_choice: forceCreateOrderFromObservationAck
+        ? ({ type: 'function', function: { name: 'criar_pedido' } } as any)
+        : 'auto',
     });
     console.log(`[AiTrace] openai_response empresa=${resolvedEmpresaId} jid=${redactJid(jid)} finish=${response.choices[0]?.finish_reason ?? '<none>'} usage=${response.usage?.total_tokens ?? '<none>'} elapsedMs=${Date.now() - startedAt}`);
     recordAiUsage({

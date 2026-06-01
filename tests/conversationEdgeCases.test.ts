@@ -1,5 +1,6 @@
 import {
   classifyConfirmationIntent,
+  classifyPendingOrderTurn,
   mapInformalSalgadoTerm,
   shouldFinalizeAfterObservationAck,
   textMentionsPaymentProof,
@@ -41,6 +42,21 @@ await runSuite('Conversation edge cases and jailbreak probes', [
         'unknown',
         'negative token plus new preference is not auto-cancelled',
       );
+      assertEqual(
+        classifyPendingOrderTurn('sim, sem cebola').action,
+        'edit_pending_order',
+        'positive token plus concrete change becomes pending edit',
+      );
+      assertEqual(
+        classifyPendingOrderTurn('cancelar só a coca').action,
+        'edit_pending_order',
+        'partial cancel request is pending edit, not full cancellation',
+      );
+      assertEqual(
+        classifyPendingOrderTurn('confirmar mais tarde?').action,
+        'edit_pending_order',
+        'natural-language confirm phrase is not treated as hard confirmation',
+      );
     },
   },
   {
@@ -80,6 +96,44 @@ await runSuite('Conversation edge cases and jailbreak probes', [
           `"${text}" remains a positive no-change reply (got ${intent})`,
         );
       }
+    },
+  },
+  {
+    name: 'common no-observation replies finalize observation prompt',
+    run: () => {
+      const replies = ['nada', 'sem obs', 'sem observação', 'sem alteração', 'nada não', 'não, deixa como tá', 'não muda nada'];
+      for (const text of replies) {
+        assertEqual(
+          classifyConfirmationIntent(text, { lastAiQuestion: 'observation_or_change' }),
+          'farewell_or_thanks_confirm',
+          `"${text}" is no-change confirmation after observation prompt`,
+        );
+        assertEqual(
+          shouldFinalizeAfterObservationAck([
+            { role: 'assistant', content: 'Gostaria de alterar algo, ou tem alguma observação a fazer?' },
+            { role: 'user', content: text },
+          ]),
+          true,
+          `"${text}" finalizes after observation prompt`,
+        );
+      }
+    },
+  },
+  {
+    name: 'enthusiasm emoji alone does not confirm a pending order',
+    run: () => {
+      for (const emoji of ['🔥', '❤', '💕', '👏', '😊']) {
+        assertEqual(
+          classifyConfirmationIntent(emoji, { lastAiQuestion: 'pending_button_confirm' }),
+          'unknown',
+          `${emoji} is a reaction/enthusiasm, not consent`,
+        );
+      }
+      assertEqual(
+        classifyConfirmationIntent('👍', { lastAiQuestion: 'pending_button_confirm' }),
+        'emoji_only_confirm',
+        'thumbs-up remains an explicit WhatsApp-style confirmation',
+      );
     },
   },
   {

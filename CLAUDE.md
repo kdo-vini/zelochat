@@ -320,6 +320,21 @@ A IA trata estoque como regra operacional:
 
 A baixa de estoque ao confirmar pedido é feita best-effort via RPC `zelochat_decrement_stock`. Se esse RPC falhar, o pedido continua confirmado e o log `[stock] decrement failed` precisa ser investigado com o ZeloPDV.
 
+## Comportamento geral da IA no WhatsApp
+
+Fonte detalhada no vault Obsidian: [[AI_BEHAVIOR_RULES]].
+
+Regras atuais:
+- Decisões de pedido pendente são determinísticas primeiro (`src/domain/conversationState.ts`), OpenAI depois.
+- Confirmação explícita aceita: `sim`, `ok`, `fechado`, `certinho`, `pode confirmar`, `com certeza`, `👍`, `✅`, `👌`, `🙏`.
+- Emoji de entusiasmo (`🔥`, `❤️`, `💕`, `👏`, `😊`) não confirma pedido sozinho.
+- Depois da pergunta de observação, `nada`, `sem obs`, `sem alteração`, `não muda nada`, `não, deixa como tá` significam sem alteração e avançam para `criar_pedido`; não repetir resumo.
+- `sim, sem cebola`, `fechou, só coloca troco pra 50`, `certo, mas troca a coca` são edição do pending order, não confirmação final.
+- `cancelar só a coca`, `cancela a coca` e `cancela a entrega, vou retirar` são edição parcial, não cancelamento do pedido inteiro.
+- Hard-button matching só aceita ID real do botão ou label exato. Frases como `confirmar mais tarde?` e `confirmar horário de amanhã` não são botão.
+
+Teste principal: `tests/aiTurnDecision.test.ts`. Ao mudar fluxo de confirmação/observação/pending order, atualize essa suíte antes de mexer no prompt.
+
 ## Histórico do cliente (abordagem planejada, não implementada)
 
 Para memória cross-conversation da IA, a abordagem planejada é: manter um campo de resumo minimalista no perfil do cliente (provavelmente em `zelochat_sessions` ou nova tabela) com até X caracteres, que a IA sobrepõe/atualiza incrementalmente a cada conversa. Não é um log completo — é um "perfil vivo" comprimido. Ainda não implementado.

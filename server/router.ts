@@ -470,10 +470,12 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       data.message?.templateButtonReplyMessage?.selectedId ??
       interactiveId ?? '';
 
+    const buttonDisplayText = data.message?.buttonsResponseMessage?.selectedDisplayText;
     const interactiveText = data.message?.interactiveResponseMessage?.body?.text ?? '';
     const msgText = (
       data.message?.conversation ??
       data.message?.extendedTextMessage?.text ??
+      buttonDisplayText ??
       interactiveText ?? ''
     ).trim();
 
@@ -499,15 +501,15 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       .replace(/\p{Mn}/gu, '')          // strip combining accents
       .replace(/[\p{S}\p{P}\s]+/gu, ' ') // collapse symbols/emoji/punct/whitespace
       .trim();
-    // Match if it's just the token (with optional surrounding whitespace).
-    // "confirmar" alone or "confirmar pedido" still match; "quer confirmar
-    // depois?" doesn't (extra leading words).
+    // Match only exact button labels/tokens. Natural text such as
+    // "confirmar mais tarde?" or "cancelar só a coca" is an edit/question, not
+    // consent to confirm/cancel the whole order.
     const isConfirmText = buttonTextNormalized === 'confirmar'
       || buttonTextNormalized === 'confirm order'
-      || buttonTextNormalized.startsWith('confirmar ');
+      || buttonTextNormalized === 'confirmar pedido';
     const isCancelText = buttonTextNormalized === 'cancelar'
       || buttonTextNormalized === 'cancel order'
-      || buttonTextNormalized.startsWith('cancelar ');
+      || buttonTextNormalized === 'cancelar pedido';
 
     const isHardConfirm = buttonId === 'CONFIRM_ORDER' || isConfirmText;
     const isHardCancel = buttonId === 'CANCEL_ORDER' || isCancelText;

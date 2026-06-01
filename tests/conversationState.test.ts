@@ -212,8 +212,8 @@ console.log('\nReg-2: informal confirmation replies finalize the order');
     'praying hands after summary is emoji_only_confirm',
   );
   assert(
-    classifyConfirmationIntent('👏👏', buttonCtx) === 'emoji_only_confirm',
-    'clap emoji repeated after buttons is emoji_only_confirm',
+    classifyConfirmationIntent('👏👏', buttonCtx) === 'unknown',
+    'clap emoji repeated after buttons is enthusiasm, not order consent',
   );
   // Emoji-only with NO pending question is "unknown" — friendly reaction
   // to nothing actionable; we don't auto-confirm without a pending question.
@@ -469,6 +469,14 @@ console.log('\nEdge: confirmation intent classifier');
   assert(
     classifyConfirmationIntent('Boa noite!!! Até amanhã 😊', observationCtx) === 'farewell_or_thanks_confirm',
     'noisy farewell with emojis after observation → farewell-confirm',
+  );
+  assert(
+    classifyConfirmationIntent('sem obs', observationCtx) === 'farewell_or_thanks_confirm',
+    'sem obs after observation prompt means no changes',
+  );
+  assert(
+    classifyConfirmationIntent('não, deixa como tá', observationCtx) === 'farewell_or_thanks_confirm',
+    'não deixa como tá after observation prompt means no changes',
   );
 }
 

@@ -124,7 +124,9 @@ These are out of scope or unsafe to change from this branch:
 - ✅ Stock availability — produto com `controlar_estoque=true` e `estoque_atual<=0` deixa de entrar no cardápio da IA; produtos com estoque limitado mostram o teto no prompt; `criar_pedido` bloqueia quantidade acima do estoque antes de abrir pedido pendente e a confirmação recheca o estoque atual antes de criar o pedido real — `server/configStore.ts`, `server/ai.ts`
 - ✅ Sync-config — `/api/sync-config` não aceita mais snapshot de catálogo do navegador como fonte da verdade; depois do sync, o backend recarrega o catálogo compartilhado direto do banco para preservar `controlar_estoque`/`estoque_atual` — `server/router.ts`
 - ✅ Frontend/simulador — estado local e simulador da IA passam a considerar `controlar_estoque` e `estoque_atual` ao montar produtos disponíveis — `src/AppShell.tsx`, `src/services/openaiService.ts`
-- Verificação: `npx tsx tests/aiPromptGuardrails.test.ts`, `npx tsc --noEmit -p server/tsconfig.json`, `npm run lint`.
+- ✅ Comportamento WhatsApp — classificador determinístico de turno cobre `sem obs`, `não muda nada`, `sim, sem cebola`, `cancelar só a coca`, emojis de entusiasmo e hard-button exato; edição de pending order agora é processada no mesmo turno em vez de pedir repetição — `src/domain/conversationState.ts`, `server/ai.ts`, `server/router.ts`, `tests/aiTurnDecision.test.ts`
+- ✅ Obsidian — comportamento geral da IA documentado no vault para continuidade — `obsidian/AI_BEHAVIOR_RULES.md`
+- Verificação: `npx tsx tests/aiPromptGuardrails.test.ts`, `npx tsx tests/aiTurnDecision.test.ts`, `npx tsx tests/conversationEdgeCases.test.ts`, `npx tsx tests/conversationState.test.ts`, `npx tsx tests/routerWebhookGuardrails.test.ts`, `npx tsc --noEmit -p server/tsconfig.json`, `npm run lint`, `npm run build`.
 
 ### Sprint 61 (2026-05-31) — Docs AI-first + fixes P2 + Tags QA close
 

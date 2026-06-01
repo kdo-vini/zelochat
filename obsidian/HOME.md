@@ -36,6 +36,7 @@
 ## Roadmap e features
 
 - [[AI_BACKEND_ROADMAP]] — próximos passos de IA e backend
+- [[AI_BEHAVIOR_RULES]] — comportamento geral da IA em confirmações, observações, pending orders, botões, reações e estoque
 - [[IMAGE_VAULT_BRAINSTORM]] — vault de imagens (brainstorm, não iniciado)
 
 ---

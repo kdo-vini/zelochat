@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-01',
     category: 'medium',
+    title: 'IA entende melhor confirmações e alterações',
+    description: 'A IA agora diferencia melhor “pode confirmar” de ajustes como “sim, sem cebola” ou “cancelar só a coca”, evitando repetir resumo ou fechar pedido errado.',
+  },
+  {
+    date: '2026-06-01',
+    category: 'medium',
     title: 'IA respeita o estoque do cardápio',
     description: 'Produtos sem estoque deixam de ser oferecidos pela IA, e pedidos acima da quantidade disponível são enviados para atendimento humano antes de finalizar.',
   },

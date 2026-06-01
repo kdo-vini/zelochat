@@ -83,18 +83,11 @@ export interface ClassifyContext {
 
 const EMOJI_AFFIRMATIVE = new Set<string>([
   '\u{1F44D}', // 👍
-  '\u{1F44F}', // 👏
   '\u{1F64F}', // 🙏
   '✅',    // ✅
   '\u{1F197}', // 🆗
   '\u{1F44C}', // 👌
   '☑',    // ☑
-  '\u{1F60A}', // 😊
-  '\u{1F642}', // 🙂
-  '\u{1F970}', // 🥰
-  '❤',    // ❤
-  '\u{1F495}', // 💕
-  '\u{1F525}', // 🔥
 ]);
 
 const EMOJI_NEGATIVE = new Set<string>([
@@ -160,7 +153,7 @@ const AFFIRMATIVE_TOKENS = new Set<string>([
   // manda
   'manda', 'manda ai', 'manda ae', 'manda ver', 'mandou bem',
   // misc
-  'vai sim', 'claro', 'show', 'show de bola', 'dale', 'dahora', 'demorou',
+  'vai sim', 'claro', 'com certeza', 'certeza', 'show', 'show de bola', 'dale', 'dahora', 'demorou',
   'combinado', 'combinadissimo', 'tranquilo', 'tranquilao', 'suave', 'tamo junto',
   'massa', 'top', 'topissimo', 'firmeza', 'firme',
   'ta bom', 'tabom', 'ta bem', 'esta bom', 'esta certo',
@@ -182,6 +175,29 @@ const NEGATIVE_TOKENS = new Set<string>([
   'desistir', 'desisto', 'desiste', 'mudei de ideia',
   'esquece', 'esquecer', 'deixa pra la', 'deixa pra outro dia',
   'para', 'pare', 'parar', 'pode parar',
+]);
+
+const NO_CHANGE_TOKENS = new Set<string>([
+  'nada',
+  'nada nao',
+  'sem obs',
+  'sem observacao',
+  'sem observacoes',
+  'sem alteracao',
+  'sem alteracoes',
+  'sem mudar nada',
+  'sem mexer',
+  'nao muda nada',
+  'nao precisa alterar',
+  'nao precisa mudar',
+  'nao altera nada',
+  'nao mexe nao',
+  'deixa como ta',
+  'deixa assim',
+  'pode deixar assim',
+  'ta bom assim',
+  'desse jeito',
+  'do jeito que ta',
 ]);
 
 const ESCALATION_PATTERNS: RegExp[] = [
@@ -225,6 +241,26 @@ function hasContradictionMarker(value: string): boolean {
   const norm = normalizeLoose(value);
   if (!norm) return false;
   return QUALIFIER_PATTERNS.some((re) => re.test(norm));
+}
+
+function looksLikeNoChangeReply(value: string): boolean {
+  const norm = normalizeLoose(value);
+  if (!norm) return false;
+  if (NO_CHANGE_TOKENS.has(norm)) return true;
+  return /\b(sem|nenhuma?)\s+(obs|observacao|observacoes|alteracao|alteracoes)\b/u.test(norm)
+    || /\bnao\s+(muda|alter[ae]|mexe)\s+nada\b/u.test(norm)
+    || /\b(deixa|pode deixar)\s+(como\s+ta|assim|desse jeito)\b/u.test(norm);
+}
+
+function looksLikePendingEditRequest(value: string): boolean {
+  const norm = normalizeLoose(value);
+  if (!norm) return false;
+  return /\b(troca|trocar|troque|muda|mudar|altera|alterar|ajusta|ajustar|corrige|corrigir|edita|editar)\b/u.test(norm)
+    || /\b(tira|tirar|remove|remover|sem|com|adiciona|adicionar|inclui|incluir|coloca|colocar|bota|botar)\b/u.test(norm)
+    || /\b(cancelar|cancela)\s+(so|apenas|somente)\b/u.test(norm)
+    || /\b(cancelar|cancela)\s+(?!o pedido\b|pedido\b|tudo\b)(a|o|as|os|essa|esse|essas|esses|uma|um)\b/u.test(norm)
+    || /\b(retirada|entrega|delivery|endereco|bairro|troco|pagamento|pix|cartao|dinheiro|horario|hora|manha|tarde|noite)\b/u.test(norm)
+    || /\b(confirmar|confirma)\s+(mais tarde|depois|so se|quando)\b/u.test(norm);
 }
 
 const CONFIRMATION_FILLER_TOKENS = new Set<string>([
@@ -291,6 +327,10 @@ export function classifyConfirmationIntent(
 
   const normalized = normalizeIntent(text);
   if (!normalized) return 'unknown';
+
+  if (context.lastAiQuestion === 'observation_or_change' && looksLikeNoChangeReply(text)) {
+    return 'farewell_or_thanks_confirm';
+  }
 
   // Single-token exact-match path runs unchanged. A user typing JUST "não" or
   // JUST "certo" is unambiguous; the contradiction-marker check below only
@@ -363,6 +403,38 @@ export function classifyConfirmationIntent(
   }
 
   return 'unknown';
+}
+
+export type PendingOrderTurnDecision =
+  | { action: 'confirm_pending_order'; reason: string; intent: ConfirmationIntent }
+  | { action: 'cancel_pending_order'; reason: string; intent: ConfirmationIntent }
+  | { action: 'edit_pending_order'; reason: string; editText: string }
+  | { action: 'clarify_pending_order'; reason: string }
+  | { action: 'escalate_human'; reason: string };
+
+export function classifyPendingOrderTurn(
+  raw: string,
+  context: ClassifyContext = { lastAiQuestion: 'pending_button_confirm' },
+): PendingOrderTurnDecision {
+  const text = (raw ?? '').trim();
+  const intent = classifyConfirmationIntent(text, context);
+  if (intent === 'escalation_request') {
+    return { action: 'escalate_human', reason: 'customer requested human/escalation' };
+  }
+  if (
+    intent === 'affirmative_confirm' ||
+    intent === 'farewell_or_thanks_confirm' ||
+    intent === 'emoji_only_confirm'
+  ) {
+    return { action: 'confirm_pending_order', reason: 'unambiguous confirmation', intent };
+  }
+  if (intent === 'negative_cancel') {
+    return { action: 'cancel_pending_order', reason: 'unambiguous cancellation', intent };
+  }
+  if (looksLikePendingEditRequest(text)) {
+    return { action: 'edit_pending_order', reason: 'customer provided an edit/change request', editText: text };
+  }
+  return { action: 'clarify_pending_order', reason: 'ambiguous pending-order reply' };
 }
 
 const FAREWELL_TOKENS = new Set<string>([

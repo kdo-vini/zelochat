@@ -60,6 +60,16 @@ await runSuite('Router webhook/order guardrails', [
     },
   },
   {
+    name: 'hard button display text is exact and does not catch natural language',
+    run: () => {
+      assertIncludes(router, 'selectedDisplayText', 'button display text is considered when provider omits selectedButtonId');
+      assertIncludes(router, "buttonTextNormalized === 'confirmar pedido'", 'confirmar pedido display label is accepted');
+      assertIncludes(router, "buttonTextNormalized === 'cancelar pedido'", 'cancelar pedido display label is accepted');
+      assert(!router.includes("buttonTextNormalized.startsWith('confirmar '"), 'natural confirm phrases are not hard-confirmed');
+      assert(!router.includes("buttonTextNormalized.startsWith('cancelar '"), 'partial cancel phrases are not hard-cancelled');
+    },
+  },
+  {
     name: 'Pix-required pending order blocks confirm and asks for receipt',
     run: () => {
       const hardPix = router.indexOf('pendingOrderRequiresPixReceipt(pending)');
