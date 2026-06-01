@@ -5,15 +5,17 @@ import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
-// Resolved once at build time and baked into the bundle. The backend reads the
-// SAME env at process start (server/router.ts → /api/version), so Dokploy
-// deploys both with one PUBLIC_APP_VERSION value (typically a commit SHA) and
-// they match. Without an override, a per-build timestamp guarantees that any
-// rebuild produces a new version string — the polling banner will then notify
-// every open tab. Keep this resolution stable: do NOT call Date.now() inside
-// the response handler, that would make every request look like a new release.
+// Resolved once at build time and baked into the bundle. The backend computes
+// the SAME value at build time (Dockerfile → /api/version), so both sides of a
+// deploy match and the UpdateAvailableBanner only fires across deploys.
+// In production PUBLIC_APP_VERSION is NOT set as an env here — Dockerfile.frontend
+// derives the git commit (`git rev-parse HEAD`) and passes it in, so each deploy
+// gets a distinct version. The fallbacks below only matter for local/manual
+// builds; pkg.version (0.0.0) is the last resort and is fine in dev because the
+// banner is suppressed when import.meta.env.DEV.
 // Filter out unexpanded shell variables like "${SOURCE_COMMIT}" passed literally
-// by some CI/CD systems (e.g. Dokploy with unresolved variable interpolation).
+// by some CI/CD systems (e.g. Dokploy, which does NOT expand SOURCE_COMMIT for
+// Dockerfile builds — that bug is exactly why this guard exists).
 const resolvedEnv = (s: string | undefined) =>
   s && !s.startsWith('${') ? s : undefined;
 

@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-05-31',
     category: 'minor',
+    title: 'Aviso quando tem versão nova',
+    description: 'Sempre que lançarmos uma melhoria, aparece um aviso discreto no canto da tela: é só tocar em "Atualizar agora" pra carregar a versão mais recente, sem precisar fechar e abrir o app.',
+  },
+  {
+    date: '2026-05-31',
+    category: 'minor',
     title: 'Figurinhas aparecem na conversa',
     description: 'Quando o cliente manda uma figurinha, agora ela aparece na conversa como imagem, em vez de mostrar só o aviso "Figurinha recebida".',
   },

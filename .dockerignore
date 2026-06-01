@@ -2,7 +2,11 @@ node_modules
 dist
 build
 coverage
-.git
+# .git is intentionally NOT ignored: the Docker builds derive the app build
+# version from `git rev-parse HEAD` so the UpdateAvailableBanner can detect a
+# new deploy. Both images compute the SAME commit, so they agree within a deploy
+# and only differ across deploys. (.git only ever lives in throwaway build
+# stages — it never ships in the final nginx/runtime images.)
 .github
 .DS_Store
 *.log

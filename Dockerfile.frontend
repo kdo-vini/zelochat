@@ -2,6 +2,9 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+# git is needed to derive the build version from the commit (see below).
+RUN apk add --no-cache git
+
 COPY package*.json ./
 RUN npm ci
 
@@ -10,16 +13,26 @@ COPY . .
 ARG VITE_API_URL
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
-ARG SOURCE_COMMIT
+# Optional explicit override. Normally left empty — the version is derived from
+# the git commit below. (The previous `${SOURCE_COMMIT}` build arg never worked:
+# Dokploy doesn't expand it for Dockerfile builds, so it baked the literal and
+# fell through to package.json's 0.0.0 → the update banner never fired.)
 ARG PUBLIC_APP_VERSION
 
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
-ENV SOURCE_COMMIT=$SOURCE_COMMIT
-ENV PUBLIC_APP_VERSION=$PUBLIC_APP_VERSION
 
-RUN npm run build
+# Bake the build version the UpdateAvailableBanner compares against. Prefer an
+# explicit PUBLIC_APP_VERSION; otherwise use the git commit Dokploy cloned into
+# the build context. The backend computes the SAME value the same way, so both
+# sides of one deploy agree and only differ across deploys. Reject unexpanded
+# "${...}" placeholders so a stale build arg can't poison the version.
+RUN case "$PUBLIC_APP_VERSION" in \
+      ''|'${'*) PUBLIC_APP_VERSION=$(git rev-parse --short=12 HEAD 2>/dev/null || echo dev) ;; \
+    esac; \
+    echo "[build] PUBLIC_APP_VERSION=$PUBLIC_APP_VERSION"; \
+    PUBLIC_APP_VERSION="$PUBLIC_APP_VERSION" npm run build
 
 FROM nginx:1.27-alpine
 

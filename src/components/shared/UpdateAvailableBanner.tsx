@@ -51,9 +51,9 @@ function hasOpenModal(): boolean {
  * repo doesn't register a service worker, so a plain location.reload is the
  * full refresh.
  *
- * Suppressed entirely in dev (`import.meta.env.DEV`): the dev fallback
- * version is timestamp-based and would mark every backend restart as a new
- * release.
+ * Suppressed entirely in dev (`import.meta.env.DEV`): there's no version
+ * injection in dev (both sides fall back to package.json's 0.0.0), so the
+ * comparison is meaningless and the banner would never be meaningful anyway.
  */
 export function UpdateAvailableBanner() {
   const [visible, setVisible] = useState(false);
