@@ -2,14 +2,18 @@
 
 WhatsApp-native customer service platform for Brazilian lanchonetes. All user-facing text, prompts, and seed data are in **Brazilian Portuguese**.
 
+> **Sprint atual / foco do momento:** ler [[CURRENT]] antes de qualquer tarefa.
+
 ## 📖 Required reading before any non-trivial change
 
-Three companion docs at the project root capture context not visible from the code alone. **Read them before touching anything customer-facing or anything tagged "CRITICAL":**
+**Read in this order before touching anything customer-facing or tagged "CRITICAL":**
 
-1. **[[CODE_REVIEW]]** — Senior-tier audit (24 P0 / 47 P1 / 38 P2 / 24 P3). Every finding has file:line, repro, customer impact, fix.
-2. **[[FIXES_PROGRESS]]** — Live tracker: shipped vs drafted vs blocked. Update when shipping a fix.
-3. **[[BILLING]]** — Stripe/Asaas runbook + cross-product subscription details.
-4. **[[CLAUDE]]** — Project context. Has two non-negotiable sections: "Shared database with ZeloPDV" (what we MUSTN'T touch) and "Critical functions — touch with extreme care" (functions whose breakage cascades to customer money loss).
+1. **[[CURRENT]]** — sprint atual, o que está em aberto, decisões recentes
+2. **[[CODE_REVIEW]]** — auditoria sênior (24 P0 / 47 P1 / 38 P2 / 24 P3). Every finding has file:line, repro, customer impact, fix.
+3. **[[FIXES_PROGRESS]]** — Live tracker: shipped vs drafted vs blocked. Update when shipping a fix.
+4. **[[BILLING]]** — Stripe/Asaas runbook + cross-product subscription details.
+5. **[[INCIDENTS]]** — Outage runbook. First stop when something looks broken in prod.
+6. **[[CLAUDE]]** — Project context. Has two non-negotiable sections: "Shared database with ZeloPDV" (what we MUSTN'T touch) and "Critical functions — touch with extreme care".
 
 ## Codex memory
 
@@ -177,23 +181,12 @@ If you change ANY of these three layers, manually walk through the duplicate-ord
 
 The `.env` checked into the repo points at the **production** Whatsmiau instance (`Comercial_d3c6ca80`). On startup, `server/whatsapp.ts` calls `setWebhook` with the local server's public URL — in dev that's a Cloudflare tunnel from `scripts/tunnel.js`. This **silently overwrites the production webhook URL on Whatsmiau**, redirecting all real customers' inbound messages to the dev machine. Outbound sends still work (they hit Whatsmiau directly), so the symptom is "app sends but receives nothing in prod" — not an obvious failure.
 
-When this happens, recover with:
+When this happens, a Dokploy redeploy fixes it (prod re-registers its own URL on startup with the correct `?token=`).
 
-```bash
-curl -X POST "https://api.whatsmiau.dev/webhook/set/Comercial_d3c6ca80" \
-  -H "apikey: $WHATSMIAU_API_KEY" -H "Content-Type: application/json" \
-  -d '{"webhook":{"enabled":true,"url":"https://chat.zelopdv.com.br/webhook","webhookByEvents":false,"webhookBase64":true,"events":["MESSAGES_UPSERT","MESSAGES_UPDATE","MESSAGES_DELETE","CONNECTION_UPDATE","CONTACTS_UPSERT"]}}'
-```
+**Before running any local dev command that boots the backend** (`npm run dev:server`, `npm run dev:all`, `npx tsx server/index.ts`):
 
-A Dokploy redeploy also fixes it (prod re-registers its own URL on startup).
-
-**Before running any local dev command that boots the backend** (`npm run dev:server`, `npm run dev:all`, `npx tsx server/index.ts`, integration tests that import `server/whatsapp.ts`):
-
-- Use a separate sandbox Whatsmiau instance + API key for dev — do not reuse the prod ones.
-- OR set `WHATSMIAU_DISABLE_WEBHOOK_REGISTER=1` (or whatever guard is added) so startup skips the `setWebhook` call.
-- OR temporarily clear `WHATSMIAU_API_KEY` / `WHATSMIAU_INSTANCE` before booting the local server.
-
-Until a hard guard is wired in, treat `dev:server` against the shared `.env` as a production-mutating action.
+- **Recommended:** set `WHATSMIAU_DISABLE_WEBHOOK_REGISTER=1` in your local `.env` — skips ALL webhook registration on startup, outbound sends still work.
+- Alternative: use a separate sandbox Whatsmiau instance + API key for dev — do not reuse prod ones.
 
 ## UI conventions
 
@@ -211,3 +204,27 @@ Until a hard guard is wired in, treat `dev:server` against the shared `.env` as 
 
 ## Workflow
 - For complex tasks, always use subagents for async work and multitasking. Be an orchestrator.
+
+## Documentação — convenção AI-first
+
+Toda IA que trabalhar neste repo **deve manter a documentação automaticamente**.
+
+### Após qualquer fix ou feature
+- **[[FIXES_PROGRESS]]**: adicionar entrada na sprint do dia. Formato: `- ✅ <ID> — <o que era> → <o que foi feito> — \`arquivo:linha\``
+- **[[CURRENT]]**: atualizar "Em aberto" se o fix fecha algo listado lá
+
+### Após fix crítico em prod (P0/P1 ou que causou outage visível)
+- **[[INCIDENTS]]**: nova entrada com: Sintoma (1 linha), Causa-raiz (1 frase), Fix (1 frase + arquivo:linha)
+- Comentário inline na função crítica: `// FIX YYYY-MM-DD: <causa em 1 frase> → <fix em 1 frase>`
+
+### Feature entregue
+- Deletar o arquivo de spec da feature (specs são temporários, o código é a verdade)
+- Se o comportamento for não-óbvio, documentar em CLAUDE.md ou AGENTS.md
+
+### Início de qualquer sessão
+1. Ler **[[CURRENT]]** — entender o foco atual
+2. Se o foco mudou, atualizar **[[CURRENT]]** antes de começar
+3. Para mudanças em funções listadas em "Critical functions" no [[CLAUDE]], ler o inline docstring completo antes de tocar
+
+### Regra de ouro
+> Documentação que não existe não será lembrada. Se você fez algo não-óbvio, documenta agora — não depois.
