@@ -66,6 +66,18 @@ Production runs on **Dokploy**, linked directly to the `main` branch on GitHub (
 
 URL: `https://chat.zelopdv.com.br`
 
+### `/api/healthz` is not WhatsApp health
+
+`/api/healthz` is a narrow Express backend liveness/reachability endpoint used
+by platform health checks and the app's offline detection flow. Treat it as
+"the ZeloChat backend can answer HTTP", not as proof that WhatsApp, webhooks,
+QR generation, printer integration, or any upstream provider are healthy.
+
+Do not repurpose `/api/healthz` for WhatsApp diagnostics, do not add auth, and
+do not add database/provider calls to it. For WhatsApp incidents, use the
+dedicated status/QR endpoints and `scripts/diagnose-webhooks.ts` from the
+backend container where production provider credentials are present.
+
 ## Commands
 
 ```bash

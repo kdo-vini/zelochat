@@ -43,22 +43,28 @@ A combinação aponta direto pra um dos blocos abaixo.
   não aparecem no ZeloChat enquanto a instância não reconecta.
 
 ### Causa-raiz
-O endpoint `/v2/instance/connect/{instance}` da Whatsmiau pode segurar a
-requisição enquanto prepara a sessão de pareamento; o backend tratava timeout
-de 10s como `disconnected`, e o frontend só fazia polling quando já havia QR.
+Confirmado em 2026-06-03: problema no proxy do provedor WhatsApp. O backend do
+ZeloChat estava respondendo, mas as chamadas de conexão/QR/envio para a
+infraestrutura do provedor não completavam corretamente.
+
+Observação importante: `/api/healthz` **não diagnostica WhatsApp**. Ele só
+prova que o backend Express do ZeloChat responde HTTP e deve continuar simples,
+sem autenticação, sem banco e sem chamadas ao provedor.
 
 ### Fix
-Timeout do connect agora volta como `connecting`, e a tela de Configurações
-continua consultando `/api/qr/refresh` automaticamente até receber QR ou estado
-conectado — `server/whatsapp.ts:674`, `src/components/views/SettingsView.tsx:188`.
+Não havia correção estrutural a fazer no ZeloChat para o proxy do provedor. O
+ajuste local foi apenas de resiliência/copy: timeout de QR mantém a tela em
+tentativa automática e não expõe detalhes técnicos ao operador —
+`server/whatsapp.ts:674`, `src/components/views/SettingsView.tsx:188`.
 
 ### Recovery
-1. Depois do deploy do fix, clique em "Gerar QR Code" uma vez e aguarde o
-   polling automático.
+1. Confirmar no dashboard/logs do provedor se há incidente/proxy instável.
 2. Se ficar em `connecting` por mais de 60s, rode no container do backend:
    `npx tsx scripts/diagnose-webhooks.ts` para checar instância upstream,
    webhook registrado e reachability pública.
-3. Se a instância não existir mais upstream ou estiver com nome divergente,
+3. Não usar `/api/healthz` como evidência de saúde do WhatsApp; ele pode estar
+   verde enquanto o proxy do provedor está fora.
+4. Se a instância não existir mais upstream ou estiver com nome divergente,
    seguir o bloco "Whatsmiau renomeou as instâncias upstream".
 
 ---

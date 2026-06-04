@@ -3,7 +3,7 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-06-03 Sprint 64):** Hotfix do fluxo Whatsmiau: timeout ao preparar QR Code não derruba mais o fluxo de reconexão; a tela continua tentando automaticamente até receber QR ou conexão.
+**Latest execution note (2026-06-03 Sprint 64):** Incidente externo no proxy do provedor WhatsApp; ZeloChat recebeu apenas ajustes defensivos de polling/copy e documentação operacional.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -119,11 +119,13 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
-### Sprint 64 (2026-06-03) — Hotfix QR Whatsmiau e envio manual
+### Sprint 64 (2026-06-03) — Incidente externo no WhatsApp + ajustes defensivos
 
-- ✅ HOTFIX — Timeout do `/v2/instance/connect` da Whatsmiau agora mantém a instância em `connecting`, em vez de devolver `disconnected` e deixar o operador preso sem QR — `server/whatsapp.ts:674`
-- ✅ HOTFIX — Tela de Configurações continua polling quando a Whatsmiau ainda está preparando o QR e não interpreta `qr=null`/`connecting` como conectado — `src/components/views/SettingsView.tsx:96`
-- ✅ HOTFIX — Envio manual aceita IDs de mensagem em formatos aninhados da Whatsmiau e retorna erro controlado quando o provedor falha, sem transformar erro pós-envio no banco em 500 — `server/whatsapp.ts:143`, `server/router.ts:205`
+- ✅ Incidente — causa confirmada fora do ZeloChat: instabilidade no proxy do provedor WhatsApp; `/api/healthz` estava verde porque só mede liveness do backend Express, não saúde da integração WhatsApp — `INCIDENTS.md:35`
+- ✅ Ajuste defensivo — timeout ao preparar QR mantém a tela em tentativa automática e não deixa o operador preso numa ação manual repetitiva — `server/whatsapp.ts:674`, `src/components/views/SettingsView.tsx:188`
+- ✅ Ajuste defensivo — envio manual aceita IDs de mensagem em formatos aninhados do provedor e retorna erro controlado quando o envio falha, sem transformar erro pós-envio no banco em 500 — `server/whatsapp.ts:143`, `server/router.ts:205`
+- ✅ Copy/docs — mensagens visíveis não expõem nomes de provedores internos; convenção documentada para futuras IAs/devs — `CLAUDE.md:46`, `AGENTS.md:56`
+- ✅ Revert — removido o ajuste extra de status por endpoint per-instância porque não era necessário para a causa raiz confirmada — commit `8ee2d8c`.
 - Verificação — `npx tsc --noEmit -p server/tsconfig.json`, `npm run lint` e `npm run build` passaram. `npx tsx tests/auditFixGuardrails.test.ts` passou nos novos guardrails e segue falhando apenas no drift conhecido de webhook documentado em [[CURRENT]].
 
 ### Sprint 62 (2026-06-01) — Estoque como regra operacional da IA
