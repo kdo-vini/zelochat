@@ -18,6 +18,7 @@ const tests = [
   'tests/audioTranscriptionRearm.test.ts',
   'tests/aiRouteGuards.test.ts',
   'tests/aiToolPlan.test.ts',
+  'tests/aiSimulatorScheduleGuard.test.ts',
   'tests/aiPromptGuardrails.test.ts',
   'tests/aiTurnDecision.test.ts',
   'tests/routerWebhookGuardrails.test.ts',

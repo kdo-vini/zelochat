@@ -575,6 +575,18 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     console.warn('[AI] confirmPendingOrder: No pending order found for JID:', jid);
     return;
   }
+  // FIX 2026-06-04: pending antiga em feriado podia ser confirmada depois → revalida agenda final e limpa a pendência inválida.
+  const pendingScheduleGuard = evaluateCreateOrderScheduleGuard(
+    pending.empresaId,
+    pending.pickupDate,
+    pending.pickupTime,
+  );
+  if (pendingScheduleGuard) {
+    console.warn(`[AI] confirmPendingOrder blocked by schedule guard for JID: ${jid}`);
+    await clearPendingOrder(jid, pending.empresaId);
+    await sendAndPersistText(jid, pendingScheduleGuard.reply, pending.empresaId);
+    return;
+  }
   if (pendingOrderRequiresPixReceipt(pending)) {
     console.warn('[AI] confirmPendingOrder blocked: Pix receipt is required and not approved for JID:', jid);
     await sendPixReceiptRequiredMessage(jid, pending.empresaId);
@@ -925,22 +937,64 @@ function hasSchedulingIntentForBlockedDate(text: string, dateCount: number): boo
   return /\b(pedido|pedir|pede|quero|queria|preciso|encomenda|encomendar|agendar|agenda|reservar|reserva|retirada|retirar|buscar|entrega|entregar|delivery|para|pra|pro|pode ser|seria|dia|data|horario|hora|cento|salgado|salgados|doce|doces|bolo|bolos|kit|kits)\b/u.test(normalized);
 }
 
+function normalizeIntentWords(text: string): string {
+  return normalizeDateText(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getBlockedDates(empresaId: string): { date: string; reason: string }[] {
   const dates = getConfig(empresaId).blockedDates;
   return Array.isArray(dates) ? dates : [];
 }
 
+function hasTodayBlockedOperationalIntent(text: string): boolean {
+  const normalized = normalizeIntentWords(text);
+  if (!normalized) return false;
+  if (hasOrderIntent(normalized) || hasImmediateOrderIntent(normalized)) return true;
+  return /\b(tem|vendo|vende|vendem|cardapio|menu|opcao|opcoes|disponivel|disponiveis|coxinha|risole|risoles|kibe|quibe|bolinha|queijo|carne|frango|presunto|mini|frito|fritos|assado|assados|doce|docinho|docinhos|bolo|bolos|pix|chave|pagamento|pagar|paguei|comprovante|retirada|retirar|buscar|entrega|entregar|delivery|nome|horario|hora|confirmar|finalizar|so isso|so esse|isso mesmo|certinho|atendendo|atende|aberto|abrem|funcionando)\b/u.test(normalized);
+}
+
+function findTodayBlockedDateFromOperationalText(
+  empresaId: string,
+  text: string,
+  now = new Date(),
+): { date: string; reason: string } | null {
+  const tz = getEmpresaTimezone(empresaId);
+  const todayIso = toIsoBrazil(now, tz);
+  const todayBlockedDate = getBlockedDateByIso(empresaId, todayIso);
+  if (!todayBlockedDate) return null;
+
+  const requestedDates = collectRequestedDateIsos(text, now, tz);
+  if (requestedDates.length > 0 && !requestedDates.includes(todayIso)) return null;
+  return hasTodayBlockedOperationalIntent(text) ? todayBlockedDate : null;
+}
+
 function findBlockedDateFromCustomerText(
   empresaId: string,
   text: string,
+  now = new Date(),
+  options: { checkCurrentDayForImmediateOrder?: boolean } = {},
 ): { date: string; reason: string } | null {
   const tz = getEmpresaTimezone(empresaId);
-  const requestedDates = collectRequestedDateIsos(text, new Date(), tz);
-  if (!hasSchedulingIntentForBlockedDate(text, requestedDates.length)) return null;
+  const requestedDates = collectRequestedDateIsos(text, now, tz);
   const blockedDates = getBlockedDates(empresaId);
-  return requestedDates
-    .map((iso) => blockedDates.find((blocked) => blocked.date === iso) ?? null)
-    .find((blocked): blocked is { date: string; reason: string } => blocked !== null) ?? null;
+  const explicitBlocked = hasSchedulingIntentForBlockedDate(text, requestedDates.length)
+    ? requestedDates
+      .map((iso) => blockedDates.find((blocked) => blocked.date === iso) ?? null)
+      .find((blocked): blocked is { date: string; reason: string } => blocked !== null) ?? null
+    : null;
+  if (explicitBlocked) return explicitBlocked;
+
+  if (
+    options.checkCurrentDayForImmediateOrder === true &&
+    requestedDates.length === 0
+  ) {
+    return findTodayBlockedDateFromOperationalText(empresaId, text, now);
+  }
+
+  return null;
 }
 
 function getBlockedDateByIso(empresaId: string, isoDate: string): { date: string; reason: string } | null {
@@ -1337,6 +1391,35 @@ function findRecentScheduleContextGuard(
   return null;
 }
 
+function findRecentTodayBlockedOperationalGuard(
+  empresaId: string,
+  messages: { role: string; content: string | null; preview: string; kind: string; audio_transcript?: string | null; audio_transcript_status?: string | null }[],
+  now = new Date(),
+): { date: string; reason: string } | null {
+  const recent = messages.slice(-12);
+  let start = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const msg = recent[i];
+    if (msg.role !== 'assistant') continue;
+    const text = buildContentForModel(msg as any) || msg.preview || '';
+    if (isScheduleGuardReply(text)) {
+      start = i + 1;
+      break;
+    }
+  }
+
+  for (let i = recent.length - 1; i >= start; i--) {
+    const msg = recent[i];
+    if (msg.role !== 'user') continue;
+    const text = buildContentForModel(msg as any) || msg.preview || '';
+    if (!text) continue;
+    const blockedDate = findTodayBlockedDateFromOperationalText(empresaId, text, now);
+    if (blockedDate) return blockedDate;
+  }
+
+  return null;
+}
+
 export const __aiScheduleGuardsForTests = {
   collectRequestedDateIsos,
   collectRequestedTimeMinutes,
@@ -1344,6 +1427,7 @@ export const __aiScheduleGuardsForTests = {
   findBusinessHoursIssueFromCustomerText,
   findBusinessHoursIssueForSchedule,
   findRecentScheduleContextGuard,
+  findRecentTodayBlockedOperationalGuard,
 };
 
 export function buildBusinessHoursReply(issue: BusinessHoursIssue, tz: string = DEFAULT_TIMEZONE): string {
@@ -1387,6 +1471,132 @@ async function sendBusinessHoursReply(
   const reply = buildBusinessHoursReply(issue, getEmpresaTimezone(empresaId));
   await sendAndPersistText(jid, reply, empresaId, { responseSource: 'ai_auto' });
   return reply;
+}
+
+export type ScheduleGuardDryRun =
+  | { type: 'blocked_date'; reply: string; blockedDate: { date: string; reason: string } }
+  | { type: 'business_hours'; reply: string; issue: BusinessHoursIssue };
+
+export function evaluateScheduleGuardForDryRun(
+  empresaId: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  now = new Date(),
+): ScheduleGuardDryRun | null {
+  if (getConfig(empresaId).zelochatMode === 'general') return null;
+
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+  const lastUserText = lastUserMsg?.content?.trim() ?? '';
+  const blockedDateFromMessage = lastUserText
+    ? findBlockedDateFromCustomerText(
+        empresaId,
+        lastUserText,
+        now,
+        { checkCurrentDayForImmediateOrder: true },
+      )
+    : null;
+  if (blockedDateFromMessage) {
+    return {
+      type: 'blocked_date',
+      reply: buildBlockedDateReply(blockedDateFromMessage),
+      blockedDate: blockedDateFromMessage,
+    };
+  }
+
+  const runtimeMessages = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+    preview: m.content,
+    kind: 'text',
+  }));
+  const todayBlockedOperationalContext = findRecentTodayBlockedOperationalGuard(empresaId, runtimeMessages, now);
+  if (todayBlockedOperationalContext) {
+    return {
+      type: 'blocked_date',
+      reply: buildBlockedDateReply(todayBlockedOperationalContext),
+      blockedDate: todayBlockedOperationalContext,
+    };
+  }
+
+  const recentScheduleContext = findRecentScheduleContextGuard(empresaId, runtimeMessages, now);
+  if (recentScheduleContext?.type === 'blocked_date') {
+    return {
+      type: 'blocked_date',
+      reply: buildBlockedDateReply(recentScheduleContext.blockedDate),
+      blockedDate: recentScheduleContext.blockedDate,
+    };
+  }
+  if (recentScheduleContext?.type === 'business_hours') {
+    return {
+      type: 'business_hours',
+      reply: buildBusinessHoursReply(recentScheduleContext.issue, getEmpresaTimezone(empresaId)),
+      issue: recentScheduleContext.issue,
+    };
+  }
+
+  const businessHoursIssueFromMessage = lastUserText
+    ? findBusinessHoursIssueFromCustomerText(
+        empresaId,
+        lastUserText,
+        now,
+        { checkCurrentMoment: false },
+      )
+    : null;
+  if (businessHoursIssueFromMessage) {
+    return {
+      type: 'business_hours',
+      reply: buildBusinessHoursReply(businessHoursIssueFromMessage, getEmpresaTimezone(empresaId)),
+      issue: businessHoursIssueFromMessage,
+    };
+  }
+
+  return null;
+}
+
+export function evaluateCreateOrderScheduleGuard(
+  empresaId: string,
+  pickupDate: unknown,
+  pickupTime: unknown,
+  now = new Date(),
+): ScheduleGuardDryRun | null {
+  if (getConfig(empresaId).zelochatMode === 'general') return null;
+
+  const normalizedPickupDate = typeof pickupDate === 'string'
+    ? normalizeIsoDateInput(pickupDate)
+    : null;
+  if (!normalizedPickupDate) return null;
+
+  const blockedPickupDate = getBlockedDateByIso(empresaId, normalizedPickupDate);
+  if (blockedPickupDate) {
+    return {
+      type: 'blocked_date',
+      reply: buildBlockedDateReply(blockedPickupDate),
+      blockedDate: blockedPickupDate,
+    };
+  }
+
+  const normalizedPickupTimeMinutes = typeof pickupTime === 'string'
+    ? parseTimeToMinutes(pickupTime)
+    : null;
+  const normalizedPickupTime = normalizedPickupTimeMinutes !== null
+    ? minutesToDisplay(normalizedPickupTimeMinutes)
+    : typeof pickupTime === 'string'
+      ? pickupTime
+      : undefined;
+  const businessHoursIssue = findBusinessHoursIssueForSchedule(
+    empresaId,
+    normalizedPickupDate,
+    normalizedPickupTime,
+    now,
+  );
+  if (businessHoursIssue) {
+    return {
+      type: 'business_hours',
+      reply: buildBusinessHoursReply(businessHoursIssue, getEmpresaTimezone(empresaId)),
+      issue: businessHoursIssue,
+    };
+  }
+
+  return null;
 }
 
 export const getAI = getOpenAIClient;
@@ -2177,14 +2387,16 @@ export function buildSystemInstruction(
   const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000), tz);
   const todayBR = isoToDisplayBR(todayISO);
   const tomorrowBR = isoToDisplayBR(tomorrowISO);
+  const todayBlockedDate = getBlockedDateByIso(empresaId, todayISO);
 
   const todayFullLabel = dayFullLabelBrazil(todayLabel);
   const openDaysFull = DAY_LABELS
     .filter((d) => !cfg.closedDays.includes(d))
     .map((d) => dayFullLabelBrazil(d))
     .join(', ');
-  const closedDayWarning = isClosedToday
-    ? `
+  const closedDayWarning = (() => {
+    if (isClosedToday) {
+      return `
 
 ⚠️ AVISO CRÍTICO — HOJE A LOJA NÃO ATENDE
 HOJE é ${todayFullLabel} (${todayBR}) e a loja está fechada. Esta é a informação MAIS IMPORTANTE desta conversa.
@@ -2201,7 +2413,29 @@ REGRAS DE LINGUAGEM:
 - Não use a expressão "dia de fechamento". Diga "hoje não atendemos" ou "a gente não atende hoje".
 
 Dias em que abrimos: ${openDaysFull || 'consulte a loja'}.`
-    : '';
+    }
+
+    if (todayBlockedDate) {
+      const reason = safeForPrompt(todayBlockedDate.reason || 'data bloqueada', 120);
+      return `
+
+⚠️ AVISO CRÍTICO — HOJE A LOJA NÃO ACEITA PEDIDOS
+HOJE é ${todayFullLabel} (${todayBR}) e a data está bloqueada no calendário${reason ? ` porque é ${reason}` : ''}. Esta é a informação MAIS IMPORTANTE desta conversa.
+
+EM TODA RESPOSTA ao cliente, você DEVE:
+1. Deixar CLARO e logo no início que hoje (${todayFullLabel}) não estamos aceitando pedidos/encomendas — NÃO diga que hoje está aberto para pedido, NÃO ignore.
+2. Oferecer escolher outro dia, antecipar para antes, deixar para depois OU chamar um atendente.
+3. NUNCA aceitar pedido para hoje. NUNCA chame criar_pedido com pickupDate=hoje.
+
+Se for a primeira mensagem do cliente (ex: "Oi", "Olá", "Boa tarde", "Tenho interesse", "Quero a promoção"), cumprimente com cordialidade ANTES de informar o bloqueio. Exemplo: "Oi! Tudo bem? Hoje (${todayFullLabel}) não estamos aceitando pedidos por causa de ${reason}, mas posso te ajudar a agendar pra outro dia 😊 Em que posso te ajudar?".
+
+REGRAS DE LINGUAGEM:
+- Use o nome COMPLETO do dia da semana (domingo, segunda-feira, terça-feira, etc.). NUNCA "Dom", "Seg", "Ter".
+- Não use a expressão "data bloqueada" com o cliente. Explique naturalmente: "hoje não estamos aceitando pedidos" e diga o motivo.`;
+    }
+
+    return '';
+  })();
   const nextDays: string[] = [];
   for (let i = 1; i <= 7; i++) {
     const d = new Date(now.getTime() + i * 86400000);
@@ -3037,6 +3271,18 @@ export async function generateAndSendReply(
   // This prevents the AI from being re-invoked and creating a duplicate pending order.
   const pendingForEdit = isGeneralMode ? null : await getPendingOrder(jid, resolvedEmpresaId);
   if (pendingForEdit) {
+    const pendingScheduleGuard = evaluateCreateOrderScheduleGuard(
+      resolvedEmpresaId,
+      pendingForEdit.pickupDate,
+      pendingForEdit.pickupTime,
+    );
+    if (pendingScheduleGuard) {
+      console.log(`[AI] Blocking pending order before confirmation: invalid schedule for empresa=${resolvedEmpresaId} jid=${jid}`);
+      await clearPendingOrder(jid, resolvedEmpresaId);
+      await sendAndPersistText(jid, pendingScheduleGuard.reply, resolvedEmpresaId, { responseSource: 'ai_auto' });
+      return pendingScheduleGuard.reply;
+    }
+
     const lastMsg = session.messages.at(-1);
     const lastText = (lastMsg
       ? (buildContentForModel(lastMsg as any) || lastMsg.preview || lastMsg.content || '')
@@ -3215,11 +3461,24 @@ export async function generateAndSendReply(
     : '';
   const blockedDateFromMessage = lastUserTextForDate
     && !isGeneralMode
-    ? findBlockedDateFromCustomerText(resolvedEmpresaId, lastUserTextForDate)
+    // FIX 2026-06-04: pedido sem "hoje" em data bloqueada dependia do modelo → agora bloqueia antes da OpenAI.
+    ? findBlockedDateFromCustomerText(
+        resolvedEmpresaId,
+        lastUserTextForDate,
+        new Date(),
+        { checkCurrentDayForImmediateOrder: true },
+      )
     : null;
   if (blockedDateFromMessage) {
     console.log(`[AI] Blocking reply before OpenAI: requested blocked date ${blockedDateFromMessage.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
     return sendBlockedDateReply(jid, resolvedEmpresaId, blockedDateFromMessage);
+  }
+  const todayBlockedOperationalContext = !isGeneralMode
+    ? findRecentTodayBlockedOperationalGuard(resolvedEmpresaId, session.messages)
+    : null;
+  if (todayBlockedOperationalContext) {
+    console.log(`[AI] Blocking reply before OpenAI: today blocked and recent order/payment context for empresa=${resolvedEmpresaId} jid=${jid}`);
+    return sendBlockedDateReply(jid, resolvedEmpresaId, todayBlockedOperationalContext);
   }
   const recentScheduleContext = findRecentScheduleContextGuard(
     resolvedEmpresaId,

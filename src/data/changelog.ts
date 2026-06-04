@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-06-04',
+    category: 'hotfix',
+    title: 'IA respeita melhor feriados e datas bloqueadas',
+    description: 'Quando hoje está bloqueado na agenda, a IA avisa logo no começo e oferece outro dia, em vez de tratar como se a loja estivesse atendendo normalmente.',
+  },
+  {
     date: '2026-06-03',
     category: 'hotfix',
     title: 'Reconexão do WhatsApp mais confiável',

@@ -254,7 +254,7 @@
   - `014_zelochat_rls_hardening.sql` contains additional hardening but is still marked draft/not applied in repo comments.
 - Known risky areas:
   - `zelochat_session_tags` cross-tenant risk was fixed in Sprint 58: migration `033_zelochat_session_tags_tenant_enforcement.sql` enforces DB-level tenant consistency.
-  - `/webhook/:instance` fails closed on missing token by default. `setWebhookForInstance()` registers tokenized webhook URLs because Whatsmiau custom headers have historically been unreliable. `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT=1` is the temporary emergency bypass.
+  - Current head drift confirmed 2026-06-01: `/webhook/:instance` accepts a missing token for a known instance unless `WEBHOOK_REQUIRE_TOKEN=1|true|yes` is set. Older Sprint 58 docs/tests still expect fail-closed by default plus explicit `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT`; `tests/auditFixGuardrails.test.ts` fails on that missing marker.
   - Service-role usage is still common on backend hot paths, so explicit tenant filters remain critical.
 
 ## AI Engine Summary
@@ -302,7 +302,7 @@
 | Session/contact list | `server/messageHandler.ts`, `src/components/views/ChatView.tsx` | `getSessionsPage()` returns server-filtered pages; frontend loads more near list bottom | Yes | Yes | Preview fan-out still exists inside each page, but the blast radius is bounded by page size |
 | Message open | `server/router.ts`, `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts` | `GET /api/sessions/:jid?limit=50` and `GET /api/sessions/:jid/messages?before=...` | Yes | N/A | Chat UI now loads older messages on top-scroll |
 | Message send | `server/router.ts`, `server/messageHandler.ts`, `server/whatsapp.ts` | `/api/send` persists an outbound intent (`outbound_status='sending'`), sends through Whatsmiau, then marks `sent` or `failed` | N/A | N/A | Migration `034_zelochat_outbound_message_lifecycle.sql` adds persisted lifecycle fields |
-| Incoming webhook | `server/router.ts`, `server/index.ts`, `server/messageHandler.ts` | Token check, ack first, raw-event log, dedupe inbound by `wa_message_id`, schedule AI | N/A | N/A | Missing token now 401s unless the explicit rollout bypass env is set |
+| Incoming webhook | `server/router.ts`, `server/index.ts`, `server/messageHandler.ts` | Token check, ack first, raw-event log, dedupe inbound by `wa_message_id`, schedule AI | N/A | N/A | Current code accepts missing token unless `WEBHOOK_REQUIRE_TOKEN` strict mode is set; this conflicts with older fail-closed docs/tests |
 | AI reply generation | `server/ai.ts`, `server/configStore.ts` | Hydrates runtime config, builds large prompt, calls OpenAI with tools | No | Partial | Catalog can dominate prompt size in larger tenants |
 | Tag filtering/search | `src/hooks/useTags.ts`, `src/components/views/ChatView.tsx`, `server/tags.ts` | Loads all tags and full session->tags map, filters client-side | No | No | Not suitable for very large inboxes |
 | Unread counts / last message preview | `server/messageHandler.ts`, `src/hooks/useWhatsAppSessions.ts` | Counts persist on sessions; last visible preview is rebuilt from message batches on refresh | No | N/A | Current preview computation adds extra queries |
@@ -310,7 +310,7 @@
 
 ## Existing Risks / Known Pitfalls
 - Fixed in Sprint 58: cross-tenant tag attachment is blocked in service code and migration `033` enforces session/tag tenant consistency.
-- Fixed in Sprint 58: inbound webhook token validation fails closed by default, with tokenized webhook URLs and an explicit temporary rollout bypass env.
+- Drift confirmed 2026-06-01: inbound webhook token validation no longer matches the Sprint 58 fail-closed documentation. Code uses `WEBHOOK_REQUIRE_TOKEN` strict opt-in and accepts missing tokens for known instances by default; `tests/auditFixGuardrails.test.ts` fails because `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT` is absent.
 - Fixed in Sprint 58: inbox list has a paginated/filterable server API and frontend load-more wiring.
 - Fixed in Sprint 58: older message pagination is wired into the chat UI on top-scroll.
 - Fixed in Sprint 58: audio transcription completion re-arms the debounced AI reply when the audio remains the latest unanswered customer turn.
@@ -320,6 +320,8 @@
 - Confirmed: `out_for_delivery` orders are missing from AI active-order context. Root cause: `server/ai.ts:1778` queries `.in('status', ['pending','preparing','ready','dispatched'])` — `'dispatched'` is a non-existent status value (DB CHECK constraint uses `'out_for_delivery'`), making that filter term a dead no-op AND omitting the real status name. Two bugs in one line.
 - Confirmed: no persisted prompt/context snapshot exists for supportability; only aggregated AI usage is stored.
 - Confirmed: `dailyContext` entries are injected into the system prompt without `safeForPrompt()` sanitization or length cap (`server/ai.ts:2062-2064`). All other user-controlled fields use `safeForPrompt(value, maxLen)`. Accepted risk: operator controls their own `dailyContext`.
+- Confirmed 2026-06-01 dependency/warnings review: `localtunnel` was removed because `scripts/tunnel.js` already uses cloudflared; `npm audit --audit-level=low` is clean. Direct dependency majors still pending include `express@5`, `vite@8`, `stripe@22`, `pino@10`, and `typescript@6`; see `DEV_SETUP.md`.
+- Confirmed 2026-06-01 build warning: `npm run build` passes but emits Vite chunk warning; largest app chunk is `index-BgmHYe4Y.js` at 569.66 kB / 162.59 kB gzip.
 
 ## Historical Drift Notes
 - Current supported webhook route is `POST /webhook/:instance`; legacy `POST /webhook` now returns `410`.

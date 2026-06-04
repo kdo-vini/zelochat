@@ -17,6 +17,9 @@
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
 - `ai.ts:1778` — bug latente: query usa status `'dispatched'` (inexistente no DB) em vez de `'out_for_delivery'` → pedidos em entrega nunca aparecem no contexto da IA
 - `supabase/migrations/014_zelochat_rls_hardening.sql` — ainda marcado `DRAFT`, não aplicado em prod
+- `server/router.ts:806` / `tests/auditFixGuardrails.test.ts` — drift de webhook auth: docs/teste esperam `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT`, mas o código atual usa `WEBHOOK_REQUIRE_TOKEN` como strict opt-in e aceita token ausente por padrão para instância conhecida
+- `npm run build` — aviso de chunk >500 kB voltou; maior chunk app atual `index-BgmHYe4Y.js` = 569.66 kB / 162.59 kB gzip (ver [[DEV_SETUP]])
+- Dependências antigas — `npm audit` limpo após remover `localtunnel`; majors ainda pendentes exigem migração dedicada (`express@5`, `vite@8`, `stripe@22`, `typescript@6`, etc.; ver [[DEV_SETUP]])
 
 ## Dívida técnica aceita (conhecido, não prioritário)
 
@@ -47,3 +50,4 @@ Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Fatias sugeridas:
 - Grace period de 14 dias para deleção de conta (LGPD)
 - Figurinhas recebidas renderizadas como imagem
 - Banner "nova versão disponível" corrigido para disparar em prod
+- Review de warnings/dependências: `localtunnel` removido porque `scripts/tunnel.js` já usa cloudflared; `npm audit --audit-level=low` agora retorna 0 vulnerabilidades; pendências documentadas em [[DEV_SETUP]] (2026-06-01)

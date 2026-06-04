@@ -3,7 +3,7 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-06-03 Sprint 64):** Incidente externo no proxy do provedor WhatsApp; ZeloChat recebeu apenas ajustes defensivos de polling/copy e documentação operacional.
+**Latest execution note (2026-06-04 Sprint 65):** Simulador e produção agora compartilham validações fortes de agenda; data bloqueada hoje barra disponibilidade, Pix, retirada e confirmação antes da OpenAI.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -119,6 +119,14 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 65 (2026-06-04) — Agenda da IA alinhada ao simulador
+
+- ✅ Agenda da IA — pedido implícito, pergunta de produto/cardápio, Pix, retirada, horário e continuação curta agora bloqueiam antes da OpenAI quando hoje está em `blocked_dates` e não há data futura explícita; o prompt também destaca “hoje bloqueado” como aviso crítico — `server/ai.ts:952`, `server/ai.ts:959`, `server/ai.ts:2312`, `server/ai.ts:3421`
+- ✅ Confirmação segura — pendência antiga com data bloqueada ou horário inválido é revalidada e limpa antes de aceitar “sim”, “só isso” ou botão de confirmação — `server/ai.ts:584`, `server/ai.ts:3273`
+- ✅ Simulador de atendimento — dry-run do Cérebro IA passa pela mesma validação de agenda da produção antes do modelo e marca `criar_pedido` como bloqueado quando a tool sair com data/horário inválidos; rascunho de regras longas não é mais cortado em 1.200 caracteres — `server/aiSimulator.ts:37`, `server/aiSimulator.ts:71`, `server/aiSimulator.ts:145`
+- ✅ Testes — cobertura para Casa dos Salgados/feriado: pedido sem “hoje”, pergunta “tem coxinha?”, Pix/retirada, “só isso” após contexto de retirada, pedido futuro livre, tool com `pickupDate` bloqueado e aviso crítico no prompt — `tests/aiSimulatorScheduleGuard.test.ts:59`, `tests/run-unit-tests.ts:21`
+- Verificação — `npx tsx tests/aiSimulatorScheduleGuard.test.ts`, `npx tsc --noEmit -p server/tsconfig.json`, `npx tsx tests/aiPromptGuardrails.test.ts`, `npm run lint`.
+
 ### Sprint 64 (2026-06-03) — Incidente externo no WhatsApp + ajustes defensivos
 
 - ✅ Incidente — causa confirmada fora do ZeloChat: instabilidade no proxy do provedor WhatsApp; `/api/healthz` estava verde porque só mede liveness do backend Express, não saúde da integração WhatsApp — `INCIDENTS.md:35`
@@ -127,6 +135,13 @@ These are out of scope or unsafe to change from this branch:
 - ✅ Copy/docs — mensagens visíveis não expõem nomes de provedores internos; convenção documentada para futuras IAs/devs — `CLAUDE.md:46`, `AGENTS.md:56`
 - ✅ Revert — removido o ajuste extra de status por endpoint per-instância porque não era necessário para a causa raiz confirmada — commit `8ee2d8c`.
 - Verificação — `npx tsc --noEmit -p server/tsconfig.json`, `npm run lint` e `npm run build` passaram. `npx tsx tests/auditFixGuardrails.test.ts` passou nos novos guardrails e segue falhando apenas no drift conhecido de webhook documentado em [[CURRENT]].
+
+### Sprint 63 (2026-06-01) — Review de warnings/dependências
+
+- ✅ Dependências — `localtunnel` removido de `devDependencies`; o script real de túnel já usa cloudflared, e a remoção elimina o audit HIGH via `localtunnel -> axios@0.21.4` sem trocar runtime de produção — `package.json`, `package-lock.json`, `scripts/tunnel.js`
+- ✅ Docs — review de `npm audit`, `npm outdated`, `npm ls`, build warning e guardrail de webhook documentado sem duplicar no vault; `obsidian/DEV_SETUP.md`, `obsidian/CURRENT.md` e `obsidian/ZeloChat.memory.md` são symlinks para os arquivos atualizados — `DEV_SETUP.md`, `CURRENT.md`, `docs/ai/ZeloChat.memory.md`
+- ⚠️ Pendentes — `npm run build` ainda avisa chunk app >500 kB (`index-BgmHYe4Y.js` 569.66 kB / 162.59 kB gzip); `npm test` ainda falha em `tests/auditFixGuardrails.test.ts` por drift entre `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT` esperado e `WEBHOOK_REQUIRE_TOKEN` usado no código atual; majors de dependências exigem migração dedicada.
+- Verificação — `npm audit --audit-level=low` passou com 0 vulnerabilidades, `npm ls --depth=0` passou, `npm run lint` passou, `npm run build` passou com aviso de chunk, `npm test` falhou apenas no guardrail de webhook citado acima.
 
 ### Sprint 62 (2026-06-01) — Estoque como regra operacional da IA
 

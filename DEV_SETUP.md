@@ -96,7 +96,7 @@ sudo npx playwright install-deps chromium   # system libs
 | `FRONTEND_URL` | Sim | URL do frontend (CORS) — `http://localhost:3000` em dev |
 | `PUBLIC_APP_URL` | Sim | URL pública do app |
 | `SERVER_PORT` | Não | Porta do backend (default: `3001`) |
-| `WEBHOOK_PUBLIC_URL` | Não | URL pública para webhook (gerada pelo localtunnel em dev) |
+| `WEBHOOK_PUBLIC_URL` | Não | URL pública para webhook (gerada pelo cloudflared em dev) |
 | `TECHNE_EMPRESA_ID` | Não | ID da empresa Techne (integração interna) |
 | `TECHNE_INTERNAL_API_KEY` | Não | Key da integração Techne |
 | `CRON_SECRET` | Não | Secret para validar chamadas de cron |
@@ -108,14 +108,14 @@ sudo npx playwright install-deps chromium   # system libs
 ### Rodar tudo junto (recomendado)
 ```bash
 npm run dev:all
-# Inicia: localtunnel (webhook) + backend Express + frontend Vite
+# Inicia: cloudflared (webhook) + backend Express + frontend Vite
 ```
 
 ### Serviços separados
 ```bash
 npm run dev          # Frontend apenas (porta 3000)
 npm run dev:server   # Backend apenas (porta 3001, com hot-reload via tsx)
-npm run dev:tunnel   # Túnel localtunnel para webhook WhatsApp
+npm run dev:tunnel   # Túnel cloudflared para webhook WhatsApp
 ```
 
 ### Build de produção
@@ -154,13 +154,42 @@ npm run test:e2e:ui  # Playwright com UI interativa
 
 ## Vulnerabilidades npm
 
-2 HIGH após `npm update`:
+Review em 2026-06-01:
 
-| Pacote | Severidade | Contexto |
-|---|---|---|
-| `localtunnel` | HIGH (via `axios`) | Dev-only — usado em `npm run dev:tunnel` para expor webhook local |
+- `npm audit --audit-level=low`: **0 vulnerabilidades**.
+- O audit anterior acusava 2 HIGH via `localtunnel -> axios@0.21.4`. `localtunnel` era dependência de dev não usada: `scripts/tunnel.js` já usa `cloudflared`. O pacote foi removido em 2026-06-01.
+- `npm audit --omit=dev --audit-level=low`: **0 vulnerabilidades** antes e depois da remoção.
 
-**Não usar `npm audit fix --force`** — o "fix" disponível é um major bump do `localtunnel` que não tem releases recentes ativos. Risco real é zero: `localtunnel` só roda localmente em dev, nunca em produção.
+---
+
+## Dependências desatualizadas
+
+Levantamento em 2026-06-01 via `npm outdated --long`.
+
+Atualizações patch/minor dentro do range atual, candidatas para uma rodada curta com regressão:
+
+| Pacote | Atual | Wanted/Latest |
+|---|---:|---:|
+| `@supabase/supabase-js` | 2.106.1 | 2.106.2 |
+| `date-fns` | 4.2.1 | 4.4.0 |
+| `openai` | 6.38.0 | 6.40.0 |
+| `react` / `react-dom` | 19.2.6 | 19.2.7 |
+| `react-router-dom` | 7.15.1 | 7.16.0 |
+| `tsx` | 4.22.3 | 4.22.4 |
+| `vite` | 6.4.2 | 6.4.3 |
+| `ws` | 8.20.1 | 8.21.0 |
+
+Majors pendentes. Não atualizar em massa sem tarefa dedicada:
+
+| Pacote | Atual | Latest | Nota |
+|---|---:|---:|---|
+| `express` / `@types/express` | 4.22.2 / 4.17.25 | 5.2.1 / 5.0.6 | Migração de middleware/typing e rotas. |
+| `vite` / `@vitejs/plugin-react` | 6.4.2 / 5.2.0 | 8.0.16 / 6.0.2 | Validar build Docker/nginx e plugins Tailwind. |
+| `stripe` | 17.7.0 | 22.2.0 | Billing crítico; revisar contrato SDK e runbook. |
+| `pino` | 9.14.0 | 10.3.1 | Validar serializadores/redaction/log shape. |
+| `typescript` | 5.8.3 | 6.0.3 | Pode exigir ajustes de tipos. |
+| `lucide-react` | 0.546.0 | 1.17.0 | Risco baixo, mas validar nomes de ícones/imports. |
+| `@types/node` | 22.19.19 | 25.9.1 | Projeto roda Node 20; manter types 22 até mudar runtime. |
 
 ---
 
@@ -170,7 +199,28 @@ npm run test:e2e:ui  # Playwright com UI interativa
 (!) Some chunks are larger than 500 kB after minification.
 ```
 
-O chunk `index.js` tem 539 kB (154 kB gzip). O `vite.config.ts` já tem `manualChunks` configurado para separar React, motion, Supabase, lucide e dnd. O chunk grande é o código da aplicação em si. Aceitável por enquanto, mas monitorar se crescer.
+Review em 2026-06-01: `npm run build` passa, mas o aviso voltou.
+
+- Maior chunk app: `dist/assets/index-BgmHYe4Y.js` com **569.66 kB** (**162.59 kB gzip**).
+- Maior vendor chunk: `supabase-vendor` com **210.50 kB** (**54.55 kB gzip**).
+- `vite.config.ts` já separa React, motion, Supabase, lucide e dnd via `manualChunks`; o excesso atual está no código da aplicação.
+- Não é risco de segurança nem bloqueia deploy, mas desfaz o estado "sem aviso de chunk grande" registrado na Sprint 42. Próximo passo pragmático: investigar code-split adicional no shell/chat ou orçamento explícito de chunk.
+
+---
+
+## Warnings de teste conhecidos
+
+Review em 2026-06-01: `npm test` roda a suíte inteira e falha em **1 guardrail estático**:
+
+```text
+tests/auditFixGuardrails.test.ts
+FAIL webhook has explicit rollout bypass name
+```
+
+Diagnóstico: `tests/auditFixGuardrails.test.ts` e docs de Sprint 58 esperam o env `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT`, mas `server/router.ts` hoje usa `WEBHOOK_REQUIRE_TOKEN` como strict opt-in e aceita token ausente para instância conhecida quando esse env não está ativo. Isso toca `/webhook/:instance`, uma função crítica; não corrigir silenciosamente sem decidir se a postura correta é:
+
+- restaurar fail-closed por padrão com bypass explícito; ou
+- atualizar docs/testes para assumir strict opt-in por `WEBHOOK_REQUIRE_TOKEN`.
 
 ---
 
@@ -194,7 +244,7 @@ zelochat/
 ├── tests/                  # Testes unitários (tsx)
 ├── e2e/                    # Testes Playwright
 ├── scripts/
-│   └── tunnel.js           # localtunnel para dev webhook
+│   └── tunnel.js           # cloudflared para dev webhook
 ├── Dockerfile              # Backend (node:20-alpine)
 ├── Dockerfile.frontend     # Frontend (nginx)
 ├── .nvmrc                  # Node version: 20
@@ -222,9 +272,10 @@ zelochat/
 - [ ] Criar `.env.example` com todas as variáveis do servidor (sem valores)
 - [ ] Mover `VITE_SUPABASE_*` do `.env.local` para `.env` (unificar arquivos de env)
 - [ ] Adicionar `engines: { node: "20.x" }` ao `package.json`
-- [ ] Avaliar substituição do `localtunnel` (sem manutenção ativa) por `cloudflared tunnel` ou `ngrok` para dev webhook
+- [ ] Planejar migração dos majors pendentes (`express@5`, `vite@8`, `stripe@22`, `typescript@6`) em tarefas separadas
+- [ ] Investigar code-split adicional para remover o aviso de chunk >500 kB
 - [ ] Considerar `tsx watch` com `--env-file=.env` quando Node 20.6+ for garantido (elimina `dotenv`)
 
 ---
 
-*Gerado em: 2026-05-21 | Node: v20.20.2 | npm: v10.8.2 | NVM: v0.40.3*
+*Atualizado em: 2026-06-01 | Node: v20.20.2 | npm: v10.8.2 | NVM: v0.40.3*

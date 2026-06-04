@@ -11,6 +11,22 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## VIII. IA pega pedido quando hoje está bloqueado na agenda
+
+### Sintoma
+- Em uma data bloqueada/feriado, a IA responde disponibilidade de produto e avança para Pix/retirada como se fosse pedido para hoje.
+
+### Causa-raiz
+As travas determinísticas só bloqueavam datas explícitas ou intenção direta de pedido; fluxos conduzidos por disponibilidade de produto, Pix, retirada, nome e continuações curtas dependiam do modelo respeitar o prompt.
+
+### Fix
+A validação pré-OpenAI agora bloqueia intenção operacional de hoje em `blocked_dates` quando não há data futura explícita, e pendências antigas são revalidadas antes da confirmação — `server/ai.ts:952`, `server/ai.ts:959`, `server/ai.ts:584`, `server/ai.ts:3273`.
+
+### Recovery
+1. Conferir se a data bloqueada aparece em Calendário → Datas bloqueadas.
+2. Testar no Cérebro IA com frases como “tem coxinha?”, “vou mandar o pix e meu filho vai buscar”, “retirada às 10:50” e “só isso”.
+3. A resposta esperada deve avisar que a data está bloqueada e oferecer outro dia ou atendente, sem pedir Pix, nome, retirada ou confirmação.
+
 ## 🔍 Como diagnosticar quando inbound morre
 
 Outage típico: "outbound funciona (cliente recebe), inbound não chega (operador

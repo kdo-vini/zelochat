@@ -7,6 +7,8 @@ import {
   CONSULT_ORDER_TOOL,
   DISPATCH_TRIGGER_TOOL,
   safeForPrompt,
+  evaluateScheduleGuardForDryRun,
+  evaluateCreateOrderScheduleGuard,
 } from './ai.js';
 import { getConfig, ensureAiSettingsHydrated } from './configStore.js';
 import { fetchActiveTriggers } from './triggers.js';
@@ -32,6 +34,7 @@ export interface SimulateResult {
 
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_HISTORY_MSGS = 20;
+const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 50000;
 
 /**
  * Dry-run the full AI pipeline for a given empresa and customer message.
@@ -48,7 +51,7 @@ export async function simulateAtendimento(
 
   // Apply any config overrides from the caller (e.g. test a new aiInstructions draft).
   if (payload.configOverride?.aiInstructions !== undefined) {
-    cfg.aiInstructions = safeForPrompt(payload.configOverride.aiInstructions, 1200);
+    cfg.aiInstructions = safeForPrompt(payload.configOverride.aiInstructions, OWNER_AI_INSTRUCTIONS_MAX_CHARS);
   }
   if (payload.configOverride?.storeName !== undefined) {
     cfg.name = safeForPrompt(payload.configOverride.storeName, 100);
@@ -56,6 +59,24 @@ export async function simulateAtendimento(
 
   const customerName = safeForPrompt(payload.customerName || 'Cliente', 80);
   const customerMessage = payload.customerMessage.slice(0, MAX_MESSAGE_CHARS);
+  const rawHistory = (payload.conversationHistory ?? []).slice(0, MAX_HISTORY_MSGS);
+  const simulatedConversation = [
+    ...rawHistory.map((msg) => ({
+      role: msg.role,
+      content: String(msg.content ?? '').slice(0, MAX_MESSAGE_CHARS),
+    })),
+    { role: 'user' as const, content: customerMessage },
+  ];
+
+  const scheduleGuard = evaluateScheduleGuardForDryRun(empresaId, simulatedConversation);
+  if (scheduleGuard) {
+    return {
+      reply: scheduleGuard.reply,
+      toolCallsMade: [],
+      wouldCreateOrder: false,
+      simulationNote: `Simulação — resposta bloqueada pela mesma validação de agenda da produção (${scheduleGuard.type})`,
+    };
+  }
 
   // Fetch triggers (read-only — no side effects).
   let triggers: Awaited<ReturnType<typeof fetchActiveTriggers>> = [];
@@ -77,10 +98,9 @@ export async function simulateAtendimento(
   );
 
   // Build the messages array.
-  const rawHistory = (payload.conversationHistory ?? []).slice(0, MAX_HISTORY_MSGS);
   const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
-    ...rawHistory.map((msg) => ({
+    ...simulatedConversation.slice(0, -1).map((msg) => ({
       role: msg.role,
       content: msg.content,
     })) as ChatCompletionMessageParam[],
@@ -122,6 +142,31 @@ export async function simulateAtendimento(
   const toolCallsMade: string[] = (assistantMessage.tool_calls ?? [])
     .filter((tc) => tc.type === 'function')
     .map((tc) => tc.function.name);
+  const createOrderCall = (assistantMessage.tool_calls ?? [])
+    .find((tc) => tc.type === 'function' && tc.function.name === 'criar_pedido');
+  if (createOrderCall?.type === 'function') {
+    try {
+      const args = JSON.parse(createOrderCall.function.arguments || '{}') as {
+        pickupDate?: unknown;
+        pickupTime?: unknown;
+      };
+      const createOrderScheduleGuard = evaluateCreateOrderScheduleGuard(
+        empresaId,
+        args.pickupDate,
+        args.pickupTime,
+      );
+      if (createOrderScheduleGuard) {
+        return {
+          reply: createOrderScheduleGuard.reply,
+          toolCallsMade,
+          wouldCreateOrder: false,
+          simulationNote: `Simulação — criar_pedido seria bloqueado pela mesma validação de agenda da produção (${createOrderScheduleGuard.type})`,
+        };
+      }
+    } catch (err) {
+      console.warn('[aiSimulator] could not parse criar_pedido arguments for schedule dry-run:', err);
+    }
+  }
 
   // Derive reply text — if the model only emitted tool calls (no content), describe what
   // it would have done so the simulator returns something readable.
