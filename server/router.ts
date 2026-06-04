@@ -202,6 +202,39 @@ function serializeInternalSendError(error: unknown): {
   };
 }
 
+function serializeManualSendError(error: unknown): {
+  error: string;
+  message: string;
+  providerStatus?: number;
+  providerMessage?: string;
+} {
+  if (axios.isAxiosError(error)) {
+    const providerStatus = error.response?.status;
+    const providerBody = error.response?.data;
+    const providerMessage =
+      typeof providerBody === 'string'
+        ? providerBody
+        : typeof providerBody?.message === 'string'
+          ? providerBody.message
+          : typeof providerBody?.error === 'string'
+            ? providerBody.error
+            : error.message;
+
+    return {
+      error: 'WHATSAPP_SEND_FAILED',
+      message: 'Não foi possível enviar a mensagem pelo WhatsApp agora. Verifique se o WhatsApp está conectado e tente novamente.',
+      ...(providerStatus ? { providerStatus } : {}),
+      ...(providerMessage ? { providerMessage } : {}),
+    };
+  }
+
+  return {
+    error: 'WHATSAPP_SEND_FAILED',
+    message: 'Não foi possível confirmar o envio pelo WhatsApp agora. Tente novamente em alguns instantes.',
+    providerMessage: error instanceof Error ? error.message : String(error || 'Falha ao enviar mensagem.'),
+  };
+}
+
 async function resolveTechneEmpresaProfile(): Promise<{ id: string; internalKeyHash: string | null }> {
   const fromEnv = (process.env.TECHNE_EMPRESA_ID || '').trim();
   if (fromEnv) {
@@ -1315,12 +1348,21 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
       } else {
         waMessageId = await sendTextMessage(to, trimmedMessage, empresaId, validQuoted);
       }
-      await markAssistantMessageSendSucceeded(empresaId, intent.id, waMessageId ?? null);
+      await markAssistantMessageSendSucceeded(empresaId, intent.id, waMessageId ?? null).catch((markError) => {
+        console.warn('[Router] WhatsApp sent, but failed to mark DB message as sent:', markError);
+      });
       res.json({ ok: true, messageId: waMessageId ?? null, dbMessageId: intent.id });
     } catch (sendError) {
-      const messageText = sendError instanceof Error ? sendError.message : String(sendError);
-      await markAssistantMessageSendFailed(empresaId, intent.id, messageText);
-      throw sendError;
+      const payload = serializeManualSendError(sendError);
+      await markAssistantMessageSendFailed(empresaId, intent.id, payload.providerMessage ?? payload.message).catch((markError) => {
+        console.warn('[Router] Failed to mark WhatsApp send as failed:', markError);
+      });
+      console.error('[Router] WhatsApp provider send error:', sendError);
+      res.status(502).json({
+        error: payload.message,
+        code: payload.error,
+        ...(payload.providerStatus ? { providerStatus: payload.providerStatus } : {}),
+      });
     }
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {

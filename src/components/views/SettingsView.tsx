@@ -93,7 +93,7 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         });
         const data = await res.json();
-        if (data.status === 'connected' || data.qr === null && !data.error) {
+        if (data.status === 'connected' || (!data.status && data.qr === null && !data.error)) {
           setWaStatus('connected');
           setQrCode(null);
           setError(null);
@@ -101,6 +101,10 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
         } else if (data.qr) {
           // QR rotated — update it
           setQrCode(data.qr);
+          setWaStatus('qr');
+          setError(null);
+        } else if (data.status === 'connecting') {
+          setWaStatus('connecting');
         }
       } catch { /* keep polling */ }
     }, 3000);
@@ -180,6 +184,12 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
       } else if (data.status === 'connected') {
         setWaStatus('connected');
         setQrCode(null);
+        stopPolling();
+      } else if (data.status === 'connecting') {
+        setWaStatus('connecting');
+        startPolling();
+        const detail = data.upstreamError ? ` (${data.upstreamError})` : '';
+        setError(`Aguardando resposta do WhatsApp${detail}. O ZeloChat vai tentar novamente automaticamente.`);
       } else if (data.error) {
         setError(`Erro ao gerar QR Code: ${data.error}`);
       } else if (data.status === 'disconnected' || data.status === 'pending') {

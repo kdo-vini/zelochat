@@ -39,10 +39,14 @@ assert(router.includes('safeEqualString(headerToken, webhookToken)'), 'webhook t
 assert(router.includes('messageExistsByWhatsAppId'), 'fromMe echo skip checks database persistence');
 assert(router.includes('createAssistantMessageIntent'), 'manual sends persist an outbound intent before WhatsApp send');
 assert(router.includes('markAssistantMessageSendFailed'), 'manual send failures are persisted');
+assert(router.includes('serializeManualSendError'), 'manual send provider failures return a controlled API error');
+assert(router.includes('WhatsApp sent, but failed to mark DB message as sent'), 'manual sends do not turn post-send DB status failures into 500s');
 
 const whatsapp = read('server/whatsapp.ts');
 assert(whatsapp.includes('toWhatsmiauNumber(jid)'), 'outbound sends pass phone digits to Whatsmiau instead of full JIDs');
 assert(whatsapp.includes('requireWhatsmiauMessageId(res.data'), 'manual outbound success requires a Whatsmiau message id');
+assert(whatsapp.includes('data?.data?.message?.key?.id'), 'Whatsmiau message id extraction accepts nested data.message.key.id responses');
+assert(whatsapp.includes("err.code === 'ECONNABORTED'"), 'QR connect timeouts keep the instance in connecting state');
 
 const messageHandler = read('server/messageHandler.ts');
 assert(messageHandler.includes('messageExistsByWhatsAppId'), 'message existence helper exists for outbound echo repair');
@@ -59,6 +63,10 @@ assert(waApi.includes('ChatSessionsQuery'), 'frontend sessions API accepts serve
 const chatView = read('src/components/views/ChatView.tsx');
 assert(chatView.includes('loadMoreSessions'), 'chat list can request additional server pages');
 assert(chatView.includes('loadOlderMessages'), 'chat detail can request older message pages');
+
+const settingsView = read('src/components/views/SettingsView.tsx');
+assert(settingsView.includes("data.status === 'connecting'"), 'WhatsApp QR UI keeps polling while Whatsmiau prepares the QR');
+assert(settingsView.includes('(!data.status && data.qr === null && !data.error)'), 'WhatsApp QR polling does not treat connecting/null-QR as connected');
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail === 0 ? 0 : 1);

@@ -141,13 +141,26 @@ function v2Url(path: string): string {
 }
 
 function extractWhatsmiauMessageId(data: any): string | undefined {
-  return (
-    data?.key?.id ??
-    data?.data?.key?.id ??
-    data?.message?.key?.id ??
-    data?.messageId ??
-    data?.id
-  ) as string | undefined;
+  const candidates = [
+    data?.key?.id,
+    data?.data?.key?.id,
+    data?.message?.key?.id,
+    data?.data?.message?.key?.id,
+    data?.response?.key?.id,
+    data?.response?.data?.key?.id,
+    data?.response?.message?.key?.id,
+    data?.response?.data?.message?.key?.id,
+    data?.messageId,
+    data?.data?.messageId,
+    data?.response?.messageId,
+    data?.response?.data?.messageId,
+    data?.id,
+    data?.data?.id,
+    data?.response?.id,
+    data?.response?.data?.id,
+  ];
+
+  return candidates.find((id): id is string => typeof id === 'string' && id.trim().length > 0);
 }
 
 function toWhatsmiauNumber(jidOrPhone: string): string {
@@ -655,6 +668,12 @@ export async function fetchInstanceQR(instanceName: string): Promise<{ status: C
     const msg = err instanceof Error ? err.message : String(err);
     const upstreamError = status ? `whatsmiau ${status}: ${msg}` : msg;
     console.error(`[WhatsApp] fetchInstanceQR(${redactInstance(instanceName)}) falhou:`, upstreamError);
+    // The connect endpoint often holds the request while Whatsmiau starts the
+    // pairing session. A client timeout here does not mean the instance is
+    // disconnected forever; keep the UI polling instead of stranding the user.
+    if (axios.isAxiosError(err) && err.code === 'ECONNABORTED') {
+      return { status: 'connecting', qr: null, upstreamError: 'whatsmiau ainda está preparando o QR Code' };
+    }
     return { status: 'disconnected', qr: null, upstreamError };
   }
 }

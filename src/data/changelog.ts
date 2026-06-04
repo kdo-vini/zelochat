@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-06-03',
+    category: 'hotfix',
+    title: 'Reconexão do WhatsApp mais confiável',
+    description: 'Quando o WhatsApp demora para gerar o QR Code, o ZeloChat continua tentando automaticamente em vez de deixar a tela parada no erro.',
+  },
+  {
     date: '2026-06-01',
     category: 'hotfix',
     title: 'Atualização do app carrega sem Ctrl+F5',

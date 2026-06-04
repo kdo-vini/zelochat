@@ -32,6 +32,37 @@ A combinação aponta direto pra um dos blocos abaixo.
 
 ---
 
+## VII. Reconectar WhatsApp fica preso em timeout ao gerar QR
+
+### Sintoma
+- Após desconectar manualmente, clicar em "Gerar QR Code" mostra:
+  `Aguardando resposta do WhatsApp (timeout of 10000ms exceeded)`.
+- A tela de instâncias da Whatsmiau aparece como desconectada, enquanto o card
+  de Configurações pode mostrar o último estado conectado por cache visual.
+- Mensagens manuais pelo painel falham e mensagens enviadas pelo WhatsApp comum
+  não aparecem no ZeloChat enquanto a instância não reconecta.
+
+### Causa-raiz
+O endpoint `/v2/instance/connect/{instance}` da Whatsmiau pode segurar a
+requisição enquanto prepara a sessão de pareamento; o backend tratava timeout
+de 10s como `disconnected`, e o frontend só fazia polling quando já havia QR.
+
+### Fix
+Timeout do connect agora volta como `connecting`, e a tela de Configurações
+continua consultando `/api/qr/refresh` automaticamente até receber QR ou estado
+conectado — `server/whatsapp.ts:674`, `src/components/views/SettingsView.tsx:188`.
+
+### Recovery
+1. Depois do deploy do fix, clique em "Gerar QR Code" uma vez e aguarde o
+   polling automático.
+2. Se ficar em `connecting` por mais de 60s, rode no container do backend:
+   `npx tsx scripts/diagnose-webhooks.ts` para checar instância upstream,
+   webhook registrado e reachability pública.
+3. Se a instância não existir mais upstream ou estiver com nome divergente,
+   seguir o bloco "Whatsmiau renomeou as instâncias upstream".
+
+---
+
 ## I. POST `/webhook/:instance` retorna 405
 
 ### Sintoma
