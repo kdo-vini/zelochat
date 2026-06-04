@@ -188,15 +188,13 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
       } else if (data.status === 'connecting') {
         setWaStatus('connecting');
         startPolling();
-        const detail = data.upstreamError ? ` (${data.upstreamError})` : '';
-        setError(`Aguardando resposta do WhatsApp${detail}. O ZeloChat vai tentar novamente automaticamente.`);
+        setError('Aguardando resposta do WhatsApp. O ZeloChat vai tentar novamente automaticamente.');
       } else if (data.error) {
         setError(`Erro ao gerar QR Code: ${data.error}`);
       } else if (data.status === 'disconnected' || data.status === 'pending') {
         // Whatsmiau ainda não retornou QR (instância recém-criada ou serviço lento).
         // Mostra contexto se backend deu detalhes, senão pede pra esperar e clicar de novo.
-        const detail = data.upstreamError ? ` (${data.upstreamError})` : '';
-        setError(`Aguardando resposta do WhatsApp${detail}. Espere uns 10 segundos e clique em "Gerar QR Code" novamente.`);
+        setError('Aguardando resposta do WhatsApp. Espere uns 10 segundos e clique em "Gerar QR Code" novamente.');
       } else {
         setError('Resposta inesperada do servidor. Tente novamente em instantes.');
       }
@@ -237,7 +235,7 @@ export const WhatsAppIntegrationCard = ({ token, subscriptionActive, subscriptio
           const v = await verify.json();
           if (v.status && v.status !== 'disconnected') {
             setWaStatus(v.status);
-            setError('O WhatsApp ainda aparece conectado no Whatsmiau. Tente novamente.');
+            setError('O WhatsApp ainda aparece conectado. Tente novamente.');
           }
         } catch { /* verification is best-effort */ }
       } else {

@@ -42,6 +42,24 @@ Categories:
 - `minor` — small polish, copy change, or UX tweak
 - `hotfix` — urgent bug fix that broke something in production
 
+## Customer-facing copy
+
+Toda mensagem exibida para operador, dono da loja ou cliente final deve ser em
+português brasileiro, clara e orientada à ação. **Nunca exponha nomes de
+provedores, serviços internos, endpoints, códigos técnicos ou detalhes de
+infraestrutura** em UI, toast, banner, erro de API consumido pelo frontend,
+Novidades ou prompts para usuário. Exemplos proibidos em texto visível:
+`Whatsmiau`, `Stripe`, `OpenAI`, `Supabase`, `webhook`, `endpoint`,
+`timeout of 10000ms exceeded`, `provider`, `upstream`.
+
+Quando precisar explicar uma falha, traduza para o impacto e próximo passo:
+- Use: "O WhatsApp ainda está preparando o QR Code. O ZeloChat vai tentar novamente automaticamente."
+- Não use: "Whatsmiau ainda está preparando o QR Code" ou "upstream timeout".
+
+Logs internos, comentários técnicos e runbooks podem citar provedores quando
+isso ajuda diagnóstico, mas qualquer valor que possa atravessar para a UI deve
+ser sanitizado antes da resposta.
+
 ## Deploy
 
 Production runs on **Dokploy**, linked directly to the `main` branch on GitHub (`kdo-vini/zelochat`). **Every push to `main` triggers an automatic redeploy** — no manual step needed, no GitHub Actions required. Docker build + container restart typically takes 2–5 minutes after the push lands. Do not tell the user to "manually trigger Dokploy" — it happens automatically on push.

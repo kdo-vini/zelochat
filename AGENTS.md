@@ -53,6 +53,7 @@ Add to `src/data/changelog.ts` only for meaningful user-facing changes. Max **4 
 - For complex tasks, use subagents for async work and parallelism. Be an orchestrator.
 - Never mutate `sessions` state directly — always go through `useWhatsAppSessions` hook.
 - Never call AI APIs from React components — always go through `/api/ai/complete`.
+- Never expose provider/internal names in customer-facing copy. UI/toasts/API errors consumed by the frontend/Novidades must use friendly Brazilian Portuguese and must not mention `Whatsmiau`, `Stripe`, `OpenAI`, `Supabase`, endpoints, webhooks, upstream, timeouts, or raw technical errors. Keep provider names in logs/runbooks only.
 
 ## Documentação — convenção AI-first
 

@@ -65,8 +65,9 @@ assert(chatView.includes('loadMoreSessions'), 'chat list can request additional 
 assert(chatView.includes('loadOlderMessages'), 'chat detail can request older message pages');
 
 const settingsView = read('src/components/views/SettingsView.tsx');
-assert(settingsView.includes("data.status === 'connecting'"), 'WhatsApp QR UI keeps polling while Whatsmiau prepares the QR');
+assert(settingsView.includes("data.status === 'connecting'"), 'WhatsApp QR UI keeps polling while the QR is being prepared');
 assert(settingsView.includes('(!data.status && data.qr === null && !data.error)'), 'WhatsApp QR polling does not treat connecting/null-QR as connected');
+assert(!/setError\([^)]*Whatsmiau/i.test(settingsView), 'customer-facing WhatsApp errors do not expose provider names');
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail === 0 ? 0 : 1);

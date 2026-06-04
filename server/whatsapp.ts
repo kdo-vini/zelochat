@@ -661,7 +661,7 @@ export async function fetchInstanceQR(instanceName: string): Promise<{ status: C
     return {
       status: 'connecting',
       qr: null,
-      upstreamError: 'whatsmiau ainda não retornou o QR; tente novamente em alguns segundos',
+      upstreamError: 'o WhatsApp ainda não retornou o QR; tente novamente em alguns segundos',
     };
   } catch (err) {
     const status = (err as { response?: { status?: number } })?.response?.status;
@@ -672,9 +672,9 @@ export async function fetchInstanceQR(instanceName: string): Promise<{ status: C
     // pairing session. A client timeout here does not mean the instance is
     // disconnected forever; keep the UI polling instead of stranding the user.
     if (axios.isAxiosError(err) && err.code === 'ECONNABORTED') {
-      return { status: 'connecting', qr: null, upstreamError: 'whatsmiau ainda está preparando o QR Code' };
+      return { status: 'connecting', qr: null, upstreamError: 'o WhatsApp ainda está preparando o QR Code' };
     }
-    return { status: 'disconnected', qr: null, upstreamError };
+    return { status: 'disconnected', qr: null, upstreamError: status ? `serviço de WhatsApp ${status}` : 'serviço de WhatsApp indisponível' };
   }
 }
 
@@ -912,7 +912,7 @@ export async function disconnectWhatsApp(): Promise<void> {
         // Non-fatal: roll back the flag so the user can retry, but surface the error.
         console.error('[WhatsApp] Logout request failed:', err instanceof Error ? err.message : err);
         manuallyDisconnected = false;
-        throw new Error('Falha ao desconectar no Whatsmiau. Tente novamente.');
+        throw new Error('Falha ao desconectar o WhatsApp. Tente novamente.');
       }
     }
   }
