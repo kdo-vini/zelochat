@@ -608,42 +608,20 @@ async function fetchInstancesList(): Promise<any[]> {
   return list;
 }
 
-function normalizeConnectionStatus(status: string | null | undefined): ConnectionStatus {
-  const value = String(status ?? '').toLowerCase();
-  if (value === 'connected' || value === 'open') return 'connected';
-  if (value === 'connecting') return 'connecting';
-  if (value === 'qr' || value === 'qr-code' || value === 'qrcode') return 'qr';
-  return 'disconnected';
-}
-
 export async function fetchInstanceConnectionState(instanceName: string): Promise<ConnectionStatus> {
   if (!instanceName) return 'disconnected';
-  try {
-    const { data } = await axios.get(v2Url(`/instance/connectionState/${encodeURIComponent(instanceName)}`), {
-      headers: apiHeaders(),
-      timeout: 10_000,
-    });
-    const state =
-      data?.state ??
-      data?.connectionState ??
-      data?.instance?.state ??
-      data?.data?.state ??
-      data?.data?.connectionState ??
-      data?.data?.instance?.state;
-    return normalizeConnectionStatus(state);
-  } catch (err) {
-    console.warn(`[WhatsApp] connectionState(${redactInstance(instanceName)}) failed; falling back to instance list:`, err instanceof Error ? err.message : err);
-  }
-
   try {
     const list = await fetchInstancesList();
     // Whatsmiau appends _{userId} to whatsmiau_instance_id (e.g. "zelo-abc_d3c6ca80")
     // but we store only the base name. Accept exact match or base-name prefix match.
     const match = list.find((i) => {
-      const id: string = i.whatsmiau_instance_id ?? i.name ?? i.instanceName ?? i.instance?.instanceName ?? '';
+      const id: string = i.whatsmiau_instance_id ?? i.name ?? '';
       return id === instanceName || id.startsWith(`${instanceName}_`);
     });
-    return normalizeConnectionStatus(match?.state ?? match?.status ?? match?.connectionState);
+    const status: string = match?.status ?? '';
+    if (status === 'CONNECTED' || status === 'open') return 'connected';
+    if (status === 'connecting') return 'connecting';
+    return 'disconnected';
   } catch (err) {
     console.warn(`[WhatsApp] fetchInstanceConnectionState(${redactInstance(instanceName)}) failed:`, err instanceof Error ? err.message : err);
     return 'disconnected';

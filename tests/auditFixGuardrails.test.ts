@@ -45,9 +45,8 @@ assert(router.includes('WhatsApp sent, but failed to mark DB message as sent'), 
 const whatsapp = read('server/whatsapp.ts');
 assert(whatsapp.includes('toWhatsmiauNumber(jid)'), 'outbound sends pass phone digits to Whatsmiau instead of full JIDs');
 assert(whatsapp.includes('requireWhatsmiauMessageId(res.data'), 'manual outbound success requires a Whatsmiau message id');
-assert(whatsapp.includes('data?.data?.message?.key?.id'), 'WhatsApp message id extraction accepts nested data.message.key.id responses');
+assert(whatsapp.includes('data?.data?.message?.key?.id'), 'Whatsmiau message id extraction accepts nested data.message.key.id responses');
 assert(whatsapp.includes("err.code === 'ECONNABORTED'"), 'QR connect timeouts keep the instance in connecting state');
-assert(whatsapp.includes('/instance/connectionState/'), 'WhatsApp status tries a per-instance connection endpoint before the list fallback');
 
 const messageHandler = read('server/messageHandler.ts');
 assert(messageHandler.includes('messageExistsByWhatsAppId'), 'message existence helper exists for outbound echo repair');
