@@ -271,6 +271,40 @@ export async function getOrCreateOwnInstanceForEmpresa(empresaId: string): Promi
   }
 }
 
+/**
+ * Clears the stored instance only if it still matches the value that just
+ * failed upstream. This lets /api/qr recover from an out-of-band provider-side
+ * deletion without racing a concurrent reconnect that already wrote a new
+ * instance.
+ */
+export async function clearMissingOwnInstanceForEmpresa(
+  empresaId: string,
+  expectedInstance: string,
+): Promise<boolean> {
+  if (!empresaId || !expectedInstance) return false;
+
+  const { data, error } = await getServiceSupabase()
+    .from('empresa_perfil')
+    .update({
+      whatsmiau_instance: null,
+      whatsmiau_connected: false,
+      whatsmiau_phone: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', empresaId)
+    .eq('whatsmiau_instance', expectedInstance)
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[instanceManager] clearMissingOwnInstanceForEmpresa failed:', error.message);
+    return false;
+  }
+
+  clearEmpresaCache(empresaId);
+  return Boolean((data as { id?: string } | null)?.id);
+}
+
 export async function deleteInstance(empresaId: string): Promise<void> {
   const instance = await getInstanceForEmpresa(empresaId);
   if (!instance) return;

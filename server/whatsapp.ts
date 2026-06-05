@@ -635,7 +635,7 @@ export async function fetchInstanceConnectionState(instanceName: string): Promis
  * Multi-tenant safe — never reads or mutates the module-level currentQR /
  * connectionStatus globals (which only track the bound singleton).
  */
-export async function fetchInstanceQR(instanceName: string): Promise<{ status: ConnectionStatus; qr: string | null; upstreamError?: string }> {
+export async function fetchInstanceQR(instanceName: string): Promise<{ status: ConnectionStatus; qr: string | null; upstreamError?: string; upstreamStatus?: number }> {
   if (!instanceName) return { status: 'disconnected', qr: null, upstreamError: 'instance name vazio' };
 
   const upstream = await fetchInstanceConnectionState(instanceName);
@@ -674,7 +674,12 @@ export async function fetchInstanceQR(instanceName: string): Promise<{ status: C
     if (axios.isAxiosError(err) && err.code === 'ECONNABORTED') {
       return { status: 'connecting', qr: null, upstreamError: 'o WhatsApp ainda está preparando o QR Code' };
     }
-    return { status: 'disconnected', qr: null, upstreamError: status ? `serviço de WhatsApp ${status}` : 'serviço de WhatsApp indisponível' };
+    return {
+      status: 'disconnected',
+      qr: null,
+      upstreamError: status ? `serviço de WhatsApp ${status}` : 'serviço de WhatsApp indisponível',
+      upstreamStatus: status,
+    };
   }
 }
 

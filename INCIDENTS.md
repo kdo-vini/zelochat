@@ -11,6 +11,32 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## IX. Gerar QR Code não recupera após instância apagada no provedor
+
+### Sintoma
+- Empresas tentando reconectar o WhatsApp ficam vendo a mensagem para aguardar
+  alguns segundos e clicar em "Gerar QR Code" de novo, mas o QR nunca aparece.
+- O problema começa depois que a instância da empresa é apagada manualmente no
+  painel do provedor.
+
+### Causa-raiz
+`empresa_perfil.whatsmiau_instance` continuava apontando para o nome apagado; o
+endpoint de QR reutilizava esse nome em vez de criar uma nova instância.
+
+### Fix
+Quando o provedor responde 404 ao buscar o QR, `/api/qr` e `/api/qr/refresh`
+limpam somente o ponteiro antigo daquela empresa, criam uma nova instância e
+tentam buscar o QR novamente no mesmo fluxo — `server/router.ts:1038`,
+`server/instanceManager.ts:275`, `server/whatsapp.ts:638`.
+
+### Recovery
+1. Clicar em "Gerar QR Code" novamente depois do deploy do hotfix.
+2. Se ainda não aparecer em até 60s, rodar `npx tsx scripts/diagnose-webhooks.ts`
+   dentro do container do backend para conferir instância upstream e webhook.
+3. Não regenerar `webhook_token`; o hotfix preserva esse segredo.
+
+---
+
 ## VIII. IA pega pedido quando hoje está bloqueado na agenda
 
 ### Sintoma

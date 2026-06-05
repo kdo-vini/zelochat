@@ -107,7 +107,12 @@ import {
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
-import { getEmpresaAndTokenForInstance, getOrCreateOwnInstanceForEmpresa, setConnectionState } from './instanceManager.js';
+import {
+  clearMissingOwnInstanceForEmpresa,
+  getEmpresaAndTokenForInstance,
+  getOrCreateOwnInstanceForEmpresa,
+  setConnectionState,
+} from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan, setStripeCancelAtPeriodEnd } from './billing.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
@@ -1030,6 +1035,25 @@ router.get('/api/version', (_req: Request, res: Response) => {
   res.json({ version: BUILD_VERSION, checkedAt: new Date().toISOString() });
 });
 
+async function fetchQrForEmpresaWithMissingInstanceRecovery(empresaId: string) {
+  const instance = await getOrCreateOwnInstanceForEmpresa(empresaId);
+  await setWebhookForInstance(instance);
+  const result = await fetchInstanceQR(instance);
+
+  if (result.upstreamStatus !== 404) return result;
+
+  // FIX 2026-06-05: instância apagada fora do ZeloChat deixava o DB apontando
+  // para um nome morto; ao receber 404 no QR, limpamos só esse ponteiro e
+  // criamos uma nova instância para o próximo pareamento.
+  console.warn(`[WhatsApp] QR instance missing upstream; recreating empresa=${empresaId} instance=${redactInstance(instance)}`);
+  const cleared = await clearMissingOwnInstanceForEmpresa(empresaId, instance);
+  if (!cleared) return result;
+
+  const replacement = await getOrCreateOwnInstanceForEmpresa(empresaId);
+  await setWebhookForInstance(replacement);
+  return fetchInstanceQR(replacement);
+}
+
 /**
  * GET /api/status — Returns this empresa's WhatsApp connection status.
  *
@@ -1077,11 +1101,7 @@ router.get('/api/qr', async (req: Request, res: Response) => {
   try {
     await requireActiveZelochatSubscription(req);
     const empresaId = await requireEmpresaId(req);
-    const instance = await getOrCreateOwnInstanceForEmpresa(empresaId);
-    // First-time creation: register the per-instance webhook so Whatsmiau
-    // delivers events to /webhook/${instance}. Idempotent — safe to call again.
-    await setWebhookForInstance(instance);
-    const result = await fetchInstanceQR(instance);
+    const result = await fetchQrForEmpresaWithMissingInstanceRecovery(empresaId);
     res.json({ qr: result.qr, status: result.status, upstreamError: result.upstreamError });
   } catch (err) {
     if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE' || err.message === 'EMPRESA_NOT_FOUND')) {
@@ -1137,9 +1157,7 @@ router.post('/api/qr/refresh', async (req: Request, res: Response) => {
   try {
     await requireActiveZelochatSubscription(req);
     const empresaId = await requireEmpresaId(req);
-    const instance = await getOrCreateOwnInstanceForEmpresa(empresaId);
-    await setWebhookForInstance(instance);
-    const result = await fetchInstanceQR(instance);
+    const result = await fetchQrForEmpresaWithMissingInstanceRecovery(empresaId);
     // Surface upstreamError pro frontend mostrar mensagem específica.
     // Não é 500 — Whatsmiau pode estar lento, user pode tentar de novo.
     res.json({ qr: result.qr, status: result.status, upstreamError: result.upstreamError });

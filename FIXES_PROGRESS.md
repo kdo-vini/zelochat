@@ -3,7 +3,7 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-06-04 Sprint 65):** Simulador e produção agora compartilham validações fortes de agenda; data bloqueada hoje barra disponibilidade, Pix, retirada e confirmação antes da OpenAI.
+**Latest execution note (2026-06-05 Sprint 66):** Reconexão do WhatsApp agora se recupera quando a instância salva foi apagada fora do ZeloChat: o backend limpa o ponteiro antigo, cria uma nova instância e busca o QR no mesmo clique.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,11 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 66 (2026-06-05) — Hotfix reconexão WhatsApp após instância apagada
+
+- ✅ QR Code WhatsApp — quando a instância salva no banco foi apagada fora do ZeloChat e o provedor retorna 404, `/api/qr` e `/api/qr/refresh` limpam somente esse ponteiro, recriam a instância da empresa e tentam buscar o QR de novo no mesmo fluxo — `server/router.ts:1038`, `server/instanceManager.ts:275`, `server/whatsapp.ts:638`
+- Verificação — `npm run lint` e `npx tsc --noEmit -p server/tsconfig.json`.
 
 ### Sprint 65 (2026-06-04) — Agenda da IA alinhada ao simulador
 
