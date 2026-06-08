@@ -17,9 +17,9 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-08',
-    category: 'medium',
-    title: 'Agenda da IA agora aceita dia e horário específicos',
-    description: 'Configure a IA diferente em cada dia da semana: 24 horas no domingo, comercial durante a semana, ou inverso (humanos das 6h às 18h e IA cobrindo o resto). Você decide.',
+    category: 'big',
+    title: 'Configurar a agenda da IA ficou muito mais simples',
+    description: 'Um assistente em 4 passos te guia para configurar quando a IA responde. Depois, se quiser mudar algo, basta descrever em uma frase tipo "muda quarta pra 24h" — a IA entende e aplica.',
   },
   {
     date: '2026-06-05',

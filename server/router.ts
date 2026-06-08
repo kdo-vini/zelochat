@@ -114,6 +114,7 @@ import {
   setConnectionState,
 } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan, setStripeCancelAtPeriodEnd } from './billing.js';
+import { parseScheduleFromDescription } from './scheduleParser.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -1619,6 +1620,45 @@ router.post('/api/ai-settings', async (req: Request, res: Response) => {
     broadcast({ type: 'ai_enabled', data: { enabled: aiEnabled } }, empresaId);
     res.json({ ok: true, ...readAiSettingsFromConfig(empresaId) });
   } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * POST /api/ai/schedule-parse — Converts a natural-language description
+ * into a proposed AiScheduleDays for the wizard's "describe in a sentence"
+ * shortcut and the incremental-edit flow ("muda só quarta pra 24h").
+ *
+ * Never persists — returns the proposal so the frontend can render a
+ * preview. Operator confirms via the existing POST /api/ai-settings.
+ */
+router.post('/api/ai/schedule-parse', express.json({ limit: '32kb' }), async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+    if (!description || description.length > 600) {
+      res.status(400).json({ error: 'Descrição inválida.' });
+      return;
+    }
+    const currentSchedule = normalizeAiScheduleDays(req.body?.currentSchedule);
+    const result = await parseScheduleFromDescription(empresaId, {
+      description,
+      currentSchedule,
+    });
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown';
+    if (
+      message === 'INVALID_SCHEDULE_DESCRIPTION'
+      || message === 'INVALID_SCHEDULE_JSON'
+      || message === 'INVALID_SCHEDULE_MODE'
+      || message === 'INVALID_SCHEDULE_DAYS'
+      || message === 'SCHEDULE_HAS_NO_ENABLED_DAYS'
+      || message === 'EMPTY_SCHEDULE_RESPONSE'
+    ) {
+      res.status(422).json({ error: 'Não consegui entender a descrição. Tente reformular ou edite manualmente.' });
+      return;
+    }
     sendAuthError(res, error);
   }
 });

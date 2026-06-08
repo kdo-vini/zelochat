@@ -404,6 +404,24 @@ export async function setAiSettings(token: string, payload: AiSettings): Promise
   };
 }
 
+export interface ScheduleParseResponse {
+  mode: AiGlobalMode;
+  scheduleDays: AiScheduleDays | null;
+  summary: string;
+}
+
+export async function parseScheduleDescription(
+  token: string,
+  payload: { description: string; currentSchedule: AiScheduleDays | null },
+): Promise<ScheduleParseResponse> {
+  const response = await apiFetch(apiUrl('/api/ai/schedule-parse'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<ScheduleParseResponse>(response);
+}
+
 export async function dispatchDriver(token: string, driverId: string, orderId: string): Promise<void> {
   const response = await apiFetch(apiUrl(`/api/drivers/${encodeURIComponent(driverId)}/dispatch`), {
     method: 'POST',

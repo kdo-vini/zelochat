@@ -392,6 +392,18 @@ A migração 040 só adiciona a coluna nullable — contas existentes ficam com 
 
 Testes: `tests/aiSchedule.test.ts` cobre legacy + per-day + fallback. Antes de mexer no gate, rodar essa suíte.
 
+### UI da agenda (wizard + edição por IA)
+
+A tela em Configurações tem 3 camadas de fluxo, ordenadas por sofisticação:
+
+1. **Wizard** (`src/components/settings/ScheduleWizard.tsx`) — fluxo padrão quando o operador escolhe "Agendada". 4 passos: cenário (3 cards: "IA cobre quando ninguém atende" / "IA atende em horário específico" / "IA atende sempre"), dias, horário, preview visual. State machine pura em `src/domain/aiScheduleWizard.ts` (`buildScheduleFromWizard`, `reverseEngineerWizardState`, `summarizeScheduleResult`). O cenário decide a polaridade (`inverted`): "IA cobre quando ninguém atende" → inverted=true; "IA atende em horário específico" → inverted=false.
+2. **Edição por IA (free text)** — depois de salvar, o card de resumo mostra um input "Quero ajustar algo? Descreva em uma frase" + visual preview. Operador digita ex. "muda quarta pra 24h" → frontend chama `POST /api/ai/schedule-parse` → backend usa OpenAI (gpt-4o-mini) com response_format JSON e o prompt em `server/scheduleParser.ts` → retorna `{ mode, scheduleDays, summary }`. UI renderiza a proposta como diff visual; nada salva até o operador clicar "Aplicar mudança". Nunca persiste direto — sempre exige confirmação humana.
+3. **Editor manual (avançado)** — disclosure "Editar manualmente (avançado)" expõe o editor dia-a-dia legado (3 botões Off/24h/Horário + toggle IA dentro/fora) para padrões que não couberem no wizard.
+
+`reverseEngineerWizardState` tenta mapear uma `AiScheduleDays` salva de volta para o estado do wizard quando o operador clica "Reconfigurar". Padrões não-uniformes (ex.: horários diferentes em dias diferentes) retornam null e o wizard começa em branco; o operador é orientado para o editor avançado nesses casos.
+
+Testes: `tests/aiScheduleWizard.test.ts` cobre as duas polaridades, reverse-engineer e summary.
+
 ## Histórico do cliente (abordagem planejada, não implementada)
 
 Para memória cross-conversation da IA, a abordagem planejada é: manter um campo de resumo minimalista no perfil do cliente (provavelmente em `zelochat_sessions` ou nova tabela) com até X caracteres, que a IA sobrepõe/atualiza incrementalmente a cada conversa. Não é um log completo — é um "perfil vivo" comprimido. Ainda não implementado.

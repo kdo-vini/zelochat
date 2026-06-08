@@ -3,7 +3,7 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-06-08 Sprint 67):** Agenda da IA aceita dia e hora específicos por dia da semana (24h, janela DENTRO/FORA, ou desligada por dia) via coluna nova `ai_schedule_days`; toggle "IA fora desse horário" cobre o padrão Casa dos Salgados (humanos 6h–18h, IA noturna). Legacy single-window continua intacto para contas antigas até elas re-salvarem.
+**Latest execution note (2026-06-08 Sprint 67):** Configurar a agenda da IA virou um wizard de 4 passos + edição por linguagem natural ("muda quarta pra 24h"). O editor manual dia-a-dia continua disponível em "Avançado". Backend `POST /api/ai/schedule-parse` usa gpt-4o-mini para converter descrições em `AiScheduleDays`; nunca persiste sem confirmação humana.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,16 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 67b (2026-06-08) — Wizard + edição por IA da agenda
+
+- ✅ Wizard guiado — 4 passos (cenário → dias → horário → preview visual) substitui o editor 7-cards como ponto de entrada principal. Lógica pura em `src/domain/aiScheduleWizard.ts` (`buildScheduleFromWizard`, `reverseEngineerWizardState`, `summarizeScheduleResult`); UI em `src/components/settings/ScheduleWizard.tsx`. Cenário escolhido define polaridade automática: "IA cobre quando ninguém atende" → inverted=true, "IA atende em horário específico" → inverted=false, "IA atende sempre" → always_on.
+- ✅ Visual preview 24h — `src/components/settings/ScheduleVisualPreview.tsx` renderiza barras horizontais por dia em 48 segmentos de meia hora (brand color = IA ativa). Usado dentro do wizard (passo final) e no card de resumo após salvar.
+- ✅ Edição por linguagem natural — `POST /api/ai/schedule-parse` (em `server/scheduleParser.ts`) usa gpt-4o-mini com `response_format=json_object` pra converter "muda quarta pra 24h" / "domingo só de tarde" / etc. em `AiScheduleDays`. Validação no backend via `normalizeAiScheduleDays`. Nunca persiste — retorna proposta pra UI mostrar diff e operador confirmar.
+- ✅ Reverse-engineer — saved schedule pré-preenche o wizard quando o operador clica "Reconfigurar". Pattern matching reconhece "human_covers_business" e "ai_covers_business"; padrões hand-edited (horários diferentes por dia) retornam null e o wizard começa em branco.
+- ✅ Editor avançado preservado — disclosure "Editar manualmente (avançado)" mantém o editor dia-a-dia (Off/24h/Horário + toggle DENTRO/FORA) intacto pra padrões que não cabem no wizard.
+- ✅ Testes — 7 testes novos em `tests/aiScheduleWizard.test.ts`: Casa dos Salgados scenario (build + evaluator end-to-end), commercial hours, always_on, reverse-engineer de ambos os padrões, rejeição de schedule não-uniforme, geração de summary. 26/26 passando. Total combinado 56/56 entre as suites de agenda.
+- Verificação — `npm run lint`, suites `aiSchedule`, `aiScheduleWizard`, `configStore`, `aiRouteGuards`, `aiSimulatorScheduleGuard` (101 testes verdes).
 
 ### Sprint 67 (2026-06-08) — Agenda da IA por dia da semana
 

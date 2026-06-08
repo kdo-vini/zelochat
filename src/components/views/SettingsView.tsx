@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import { useToast } from '../../contexts/ToastContext';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2 } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Sparkles, Settings2, ChevronDown } from 'lucide-react';
 import { ConfirmModal } from '../ConfirmModal';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
@@ -18,9 +18,13 @@ import {
   type AiScheduleDayKey,
   type AiScheduleDays,
 } from '../../domain/aiSchedule';
+import { reverseEngineerWizardState, summarizeScheduleResult, WIZARD_DAY_LABELS } from '../../domain/aiScheduleWizard';
+import { ScheduleWizard } from '../settings/ScheduleWizard';
+import { ScheduleVisualPreview } from '../settings/ScheduleVisualPreview';
 import {
   getAiEnabled,
   getAiSettings,
+  parseScheduleDescription,
   setAiEnabled as setAiEnabledApi,
   setAiSettings as setAiSettingsApi,
   type AiSettings,
@@ -610,6 +614,18 @@ export const AiGlobalScheduleCard = ({
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Open the wizard explicitly (e.g. after clicking "Reconfigurar"). */
+  const [wizardOpen, setWizardOpen] = useState(false);
+  /** Disclosure for the legacy per-day editor — kept as power-user escape. */
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  /** Natural-language incremental-edit state. */
+  const [nlInput, setNlInput] = useState('');
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlError, setNlError] = useState<string | null>(null);
+  const [nlProposal, setNlProposal] = useState<
+    | { mode: AiGlobalMode; scheduleDays: AiScheduleDays | null; summary: string }
+    | null
+  >(null);
 
   useEffect(() => {
     if (!token) { setSettings(null); return; }
@@ -645,20 +661,82 @@ export const AiGlobalScheduleCard = ({
     if (!settings) return;
     if (mode === 'scheduled') {
       setError(null);
-      // Seed per-day schedule preferring the operator's existing legacy single
-      // window (so re-saving doesn't accidentally overwrite their schedule),
-      // then loja business hours, then commercial defaults.
+      setAdvancedOpen(false);
+      // Empty schedule → open the wizard. Existing schedule → show summary
+      // so operator can either confirm what's already saved or click
+      // "Reconfigurar" to reopen the wizard pre-filled.
+      const hasSchedule = settings.scheduleDays !== null;
+      setWizardOpen(!hasSchedule);
       const scheduleDays = settings.scheduleDays
         ?? seedScheduleDays(null, settings.scheduleStart, settings.scheduleEnd, businessOpenTime, businessCloseTime);
       setSettings((prev) => prev ? { ...prev, mode, scheduleDays } : prev);
       return;
     }
+    setWizardOpen(false);
+    setAdvancedOpen(false);
     await saveSettings({
       mode,
       scheduleStart: settings.scheduleStart,
       scheduleEnd: settings.scheduleEnd,
       scheduleDays: settings.scheduleDays,
     });
+  };
+
+  const handleWizardConfirm = async (payload: {
+    mode: 'always_on' | 'scheduled';
+    scheduleDays: AiScheduleDays | null;
+  }) => {
+    if (!settings) return;
+    await saveSettings({
+      mode: payload.mode,
+      scheduleStart: settings.scheduleStart,
+      scheduleEnd: settings.scheduleEnd,
+      scheduleDays: payload.scheduleDays,
+    });
+    setWizardOpen(false);
+  };
+
+  const submitNaturalLanguageEdit = async () => {
+    if (!token || !settings) return;
+    const description = nlInput.trim();
+    if (!description) return;
+    setNlLoading(true);
+    setNlError(null);
+    setNlProposal(null);
+    try {
+      const proposal = await parseScheduleDescription(token, {
+        description,
+        currentSchedule: settings.scheduleDays,
+      });
+      setNlProposal(proposal);
+    } catch (err) {
+      setNlError(err instanceof WaServerOfflineError
+        ? err.message
+        : 'Não consegui entender. Tente reformular ou edite manualmente.');
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
+  const confirmNaturalLanguageProposal = async () => {
+    if (!nlProposal || !settings) return;
+    if (nlProposal.mode === 'scheduled' && !nlProposal.scheduleDays) {
+      setNlError('Proposta inválida — tente reformular.');
+      return;
+    }
+    await saveSettings({
+      mode: nlProposal.mode,
+      scheduleStart: settings.scheduleStart,
+      scheduleEnd: settings.scheduleEnd,
+      scheduleDays: nlProposal.scheduleDays,
+    });
+    setNlProposal(null);
+    setNlInput('');
+  };
+
+  const cancelNaturalLanguageProposal = () => {
+    setNlProposal(null);
+    setNlError(null);
   };
 
   const updateDay = (dayKey: AiScheduleDayKey, patch: Partial<AiScheduleDay>) => {
@@ -772,116 +850,249 @@ export const AiGlobalScheduleCard = ({
           ))}
         </div>
 
-        {mode === 'scheduled' && scheduleDays && settings && (
-          <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 space-y-3">
-            <p className="text-[12px] text-[var(--color-ink-muted)]">
-              Defina para cada dia da semana: <strong>desligada</strong>, <strong>24 horas</strong> ou um horário específico. Dentro de "Horário" você pode descrever o turno humano e marcar "<strong>IA ligada FORA desse horário</strong>" — ideal para casos como "humanos das 6h às 18h, IA cobre o resto".
-            </p>
-            {!settings.scheduleDays && hasLegacyOvernightWindow(settings.scheduleStart, settings.scheduleEnd) && (
-              <p className="text-[12px] text-[var(--color-warn)]">
-                Sua agenda atual ({settings.scheduleStart}–{settings.scheduleEnd}) cruza a madrugada. Revise os horários de cada dia antes de salvar.
-              </p>
-            )}
-            <div className="space-y-2">
-              {AI_SCHEDULE_DAY_KEYS.map((key) => {
-                const day = scheduleDays[key];
-                const currentMode = dayMode(day);
-                return (
-                  <div
-                    key={key}
-                    className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5 space-y-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-[13px] font-semibold">{DAY_LABELS[key]}</p>
-                        <p className="text-[11.5px] text-[var(--color-ink-muted)]">{describeDay(day)}</p>
-                      </div>
-                      <div className="flex rounded-md border border-[var(--color-line)] overflow-hidden text-[11.5px]">
-                        {(['off', 'allDay', 'window'] as DayMode[]).map((option) => {
-                          const label = option === 'off' ? 'Desligada' : option === 'allDay' ? '24 horas' : 'Horário';
-                          const active = currentMode === option;
-                          return (
-                            <button
-                              key={option}
-                              type="button"
-                              onClick={() => setDayMode(key, option)}
-                              disabled={!token || saving}
-                              className={`px-2.5 py-1.5 transition-colors ${
-                                active
-                                  ? 'bg-[var(--color-brand)] text-white'
-                                  : 'bg-transparent text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]'
-                              } disabled:opacity-50`}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    {currentMode === 'window' && (
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          <label>
-                            <span className={LABEL}>{day.inverted ? 'Humano das' : 'Liga às'}</span>
-                            <input
-                              type="time"
-                              value={day.start}
-                              onChange={(e) => updateDay(key, { start: e.target.value })}
-                              disabled={!token || saving}
-                              className={FIELD}
-                            />
-                          </label>
-                          <label>
-                            <span className={LABEL}>{day.inverted ? 'até as' : 'Desliga às'}</span>
-                            <input
-                              type="time"
-                              value={day.end}
-                              onChange={(e) => updateDay(key, { end: e.target.value })}
-                              disabled={!token || saving}
-                              className={FIELD}
-                            />
-                          </label>
-                        </div>
-                        <div className="flex rounded-md border border-[var(--color-line)] overflow-hidden text-[11.5px]">
-                          {[
-                            { value: false, label: 'IA ligada DENTRO desse horário' },
-                            { value: true, label: 'IA ligada FORA desse horário' },
-                          ].map((option) => {
-                            const active = day.inverted === option.value;
-                            return (
-                              <button
-                                key={String(option.value)}
-                                type="button"
-                                onClick={() => updateDay(key, { inverted: option.value })}
-                                disabled={!token || saving}
-                                className={`flex-1 px-2.5 py-1.5 transition-colors ${
-                                  active
-                                    ? 'bg-[var(--color-brand)] text-white'
-                                    : 'bg-transparent text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]'
-                                } disabled:opacity-50`}
-                              >
-                                {option.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+        {mode === 'scheduled' && settings && (() => {
+          // Reverse-engineer the saved schedule into wizard state so
+          // "Reconfigurar" opens with the operator's existing answers
+          // pre-filled instead of starting blank.
+          const wizardInitial = settings.scheduleDays
+            ? reverseEngineerWizardState('scheduled', settings.scheduleDays)
+            : null;
+          const showWizard = wizardOpen || !settings.scheduleDays;
+          if (showWizard) {
+            return (
+              <ScheduleWizard
+                initial={wizardInitial}
+                saving={saving}
+                onConfirm={handleWizardConfirm}
+                onCancel={settings.scheduleDays ? () => setWizardOpen(false) : undefined}
+              />
+            );
+          }
+          // Summary view — operator saved a schedule; show what it looks like.
+          const summary = summarizeScheduleResult({ mode: 'scheduled', scheduleDays: settings.scheduleDays });
+          return (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[13.5px] font-semibold">Agenda salva</p>
+                    <p className="text-[12px] text-[var(--color-ink-muted)] mt-0.5">{summary.headline}</p>
                   </div>
-                );
-              })}
+                  <button
+                    type="button"
+                    onClick={() => setWizardOpen(true)}
+                    disabled={saving}
+                    className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white text-[12px] font-semibold disabled:opacity-50"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" /> Reconfigurar
+                  </button>
+                </div>
+                <ScheduleVisualPreview scheduleDays={settings.scheduleDays} />
+                <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 space-y-0.5">
+                  {summary.lines.map((line) => (
+                    <div key={line.day} className="flex items-center justify-between text-[12px]">
+                      <span className="text-[var(--color-ink-muted)] w-12">{WIZARD_DAY_LABELS[line.day]}</span>
+                      <span className="text-[var(--color-ink)] text-right flex-1">{line.label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Natural-language incremental edit. Operator types
+                    "muda quarta pra 24h"; backend LLM returns a proposed
+                    schedule; we render a diff preview before saving. */}
+                {nlProposal ? (
+                  <div className="rounded-lg border border-[var(--color-brand)] bg-[var(--color-brand-soft)]/30 p-2.5 space-y-2">
+                    <p className="text-[12px] text-[var(--color-brand-deep)] font-semibold">
+                      {nlProposal.summary}
+                    </p>
+                    {nlProposal.mode === 'scheduled' && (
+                      <ScheduleVisualPreview scheduleDays={nlProposal.scheduleDays} />
+                    )}
+                    {nlProposal.mode === 'always_on' && (
+                      <p className="text-[12px] text-[var(--color-ink-muted)]">A IA passa a responder 24 horas, todos os dias.</p>
+                    )}
+                    {nlProposal.mode === 'always_off' && (
+                      <p className="text-[12px] text-[var(--color-ink-muted)]">A IA fica desligada — atendimento manual.</p>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void confirmNaturalLanguageProposal()}
+                        disabled={saving}
+                        className="flex-1 flex items-center justify-center gap-1 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[12.5px] font-semibold"
+                      >
+                        {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        Aplicar mudança
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelNaturalLanguageProposal}
+                        disabled={saving}
+                        className="px-3 py-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] text-[12.5px] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <p className="text-[11.5px] text-[var(--color-ink-muted)]">
+                      Quer ajustar algo? Descreva em uma frase:
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={nlInput}
+                        onChange={(e) => setNlInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !nlLoading) {
+                            e.preventDefault();
+                            void submitNaturalLanguageEdit();
+                          }
+                        }}
+                        placeholder='Ex: "muda quarta pra 24h" ou "domingo só de tarde"'
+                        disabled={!token || nlLoading || saving}
+                        className={`${FIELD} text-[12.5px]`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void submitNaturalLanguageEdit()}
+                        disabled={!token || nlLoading || saving || !nlInput.trim()}
+                        className="shrink-0 flex items-center gap-1 px-3 py-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-line)] hover:border-[var(--color-brand)] text-[12.5px] disabled:opacity-50"
+                      >
+                        {nlLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        Pedir
+                      </button>
+                    </div>
+                    {nlError && <p className="text-[11.5px] text-[var(--color-alert)]">{nlError}</p>}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] text-[12px] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Settings2 className="w-3.5 h-3.5" /> Editar manualmente (avançado)
+                </span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {advancedOpen && scheduleDays && (
+                <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 space-y-3">
+                  <p className="text-[12px] text-[var(--color-ink-muted)]">
+                    Editor dia a dia. Use só se a agenda que você quer não couber no assistente — por exemplo, horários diferentes em cada dia.
+                  </p>
+                  {!settings.scheduleDays && hasLegacyOvernightWindow(settings.scheduleStart, settings.scheduleEnd) && (
+                    <p className="text-[12px] text-[var(--color-warn)]">
+                      Sua agenda atual ({settings.scheduleStart}–{settings.scheduleEnd}) cruza a madrugada. Revise os horários de cada dia antes de salvar.
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {AI_SCHEDULE_DAY_KEYS.map((key) => {
+                      const day = scheduleDays[key];
+                      const currentMode = dayMode(day);
+                      return (
+                        <div
+                          key={key}
+                          className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5 space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-semibold">{DAY_LABELS[key]}</p>
+                              <p className="text-[11.5px] text-[var(--color-ink-muted)]">{describeDay(day)}</p>
+                            </div>
+                            <div className="flex rounded-md border border-[var(--color-line)] overflow-hidden text-[11.5px]">
+                              {(['off', 'allDay', 'window'] as DayMode[]).map((option) => {
+                                const label = option === 'off' ? 'Desligada' : option === 'allDay' ? '24 horas' : 'Horário';
+                                const active = currentMode === option;
+                                return (
+                                  <button
+                                    key={option}
+                                    type="button"
+                                    onClick={() => setDayMode(key, option)}
+                                    disabled={!token || saving}
+                                    className={`px-2.5 py-1.5 transition-colors ${
+                                      active
+                                        ? 'bg-[var(--color-brand)] text-white'
+                                        : 'bg-transparent text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]'
+                                    } disabled:opacity-50`}
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          {currentMode === 'window' && (
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-2 gap-2">
+                                <label>
+                                  <span className={LABEL}>{day.inverted ? 'Humano das' : 'Liga às'}</span>
+                                  <input
+                                    type="time"
+                                    value={day.start}
+                                    onChange={(e) => updateDay(key, { start: e.target.value })}
+                                    disabled={!token || saving}
+                                    className={FIELD}
+                                  />
+                                </label>
+                                <label>
+                                  <span className={LABEL}>{day.inverted ? 'até as' : 'Desliga às'}</span>
+                                  <input
+                                    type="time"
+                                    value={day.end}
+                                    onChange={(e) => updateDay(key, { end: e.target.value })}
+                                    disabled={!token || saving}
+                                    className={FIELD}
+                                  />
+                                </label>
+                              </div>
+                              <div className="flex rounded-md border border-[var(--color-line)] overflow-hidden text-[11.5px]">
+                                {[
+                                  { value: false, label: 'IA DENTRO desse horário' },
+                                  { value: true, label: 'IA FORA desse horário' },
+                                ].map((option) => {
+                                  const active = day.inverted === option.value;
+                                  return (
+                                    <button
+                                      key={String(option.value)}
+                                      type="button"
+                                      onClick={() => updateDay(key, { inverted: option.value })}
+                                      disabled={!token || saving}
+                                      className={`flex-1 px-2.5 py-1.5 transition-colors ${
+                                        active
+                                          ? 'bg-[var(--color-brand)] text-white'
+                                          : 'bg-transparent text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]'
+                                      } disabled:opacity-50`}
+                                    >
+                                      {option.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void saveSchedule()}
+                    disabled={!token || saving}
+                    className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {saving ? 'Salvando...' : 'Salvar agenda'}
+                  </button>
+                </div>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={() => void saveSchedule()}
-              disabled={!token || saving}
-              className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              {saving ? 'Salvando...' : 'Salvar agenda'}
-            </button>
-          </div>
-        )}
+          );
+        })()}
 
         {!token && (
           <p className="text-[12px] text-[var(--color-warn)]">Faça login para controlar a IA.</p>
