@@ -373,12 +373,18 @@ Quando o modo é `scheduled`, duas fontes de janela coexistem:
 
 1. **Per-day (preferida)** — coluna `empresa_perfil.ai_schedule_days` (JSONB, migration 040). Shape:
    ```json
-   { "sun": { "enabled": true, "start": "00:00", "end": "00:00" },
-     "mon": { "enabled": true, "start": "08:00", "end": "18:00" },
-     ... ,
-     "sat": { "enabled": true, "start": "13:00", "end": "23:59" } }
+   { "sun": { "enabled": true, "start": "00:00", "end": "00:00", "inverted": false },
+     "mon": { "enabled": true, "start": "06:00", "end": "18:00", "inverted": true },
+     ... }
    ```
-   Por dia: `enabled=false` → IA desligada o dia todo. `enabled=true && start===end` → 24h. `enabled=true && start<end` → janela `[start, end]`. **Não há wrap entre dias** — para "até o fim do dia" o operador coloca `end='23:59'`. A resolução do dia da semana usa o timezone da empresa via `Intl.DateTimeFormat('en-US', { weekday: 'short' })`.
+   Por dia:
+   - `enabled=false` → IA desligada o dia todo.
+   - `enabled=true && start===end` → 24h (ignora `inverted`).
+   - `enabled=true && start<end && inverted=false` → IA ativa **dentro** de `[start, end]`.
+   - `enabled=true && start<end && inverted=true` → IA ativa **fora** de `[start, end]` (operador descreve o turno humano e a IA cobre o resto). Caso Casa dos Salgados: humanos 06–18h, IA 18h→06h+1; cada dia continua independente porque a faixa "noite" (`18:00–23:59`) e "madrugada" (`00:00–06:00`) caem ambas no mesmo dia local.
+   - `start>end` permanece inválido — para overnight, use `inverted=true` em vez de wrap.
+   - Campo `inverted` é opcional no JSONB (default false). Rows pré-existentes sem a chave continuam comportando-se como "ativa dentro" sem nenhuma alteração de comportamento.
+   - **Não há wrap entre dias** — para "até o fim do dia" o operador coloca `end='23:59'`. A resolução do dia da semana usa o timezone da empresa via `Intl.DateTimeFormat('en-US', { weekday: 'short' })`.
 
 2. **Single-window legacy** — colunas `ai_schedule_start`/`ai_schedule_end`. Mesma janela todo dia, com suporte a overnight wrap (`start > end`). Continua sendo usada quando `ai_schedule_days IS NULL` — clientes antigos não perdem a agenda até abrirem a tela e salvarem o novo formato.
 

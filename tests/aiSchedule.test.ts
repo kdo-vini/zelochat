@@ -191,13 +191,13 @@ console.log('\nTest 6: per-day schedule applies the right window for the right w
   // 2026-05-02 = Saturday, 2026-05-03 = Sunday, 2026-05-04 = Monday
   // (verified via Intl.DateTimeFormat with America/Sao_Paulo)
   const days: AiScheduleDays = {
-    sun: { enabled: true, start: '00:00', end: '00:00' }, // 24h
-    mon: { enabled: true, start: '08:00', end: '18:00' },
-    tue: { enabled: true, start: '08:00', end: '18:00' },
-    wed: { enabled: true, start: '08:00', end: '18:00' },
-    thu: { enabled: true, start: '08:00', end: '18:00' },
-    fri: { enabled: true, start: '08:00', end: '18:00' },
-    sat: { enabled: true, start: '13:00', end: '23:59' },
+    sun: { enabled: true, start: '00:00', end: '00:00', inverted: false }, // 24h
+    mon: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+    tue: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+    wed: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+    thu: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+    fri: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+    sat: { enabled: true, start: '13:00', end: '23:59', inverted: false },
   };
   const base = {
     aiEnabled: true,
@@ -237,7 +237,7 @@ console.log('\nTest 6: per-day schedule applies the right window for the right w
 console.log('\nTest 7: disabled day silences the AI even mid-window');
 {
   const days = buildDefaultAiScheduleDays('08:00', '18:00');
-  days.mon = { enabled: false, start: '08:00', end: '18:00' };
+  days.mon = { enabled: false, start: '08:00', end: '18:00', inverted: false };
   // Monday 12:00 local (2026-05-04 15:00 UTC) — should be silenced
   assert(
     !evaluateAiSchedule({
@@ -279,6 +279,64 @@ console.log('\nTest 8: per-day schedule takes precedence over legacy single wind
     }, atUtc('2026-05-07T00:00:00.000Z')).effectiveEnabledNow,
     'per-day 24h wins over legacy 09:00-18:00 at 21:00 local',
   );
+}
+
+console.log('\nTest 8b: inverted flag flips the window (Casa dos Salgados pattern)');
+{
+  // Casa dos Salgados: humans 06:00–18:00, AI covers 18:00→06:00 next day, Sunday 24h.
+  const days: AiScheduleDays = {
+    sun: { enabled: true, start: '00:00', end: '00:00', inverted: false },
+    mon: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    tue: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    wed: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    thu: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    fri: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    sat: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+  };
+  const base = {
+    aiEnabled: true,
+    aiMode: 'scheduled' as const,
+    aiScheduleStart: null,
+    aiScheduleEnd: null,
+    aiScheduleDays: days,
+    timezone: 'America/Sao_Paulo',
+  };
+  // Monday 02:00 local (2026-05-04 05:00 UTC) — outside [06:00, 18:00], AI on
+  assert(
+    evaluateAiSchedule(base, atUtc('2026-05-04T05:00:00.000Z')).effectiveEnabledNow,
+    'inverted monday 06-18: 02:00 is AI on',
+  );
+  // Monday 12:00 local (2026-05-04 15:00 UTC) — inside window, AI off (human shift)
+  assert(
+    !evaluateAiSchedule(base, atUtc('2026-05-04T15:00:00.000Z')).effectiveEnabledNow,
+    'inverted monday 06-18: 12:00 is AI off',
+  );
+  // Monday 22:00 local (2026-05-05 01:00 UTC) — outside, AI on
+  assert(
+    evaluateAiSchedule(base, atUtc('2026-05-05T01:00:00.000Z')).effectiveEnabledNow,
+    'inverted monday 06-18: 22:00 is AI on',
+  );
+  // Sunday 12:00 local (2026-05-03 15:00 UTC) — 24h on
+  assert(
+    evaluateAiSchedule(base, atUtc('2026-05-03T15:00:00.000Z')).effectiveEnabledNow,
+    'sunday 24h overrides inverted check',
+  );
+}
+
+console.log('\nTest 8c: inverted flag is optional in normalizer (backward compat)');
+{
+  // Existing JSONB rows without the inverted key default to inverted=false.
+  const days = normalizeAiScheduleDays({
+    sun: { enabled: true, start: '08:00', end: '18:00' },
+    mon: { enabled: true, start: '08:00', end: '18:00' },
+    tue: { enabled: true, start: '08:00', end: '18:00' },
+    wed: { enabled: true, start: '08:00', end: '18:00' },
+    thu: { enabled: true, start: '08:00', end: '18:00' },
+    fri: { enabled: true, start: '08:00', end: '18:00' },
+    sat: { enabled: true, start: '08:00', end: '18:00' },
+  });
+  assert(days !== null, 'days without inverted key are accepted');
+  assert(days?.mon.inverted === false, 'missing inverted defaults to false');
 }
 
 console.log('\nTest 9: normalizeAiScheduleDays rejects malformed payloads');

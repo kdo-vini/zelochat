@@ -12,6 +12,20 @@ export interface AiScheduleDay {
   /** 'HH:MM' (00:00–23:59). When start === end on an enabled day, the day is treated as 24h on. */
   start: string;
   end: string;
+  /**
+   * When true, the AI is active OUTSIDE the [start, end] window (i.e. the
+   * window describes the human-only hours and the AI fills the rest of the
+   * day). Only meaningful for `enabled=true && start !== end`; ignored for
+   * 24h-on days (start===end). Defaults to false for backward compat — older
+   * JSONB rows without this field continue to behave as "active inside window".
+   *
+   * Casa dos Salgados use case: humans work 06:00–18:00, AI covers
+   * 18:00→06:00 next day. Expressed per-day as `inverted=true, start='06:00',
+   * end='18:00'` — the late-evening tail and early-morning portion of the
+   * same day both fall outside [06:00, 18:00], so each day stays independent
+   * (no overnight bleed needed).
+   */
+  inverted: boolean;
 }
 
 export type AiScheduleDays = Record<AiScheduleDayKey, AiScheduleDay>;
@@ -66,7 +80,12 @@ export function buildDefaultAiScheduleDays(
 ): AiScheduleDays {
   const normalizedStart = normalizeAiScheduleTime(start) ?? DEFAULT_DAY_START;
   const normalizedEnd = normalizeAiScheduleTime(end) ?? DEFAULT_DAY_END;
-  const day: AiScheduleDay = { enabled: true, start: normalizedStart, end: normalizedEnd };
+  const day: AiScheduleDay = {
+    enabled: true,
+    start: normalizedStart,
+    end: normalizedEnd,
+    inverted: false,
+  };
   return {
     sun: { ...day },
     mon: { ...day },
@@ -95,18 +114,20 @@ export function normalizeAiScheduleDays(value: unknown): AiScheduleDays | null {
   for (const key of AI_SCHEDULE_DAY_KEYS) {
     const entry = row[key];
     if (!entry || typeof entry !== 'object') return null;
-    const e = entry as { enabled?: unknown; start?: unknown; end?: unknown };
+    const e = entry as { enabled?: unknown; start?: unknown; end?: unknown; inverted?: unknown };
     const enabled = e.enabled === true;
+    const inverted = e.inverted === true; // default false — pre-existing rows without the key behave unchanged
     const start = normalizeAiScheduleTime(e.start);
     const end = normalizeAiScheduleTime(e.end);
     if (enabled) {
       if (!start || !end) return null;
-      out[key] = { enabled: true, start, end };
+      out[key] = { enabled: true, start, end, inverted };
     } else {
       out[key] = {
         enabled: false,
         start: start ?? DEFAULT_DAY_START,
         end: end ?? DEFAULT_DAY_END,
+        inverted,
       };
     }
   }
@@ -124,10 +145,17 @@ export function isWithinAiScheduleDay(nowMinutes: number, day: AiScheduleDay): b
   const startMinutes = parseAiScheduleMinutes(day.start);
   const endMinutes = parseAiScheduleMinutes(day.end);
   if (startMinutes === null || endMinutes === null) return false;
+  // 24h-on day (start === end): inverted is meaningless — operator picks
+  // enabled=false to silence the day instead.
   if (startMinutes === endMinutes) return true;
   if (startMinutes < endMinutes) {
-    return nowMinutes >= startMinutes && nowMinutes <= endMinutes;
+    const inWindow = nowMinutes >= startMinutes && nowMinutes <= endMinutes;
+    // inverted=true means the [start, end] window is the human-only block;
+    // AI is active OUTSIDE it (Casa dos Salgados use case).
+    return day.inverted ? !inWindow : inWindow;
   }
+  // start > end never reaches a per-day window: we deliberately don't wrap
+  // across days. Operators describing overnight AI use inverted=true.
   return false;
 }
 

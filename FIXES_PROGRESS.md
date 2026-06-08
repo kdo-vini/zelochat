@@ -3,7 +3,7 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-06-08 Sprint 67):** Agenda da IA agora aceita dia e hora específicos por dia da semana (24h, janela ou desligada por dia) via coluna nova `ai_schedule_days`; legacy single-window continua funcionando intacto para contas antigas até elas re-salvarem.
+**Latest execution note (2026-06-08 Sprint 67):** Agenda da IA aceita dia e hora específicos por dia da semana (24h, janela DENTRO/FORA, ou desligada por dia) via coluna nova `ai_schedule_days`; toggle "IA fora desse horário" cobre o padrão Casa dos Salgados (humanos 6h–18h, IA noturna). Legacy single-window continua intacto para contas antigas até elas re-salvarem.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -123,8 +123,9 @@ These are out of scope or unsafe to change from this branch:
 
 - ✅ Per-day schedule — modo `scheduled` agora aceita janela diferente por dia (Off / 24h / Horário específico) na coluna nova `empresa_perfil.ai_schedule_days` (JSONB); avaliação `evaluateAiSchedule` prioriza per-day quando presente e cai pra single-window legacy quando `NULL` — `src/domain/aiSchedule.ts:88`, `src/domain/aiSchedule.ts:182`, `server/configStore.ts:80`, `server/router.ts:1547`, `supabase/migrations/040_ai_schedule_per_day.sql`
 - ✅ UI per-day — `AiGlobalScheduleCard` ganhou editor 7-dias com 3 estados por dia (Desligada/24h/Horário). Seed inicial usa a janela legacy do operador (não horário comercial) pra não sobrescrever o agendamento dele em save acidental; aviso amarelo quando legacy cruza madrugada — `src/components/views/SettingsView.tsx:524`, `src/components/views/SettingsView.tsx:639`
+- ✅ Toggle de polaridade per-day (Casa dos Salgados) — campo `inverted` em cada `AiScheduleDay`. UI mostra dois botões dentro de "Horário": "IA ligada DENTRO" / "IA ligada FORA" — permite descrever o turno humano em vez do turno da IA, resolve o padrão "humanos 06–18h, IA cobre o resto" sem precisar de wrap entre dias. Default `false` mantém comportamento; rows JSONB pré-existentes sem o campo continuam idênticos — `src/domain/aiSchedule.ts:24`, `src/domain/aiSchedule.ts:140`, `src/components/views/SettingsView.tsx:835`
 - ✅ Backward compat — fallback resilient quando coluna não existe: hidratação no backend (`configStore.ts`), select no hook (`useEmpresaPerfil.ts`), persistência no `POST /api/ai-settings` — clientes antigos com `ai_schedule_days = NULL` mantêm comportamento legacy bit-a-bit idêntico até re-salvarem.
-- ✅ Testes — 9 asserções novas em `tests/aiSchedule.test.ts`: domingo 24h, sábado 13:00–23:59, dia desligado, per-day vence legacy, normalizer rejeita payload malformado. 24/24 passando.
+- ✅ Testes — 13 asserções novas em `tests/aiSchedule.test.ts`: domingo 24h, sábado 13:00–23:59, dia desligado, per-day vence legacy, normalizer rejeita payload malformado, padrão Casa dos Salgados (inverted 06-18) em 02h/12h/22h, inverted opcional no normalizer. 30/30 passando.
 - Verificação — `npm run lint` + suites `aiSchedule`, `configStore`, `aiSimulatorScheduleGuard`, `aiRouteGuards`.
 
 ### Sprint 66 (2026-06-05) — Hotfix reconexão WhatsApp após instância apagada

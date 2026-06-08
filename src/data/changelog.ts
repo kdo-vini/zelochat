@@ -19,7 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-06-08',
     category: 'medium',
     title: 'Agenda da IA agora aceita dia e horário específicos',
-    description: 'Configure a IA diferente em cada dia da semana: 24 horas no domingo, das 13h ao fim do dia no sábado, comercial durante a semana — você decide.',
+    description: 'Configure a IA diferente em cada dia da semana: 24 horas no domingo, comercial durante a semana, ou inverso (humanos das 6h às 18h e IA cobrindo o resto). Você decide.',
   },
   {
     date: '2026-06-05',

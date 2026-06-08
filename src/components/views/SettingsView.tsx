@@ -492,6 +492,7 @@ function describeDay(day: AiScheduleDay): string {
   const mode = dayMode(day);
   if (mode === 'off') return 'IA desligada';
   if (mode === 'allDay') return '24 horas';
+  if (day.inverted) return `IA fora de ${day.start}–${day.end}`;
   return `${day.start} às ${day.end}`;
 }
 
@@ -681,13 +682,15 @@ export const AiGlobalScheduleCard = ({
       if (next === 'off') {
         nextDay = { ...day, enabled: false };
       } else if (next === 'allDay') {
-        nextDay = { enabled: true, start: '00:00', end: '00:00' };
+        // inverted is meaningless for 24h-on; clear it so a future flip back
+        // to 'window' doesn't surprise the operator with stale polarity.
+        nextDay = { enabled: true, start: '00:00', end: '00:00', inverted: false };
       } else {
         // 'window' — re-enable; if the previous start/end was a 24h placeholder
         // (start === end), seed something sensible so both inputs have a value.
         const start = day.start !== day.end ? day.start : '08:00';
         const end = day.start !== day.end ? day.end : '18:00';
-        nextDay = { enabled: true, start, end };
+        nextDay = { enabled: true, start, end, inverted: day.inverted };
       }
       return {
         ...prev,
@@ -772,7 +775,7 @@ export const AiGlobalScheduleCard = ({
         {mode === 'scheduled' && scheduleDays && settings && (
           <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 space-y-3">
             <p className="text-[12px] text-[var(--color-ink-muted)]">
-              Defina para cada dia da semana: <strong>desligada</strong>, <strong>24 horas</strong> ou um horário específico. Para "até o fim do dia", coloque o final às <strong>23:59</strong>.
+              Defina para cada dia da semana: <strong>desligada</strong>, <strong>24 horas</strong> ou um horário específico. Dentro de "Horário" você pode descrever o turno humano e marcar "<strong>IA ligada FORA desse horário</strong>" — ideal para casos como "humanos das 6h às 18h, IA cobre o resto".
             </p>
             {!settings.scheduleDays && hasLegacyOvernightWindow(settings.scheduleStart, settings.scheduleEnd) && (
               <p className="text-[12px] text-[var(--color-warn)]">
@@ -816,27 +819,52 @@ export const AiGlobalScheduleCard = ({
                       </div>
                     </div>
                     {currentMode === 'window' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <label>
-                          <span className={LABEL}>Liga às</span>
-                          <input
-                            type="time"
-                            value={day.start}
-                            onChange={(e) => updateDay(key, { start: e.target.value })}
-                            disabled={!token || saving}
-                            className={FIELD}
-                          />
-                        </label>
-                        <label>
-                          <span className={LABEL}>Desliga às</span>
-                          <input
-                            type="time"
-                            value={day.end}
-                            onChange={(e) => updateDay(key, { end: e.target.value })}
-                            disabled={!token || saving}
-                            className={FIELD}
-                          />
-                        </label>
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <label>
+                            <span className={LABEL}>{day.inverted ? 'Humano das' : 'Liga às'}</span>
+                            <input
+                              type="time"
+                              value={day.start}
+                              onChange={(e) => updateDay(key, { start: e.target.value })}
+                              disabled={!token || saving}
+                              className={FIELD}
+                            />
+                          </label>
+                          <label>
+                            <span className={LABEL}>{day.inverted ? 'até as' : 'Desliga às'}</span>
+                            <input
+                              type="time"
+                              value={day.end}
+                              onChange={(e) => updateDay(key, { end: e.target.value })}
+                              disabled={!token || saving}
+                              className={FIELD}
+                            />
+                          </label>
+                        </div>
+                        <div className="flex rounded-md border border-[var(--color-line)] overflow-hidden text-[11.5px]">
+                          {[
+                            { value: false, label: 'IA ligada DENTRO desse horário' },
+                            { value: true, label: 'IA ligada FORA desse horário' },
+                          ].map((option) => {
+                            const active = day.inverted === option.value;
+                            return (
+                              <button
+                                key={String(option.value)}
+                                type="button"
+                                onClick={() => updateDay(key, { inverted: option.value })}
+                                disabled={!token || saving}
+                                className={`flex-1 px-2.5 py-1.5 transition-colors ${
+                                  active
+                                    ? 'bg-[var(--color-brand)] text-white'
+                                    : 'bg-transparent text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]'
+                                } disabled:opacity-50`}
+                              >
+                                {option.label}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
