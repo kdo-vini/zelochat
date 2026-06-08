@@ -472,6 +472,10 @@ interface AiGlobalScheduleCardProps {
   /** Used to seed the per-day schedule when the operator switches to "Agendada" for the first time. */
   businessOpenTime: string;
   businessCloseTime: string;
+  /** Current blocked_dates — passed to the natural-language parser so it can edit them. */
+  blockedDates: { date: string; reason: string }[];
+  /** Persist proposed blocked_dates after operator confirms a NL edit. Triggers debounced save in AppShell. */
+  onUpdateBlockedDates: (next: { date: string; reason: string }[]) => void;
 }
 
 const DAY_LABELS: Record<AiScheduleDayKey, string> = {
@@ -534,6 +538,14 @@ function seedScheduleDays(
   const end = normalizeAiScheduleTime(closeTime) ?? '18:00';
   if (start === end) return buildDefaultAiScheduleDays();
   return buildDefaultAiScheduleDays(start, end);
+}
+
+function formatBlockedDateLabel(iso: string): string {
+  // iso = 'YYYY-MM-DD' — parse and format dd/mm/yyyy in PT-BR.
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return iso;
+  const [, y, m, d] = match;
+  return `${d}/${m}/${y}`;
 }
 
 function hasLegacyOvernightWindow(legacyStart: string | null, legacyEnd: string | null): boolean {
@@ -610,6 +622,8 @@ export const AiGlobalScheduleCard = ({
   timezone,
   businessOpenTime,
   businessCloseTime,
+  blockedDates,
+  onUpdateBlockedDates,
 }: AiGlobalScheduleCardProps) => {
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [saving, setSaving] = useState(false);
@@ -623,7 +637,12 @@ export const AiGlobalScheduleCard = ({
   const [nlLoading, setNlLoading] = useState(false);
   const [nlError, setNlError] = useState<string | null>(null);
   const [nlProposal, setNlProposal] = useState<
-    | { mode: AiGlobalMode; scheduleDays: AiScheduleDays | null; summary: string }
+    | {
+        mode: AiGlobalMode;
+        scheduleDays: AiScheduleDays | null;
+        blockedDates: { date: string; reason: string }[] | null;
+        summary: string;
+      }
     | null
   >(null);
 
@@ -707,6 +726,7 @@ export const AiGlobalScheduleCard = ({
       const proposal = await parseScheduleDescription(token, {
         description,
         currentSchedule: settings.scheduleDays,
+        currentBlockedDates: blockedDates,
       });
       setNlProposal(proposal);
     } catch (err) {
@@ -723,6 +743,11 @@ export const AiGlobalScheduleCard = ({
     if (nlProposal.mode === 'scheduled' && !nlProposal.scheduleDays) {
       setNlError('Proposta inválida — tente reformular.');
       return;
+    }
+    // Apply blocked_dates change first (debounced auto-save in AppShell)
+    // so the user's state is consistent before we kick the schedule save.
+    if (nlProposal.blockedDates) {
+      onUpdateBlockedDates(nlProposal.blockedDates);
     }
     await saveSettings({
       mode: nlProposal.mode,
@@ -897,6 +922,44 @@ export const AiGlobalScheduleCard = ({
                   ))}
                 </div>
 
+                {(() => {
+                  // Surface upcoming blocked dates so the operator knows the
+                  // schedule is being overridden on those days. List the next
+                  // 3 that haven't passed; "Em datas bloqueadas, a IA cobre"
+                  // is the rule the gate now applies — see CLAUDE.md
+                  // §"Agenda global da IA".
+                  const todayIso = new Intl.DateTimeFormat('en-CA', {
+                    timeZone: timezone || 'America/Sao_Paulo',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                  }).format(new Date());
+                  const upcoming = blockedDates
+                    .filter((d) => d.date >= todayIso)
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .slice(0, 3);
+                  return (
+                    <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 space-y-1">
+                      <p className="text-[11.5px] text-[var(--color-ink-muted)]">
+                        <strong>Datas bloqueadas:</strong> nesses dias a IA cobre o WhatsApp 24h (mas não aceita pedidos — a loja não está operando).
+                      </p>
+                      {upcoming.length > 0 && (
+                        <ul className="text-[11.5px] text-[var(--color-ink)] space-y-0.5 pt-1">
+                          {upcoming.map((d) => (
+                            <li key={d.date}>
+                              • {formatBlockedDateLabel(d.date)}
+                              {d.reason && <span className="text-[var(--color-ink-muted)]"> — {d.reason}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {upcoming.length === 0 && (
+                        <p className="text-[11px] text-[var(--color-ink-faint)]">Nenhuma data bloqueada nos próximos dias.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Natural-language incremental edit. Operator types
                     "muda quarta pra 24h"; backend LLM returns a proposed
                     schedule; we render a diff preview before saving. */}
@@ -914,6 +977,28 @@ export const AiGlobalScheduleCard = ({
                     {nlProposal.mode === 'always_off' && (
                       <p className="text-[12px] text-[var(--color-ink-muted)]">A IA fica desligada — atendimento manual.</p>
                     )}
+                    {nlProposal.blockedDates && (() => {
+                      const currentKeys = new Set(blockedDates.map((d) => d.date));
+                      const proposedKeys = new Set(nlProposal.blockedDates.map((d) => d.date));
+                      const added = nlProposal.blockedDates.filter((d) => !currentKeys.has(d.date));
+                      const removed = blockedDates.filter((d) => !proposedKeys.has(d.date));
+                      if (added.length === 0 && removed.length === 0) return null;
+                      return (
+                        <div className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-1.5 space-y-1">
+                          <p className="text-[11px] text-[var(--color-ink-faint)] uppercase tracking-wide">Datas bloqueadas</p>
+                          {added.map((d) => (
+                            <p key={`add-${d.date}`} className="text-[12px] text-[var(--color-brand-deep)]">
+                              + {formatBlockedDateLabel(d.date)} {d.reason && <span className="text-[var(--color-ink-muted)]">— {d.reason}</span>}
+                            </p>
+                          ))}
+                          {removed.map((d) => (
+                            <p key={`rm-${d.date}`} className="text-[12px] text-[var(--color-alert)] line-through">
+                              − {formatBlockedDateLabel(d.date)} {d.reason && <span className="text-[var(--color-ink-muted)]">— {d.reason}</span>}
+                            </p>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -1539,6 +1624,8 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               timezone={state.businessInfo.timezone}
               businessOpenTime={state.businessInfo.openTime}
               businessCloseTime={state.businessInfo.closeTime}
+              blockedDates={state.blockedDates}
+              onUpdateBlockedDates={(next) => setState((prev) => ({ ...prev, blockedDates: next }))}
             />
 
             <SectionCard icon={Clock} title="Horários e atendimento">

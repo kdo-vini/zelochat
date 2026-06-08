@@ -18,8 +18,14 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-08',
     category: 'big',
+    title: 'IA agora cobre o WhatsApp nas suas folgas',
+    description: 'Em datas que você marcar como bloqueadas (feriados, folgas, viagem), a IA fica ligada o dia todo respondendo seus clientes — sem aceitar pedidos, já que a loja está fechada. Antes, o cliente podia ficar sem resposta.',
+  },
+  {
+    date: '2026-06-08',
+    category: 'big',
     title: 'Configurar a agenda da IA ficou muito mais simples',
-    description: 'Um assistente em 4 passos te guia para configurar quando a IA responde. Depois, se quiser mudar algo, basta descrever em uma frase tipo "muda quarta pra 24h" — a IA entende e aplica.',
+    description: 'Um assistente em 4 passos te guia para configurar quando a IA responde. Depois, se quiser mudar algo, basta descrever em uma frase tipo "muda quarta pra 24h" ou "bloqueia 25/12 Natal" — a IA entende e aplica.',
   },
   {
     date: '2026-06-05',

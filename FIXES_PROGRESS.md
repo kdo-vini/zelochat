@@ -3,7 +3,7 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-06-08 Sprint 67):** Configurar a agenda da IA virou um wizard de 4 passos + edição por linguagem natural ("muda quarta pra 24h"). O editor manual dia-a-dia continua disponível em "Avançado". Backend `POST /api/ai/schedule-parse` usa gpt-4o-mini para converter descrições em `AiScheduleDays`; nunca persiste sem confirmação humana.
+**Latest execution note (2026-06-08 Sprint 67):** Configurar a agenda da IA virou um wizard de 4 passos + edição por linguagem natural ("muda quarta pra 24h" / "bloqueia 25/12 Natal"). Datas bloqueadas agora forçam IA ligada 24h (resolvendo o gap em que cliente ficava sem resposta no feriado quando o schedule semanal silenciava o horário). Backend `POST /api/ai/schedule-parse` cobre schedule + blocked_dates; nunca persiste sem confirmação humana.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,16 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 67c (2026-06-08) — Datas bloqueadas ativam IA 24h
+
+- ✅ Schedule gate respeita blocked_dates — `evaluateAiSchedule` ganha early-return quando hoje (resolvido no fuso da empresa via `Intl.DateTimeFormat('en-CA', { timeZone })`) está em `blockedDates`: força `effectiveEnabledNow=true`. Fecha o gap em que cliente mandava mensagem em feriado e ficava sem resposta porque o schedule semanal estava em "off" (caso Casa dos Salgados, sábado 14h cai no turno humano). Order guards em `server/ai.ts` inalterados — IA continua recusando `criar_pedido` em datas bloqueadas, loja não opera — `src/domain/aiSchedule.ts:181`, `src/domain/aiSchedule.ts:222`
+- ✅ `always_off` ainda vence — kill-switch deliberado do operador respeitado mesmo em data bloqueada. Apenas `scheduled` e `always_on` recebem o boost.
+- ✅ Parser extension — `server/scheduleParser.ts` ganha campo `blockedDates` no input/output. System prompt ensina o LLM a adicionar/remover datas ("bloqueia 25/12 Natal", "tira a folga do dia 15"), usar campo `today` para resolver "amanhã"/"próxima sexta", e retornar a LISTA COMPLETA resultante (não diff). Validação no backend rejeita formato ISO inválido.
+- ✅ Frontend NL flow — `AiGlobalScheduleCard` agora recebe `blockedDates` + `onUpdateBlockedDates` como props. Preview do proposal mostra diff "+ adicionadas / − removidas" com data formatada em dd/mm/yyyy. Confirmação salva `state.blockedDates` (AppShell auto-persiste em 800ms) ANTES de aplicar mudança de schedule — `src/components/views/SettingsView.tsx:471`, `src/components/views/SettingsView.tsx:954`
+- ✅ Hint no card de resumo — explicitamente diz "Em datas bloqueadas, a IA cobre 24h (mas não aceita pedidos)" + lista as próximas 3 datas bloqueadas como confirmação visual.
+- ✅ Testes — 3 asserções novas em `tests/aiSchedule.test.ts`: blocked date força AI on mesmo no turno humano, `always_off` vence, timezone resolve corretamente (UTC vs BRT na virada do dia). 34/34 passando.
+- Verificação — `npm run lint` + suites `aiSchedule`, `aiScheduleWizard`, `configStore` (70 testes verdes).
 
 ### Sprint 67b (2026-06-08) — Wizard + edição por IA da agenda
 

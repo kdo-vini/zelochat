@@ -392,6 +392,17 @@ A migração 040 só adiciona a coluna nullable — contas existentes ficam com 
 
 Testes: `tests/aiSchedule.test.ts` cobre legacy + per-day + fallback. Antes de mexer no gate, rodar essa suíte.
 
+### Override por data bloqueada
+
+`empresa_perfil.blocked_dates` (JSONB `[{ date: 'YYYY-MM-DD', reason }]`) tem dois efeitos hoje:
+
+1. **Guards de pedido** (`server/ai.ts`): IA continua recusando `criar_pedido`, retirada, Pix etc. para datas bloqueadas — a loja não está operando.
+2. **Override do schedule gate** (`evaluateAiSchedule`): se hoje (no fuso da empresa, resolvido via `Intl.DateTimeFormat('en-CA', { timeZone })`) está em `blocked_dates`, força `effectiveEnabledNow=true` independente da agenda semanal. Justificativa: blocked = dono não vai trabalhar; sem o override, mensagens de cliente em feriado caíam num "AI off" do schedule (ex: Casa dos Salgados, sábado 14h cai no turno humano que não vai existir) e ficavam sem resposta.
+
+`always_off` **vence** sobre o override — kill-switch deliberado do operador é respeitado mesmo em data bloqueada. `always_on` e `scheduled` recebem o boost.
+
+Editor de blocked_dates fica em `CalendarView`; AppShell auto-salva (`saveEmpresa({ blocked_dates })`) debounced. O parser de linguagem natural (`server/scheduleParser.ts`) também consegue propor mudanças em `blockedDates` quando o operador diz "bloqueia 25/12 Natal" — frontend mostra diff (added/removed) antes do operador confirmar.
+
 ### UI da agenda (wizard + edição por IA)
 
 A tela em Configurações tem 3 camadas de fluxo, ordenadas por sofisticação:

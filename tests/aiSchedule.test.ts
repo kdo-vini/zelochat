@@ -362,5 +362,74 @@ console.log('\nTest 9: normalizeAiScheduleDays rejects malformed payloads');
   assert(enabledWithoutTimes === null, 'enabled day without times is rejected');
 }
 
+console.log('\nTest 10: blocked_dates force AI on 24h on Casa dos Salgados pattern');
+{
+  // Casa dos Salgados: humans 06–18, AI overnight. Without blocked_dates,
+  // monday 12:00 BRT = AI off. Add today (2026-05-04 = Monday) to
+  // blocked_dates → AI must be on 24h regardless of the schedule.
+  const days: AiScheduleDays = {
+    sun: { enabled: true, start: '00:00', end: '00:00', inverted: false },
+    mon: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    tue: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    wed: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    thu: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    fri: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+    sat: { enabled: true, start: '06:00', end: '18:00', inverted: true },
+  };
+  const base = {
+    aiEnabled: true,
+    aiMode: 'scheduled' as const,
+    aiScheduleDays: days,
+    timezone: 'America/Sao_Paulo',
+  };
+  // Monday 12:00 BRT (2026-05-04 15:00 UTC) — normally AI off (human shift)
+  const withoutBlocked = evaluateAiSchedule(base, atUtc('2026-05-04T15:00:00.000Z'));
+  assert(!withoutBlocked.effectiveEnabledNow, 'baseline: monday 12:00 BRT is AI off without blocked_dates');
+
+  // Same instant, but today is in blocked_dates → AI on
+  const withBlocked = evaluateAiSchedule({
+    ...base,
+    blockedDates: [{ date: '2026-05-04', reason: 'Folga do dono' }],
+  }, atUtc('2026-05-04T15:00:00.000Z'));
+  assert(withBlocked.effectiveEnabledNow, 'blocked_dates: monday 12:00 BRT becomes AI on');
+}
+
+console.log('\nTest 11: always_off still wins over blocked_dates');
+{
+  // Operator deliberately killed the AI globally — blocked_dates should NOT
+  // resurrect it. Respecting the deliberate kill switch is the safer
+  // posture (e.g. operator handles WhatsApp themselves during a holiday).
+  const evalResult = evaluateAiSchedule({
+    aiEnabled: false,
+    aiMode: 'always_off',
+    blockedDates: [{ date: '2026-05-04', reason: 'Folga do dono' }],
+    timezone: 'America/Sao_Paulo',
+  }, atUtc('2026-05-04T15:00:00.000Z'));
+  assert(!evalResult.effectiveEnabledNow, 'always_off + blocked date = still off');
+}
+
+console.log('\nTest 12: timezone matters — blocked date is local, not UTC');
+{
+  // 2026-05-04T02:00:00 UTC = 2026-05-03 23:00 BRT (Sunday still).
+  // If the operator blocked 2026-05-03 (Sunday), this UTC instant should
+  // count as blocked in BRT even though UTC says May 4.
+  const evalResult = evaluateAiSchedule({
+    aiEnabled: true,
+    aiMode: 'scheduled',
+    aiScheduleDays: {
+      sun: { enabled: false, start: '08:00', end: '18:00', inverted: false },
+      mon: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+      tue: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+      wed: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+      thu: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+      fri: { enabled: true, start: '08:00', end: '18:00', inverted: false },
+      sat: { enabled: false, start: '08:00', end: '18:00', inverted: false },
+    },
+    blockedDates: [{ date: '2026-05-03', reason: 'Dia da Mãe' }],
+    timezone: 'America/Sao_Paulo',
+  }, atUtc('2026-05-04T02:00:00.000Z')); // Sunday 23:00 BRT
+  assert(evalResult.effectiveEnabledNow, 'blocked date resolves in empresa timezone');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail === 0 ? 0 : 1);

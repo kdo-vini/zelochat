@@ -404,15 +404,26 @@ export async function setAiSettings(token: string, payload: AiSettings): Promise
   };
 }
 
+export interface BlockedDateEntry {
+  date: string;
+  reason: string;
+}
+
 export interface ScheduleParseResponse {
   mode: AiGlobalMode;
   scheduleDays: AiScheduleDays | null;
+  /** Null = no change. Array = full proposed list (replaces current). */
+  blockedDates: BlockedDateEntry[] | null;
   summary: string;
 }
 
 export async function parseScheduleDescription(
   token: string,
-  payload: { description: string; currentSchedule: AiScheduleDays | null },
+  payload: {
+    description: string;
+    currentSchedule: AiScheduleDays | null;
+    currentBlockedDates?: BlockedDateEntry[];
+  },
 ): Promise<ScheduleParseResponse> {
   const response = await apiFetch(apiUrl('/api/ai/schedule-parse'), {
     method: 'POST',

@@ -1641,9 +1641,21 @@ router.post('/api/ai/schedule-parse', express.json({ limit: '32kb' }), async (re
       return;
     }
     const currentSchedule = normalizeAiScheduleDays(req.body?.currentSchedule);
+    // Use server-derived "today" in the empresa timezone — never trust the
+    // client clock for date resolution.
+    const config = getConfig(empresaId);
+    const timezone = config.timezone || 'America/Sao_Paulo';
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
     const result = await parseScheduleFromDescription(empresaId, {
       description,
       currentSchedule,
+      currentBlockedDates: config.blockedDates ?? [],
+      today,
     });
     res.json(result);
   } catch (error) {

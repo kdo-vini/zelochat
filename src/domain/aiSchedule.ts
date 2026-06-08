@@ -38,6 +38,17 @@ export interface AiScheduleLike {
   aiScheduleEnd?: string | null;
   /** Per-day schedule. When present (non-null), takes precedence over the legacy fields. */
   aiScheduleDays?: AiScheduleDays | null;
+  /**
+   * Dates the dono won't be working ("YYYY-MM-DD"). When today (in empresa
+   * timezone) falls on one of these, the AI takes over WhatsApp 24h — even
+   * if the weekly schedule would have it silenced (typical case: Casa dos
+   * Salgados has humans 06–18 Mon–Sat, but on Christmas no one is there).
+   * Order guards in server/ai.ts still refuse `criar_pedido` for blocked
+   * dates; this override only flips the global on/off gate.
+   * always_off mode still wins — if the operator killed the AI globally,
+   * blocked dates do NOT resurrect it.
+   */
+  blockedDates?: { date: string; reason: string }[];
   timezone?: string | null;
 }
 
@@ -182,6 +193,20 @@ function getNowMinutesInTimezone(now: Date, timezone: string): number {
   return get('hour') * 60 + get('minute');
 }
 
+function getDateKeyInTimezone(now: Date, timezone: string): string {
+  // en-CA outputs YYYY-MM-DD natively, matching the blocked_dates JSONB shape.
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const year = parts.find((p) => p.type === 'year')?.value ?? '';
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  return `${year}-${month}-${day}`;
+}
+
 const WEEKDAY_SHORT_TO_KEY: Record<string, AiScheduleDayKey> = {
   Sun: 'sun',
   Mon: 'mon',
@@ -229,6 +254,20 @@ export function evaluateAiSchedule(config: AiScheduleLike, now = new Date()): Ai
 
   if (!config.timezone) {
     return { mode, effectiveEnabledNow: false, hasValidSchedule: false };
+  }
+
+  // Blocked-date override: if today (in empresa timezone) is in the
+  // operator's blocked_dates, force AI on for the whole day regardless of
+  // the weekly schedule. The dono won't be present to cover manually, so
+  // letting customer messages go unanswered would be worse than the AI
+  // saying "estamos fechados hoje". Order guards still refuse orders for
+  // blocked dates — this only flips the global on/off gate.
+  if (Array.isArray(config.blockedDates) && config.blockedDates.length > 0) {
+    const todayKey = getDateKeyInTimezone(now, config.timezone);
+    const isBlockedToday = config.blockedDates.some((entry) => entry?.date === todayKey);
+    if (isBlockedToday) {
+      return { mode, effectiveEnabledNow: true, hasValidSchedule: true };
+    }
   }
 
   const days = normalizeAiScheduleDays(config.aiScheduleDays);
