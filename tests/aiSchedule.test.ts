@@ -1,8 +1,11 @@
 import { DEFAULT_PIX_RECEIPT_CONFIG } from '../src/domain/pixReceipt.js';
 import { DEFAULT_ZELOCHAT_MODE } from '../src/domain/zelochatMode.js';
 import {
+  buildDefaultAiScheduleDays,
   evaluateAiSchedule,
   isAiGloballyEnabledNow,
+  normalizeAiScheduleDays,
+  type AiScheduleDays,
 } from '../src/domain/aiSchedule.js';
 import { buildAiHealthReport } from '../server/aiHealth.js';
 import type { BusinessConfig } from '../server/configStore.js';
@@ -68,6 +71,7 @@ function makeConfig(overrides: Partial<BusinessConfig> = {}): BusinessConfig {
     aiMode: 'always_on',
     aiScheduleStart: null,
     aiScheduleEnd: null,
+    aiScheduleDays: null,
     aiCanReengagePending: false,
     deliveryConfig: { enabled: false, neighborhoods: [] },
     pixReceiptConfig: { ...DEFAULT_PIX_RECEIPT_CONFIG },
@@ -180,6 +184,124 @@ console.log('\nTest 5: AI health summary tracks scheduled state');
     scheduledOff.safeSummaryStatus === 'scheduled_off',
     'health reports scheduled_off when outside the active window',
   );
+}
+
+console.log('\nTest 6: per-day schedule applies the right window for the right weekday');
+{
+  // 2026-05-02 = Saturday, 2026-05-03 = Sunday, 2026-05-04 = Monday
+  // (verified via Intl.DateTimeFormat with America/Sao_Paulo)
+  const days: AiScheduleDays = {
+    sun: { enabled: true, start: '00:00', end: '00:00' }, // 24h
+    mon: { enabled: true, start: '08:00', end: '18:00' },
+    tue: { enabled: true, start: '08:00', end: '18:00' },
+    wed: { enabled: true, start: '08:00', end: '18:00' },
+    thu: { enabled: true, start: '08:00', end: '18:00' },
+    fri: { enabled: true, start: '08:00', end: '18:00' },
+    sat: { enabled: true, start: '13:00', end: '23:59' },
+  };
+  const base = {
+    aiEnabled: true,
+    aiMode: 'scheduled' as const,
+    aiScheduleStart: null,
+    aiScheduleEnd: null,
+    aiScheduleDays: days,
+    timezone: 'America/Sao_Paulo',
+  };
+  // Sunday 04:00 local (2026-05-03 07:00 UTC) — Sunday is 24h → active
+  assert(
+    evaluateAiSchedule(base, atUtc('2026-05-03T07:00:00.000Z')).effectiveEnabledNow,
+    'sunday 24h is active at 04:00',
+  );
+  // Saturday 15:00 local (2026-05-02 18:00 UTC) — Saturday 13:00-23:59 → active
+  assert(
+    evaluateAiSchedule(base, atUtc('2026-05-02T18:00:00.000Z')).effectiveEnabledNow,
+    'saturday 13:00-23:59 is active at 15:00',
+  );
+  // Saturday 11:00 local (2026-05-02 14:00 UTC) — before the saturday window → inactive
+  assert(
+    !evaluateAiSchedule(base, atUtc('2026-05-02T14:00:00.000Z')).effectiveEnabledNow,
+    'saturday 13:00-23:59 is inactive at 11:00',
+  );
+  // Monday 10:00 local (2026-05-04 13:00 UTC) — within commercial hours → active
+  assert(
+    evaluateAiSchedule(base, atUtc('2026-05-04T13:00:00.000Z')).effectiveEnabledNow,
+    'monday 08:00-18:00 is active at 10:00',
+  );
+  // Monday 20:00 local (2026-05-04 23:00 UTC) — outside commercial hours → inactive
+  assert(
+    !evaluateAiSchedule(base, atUtc('2026-05-04T23:00:00.000Z')).effectiveEnabledNow,
+    'monday 08:00-18:00 is inactive at 20:00',
+  );
+}
+
+console.log('\nTest 7: disabled day silences the AI even mid-window');
+{
+  const days = buildDefaultAiScheduleDays('08:00', '18:00');
+  days.mon = { enabled: false, start: '08:00', end: '18:00' };
+  // Monday 12:00 local (2026-05-04 15:00 UTC) — should be silenced
+  assert(
+    !evaluateAiSchedule({
+      aiEnabled: true,
+      aiMode: 'scheduled',
+      aiScheduleStart: null,
+      aiScheduleEnd: null,
+      aiScheduleDays: days,
+      timezone: 'America/Sao_Paulo',
+    }, atUtc('2026-05-04T15:00:00.000Z')).effectiveEnabledNow,
+    'monday disabled = inactive even at 12:00',
+  );
+  // Tuesday 12:00 local (2026-05-05 15:00 UTC) — Tuesday is enabled → active
+  assert(
+    evaluateAiSchedule({
+      aiEnabled: true,
+      aiMode: 'scheduled',
+      aiScheduleStart: null,
+      aiScheduleEnd: null,
+      aiScheduleDays: days,
+      timezone: 'America/Sao_Paulo',
+    }, atUtc('2026-05-05T15:00:00.000Z')).effectiveEnabledNow,
+    'tuesday still active when only monday is disabled',
+  );
+}
+
+console.log('\nTest 8: per-day schedule takes precedence over legacy single window');
+{
+  const days = buildDefaultAiScheduleDays('00:00', '00:00'); // every day 24h
+  // Legacy says 09:00-18:00 (inactive at 21:00); per-day says 24h (active).
+  assert(
+    evaluateAiSchedule({
+      aiEnabled: true,
+      aiMode: 'scheduled',
+      aiScheduleStart: '09:00',
+      aiScheduleEnd: '18:00',
+      aiScheduleDays: days,
+      timezone: 'America/Sao_Paulo',
+    }, atUtc('2026-05-07T00:00:00.000Z')).effectiveEnabledNow,
+    'per-day 24h wins over legacy 09:00-18:00 at 21:00 local',
+  );
+}
+
+console.log('\nTest 9: normalizeAiScheduleDays rejects malformed payloads');
+{
+  assert(normalizeAiScheduleDays(null) === null, 'null returns null');
+  assert(normalizeAiScheduleDays({}) === null, 'empty object returns null (missing days)');
+  assert(
+    normalizeAiScheduleDays({
+      sun: { enabled: true, start: '08:00', end: '18:00' },
+      // missing mon..sat
+    }) === null,
+    'partial weekdays return null',
+  );
+  const enabledWithoutTimes = normalizeAiScheduleDays({
+    sun: { enabled: true },
+    mon: { enabled: true, start: '08:00', end: '18:00' },
+    tue: { enabled: true, start: '08:00', end: '18:00' },
+    wed: { enabled: true, start: '08:00', end: '18:00' },
+    thu: { enabled: true, start: '08:00', end: '18:00' },
+    fri: { enabled: true, start: '08:00', end: '18:00' },
+    sat: { enabled: true, start: '08:00', end: '18:00' },
+  });
+  assert(enabledWithoutTimes === null, 'enabled day without times is rejected');
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

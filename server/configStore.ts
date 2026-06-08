@@ -20,8 +20,10 @@ import {
   evaluateAiSchedule,
   isAiGloballyEnabledNow as sharedIsAiGloballyEnabledNow,
   normalizeAiGlobalMode,
+  normalizeAiScheduleDays,
   normalizeAiScheduleTime,
   type AiGlobalMode,
+  type AiScheduleDays,
 } from '../src/domain/aiSchedule.js';
 import {
   DEFAULT_PIX_RECEIPT_CONFIG,
@@ -77,6 +79,13 @@ export interface BusinessConfig {
   aiMode?: AiGlobalMode;
   aiScheduleStart: string | null;
   aiScheduleEnd: string | null;
+  /**
+   * Per-day AI schedule. When present (non-null), takes precedence over the
+   * legacy single-window aiScheduleStart/aiScheduleEnd. Customers who haven't
+   * re-saved their schedule from the new UI stay on the legacy fields and
+   * keep working through the fallback path in evaluateAiSchedule.
+   */
+  aiScheduleDays: AiScheduleDays | null;
   /** Allow the AI to proactively reference unconfirmed pending orders in conversation. */
   aiCanReengagePending: boolean;
   deliveryConfig: DeliveryConfig | null;
@@ -104,6 +113,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   managerPhone: '',
   aiScheduleStart: null,
   aiScheduleEnd: null,
+  aiScheduleDays: null,
   // aiEnabled intentionally omitted — undefined means "not hydrated yet". Hydration
   // happens via loadAiSettingsFromDb / ensureAiSettingsHydrated. This is the fail-closed
   // posture for the global kill-switch: until we've read the DB, we don't reply.
@@ -334,6 +344,11 @@ export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
       ? existing.aiScheduleEnd
       : normalizeAiScheduleTime(patch.aiScheduleEnd);
   }
+  if ('aiScheduleDays' in patch) {
+    patch.aiScheduleDays = patch.aiScheduleDays === undefined
+      ? existing.aiScheduleDays
+      : normalizeAiScheduleDays(patch.aiScheduleDays);
+  }
   if ('blockedDates' in patch) {
     if (patch.blockedDates === undefined) {
       delete patch.blockedDates;
@@ -380,10 +395,19 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   try {
     let result = await supabase
       .from('empresa_perfil')
-      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
+      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_schedule_days, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
       .eq('id', empresaId)
       .abortSignal(controller.signal)
       .maybeSingle();
+    if (result.error?.message?.includes('ai_schedule_days')) {
+      console.warn('[configStore] ai_schedule_days column is not available yet; hydrating without per-day schedule.');
+      result = await supabase
+        .from('empresa_perfil')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
+        .eq('id', empresaId)
+        .abortSignal(controller.signal)
+        .maybeSingle();
+    }
     if (
       result.error?.message?.includes('zelochat_mode')
     ) {
@@ -428,6 +452,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     ai_mode?: string | null;
     ai_schedule_start?: string | null;
     ai_schedule_end?: string | null;
+    ai_schedule_days?: unknown;
     ai_can_reengage_pending?: boolean;
     blocked_dates?: unknown;
     horario_abertura?: string | null;
@@ -493,6 +518,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   patch.aiMode = normalizeAiGlobalMode(row?.ai_mode) ?? DEFAULT_AI_GLOBAL_MODE;
   patch.aiScheduleStart = normalizeAiScheduleTime(row?.ai_schedule_start);
   patch.aiScheduleEnd = normalizeAiScheduleTime(row?.ai_schedule_end);
+  patch.aiScheduleDays = normalizeAiScheduleDays(row?.ai_schedule_days);
   if (typeof row?.ai_enabled === 'boolean') {
     patch.aiEnabled = row.ai_enabled;
   } else {

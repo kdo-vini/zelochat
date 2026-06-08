@@ -123,8 +123,10 @@ import type { ChatAttachment } from '../src/types.js';
 import {
   DEFAULT_AI_GLOBAL_MODE,
   normalizeAiGlobalMode,
+  normalizeAiScheduleDays,
   normalizeAiScheduleTime,
   type AiGlobalMode,
+  type AiScheduleDays,
 } from '../src/domain/aiSchedule.js';
 
 const router = Router();
@@ -135,6 +137,7 @@ interface AiSettingsPayload {
   mode: AiGlobalMode;
   scheduleStart: string | null;
   scheduleEnd: string | null;
+  scheduleDays: AiScheduleDays | null;
 }
 
 function readAiSettingsFromConfig(empresaId: string): AiSettingsPayload {
@@ -143,6 +146,7 @@ function readAiSettingsFromConfig(empresaId: string): AiSettingsPayload {
     mode: normalizeAiGlobalMode(config.aiMode) ?? DEFAULT_AI_GLOBAL_MODE,
     scheduleStart: normalizeAiScheduleTime(config.aiScheduleStart),
     scheduleEnd: normalizeAiScheduleTime(config.aiScheduleEnd),
+    scheduleDays: config.aiScheduleDays ?? null,
   };
 }
 
@@ -1553,9 +1557,24 @@ router.post('/api/ai-settings', async (req: Request, res: Response) => {
 
     const scheduleStart = normalizeAiScheduleTime(req.body?.scheduleStart);
     const scheduleEnd = normalizeAiScheduleTime(req.body?.scheduleEnd);
-    if (mode === 'scheduled' && (!scheduleStart || !scheduleEnd || scheduleStart === scheduleEnd)) {
-      res.status(400).json({ error: 'Informe horários válidos para a agenda da IA.' });
-      return;
+    const scheduleDays = normalizeAiScheduleDays(req.body?.scheduleDays);
+
+    if (mode === 'scheduled') {
+      // Per-day schedule wins. If the operator sent neither a per-day payload
+      // nor a usable legacy window, reject so they can't accidentally land in
+      // a "scheduled but no schedule" state (the kill-switch would silence
+      // every reply, see configStore §"fail-closed posture").
+      if (scheduleDays) {
+        const hasEnabledDay = (Object.values(scheduleDays) as AiScheduleDays[keyof AiScheduleDays][])
+          .some((day) => day.enabled);
+        if (!hasEnabledDay) {
+          res.status(400).json({ error: 'Habilite pelo menos um dia para a agenda da IA.' });
+          return;
+        }
+      } else if (!scheduleStart || !scheduleEnd || scheduleStart === scheduleEnd) {
+        res.status(400).json({ error: 'Informe horários válidos para a agenda da IA.' });
+        return;
+      }
     }
 
     const aiEnabled = mode !== 'always_off';
@@ -1564,20 +1583,38 @@ router.post('/api/ai-settings', async (req: Request, res: Response) => {
       aiMode: mode,
       aiScheduleStart: scheduleStart,
       aiScheduleEnd: scheduleEnd,
+      aiScheduleDays: scheduleDays,
     });
-    try {
-      await getServiceSupabase()
+    const supabase = getServiceSupabase();
+    const updatedAt = new Date().toISOString();
+    const updateWithDays = await supabase
+      .from('empresa_perfil')
+      .update({
+        ai_enabled: aiEnabled,
+        ai_mode: mode,
+        ai_schedule_start: scheduleStart,
+        ai_schedule_end: scheduleEnd,
+        ai_schedule_days: scheduleDays,
+        updated_at: updatedAt,
+      })
+      .eq('id', empresaId);
+    if (updateWithDays.error?.message?.includes('ai_schedule_days')) {
+      console.warn('[Router] ai_schedule_days column missing - persisting legacy fields only. Run migration 040.');
+      const fallback = await supabase
         .from('empresa_perfil')
         .update({
           ai_enabled: aiEnabled,
           ai_mode: mode,
           ai_schedule_start: scheduleStart,
           ai_schedule_end: scheduleEnd,
-          updated_at: new Date().toISOString(),
+          updated_at: updatedAt,
         })
         .eq('id', empresaId);
-    } catch (err) {
-      console.warn('[Router] ai settings persist failed (column missing?):', err);
+      if (fallback.error) {
+        console.warn('[Router] ai settings persist failed (legacy fallback):', fallback.error);
+      }
+    } else if (updateWithDays.error) {
+      console.warn('[Router] ai settings persist failed (column missing?):', updateWithDays.error);
     }
     broadcast({ type: 'ai_enabled', data: { enabled: aiEnabled } }, empresaId);
     res.json({ ok: true, ...readAiSettingsFromConfig(empresaId) });

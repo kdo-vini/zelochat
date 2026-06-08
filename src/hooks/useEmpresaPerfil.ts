@@ -3,7 +3,13 @@ import { supabase } from '../services/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import type { ChatMessage, PixReceiptConfig } from '../types';
 import { normalizePixReceiptConfig } from '../domain/pixReceipt';
-import { normalizeAiGlobalMode, normalizeAiScheduleTime, type AiGlobalMode } from '../domain/aiSchedule';
+import {
+  normalizeAiGlobalMode,
+  normalizeAiScheduleDays,
+  normalizeAiScheduleTime,
+  type AiGlobalMode,
+  type AiScheduleDays,
+} from '../domain/aiSchedule';
 import { normalizeZeloChatMode, type ZeloChatMode } from '../domain/zelochatMode';
 
 /** Subset of empresa_perfil columns relevant to ZeloChat */
@@ -35,6 +41,8 @@ export interface EmpresaPerfil {
   ai_mode: AiGlobalMode | null;
   ai_schedule_start: string | null;
   ai_schedule_end: string | null;
+  /** Added via migration 040_ai_schedule_per_day.sql — may be null if migration not yet run. */
+  ai_schedule_days: AiScheduleDays | null;
   zelochat_mode: ZeloChatMode;
   /** Customer status notification toggles — added via add_out_for_delivery_status_and_customer_notify_toggles */
   notify_customer_preparing: boolean;
@@ -88,6 +96,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       'ai_mode',
       'ai_schedule_start',
       'ai_schedule_end',
+      'ai_schedule_days',
       'zelochat_mode',
       'notify_customer_preparing',
       'notify_customer_ready',
@@ -95,11 +104,26 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       'deletion_scheduled_at',
     ].join(', ');
 
-    const { data, error: dbError } = await supabase
+    let { data, error: dbError } = await supabase
       .from('empresa_perfil')
       .select(fullSelect)
       .eq('user_id', session.user.id)
       .maybeSingle();
+
+    // ai_schedule_days was added in migration 040. Pre-migration empresas would
+    // lose ALL AI settings if we let this kick straight into the base-columns
+    // fallback below, so retry once without the new column first.
+    if (dbError?.message?.includes('ai_schedule_days')) {
+      console.warn('[useEmpresaPerfil] ai_schedule_days column missing; retrying without it. Run migration 040.');
+      const selectWithoutDays = fullSelect.replace(/,\s*ai_schedule_days/, '');
+      const retry = await supabase
+        .from('empresa_perfil')
+        .select(selectWithoutDays)
+        .eq('user_id', session.user.id)
+        .maybeSingle();
+      data = retry.data;
+      dbError = retry.error;
+    }
 
     let row = data as (Partial<EmpresaPerfil> & { id?: string }) | null;
     if (dbError) {
@@ -156,6 +180,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       ai_mode: normalizeAiGlobalMode(row.ai_mode) ?? null,
       ai_schedule_start: normalizeAiScheduleTime(row.ai_schedule_start),
       ai_schedule_end: normalizeAiScheduleTime(row.ai_schedule_end),
+      ai_schedule_days: normalizeAiScheduleDays(row.ai_schedule_days),
       zelochat_mode: normalizeZeloChatMode(row.zelochat_mode),
       notify_customer_preparing: row.notify_customer_preparing ?? true,
       notify_customer_ready: row.notify_customer_ready ?? true,

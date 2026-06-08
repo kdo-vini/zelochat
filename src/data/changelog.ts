@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-06-08',
+    category: 'medium',
+    title: 'Agenda da IA agora aceita dia e horário específicos',
+    description: 'Configure a IA diferente em cada dia da semana: 24 horas no domingo, das 13h ao fim do dia no sábado, comercial durante a semana — você decide.',
+  },
+  {
     date: '2026-06-05',
     category: 'hotfix',
     title: 'QR Code do WhatsApp volta a aparecer após reset',

@@ -8,7 +8,16 @@ import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { normalizeZeloChatMode, type ZeloChatMode } from '../../domain/zelochatMode';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
 import { maskBrazilianPhone } from '../../domain/chat';
-import { evaluateAiSchedule, type AiGlobalMode } from '../../domain/aiSchedule';
+import {
+  AI_SCHEDULE_DAY_KEYS,
+  buildDefaultAiScheduleDays,
+  evaluateAiSchedule,
+  normalizeAiScheduleTime,
+  type AiGlobalMode,
+  type AiScheduleDay,
+  type AiScheduleDayKey,
+  type AiScheduleDays,
+} from '../../domain/aiSchedule';
 import {
   getAiEnabled,
   getAiSettings,
@@ -456,6 +465,76 @@ const DAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 interface AiGlobalScheduleCardProps {
   token: string | null;
   timezone: string;
+  /** Used to seed the per-day schedule when the operator switches to "Agendada" for the first time. */
+  businessOpenTime: string;
+  businessCloseTime: string;
+}
+
+const DAY_LABELS: Record<AiScheduleDayKey, string> = {
+  sun: 'Domingo',
+  mon: 'Segunda',
+  tue: 'Terça',
+  wed: 'Quarta',
+  thu: 'Quinta',
+  fri: 'Sexta',
+  sat: 'Sábado',
+};
+
+type DayMode = 'off' | 'allDay' | 'window';
+
+function dayMode(day: AiScheduleDay): DayMode {
+  if (!day.enabled) return 'off';
+  if (day.start === day.end) return 'allDay';
+  return 'window';
+}
+
+function describeDay(day: AiScheduleDay): string {
+  const mode = dayMode(day);
+  if (mode === 'off') return 'IA desligada';
+  if (mode === 'allDay') return '24 horas';
+  return `${day.start} às ${day.end}`;
+}
+
+/**
+ * Decide how to seed the per-day editor when the operator hasn't saved one yet.
+ *
+ * Preference order (so existing customers don't lose their schedule on first
+ * open of the new UI):
+ *   1. legacy single-window (aiScheduleStart/aiScheduleEnd) — that's the
+ *      schedule actually in effect on the backend right now;
+ *   2. loja business hours — when no legacy schedule exists, mirror the loja's
+ *      open/close;
+ *   3. commercial defaults (08:00–18:00) — last resort.
+ *
+ * Legacy windows that cross midnight (start > end) can't be expressed
+ * cleanly per-day (we deliberately don't wrap days). When that happens we
+ * fall back to business hours so the form shows something valid, and the
+ * UI surfaces a warning so the operator knows their previous overnight
+ * window won't translate 1:1.
+ */
+function seedScheduleDays(
+  current: AiScheduleDays | null,
+  legacyStart: string | null,
+  legacyEnd: string | null,
+  openTime: string,
+  closeTime: string,
+): AiScheduleDays {
+  if (current) return current;
+  const ls = normalizeAiScheduleTime(legacyStart);
+  const le = normalizeAiScheduleTime(legacyEnd);
+  if (ls && le && ls < le) {
+    return buildDefaultAiScheduleDays(ls, le);
+  }
+  const start = normalizeAiScheduleTime(openTime) ?? '08:00';
+  const end = normalizeAiScheduleTime(closeTime) ?? '18:00';
+  if (start === end) return buildDefaultAiScheduleDays();
+  return buildDefaultAiScheduleDays(start, end);
+}
+
+function hasLegacyOvernightWindow(legacyStart: string | null, legacyEnd: string | null): boolean {
+  const ls = normalizeAiScheduleTime(legacyStart);
+  const le = normalizeAiScheduleTime(legacyEnd);
+  return Boolean(ls && le && ls > le);
 }
 
 const AI_MODE_OPTIONS: { value: AiGlobalMode; title: string; description: string }[] = [
@@ -472,7 +551,7 @@ const AI_MODE_OPTIONS: { value: AiGlobalMode; title: string; description: string
   {
     value: 'scheduled',
     title: 'Agendada',
-    description: 'A IA responde apenas dentro da janela programada, todos os dias.',
+    description: 'Defina dia e horário: 24 horas, janela específica ou desligada — diferente em cada dia da semana.',
   },
 ];
 
@@ -494,6 +573,7 @@ function describeAiScheduleState(settings: AiSettings | null, timezone: string):
     aiMode: settings.mode,
     aiScheduleStart: settings.scheduleStart,
     aiScheduleEnd: settings.scheduleEnd,
+    aiScheduleDays: settings.scheduleDays,
     timezone,
   });
 
@@ -520,7 +600,12 @@ function describeAiScheduleState(settings: AiSettings | null, timezone: string):
   };
 }
 
-export const AiGlobalScheduleCard = ({ token, timezone }: AiGlobalScheduleCardProps) => {
+export const AiGlobalScheduleCard = ({
+  token,
+  timezone,
+  businessOpenTime,
+  businessCloseTime,
+}: AiGlobalScheduleCardProps) => {
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -532,7 +617,7 @@ export const AiGlobalScheduleCard = ({ token, timezone }: AiGlobalScheduleCardPr
       .then((value) => { if (!cancelled) setSettings(value); })
       .catch(() => {
         if (!cancelled) {
-          setSettings({ mode: 'always_on', scheduleStart: null, scheduleEnd: null });
+          setSettings({ mode: 'always_on', scheduleStart: null, scheduleEnd: null, scheduleDays: null });
         }
       });
     return () => { cancelled = true; };
@@ -559,32 +644,96 @@ export const AiGlobalScheduleCard = ({ token, timezone }: AiGlobalScheduleCardPr
     if (!settings) return;
     if (mode === 'scheduled') {
       setError(null);
-      setSettings((prev) => prev ? { ...prev, mode } : prev);
+      // Seed per-day schedule preferring the operator's existing legacy single
+      // window (so re-saving doesn't accidentally overwrite their schedule),
+      // then loja business hours, then commercial defaults.
+      const scheduleDays = settings.scheduleDays
+        ?? seedScheduleDays(null, settings.scheduleStart, settings.scheduleEnd, businessOpenTime, businessCloseTime);
+      setSettings((prev) => prev ? { ...prev, mode, scheduleDays } : prev);
       return;
     }
     await saveSettings({
       mode,
       scheduleStart: settings.scheduleStart,
       scheduleEnd: settings.scheduleEnd,
+      scheduleDays: settings.scheduleDays,
     });
   };
 
-  const updateScheduleField = (field: 'scheduleStart' | 'scheduleEnd', value: string) => {
-    setSettings((prev) => prev ? { ...prev, [field]: value } : prev);
+  const updateDay = (dayKey: AiScheduleDayKey, patch: Partial<AiScheduleDay>) => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const current = prev.scheduleDays ?? seedScheduleDays(null, prev.scheduleStart, prev.scheduleEnd, businessOpenTime, businessCloseTime);
+      const nextDay: AiScheduleDay = { ...current[dayKey], ...patch };
+      return {
+        ...prev,
+        scheduleDays: { ...current, [dayKey]: nextDay },
+      };
+    });
+  };
+
+  const setDayMode = (dayKey: AiScheduleDayKey, next: DayMode) => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const current = prev.scheduleDays ?? seedScheduleDays(null, prev.scheduleStart, prev.scheduleEnd, businessOpenTime, businessCloseTime);
+      const day = current[dayKey];
+      let nextDay: AiScheduleDay;
+      if (next === 'off') {
+        nextDay = { ...day, enabled: false };
+      } else if (next === 'allDay') {
+        nextDay = { enabled: true, start: '00:00', end: '00:00' };
+      } else {
+        // 'window' — re-enable; if the previous start/end was a 24h placeholder
+        // (start === end), seed something sensible so both inputs have a value.
+        const start = day.start !== day.end ? day.start : '08:00';
+        const end = day.start !== day.end ? day.end : '18:00';
+        nextDay = { enabled: true, start, end };
+      }
+      return {
+        ...prev,
+        scheduleDays: { ...current, [dayKey]: nextDay },
+      };
+    });
   };
 
   const saveSchedule = async () => {
     if (!settings) return;
-    if (!settings.scheduleStart || !settings.scheduleEnd || settings.scheduleStart === settings.scheduleEnd) {
-      setError('Informe horários válidos para a agenda da IA.');
+    const days = settings.scheduleDays ?? seedScheduleDays(null, settings?.scheduleStart ?? null, settings?.scheduleEnd ?? null, businessOpenTime, businessCloseTime);
+    let firstInvalid: { dayKey: AiScheduleDayKey; reason: string } | null = null;
+    let hasEnabled = false;
+    for (const key of AI_SCHEDULE_DAY_KEYS) {
+      const day = days[key];
+      if (!day.enabled) continue;
+      hasEnabled = true;
+      if (day.start === day.end) continue; // 24h is valid
+      const start = normalizeAiScheduleTime(day.start);
+      const end = normalizeAiScheduleTime(day.end);
+      if (!start || !end) {
+        firstInvalid = { dayKey: key, reason: 'Informe horários válidos.' };
+        break;
+      }
+      if (start >= end) {
+        firstInvalid = { dayKey: key, reason: 'O horário inicial precisa ser antes do final.' };
+        break;
+      }
+    }
+    if (firstInvalid) {
+      setError(`${DAY_LABELS[firstInvalid.dayKey]}: ${firstInvalid.reason}`);
       return;
     }
-    await saveSettings(settings);
+    if (!hasEnabled) {
+      setError('Habilite pelo menos um dia para a agenda da IA.');
+      return;
+    }
+    await saveSettings({ ...settings, scheduleDays: days });
   };
 
   const status = describeAiScheduleState(settings, timezone);
   const mode = settings?.mode ?? 'always_on';
   const StatusIcon = mode === 'always_off' ? BotOff : Bot;
+  const scheduleDays = mode === 'scheduled' && settings
+    ? (settings.scheduleDays ?? seedScheduleDays(null, settings?.scheduleStart ?? null, settings?.scheduleEnd ?? null, businessOpenTime, businessCloseTime))
+    : null;
 
   return (
     <SectionCard icon={Bot} title="Assistente de IA">
@@ -620,34 +769,80 @@ export const AiGlobalScheduleCard = ({ token, timezone }: AiGlobalScheduleCardPr
           ))}
         </div>
 
-        {mode === 'scheduled' && settings && (
+        {mode === 'scheduled' && scheduleDays && settings && (
           <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label>
-                <span className={LABEL}>Liga às</span>
-                <input
-                  type="time"
-                  value={settings.scheduleStart ?? ''}
-                  onChange={(e) => updateScheduleField('scheduleStart', e.target.value)}
-                  className={FIELD}
-                />
-              </label>
-              <label>
-                <span className={LABEL}>Desliga às</span>
-                <input
-                  type="time"
-                  value={settings.scheduleEnd ?? ''}
-                  onChange={(e) => updateScheduleField('scheduleEnd', e.target.value)}
-                  className={FIELD}
-                />
-              </label>
+            <p className="text-[12px] text-[var(--color-ink-muted)]">
+              Defina para cada dia da semana: <strong>desligada</strong>, <strong>24 horas</strong> ou um horário específico. Para "até o fim do dia", coloque o final às <strong>23:59</strong>.
+            </p>
+            {!settings.scheduleDays && hasLegacyOvernightWindow(settings.scheduleStart, settings.scheduleEnd) && (
+              <p className="text-[12px] text-[var(--color-warn)]">
+                Sua agenda atual ({settings.scheduleStart}–{settings.scheduleEnd}) cruza a madrugada. Revise os horários de cada dia antes de salvar.
+              </p>
+            )}
+            <div className="space-y-2">
+              {AI_SCHEDULE_DAY_KEYS.map((key) => {
+                const day = scheduleDays[key];
+                const currentMode = dayMode(day);
+                return (
+                  <div
+                    key={key}
+                    className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-semibold">{DAY_LABELS[key]}</p>
+                        <p className="text-[11.5px] text-[var(--color-ink-muted)]">{describeDay(day)}</p>
+                      </div>
+                      <div className="flex rounded-md border border-[var(--color-line)] overflow-hidden text-[11.5px]">
+                        {(['off', 'allDay', 'window'] as DayMode[]).map((option) => {
+                          const label = option === 'off' ? 'Desligada' : option === 'allDay' ? '24 horas' : 'Horário';
+                          const active = currentMode === option;
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              onClick={() => setDayMode(key, option)}
+                              disabled={!token || saving}
+                              className={`px-2.5 py-1.5 transition-colors ${
+                                active
+                                  ? 'bg-[var(--color-brand)] text-white'
+                                  : 'bg-transparent text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]'
+                              } disabled:opacity-50`}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {currentMode === 'window' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <label>
+                          <span className={LABEL}>Liga às</span>
+                          <input
+                            type="time"
+                            value={day.start}
+                            onChange={(e) => updateDay(key, { start: e.target.value })}
+                            disabled={!token || saving}
+                            className={FIELD}
+                          />
+                        </label>
+                        <label>
+                          <span className={LABEL}>Desliga às</span>
+                          <input
+                            type="time"
+                            value={day.end}
+                            onChange={(e) => updateDay(key, { end: e.target.value })}
+                            disabled={!token || saving}
+                            className={FIELD}
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <p className="text-[12px] text-[var(--color-ink-muted)]">
-              Todos os dias, no fuso da empresa. Horários que cruzam a madrugada funcionam normalmente.
-            </p>
-            <p className="text-[12px] text-[var(--color-ink-muted)]">
-              Preencha os horarios e salve para ativar a agenda.
-            </p>
             <button
               type="button"
               onClick={() => void saveSchedule()}
@@ -1100,7 +1295,12 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               onPlanChange={handlePlanChange}
             />
 
-            <AiGlobalScheduleCard token={token} timezone={state.businessInfo.timezone} />
+            <AiGlobalScheduleCard
+              token={token}
+              timezone={state.businessInfo.timezone}
+              businessOpenTime={state.businessInfo.openTime}
+              businessCloseTime={state.businessInfo.closeTime}
+            />
 
             <SectionCard icon={Clock} title="Horários e atendimento">
               <div className="space-y-3">

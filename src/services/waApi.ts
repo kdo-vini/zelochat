@@ -13,7 +13,7 @@ import type {
   TriggerKind,
 } from '../types';
 import { apiUrl, apiFetch } from '../config';
-import type { AiGlobalMode } from '../domain/aiSchedule';
+import type { AiGlobalMode, AiScheduleDays } from '../domain/aiSchedule';
 
 type SessionsResponse = ChatSessionsPage;
 type SessionResponse = { session: ChatSession };
@@ -22,6 +22,7 @@ export interface AiSettings {
   mode: AiGlobalMode;
   scheduleStart: string | null;
   scheduleEnd: string | null;
+  scheduleDays: AiScheduleDays | null;
 }
 export interface AiHealthReport {
   catalogLoaded: boolean;
@@ -399,6 +400,7 @@ export async function setAiSettings(token: string, payload: AiSettings): Promise
     mode: body.mode,
     scheduleStart: body.scheduleStart,
     scheduleEnd: body.scheduleEnd,
+    scheduleDays: body.scheduleDays ?? null,
   };
 }
 
