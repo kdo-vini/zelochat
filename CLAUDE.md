@@ -365,6 +365,27 @@ Regras atuais:
 
 Teste principal: `tests/aiTurnDecision.test.ts`. Ao mudar fluxo de confirmação/observação/pending order, atualize essa suíte antes de mexer no prompt.
 
+## Agenda global da IA (`ai_mode` + per-day schedule)
+
+A IA tem três modos globais em `empresa_perfil.ai_mode`: `always_on`, `always_off`, `scheduled`. O gate fica em `evaluateAiSchedule()` / `isAiGloballyEnabledNow()` em `src/domain/aiSchedule.ts`, chamado pelo `server/ai.ts:generateAndSendReply` antes de qualquer resposta automática.
+
+Quando o modo é `scheduled`, duas fontes de janela coexistem:
+
+1. **Per-day (preferida)** — coluna `empresa_perfil.ai_schedule_days` (JSONB, migration 040). Shape:
+   ```json
+   { "sun": { "enabled": true, "start": "00:00", "end": "00:00" },
+     "mon": { "enabled": true, "start": "08:00", "end": "18:00" },
+     ... ,
+     "sat": { "enabled": true, "start": "13:00", "end": "23:59" } }
+   ```
+   Por dia: `enabled=false` → IA desligada o dia todo. `enabled=true && start===end` → 24h. `enabled=true && start<end` → janela `[start, end]`. **Não há wrap entre dias** — para "até o fim do dia" o operador coloca `end='23:59'`. A resolução do dia da semana usa o timezone da empresa via `Intl.DateTimeFormat('en-US', { weekday: 'short' })`.
+
+2. **Single-window legacy** — colunas `ai_schedule_start`/`ai_schedule_end`. Mesma janela todo dia, com suporte a overnight wrap (`start > end`). Continua sendo usada quando `ai_schedule_days IS NULL` — clientes antigos não perdem a agenda até abrirem a tela e salvarem o novo formato.
+
+A migração 040 só adiciona a coluna nullable — contas existentes ficam com `ai_schedule_days = NULL` e mantêm o comportamento legacy bit-a-bit idêntico ao anterior até re-salvarem a agenda. A UI per-day usa a janela legacy do operador como seed inicial (não horário comercial da loja), pra que um save acidental sem mudar nada preserve o agendamento que ele já tinha.
+
+Testes: `tests/aiSchedule.test.ts` cobre legacy + per-day + fallback. Antes de mexer no gate, rodar essa suíte.
+
 ## Histórico do cliente (abordagem planejada, não implementada)
 
 Para memória cross-conversation da IA, a abordagem planejada é: manter um campo de resumo minimalista no perfil do cliente (provavelmente em `zelochat_sessions` ou nova tabela) com até X caracteres, que a IA sobrepõe/atualiza incrementalmente a cada conversa. Não é um log completo — é um "perfil vivo" comprimido. Ainda não implementado.

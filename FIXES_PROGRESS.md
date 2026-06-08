@@ -3,7 +3,7 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
-**Latest execution note (2026-06-05 Sprint 66):** Reconexão do WhatsApp agora se recupera quando a instância salva foi apagada fora do ZeloChat: o backend limpa o ponteiro antigo, cria uma nova instância e busca o QR no mesmo clique.
+**Latest execution note (2026-06-08 Sprint 67):** Agenda da IA agora aceita dia e hora específicos por dia da semana (24h, janela ou desligada por dia) via coluna nova `ai_schedule_days`; legacy single-window continua funcionando intacto para contas antigas até elas re-salvarem.
 
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
@@ -118,6 +118,14 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 67 (2026-06-08) — Agenda da IA por dia da semana
+
+- ✅ Per-day schedule — modo `scheduled` agora aceita janela diferente por dia (Off / 24h / Horário específico) na coluna nova `empresa_perfil.ai_schedule_days` (JSONB); avaliação `evaluateAiSchedule` prioriza per-day quando presente e cai pra single-window legacy quando `NULL` — `src/domain/aiSchedule.ts:88`, `src/domain/aiSchedule.ts:182`, `server/configStore.ts:80`, `server/router.ts:1547`, `supabase/migrations/040_ai_schedule_per_day.sql`
+- ✅ UI per-day — `AiGlobalScheduleCard` ganhou editor 7-dias com 3 estados por dia (Desligada/24h/Horário). Seed inicial usa a janela legacy do operador (não horário comercial) pra não sobrescrever o agendamento dele em save acidental; aviso amarelo quando legacy cruza madrugada — `src/components/views/SettingsView.tsx:524`, `src/components/views/SettingsView.tsx:639`
+- ✅ Backward compat — fallback resilient quando coluna não existe: hidratação no backend (`configStore.ts`), select no hook (`useEmpresaPerfil.ts`), persistência no `POST /api/ai-settings` — clientes antigos com `ai_schedule_days = NULL` mantêm comportamento legacy bit-a-bit idêntico até re-salvarem.
+- ✅ Testes — 9 asserções novas em `tests/aiSchedule.test.ts`: domingo 24h, sábado 13:00–23:59, dia desligado, per-day vence legacy, normalizer rejeita payload malformado. 24/24 passando.
+- Verificação — `npm run lint` + suites `aiSchedule`, `configStore`, `aiSimulatorScheduleGuard`, `aiRouteGuards`.
 
 ### Sprint 66 (2026-06-05) — Hotfix reconexão WhatsApp após instância apagada
 
