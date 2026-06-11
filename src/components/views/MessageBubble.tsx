@@ -785,6 +785,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                 <button
                   onClick={() => setLightbox({ type: 'image', src: message.attachment!.dataUrl! })}
                   className="block cursor-pointer focus:outline-none"
+                  aria-label="Visualizar imagem"
                 >
                   <img
                     src={message.attachment.dataUrl}
@@ -813,6 +814,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                 <button
                   onClick={() => setLightbox({ type: 'image', src: message.attachment!.dataUrl! })}
                   className="block w-full cursor-pointer focus:outline-none"
+                  aria-label="Visualizar imagem"
                 >
                   <img
                     src={message.attachment.dataUrl}
@@ -839,6 +841,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                 <button
                   onClick={() => setLightbox({ type: 'video', src: message.attachment!.dataUrl! })}
                   className="block w-full cursor-pointer focus:outline-none relative"
+                  aria-label="Visualizar vídeo"
                 >
                   <video
                     src={message.attachment.dataUrl}

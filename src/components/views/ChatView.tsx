@@ -2558,6 +2558,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                       disabled={attachmentLoading || isSending}
                       className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-ink-muted)] shadow-[var(--shadow-card)] transition-colors hover:text-[var(--color-ink)] disabled:opacity-50"
                       title="Anexar"
+                      aria-label="Anexar arquivo"
                     >
                       <Paperclip className="h-4.5 w-4.5" strokeWidth={1.8} />
                     </button>
@@ -2665,6 +2666,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                       onPaste={handlePaste}
                       disabled={isSending || aiAssistLoading !== null}
                       placeholder={pendingAttachments.length > 0 ? 'Adicione uma legenda (opcional)' : 'Digite uma mensagem ou /atalho'}
+                      aria-label="Digite uma mensagem"
                       className="w-full resize-none overflow-y-auto max-h-[160px] bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl px-4 py-2.5 text-[13.5px] outline-none shadow-[var(--shadow-card)] focus:ring-2 focus:ring-[var(--color-brand)]/20 focus:border-[var(--color-brand)] transition-all pr-12 disabled:opacity-60 disabled:cursor-not-allowed leading-[1.5]"
                     />
                     <div className="absolute right-3 bottom-2.5">
@@ -2680,6 +2682,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                             }}
                             disabled={aiAssistLoading !== null || isSending}
                             title="Sugestões de IA"
+                            aria-label="Sugestões de IA"
                             className="flex h-8 w-8 items-center justify-center rounded-full transition-colors text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)]"
                           >
                             {aiAssistLoading ? (
@@ -2757,12 +2760,14 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                         : 'bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
                     }`}
                     title={isRecording ? 'Parar gravação' : 'Gravar áudio'}
+                    aria-label={isRecording ? 'Parar gravação' : 'Gravar áudio'}
                   >
                     {isRecording ? <MicOff className="h-4.5 w-4.5" strokeWidth={1.8} /> : <Mic className="h-4.5 w-4.5" strokeWidth={1.8} />}
                   </button>
                   <button
                     onClick={() => void handleOwnerSend()}
                     disabled={isSending || (!ownerInput.trim() && pendingAttachments.length === 0)}
+                    aria-label="Enviar mensagem"
                     className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all flex-shrink-0 ${
                       isSending
                         ? 'bg-[var(--color-brand)] text-white shadow-[var(--shadow-card)] cursor-not-allowed'
