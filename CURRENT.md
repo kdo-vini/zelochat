@@ -41,6 +41,7 @@ Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Fatias sugeridas:
 
 ## Decisões recentes
 
+- Hotfix de billing/share-table (2026-06-11): acesso do ZeloChat para `chat`/`bundle` agora usa a expiração efetiva mais longa entre `current_period_end` e `manually_extended_until`. Isso evita que uma extensão manual já vencida derrube um bundle renovado via AbacatePay no ZeloPDV; caso real: Casa dos Salgados. Coberto por `tests/subscriptionExpiry.test.ts`.
 - Botão "Atualizar agora" agora depende de headers `no-store` no shell SPA e limpa `?appVersion=...` após carregar; assets Vite hashados continuam em cache longo (2026-06-01)
 - Comportamento geral da IA documentado no Obsidian: confirmações, observações, pending orders, hard buttons, emojis e estoque agora têm suíte determinística (`tests/aiTurnDecision.test.ts`) antes do prompt (2026-06-01)
 - Estoque agora é regra operacional da IA: produto com `controlar_estoque=true` e `estoque_atual<=0` sai do cardápio da IA; pedido acima do estoque é bloqueado antes de abrir pendência (2026-06-01)

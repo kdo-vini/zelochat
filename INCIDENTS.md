@@ -11,6 +11,37 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## X. Bundle renovado no ZeloPDV segue sem acesso no ZeloChat
+
+### Sintoma
+- Cliente paga a renovação do bundle via AbacatePay dentro do ZeloPDV.
+- No banco, `subscriptions.status='active'`, `plan_tier='bundle'` e
+  `current_period_end` fica no futuro, mas o ZeloChat continua mostrando
+  paywall / `SUBSCRIPTION_INACTIVE`.
+
+### Causa-raiz
+O ZeloChat priorizava `manually_extended_until ?? current_period_end`. Quando a
+row compartilhada tinha uma extensão manual antiga já vencida, ela sombreava um
+`current_period_end` renovado no futuro e fazia a assinatura parecer expirada.
+
+### Fix
+A expiração efetiva agora é sempre o timestamp válido mais longo entre
+`current_period_end` e `manually_extended_until` em `server/supabase.ts`,
+`server/subscriptionSweeper.ts`, `src/hooks/useSubscription.ts` e
+`src/components/billing/BillingCards.tsx`. Regressão coberta em
+`tests/subscriptionExpiry.test.ts`.
+
+### Recovery
+1. Conferir a row em `public.subscriptions` do cliente.
+2. Se `status='active'`, `plan_tier in ('chat','bundle')`,
+   `current_period_end > now()` e `manually_extended_until < now()`, aplicar
+   hotfix limpando o override vencido:
+   `UPDATE subscriptions SET manually_extended_until = NULL WHERE id = ...;`
+3. Pedir para o operador recarregar o ZeloChat ou aguardar a próxima leitura da
+   assinatura.
+4. Confirmar que o bundle continua ativo e que a data exibida no billing card
+   bate com o vencimento mais longo.
+
 ## IX. Gerar QR Code não recupera após instância apagada no provedor
 
 ### Sintoma

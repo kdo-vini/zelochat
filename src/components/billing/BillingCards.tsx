@@ -3,6 +3,7 @@ import { Loader2, Check, Lock, Sparkles, ArrowRightLeft, UserCog, QrCode, Copy, 
 import { type ZeloChatSubscription } from '../../hooks/useSubscription';
 import { startCheckout, openPortal, BillingError, createPixCharge, getPixStatus } from '../../services/billingApi';
 import { PRICING } from '../../data/pricing';
+import { getEffectiveSubscriptionExpiry } from '../../domain/subscription.js';
 
 // ---------------------------------------------------------------------------
 // PixPaymentModal
@@ -531,7 +532,7 @@ export const BillingManagementCard = ({
   if (!subscription) return null;
 
   const planLabel = subscription.plan_tier === 'bundle' ? 'Pacote Gestão + Atendimento' : 'ZeloChat Pro';
-  const periodEnd = subscription.manually_extended_until ?? subscription.current_period_end;
+  const periodEnd = getEffectiveSubscriptionExpiry(subscription);
   const periodEndFmt = periodEnd
     ? new Date(periodEnd).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
     : null;

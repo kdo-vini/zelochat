@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import { randomBytes } from 'crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
+import { isSubscriptionCurrentlyActive } from '../src/domain/subscription.js';
 
 let serviceClient: SupabaseClient | null = null;
 let boundEmpresaId: string | null = null;
@@ -158,10 +159,7 @@ interface SubscriptionRow {
 }
 
 function isRowActive(row: SubscriptionRow | null | undefined): boolean {
-  if (!row || row.status !== 'active') return false;
-  const expiry = row.manually_extended_until ?? row.current_period_end;
-  if (!expiry) return false;
-  return new Date(expiry).getTime() > Date.now();
+  return isSubscriptionCurrentlyActive(row);
 }
 
 /**

@@ -26,6 +26,7 @@
 - Zelo PDV shared data/integration:
   - Frontend catalog CRUD reads/writes `produtos`, `categorias`, `subcategorias` directly through Supabase in `src/hooks/useCatalog.ts`.
   - Backend AI runtime hydrates shared profile/catalog from `empresa_perfil.user_id` in `server/configStore.ts`.
+  - Shared `subscriptions` expiry for ZeloChat access must use the later valid timestamp between `current_period_end` and `manually_extended_until`; an expired manual extension must never shorten a renewed chat/bundle entitlement.
 - Relevant libraries confirmed:
   - `@supabase/supabase-js`
   - `openai`

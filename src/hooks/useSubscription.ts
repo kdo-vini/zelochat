@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
+import { isSubscriptionCurrentlyActive } from '../domain/subscription.js';
 
 export interface ZeloChatSubscription {
   id: string;
@@ -81,10 +82,5 @@ export function useSubscription(session: Session | null): UseSubscriptionResult 
 
 /** True se a row tem status='active' e período não expirou (manual ou normal). */
 export function isSubscriptionActive(sub: ZeloChatSubscription | null): boolean {
-  if (!sub) return false;
-  if (sub.status !== 'active') return false;
-  const now = Date.now();
-  const expiry = sub.manually_extended_until ?? sub.current_period_end;
-  if (!expiry) return false;
-  return new Date(expiry).getTime() > now;
+  return isSubscriptionCurrentlyActive(sub);
 }

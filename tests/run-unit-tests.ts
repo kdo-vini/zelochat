@@ -24,6 +24,7 @@ const tests = [
   'tests/routerWebhookGuardrails.test.ts',
   'tests/updateReloadGuardrails.test.ts',
   'tests/billingPix.test.ts',
+  'tests/subscriptionExpiry.test.ts',
 ];
 
 if (!existsSync(tsxCli)) {

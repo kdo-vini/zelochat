@@ -5,6 +5,8 @@
 
 **Latest execution note (2026-06-08 Sprint 67):** Configurar a agenda da IA virou um wizard de 4 passos + edição por linguagem natural ("muda quarta pra 24h" / "bloqueia 25/12 Natal"). Datas bloqueadas agora forçam IA ligada 24h (resolvendo o gap em que cliente ficava sem resposta no feriado quando o schedule semanal silenciava o horário). Backend `POST /api/ai/schedule-parse` cobre schedule + blocked_dates; nunca persiste sem confirmação humana.
 
+**Latest hotfix note (2026-06-11 Sprint 68):** Bundle renovado via AbacatePay no ZeloPDV não pode perder acesso no ZeloChat por causa de `manually_extended_until` vencido. A expiração efetiva agora usa o timestamp mais longo entre `current_period_end` e `manually_extended_until` no backend, frontend e sweeper; o caso real da Casa dos Salgados foi destravado com hotfix na row compartilhada `subscriptions`.
+
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
 | Tier | Total | Closed | Pending | Deferred | % |
@@ -118,6 +120,13 @@ These are out of scope or unsafe to change from this branch:
 ---
 
 ## Sprint history
+
+### Sprint 68 (2026-06-11) — Hotfix bundle renovado bloqueado por extensão manual vencida
+
+- ✅ Billing/shared subscription expiry — `server/supabase.ts`, `server/subscriptionSweeper.ts`, `src/hooks/useSubscription.ts` e `src/components/billing/BillingCards.tsx` passaram a usar a expiração efetiva mais longa entre `current_period_end` e `manually_extended_until`, em vez de priorizar cegamente a extensão manual. Isso corrige o caso em que o bundle já foi renovado no ZeloPDV, mas uma extensão manual antiga e vencida ainda existia na mesma row e fazia o ZeloChat enxergar a assinatura como expirada.
+- ✅ Regressão coberta — novo `tests/subscriptionExpiry.test.ts` reproduz o caso real: `current_period_end` no futuro com `manually_extended_until` no passado deve continuar liberando `bundle`, enquanto extensões futuras ainda estendem o acesso normalmente.
+- ✅ Operação manual — hotfix aplicado na `subscriptions.id=8edfe91d-585d-4c1c-9bad-c34c223816f3` (Casa dos Salgados): `manually_extended_until` zerado, preservando `status='active'`, `plan_tier='bundle'` e `current_period_end=2026-07-11T02:59:59.999Z`.
+- Verificação — `node ./node_modules/tsx/dist/cli.mjs tests/subscriptionExpiry.test.ts`, `npm run lint` e `npm run build`.
 
 ### Sprint 67c (2026-06-08) — Datas bloqueadas ativam IA 24h
 

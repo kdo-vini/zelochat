@@ -1,6 +1,7 @@
 import { getServiceSupabase } from './supabase.js';
 import { deleteInstance } from './instanceManager.js';
 import { redactInstance } from './redact.js';
+import { getEffectiveSubscriptionExpiryMs } from '../src/domain/subscription.js';
 
 /**
  * Subscription sweeper — closes P1.13.
@@ -100,8 +101,7 @@ export async function findSweepCandidates(
     current_period_end: string | null;
     manually_extended_until: string | null;
   }>) {
-    const expiryRaw = row.manually_extended_until ?? row.current_period_end;
-    const expiryMs = expiryRaw ? new Date(expiryRaw).getTime() : null;
+    const expiryMs = getEffectiveSubscriptionExpiryMs(row);
     const prev = latestByUser.get(row.user_id);
     if (!prev || (expiryMs != null && (prev.expiry == null || expiryMs > prev.expiry))) {
       latestByUser.set(row.user_id, { status: row.status, expiry: expiryMs });
