@@ -11,6 +11,7 @@ export type ChatEventCardData = {
     | 'pending_text_confirmation'
     | 'pending_pix_receipt'
     | 'pending_order_echo'
+    | 'zelomenu_order_received'
     | 'order_confirmed'
     | 'order_already_confirmed'
     | 'escalated'
@@ -139,7 +140,7 @@ export function parseChatEventCard(
     return {
       kind: 'pending_order_echo',
       title: 'Pedido enviado para conferência',
-      subtitle: 'A IA já montou o resumo e está aguardando a confirmação do cliente.',
+      subtitle: 'A IA montou o resumo neste ponto da conversa. Veja os cards seguintes para o status atual.',
       tone: 'pending',
       lines,
       focusRequest: parseOrderContextFromLines(lines, customerPhone),
@@ -169,6 +170,29 @@ export function parseChatEventCard(
     };
   }
 
+  if (message.role === 'assistant' && cleanText.startsWith('✅ Pedido recebido pelo cardápio!')) {
+    const lines = splitNonEmptyLines(cleanText)
+      .slice(1);
+    const focusRequest = parseOrderContextFromLines(splitNonEmptyLines(cleanText), customerPhone);
+    const waitingPayment = /comprovante do pix/i.test(cleanText);
+    return {
+      kind: 'zelomenu_order_received',
+      title: sendFailed
+        ? 'Pedido recebido, mas a mensagem falhou'
+        : 'Pedido recebido pelo cardápio',
+      subtitle: sendFailed
+        ? 'O carrinho foi confirmado, mas a orientação não chegou ao cliente.'
+        : waitingPayment
+          ? 'Aguardando comprovante Pix antes da conferência da loja.'
+          : 'Aguardando conferência da loja. Ainda não entrou na produção.',
+      badge: focusRequest?.shortId ? `#${focusRequest.shortId}` : undefined,
+      tone: sendFailed ? 'warning' : waitingPayment ? 'warning' : 'pending',
+      lines,
+      focusRequest,
+      sendFailed,
+    };
+  }
+
   if (message.role === 'assistant' && cleanText.startsWith('Seu pedido já foi confirmado!')) {
     return {
       kind: 'order_already_confirmed',
@@ -187,8 +211,8 @@ export function parseChatEventCard(
     const parsed = parsePendingSummary(cleanText, 'Aguardando confirmação do cliente:', customerPhone);
     return {
       kind: 'pending_confirmation',
-      title: 'Aguardando confirmação do cliente',
-      subtitle: 'O pedido ainda não entrou na produção. Falta o cliente confirmar.',
+      title: 'Resumo enviado para confirmação',
+      subtitle: 'Este card registra a etapa de conferência. Se o cliente confirmou depois, o pedido já aparece na produção.',
       tone: 'pending',
       ...parsed,
     };
@@ -198,8 +222,8 @@ export function parseChatEventCard(
     const parsed = parsePendingSummary(cleanText, 'Aguardando confirmação por texto:', customerPhone);
     return {
       kind: 'pending_text_confirmation',
-      title: 'Aguardando confirmação por texto',
-      subtitle: 'Os botões falharam ou não ficaram disponíveis. O cliente precisa responder "Sim".',
+      title: 'Resumo enviado para confirmação por texto',
+      subtitle: 'Este card registra a etapa de conferência por texto. Veja os cards seguintes para o status atual.',
       tone: 'warning',
       ...parsed,
     };
@@ -209,8 +233,8 @@ export function parseChatEventCard(
     const parsed = parsePendingSummary(cleanText, 'Aguardando comprovante Pix:', customerPhone);
     return {
       kind: 'pending_pix_receipt',
-      title: 'Aguardando comprovante Pix',
-      subtitle: 'O pedido só segue para a produção depois da conferência do comprovante.',
+      title: 'Comprovante Pix solicitado',
+      subtitle: 'Este card registra a solicitação do comprovante. Veja os cards seguintes para o status atual.',
       tone: 'warning',
       ...parsed,
     };

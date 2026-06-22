@@ -311,6 +311,36 @@ console.log('\nReg-3: "salgados fritos" maps to a candidate set, not no_match');
   assert(empty.kind === 'no_match', 'empty input is no_match');
 }
 
+console.log('\nReg-3b: common Casa dos Salgados assado names map semantically');
+{
+  const CASA_ASSADOS: CatalogProductLike[] = [
+    { name: 'Cento de esfiha de carne', unitBased: true },
+    { name: 'Cento de hamburguinho', unitBased: true },
+    { name: 'Cento de travesseiro de presunto e queijo frito', unitBased: true },
+    { name: 'Cento de presunto e queijo c catupiry', unitBased: true },
+    { name: 'Cento de coxinha de carne', unitBased: true },
+    { name: 'Cento Pastel carne', unitBased: true },
+  ];
+
+  const esfirra = resolveProductBySemantic('esfirra de carne', CASA_ASSADOS);
+  assert(
+    esfirra.kind === 'unique_match' && esfirra.product.name === 'Cento de esfiha de carne',
+    `esfirra de carne → Cento de esfiha de carne (got ${esfirra.kind})`,
+  );
+
+  const hamburguer = resolveProductBySemantic('hambúrguer', CASA_ASSADOS);
+  assert(
+    hamburguer.kind === 'unique_match' && hamburguer.product.name === 'Cento de hamburguinho',
+    `hambúrguer → Cento de hamburguinho (got ${hamburguer.kind})`,
+  );
+
+  const enroladinho = resolveProductBySemantic('enroladinho de presunto e queijo', CASA_ASSADOS);
+  assert(
+    enroladinho.kind !== 'no_match',
+    `enroladinho de presunto e queijo should offer candidates instead of cold escalation (got ${enroladinho.kind})`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // REG-4 — "não" answering "quer alterar algo?" is confirm, not cancel
 // ---------------------------------------------------------------------------

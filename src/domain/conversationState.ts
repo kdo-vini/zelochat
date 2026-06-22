@@ -530,8 +530,10 @@ export function mapInformalSalgadoTerm(raw: string): SemanticIntent {
   }
 
   // categories
-  if (/\b(salgad\w*|coxinha\w*|risole\w*|kibe\w*|enroladinh\w*|bolinh\w*|empad\w*|esfih\w*)\b/u.test(norm)) {
-    if (intent.mode === 'assados') intent.categories.push('salgado_assado_mini');
+  const mentionsSalgado = /\b(salgad\w*|coxinha\w*|risole\w*|kibe\w*|enroladinh\w*|bolinh\w*|empad\w*|esfih\w*|esfirr\w*|hamburg\w*)\b/u.test(norm);
+  const isUsuallyBakedMini = /\b(esfih\w*|esfirr\w*|hamburg\w*)\b/u.test(norm);
+  if (mentionsSalgado) {
+    if (intent.mode === 'assados' || (intent.mode === null && isUsuallyBakedMini)) intent.categories.push('salgado_assado_mini');
     else if (intent.mode === 'sortidos') intent.categories.push('salgado_sortido_mini');
     else intent.categories.push('salgado_frito_mini');
   }
@@ -555,6 +557,8 @@ export function mapInformalSalgadoTerm(raw: string): SemanticIntent {
     { re: /\b(presunto\s+e\s+queijo|presunto\b)/u, label: 'presunto' },
     { re: /\bqueijo\b/u, label: 'queijo' },
     { re: /\bcatupiry\b/u, label: 'catupiry' },
+    { re: /\b(esfiha|esfirra)\b/u, label: 'esfiha' },
+    { re: /\b(hamburguer|hamburguerzinho|hamburg\w*)\b/u, label: 'hamburguer' },
     { re: /\b(quatro\s+queijos|4\s+queijos)\b/u, label: 'quatro queijos' },
     { re: /\bbacalhau\b/u, label: 'bacalhau' },
     { re: /\b(pizza|pizz\w+)\b/u, label: 'pizza' },
@@ -644,7 +648,7 @@ const CATEGORY_KEYWORDS: Record<SemanticCategory, RegExp[]> = {
   ],
   salgado_assado_mini: [
     /\bcento\b/u,
-    /\b(assado\w*|forno|esfiha)\b/u,
+    /\b(assado\w*|forno|esfiha|esfirra|hamburg\w*)\b/u,
   ],
   salgado_sortido_mini: [
     /\bcento\b/u,
@@ -668,7 +672,7 @@ function productMatchesCategory(productName: string, category: SemanticCategory)
   }
   if (category === 'salgado_assado_mini') {
     if (!/\bcento\b/u.test(norm)) return false;
-    return /\b(assad\w*|forno)\b/u.test(norm);
+    return /\b(assad\w*|forno|esfih\w*|esfirr\w*|hamburg\w*)\b/u.test(norm);
   }
   if (category === 'salgado_sortido_mini') {
     if (!/\bcento\b/u.test(norm)) return false;
@@ -678,11 +682,17 @@ function productMatchesCategory(productName: string, category: SemanticCategory)
 }
 
 function flavorMatchesProduct(flavor: string, productName: string): boolean {
-  const flavorTokens = new Set(catalogTokens(flavor));
+  const flavorTokens = new Set(catalogTokens(flavor).flatMap(expandFlavorTokenAliases));
   if (flavorTokens.size === 0) return false;
-  const productTokensSet = new Set(catalogTokens(productName));
+  const productTokensSet = new Set(catalogTokens(productName).flatMap(expandFlavorTokenAliases));
   // every significant flavor token must be in the product name
   return [...flavorTokens].every((t) => productTokensSet.has(t));
+}
+
+function expandFlavorTokenAliases(token: string): string[] {
+  if (token === 'esfiha' || token === 'esfirra') return ['esfiha', 'esfirra'];
+  if (token === 'hamburguer' || token === 'hamburguinho') return ['hamburguer', 'hamburguinho'];
+  return [token];
 }
 
 export type SemanticResolution =

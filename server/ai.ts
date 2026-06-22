@@ -52,6 +52,7 @@ import {
   type ActiveOrderRow,
   type SemanticResolution,
 } from '../src/domain/conversationState.js';
+import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -115,6 +116,53 @@ async function sendRedirectContactReply(
   await addToolMessage(jid, `Encaminhado para ${redirect.phone}`, toolCall.id, empresaId);
   await sendAndPersistText(jid, redirect.text, empresaId, { responseSource: 'ai_auto' });
   return redirect.text;
+}
+
+async function notifyManagerForConfirmedOrder(params: {
+  empresaId: string;
+  jid: string;
+  customerName: string;
+  customerPhone: string;
+  items: { product: string; quantity: number }[];
+  pickupDate: string;
+  pickupTime: string;
+  paymentMethod?: string;
+  total: number;
+  toolCallId?: string;
+}): Promise<void> {
+  const triggers = await fetchActiveTriggers(params.empresaId);
+  const matches = selectOrderCreatedNotifyTriggers(triggers, params.items);
+  if (matches.length === 0) return;
+
+  const cfg = getConfig(params.empresaId);
+  const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
+  if (!managerJid) {
+    console.warn('[AI] order-created notify_manager trigger matched but managerPhone is missing or invalid.');
+    return;
+  }
+
+  const itemsList = params.items.map((item) => `${item.quantity}x ${item.product}`).join(', ');
+  const dateBR = isoToDisplayBR(params.pickupDate) || params.pickupDate;
+  for (const match of matches) {
+    try {
+      await sendTextMessage(
+        managerJid,
+        `🔔 *${safeForPrompt(match.trigger.name, 80)}*\n` +
+          `Cliente: ${safeForPrompt(params.customerName, 80)} (${safeForPrompt(params.customerPhone, 30)})\n` +
+          `Pedido: ${safeForPrompt(itemsList, 240)}\n` +
+          `Retirada/entrega: ${safeForPrompt(dateBR, 20)} às ${safeForPrompt(params.pickupTime, 20)}\n` +
+          `Pagamento: ${safeForPrompt(params.paymentMethod || 'Não informado', 40)}\n` +
+          `Total: R$ ${params.total.toFixed(2)}\n` +
+          `Motivo: ${safeForPrompt(match.reason, 180)}`,
+        params.empresaId,
+      );
+      if (params.toolCallId) {
+        await addToolMessage(params.jid, 'Gerente notificado', params.toolCallId, params.empresaId);
+      }
+    } catch (err) {
+      console.warn('[AI] Failed to notify manager for confirmed order:', err);
+    }
+  }
 }
 
 /**
@@ -640,6 +688,19 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   }).then(null, (err) => console.error('[stock] decrement failed (non-blocking):', err));
 
   await clearPendingOrder(jid, pending.empresaId);
+
+  await notifyManagerForConfirmedOrder({
+    empresaId: pending.empresaId,
+    jid,
+    customerName: pending.customerName,
+    customerPhone: pending.customerPhone,
+    items: pending.items,
+    pickupDate: pending.pickupDate,
+    pickupTime: pending.pickupTime,
+    paymentMethod: pending.paymentMethod,
+    total: pending.total,
+    toolCallId: pending.toolCallId,
+  });
 
   const shortId = orderId.slice(0, 8).toUpperCase();
   const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');

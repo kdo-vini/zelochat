@@ -11,6 +11,39 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XI. Pedido confirmado entra na produção mas gerente não é avisado
+
+### Sintoma
+- Cliente confirma o pedido fora do horário humano.
+- O pedido aparece na produção, mas o gerente não recebe o alerta configurado
+  como "Novo pedido".
+- No chat, cards antigos de conferência podem dar a impressão de que o pedido
+  ainda aguarda confirmação, mesmo após a confirmação.
+
+### Causa-raiz
+Gatilhos `notify_manager` eram executados apenas quando o modelo chamava
+`dispatch_trigger`; pedidos finalizados pelo caminho determinístico
+`confirmPendingOrder` criavam a row em `zelochat_orders`, mas não reavaliavam
+gatilhos de evento real como "Novo pedido".
+
+### Fix
+Pedidos confirmados agora selecionam gatilhos determinísticos de evento
+(`novo pedido` e pedido grande por quantidade) e notificam o gerente depois da
+criação do pedido — `src/domain/orderEventTriggers.ts:45`,
+`server/ai.ts:121`, `server/ai.ts:692`. Cards de conferência também foram
+reescritos como histórico da etapa, não estado atual — `src/domain/chatFeedback.ts:141`.
+
+### Recovery
+1. Conferir se o pedido existe em Produção.
+2. Se existir e o gerente não recebeu aviso, verificar se há gatilho ativo
+   `notify_manager` com texto de novo pedido e se o telefone do gerente está
+   preenchido.
+3. Após este hotfix, reproduzir com um pedido pequeno e confirmar que o gerente
+   recebe o alerta assim que o pedido entra na produção.
+4. Para produto não identificado, conferir o card azul de análise; grafias
+   "esfirra/esfiha" e "hambúrguer/hamburguinho" agora devem mapear antes de
+   escalar.
+
 ## X. Bundle renovado no ZeloPDV segue sem acesso no ZeloChat
 
 ### Sintoma
