@@ -108,6 +108,11 @@ export function buildPublicCartPath(token: string): string {
   return `/menu/carrinho/${encodeURIComponent(token)}`;
 }
 
+export function buildPublicCartUrl(appBaseUrl: string, token: string): string {
+  const base = appBaseUrl.replace(/\/$/, '');
+  return `${base}${buildPublicCartPath(token)}`;
+}
+
 export function computeCartPricing(
   items: Array<Pick<ZeloMenuCartItemSnapshot, 'lineTotal'>>,
   deliveryFee = 0,
@@ -166,4 +171,19 @@ export function buildConfirmedCartCustomerMessage(input: {
     : 'A loja vai conferir o pedido e te chamar por aqui com o próximo passo.';
 
   return `✅ Pedido recebido pelo cardápio! Número: *#${shortId}*\n\n📦 ${itemsList}${deliveryLine}${observationsLine}\n${scheduleLine}\n💳 Pagamento: ${input.payment.declaredMethod || 'Não informado'}\n💰 Total: ${formatBRL(input.pricing.total)}\n\n${nextStep}`;
+}
+
+export function buildWhatsAppCartLinkMessage(input: {
+  publicUrl: string;
+  customerName: string;
+  summary: string;
+  pixReceiptRequired: boolean;
+}): string {
+  const greeting = input.customerName
+    ? `Perfeito, ${input.customerName}!`
+    : 'Perfeito!';
+  const pixLine = input.pixReceiptRequired
+    ? '\n\nSe o pagamento for no Pix, o comprovante será pedido no WhatsApp depois que você confirmar pelo link.'
+    : '';
+  return `${greeting} Montei seu pedido no link abaixo para você revisar com calma, ajustar se precisar e confirmar:\n\n${input.publicUrl}\n\n${input.summary}${pixLine}`;
 }

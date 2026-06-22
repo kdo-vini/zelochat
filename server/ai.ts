@@ -53,12 +53,27 @@ import {
   type SemanticResolution,
 } from '../src/domain/conversationState.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
+import { buildWhatsAppCartLinkMessage, buildPublicCartUrl } from '../src/domain/zelomenuCart.js';
+import { openWhatsAppCartSession } from './zelomenuCartSessions.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
 const PENDING_ORDER_TTL_MIN = 30;
 const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 50000;
 const IMAGE_HISTORY_CAP = 3;
+
+function getPublicAppBaseUrl(): string {
+  const explicit = process.env.PUBLIC_APP_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+
+  const frontendOrigin = (process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .find(Boolean);
+  if (frontendOrigin) return frontendOrigin.replace(/\/$/, '');
+
+  return 'https://chat.zelopdv.com.br';
+}
 
 type AssistantPersistOptions = NonNullable<Parameters<typeof addAssistantMessage>[5]>;
 
@@ -4220,9 +4235,59 @@ export async function generateAndSendReply(
           const sanitizedObs = args.observations ? safeForPrompt(args.observations, 300) : '';
           const requiresPixReceipt = isPixReceiptConfigActive(cfg.pixReceiptConfig) && isPixPaymentMethod(sanitizedPayment);
 
-          // Persist pending order to Supabase (review fix C2 — survives restarts).
-          // UPSERT semantics ensure two simultaneous criar_pedido calls don't create
-          // duplicate rows; the latest payload wins.
+          const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
+          const isDelivery = args.orderType === 'delivery';
+          const scheduleLabel = isDelivery ? '🛵 Entrega' : '📅 Retirada';
+          const deliveryLine = isDelivery && args.deliveryAddress
+            ? `\n📍 ${args.deliveryAddress}\n🏘️ Taxa (${args.deliveryNeighborhood}): R$ ${(args.deliveryFee ?? 0).toFixed(2)}`
+            : '';
+          const obsLine = sanitizedObs ? `\n📝 Obs: ${sanitizedObs}` : '';
+          const summary = `📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}`;
+
+          try {
+            const cartSession = await openWhatsAppCartSession({
+              empresaId: resolvedEmpresaId,
+              remoteJid: jid,
+              customerName: sanitizedName,
+              customerPhone: args.customerPhone,
+              items: args.items.map((item) => ({
+                productName: item.product,
+                quantity: item.quantity,
+              })),
+              fulfillment: {
+                type: args.orderType === 'delivery' ? 'delivery' : 'pickup',
+                pickupDate: args.pickupDate,
+                pickupTime: sanitizedPickupTime,
+                deliveryAddress: sanitizedAddress,
+                deliveryNeighborhood: sanitizedNeighborhood,
+              },
+              paymentMethod: sanitizedPayment,
+              observations: sanitizedObs || undefined,
+              source: 'ai_prebuilt',
+            });
+            const publicUrl = buildPublicCartUrl(getPublicAppBaseUrl(), cartSession.publicToken);
+            const linkMsg = buildWhatsAppCartLinkMessage({
+              publicUrl,
+              customerName: sanitizedName,
+              summary,
+              pixReceiptRequired: requiresPixReceipt,
+            });
+
+            await addToolMessage(jid, `Carrinho ZeloMenu aberto: ${summary}\n🔗 ${publicUrl}`, toolCall.id, resolvedEmpresaId);
+            const waMessageId = await sendTextMessage(jid, linkMsg, resolvedEmpresaId);
+            try {
+              await addAssistantMessage(jid, linkMsg, undefined, resolvedEmpresaId, undefined, { waMessageId });
+            } catch (persistErr) {
+              console.error('[AI] Failed to persist ZeloMenu cart link after sending:', persistErr);
+            }
+            console.log(`[AI] ZeloMenu cart opened for AI handoff: ${jid}`);
+            return linkMsg;
+          } catch (zelomenuErr) {
+            console.warn('[AI] Failed to open ZeloMenu cart; falling back to legacy pending order flow:', zelomenuErr);
+          }
+
+          // Legacy fallback kept during rollout so Casa dos Salgados does not lose order capture
+          // if the new cart-session path fails in production.
           await setPendingOrder({
             empresaId: resolvedEmpresaId,
             jid,
@@ -4241,14 +4306,6 @@ export async function generateAndSendReply(
             observations: sanitizedObs || undefined,
             pixReceiptStatus: requiresPixReceipt ? 'required' : 'not_required',
           });
-          const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
-          const isDelivery = args.orderType === 'delivery';
-          const scheduleLabel = isDelivery ? '🛵 Entrega' : '📅 Retirada';
-          const deliveryLine = isDelivery && args.deliveryAddress
-            ? `\n📍 ${args.deliveryAddress}\n🏘️ Taxa (${args.deliveryNeighborhood}): R$ ${(args.deliveryFee ?? 0).toFixed(2)}`
-            : '';
-          const obsLine = sanitizedObs ? `\n📝 Obs: ${sanitizedObs}` : '';
-          const summary = `📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}`;
 
           if (requiresPixReceipt) {
             const receiptMsg = `Perfeito, separei seu pedido:\n\n${summary}\n\nPara finalizar, preciso do comprovante Pix. Pode enviar a imagem ou PDF por aqui. Assim que eu conferir beneficiário, valor e data, eu confirmo o pedido.`;

@@ -18,6 +18,7 @@ const tests = [
   'tests/replyDebouncer-disabled.test.ts',
   'tests/audioTranscriptionRearm.test.ts',
   'tests/aiRouteGuards.test.ts',
+  'tests/aiZeloMenuGuardrails.test.ts',
   'tests/aiToolPlan.test.ts',
   'tests/aiSimulatorScheduleGuard.test.ts',
   'tests/aiPromptGuardrails.test.ts',

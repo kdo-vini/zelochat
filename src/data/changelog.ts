@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-22',
     category: 'medium',
+    title: 'Pedidos no WhatsApp agora podem ir para um link de revisão',
+    description: 'Quando a IA monta seu pedido, ela pode te mandar para um link onde você revisa os itens, ajusta o que precisar e confirma com mais clareza.',
+  },
+  {
+    date: '2026-06-22',
+    category: 'medium',
     title: 'Pedido pelo cardápio com confirmação guiada',
     description: 'O cliente que revisa o pedido pelo link agora consegue confirmar o carrinho e recebe a orientação certa para aguardar a loja ou enviar o comprovante do Pix.',
   },

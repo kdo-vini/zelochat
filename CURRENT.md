@@ -37,10 +37,10 @@ Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA n�
 Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Novo foco estratégico aberto em [[ZELOMENU_LINEAR_PLAN]]: ZeloMenu + novo motor de pedidos do ZeloChat, com integração futura ZeloPDV.
 
 Fatias sugeridas:
-1. Fechar `ZLM-101` no fluxo de IA — trocar o resumo legado pelo link novo sem quebrar Casa dos Salgados
-2. `ZLM-104` — aceite manual no ZeloChat, materializando produção só depois da conferência humana
-3. `ZLM-205` — rollout de billing/planos/flags compartilhadas sem quebrar pricing nem clientes legados
-4. Áudio (PTT) na IA — envio automático de mensagens de voz
+1. `ZLM-104` — aceite manual no ZeloChat, materializando produção só depois da conferência humana
+2. `ZLM-205` — rollout de billing/planos/flags compartilhadas sem quebrar pricing nem clientes legados
+3. Áudio (PTT) na IA — envio automático de mensagens de voz
+4. Estados vazios/polimentos de pedidos novos nas superfícies Chat/Menu
 
 ## Decisões recentes
 
@@ -49,7 +49,7 @@ Fatias sugeridas:
 - ZLM-003 fechado (2026-06-22): o módulo `Ordering` passa a ter interface mínima `apply(command)` + `getSnapshot(ref)`, com `ordering_id` único do carrinho até a conclusão. Estados pré-aceite ficam no aggregate `Ordering`; o destino operacional só nasce no `accept`, evitando poluir `pedidos` com fases que o PDV ainda não modela bem. Mapeamento operacional aprovado: `whatsapp_order -> pedidos.origem='zelochat'`, `public_order -> pedidos.origem='zelomenu'` (no repo PDV), `table_order -> comandas` com tickets de cozinha `origem='comanda'`. Próxima fatia recomendada: `ZLM-004`.
 - ZLM-004 fechado (2026-06-22): o catálogo comum fica explicitamente separado da camada de publicação do ZeloMenu. `produtos`/`categorias`/`subcategorias` seguem como base PDV-owned; nome público, descrição, foto, ordem, visibilidade online e modifiers vendáveis ficam em overlay de publicação também PDV-owned. Preço base continua único em `produtos.preco`; adicionais/variações entram como groups/options com `price_delta`, sem duplicar preço por canal. Próxima fatia recomendada: `ZLM-005`.
 - ZLM-005 fechado (2026-06-22): entitlements e navegação foram separados por capability (`chat_app`, `pdv_core`, `menu_publication`, `ordering_review`, `kitchen_queue`, `mesas`, `acessos`). `has_pedidos_addon` fica legado/grandfathered e o entitlement do ZeloMenu deve nascer separado no domínio compartilhado em `ZLM-205`. Chat-only continua sem acesso ao app ZeloPDV; bundle acessa ambos os apps; PDV+ZeloMenu opera pedidos online no ZeloPDV. Próxima fatia recomendada: `ZLM-101`.
-- ZLM-101 em andamento (2026-06-22): a base server-side do carrinho já existe em `zelomenu_cart_sessions` + `zelomenu_cart_tokens`, com token hash, leitura pública, edição pública, revalidação e um carrinho ativo por conversa. O legado `zelochat_pending_orders` ficou intacto. Próxima fatia recomendada: `ZLM-102` + integração do fluxo de IA para emitir o link novo.
+- ZLM-101 fechado (2026-06-22): além da base server-side do carrinho em `zelomenu_cart_sessions` + `zelomenu_cart_tokens`, a IA agora abre o link novo do ZeloMenu no fim da tool `criar_pedido`, com fallback explícito para o resumo legado de `zelochat_pending_orders` se a sessão nova falhar. Próxima fatia recomendada: `ZLM-104`.
 - ZLM-102 fechado (2026-06-22): a UI pública inicial do carrinho já está em `/menu/carrinho/:token`, consumindo os endpoints públicos do backend novo, com catálogo editável, retirada/entrega, pagamento, observações, aviso de Pix e tratamento de link `stale`. Próxima fatia recomendada: `ZLM-103`.
 - ZLM-103 fechado (2026-06-22): o carrinho público agora confirma via `/public-api/zelomenu/cart/:token/confirm`, revalida antes de fechar, move a sessão para `confirmed_waiting_review` ou `confirmed_waiting_payment`, grava a mensagem no chat e envia o próximo passo no WhatsApp sem criar pedido operacional falso em `zelochat_orders`. Próxima fatia recomendada: integrar a IA para emitir o link novo e depois `ZLM-104`.
 - Hotfix de billing/share-table (2026-06-11): acesso do ZeloChat para `chat`/`bundle` agora usa a expiração efetiva mais longa entre `current_period_end` e `manually_extended_until`. Isso evita que uma extensão manual já vencida derrube um bundle renovado via AbacatePay no ZeloPDV; caso real: Casa dos Salgados. Coberto por `tests/subscriptionExpiry.test.ts`.

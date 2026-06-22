@@ -121,6 +121,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69h (2026-06-22) — IA passa a abrir o carrinho novo do ZeloMenu
+
+- ✅ ZLM-101 — a tool `criar_pedido` agora abre `zelomenu_cart_sessions` no fluxo `whatsapp_order`, gera link absoluto de revisão/confirmação e envia o handoff novo ao cliente pelo WhatsApp — `server/ai.ts:4248`, `src/domain/zelomenuCart.ts:111`
+- ✅ ZLM-101 — rollout mantido com fallback explícito para `zelochat_pending_orders` e botões legados se a abertura do carrinho novo falhar, preservando o piloto da Casa dos Salgados — `server/ai.ts:4286`, `tests/aiZeloMenuGuardrails.test.ts:1`
+- ✅ ZLM-101 — suíte ampliada para URL/copy do link e guardrails da IA; `npm run lint` e `npm run build` passaram, `npm test` segue falhando apenas no drift conhecido de `tests/auditFixGuardrails.test.ts` sobre rollout de webhook — `tests/zelomenuCart.test.ts:52`, `CURRENT.md:20`
+
 ### Sprint 69g (2026-06-22) — Confirmação do carrinho ZeloMenu no ZeloChat
 
 - ✅ ZLM-103 — carrinho público agora confirma via rota dedicada, revalida antes de fechar e grava o estado canônico `confirmed_waiting_review` ou `confirmed_waiting_payment` sem criar pedido operacional falso no legado — `server/zelomenuCartSessions.ts:806`

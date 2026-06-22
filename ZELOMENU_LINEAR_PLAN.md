@@ -1613,7 +1613,7 @@ Resultado:
 
 #### ZLM-101 — Criar sessões de carrinho do ZeloMenu
 
-Status: Doing  
+Status: Done  
 Type: Prototype  
 Depends on: ZLM-003, ZLM-004  
 Owner: Engenharia  
@@ -1643,9 +1643,9 @@ Resultado parcial (2026-06-22):
   - link antigo fica somente leitura (`stale`) e orientado para refresh, sem poder editar
   - preço/taxa Pix/taxa de entrega/estoque/disponibilidade vêm do estado atual do catálogo compartilhado, não do payload do cliente
   - `zelochat_pending_orders` permanece intacto; Casa dos Salgados não migra neste passo
-- Ainda pendente para fechar o ticket:
-  - UI pública consumindo esses endpoints (`ZLM-102`)
-  - integração do fluxo de IA para emitir o link novo em vez do resumo legado
+- Fechamento do ticket (2026-06-22):
+  - `server/ai.ts` agora tenta abrir `openWhatsAppCartSession()` ao fim de `criar_pedido`, gera o link absoluto do carrinho novo e envia o handoff ao cliente em vez do resumo legado
+  - o fluxo legado de `zelochat_pending_orders` + botões continua como fallback explícito se a abertura da sessão nova falhar, para rollout seguro do piloto
 
 #### ZLM-102 — Criar UI pública inicial do ZeloMenu
 

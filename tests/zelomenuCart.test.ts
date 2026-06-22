@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   buildConfirmedCartCustomerMessage,
+  buildPublicCartUrl,
+  buildWhatsAppCartLinkMessage,
   buildPublicCartPath,
   computeCartPricing,
   createPublicCartToken,
@@ -46,6 +48,10 @@ const tests = [
     run() {
       const path = buildPublicCartPath('abc_DEF-123');
       assert.equal(path, '/menu/carrinho/abc_DEF-123');
+      assert.equal(
+        buildPublicCartUrl('https://chat.zelopdv.com.br/', 'abc_DEF-123'),
+        'https://chat.zelopdv.com.br/menu/carrinho/abc_DEF-123',
+      );
     },
   },
   {
@@ -90,6 +96,22 @@ const tests = [
       assert.match(message, /Pedido recebido pelo cardápio/);
       assert.match(message, /A loja vai conferir/);
       assert.doesNotMatch(message, /produção/i);
+    },
+  },
+  {
+    name: 'mensagem do link orienta revisão no ZeloMenu',
+    run() {
+      const message = buildWhatsAppCartLinkMessage({
+        publicUrl: 'https://chat.zelopdv.com.br/menu/carrinho/token123',
+        customerName: 'João',
+        summary: '📦 2x Coxinha\n📅 Retirada: 2026-06-22 às 18:30\n💳 Pagamento: Pix\n💰 Total: R$ 10.00',
+        pixReceiptRequired: true,
+      });
+
+      assert.match(message, /João/);
+      assert.match(message, /https:\/\/chat\.zelopdv\.com\.br\/menu\/carrinho\/token123/);
+      assert.match(message, /revisar com calma, ajustar se precisar e confirmar/i);
+      assert.match(message, /comprovante será pedido no WhatsApp/i);
     },
   },
 ];

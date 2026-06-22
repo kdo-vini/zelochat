@@ -109,6 +109,8 @@
   - Public consume/edit/confirm paths: `GET/PATCH /public-api/zelomenu/cart/:token` and `POST /public-api/zelomenu/cart/:token/confirm`.
   - `supabase/migrations/041_zelomenu_cart_sessions.sql` stores only `token_hash` in `zelomenu_cart_tokens`; raw public token is never persisted.
   - Public frontend route now exists at `src/pages/ZeloMenuCartPage.tsx` under `/menu/carrinho/:token`, outside `/app/*`.
+  - `server/ai.ts` now uses `openWhatsAppCartSession()` at the end of `criar_pedido` to hand the customer off to the public cart link instead of always persisting `zelochat_pending_orders`.
+  - The AI integration intentionally keeps the legacy pending-order/button path as fallback when cart-session opening fails, so rollout can happen without losing order capture.
   - Confirmation keeps the order in `zelomenu_cart_sessions` state (`confirmed_waiting_review` or `confirmed_waiting_payment`) and intentionally does not create a legacy `zelochat_orders` row before human accept.
   - Confirmed ZeloMenu carts persist a WhatsApp/chat message that starts with "✅ Pedido recebido pelo cardápio!", which the chat feedback parser treats separately from legacy "✅ Pedido confirmado!" production orders.
 - AI behavior rules:
@@ -237,7 +239,7 @@
 - Public ZeloMenu UI
   - `src/pages/ZeloMenuCartPage.tsx` + `src/services/zelomenuApi.ts` already consume the new public API.
   - Current public UI supports review/edit/confirm: catalog browsing, item quantity changes, delivery/pickup fields, payment, observations, Pix warning, stale-token/read-only handling, and post-confirm read-only state.
-  - ZLM-103 confirms back into the WhatsApp/chat lifecycle without touching the legacy pending-order confirmation path; the next seam is AI emission of the new link and then manual accept (`ZLM-104`).
+  - ZLM-103 confirms back into the WhatsApp/chat lifecycle without touching production rows; the AI already emits the new link, and the next seam is manual accept (`ZLM-104`).
 - Strategic ordering direction
   - `ZELOMENU_LINEAR_PLAN.md` `ZLM-003` closes the interface for a future `Ordering` aggregate with:
     - single `ordering_id` from cart to fulfillment
