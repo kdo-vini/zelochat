@@ -16,6 +16,18 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-06-22',
+    category: 'medium',
+    title: 'Pedido pelo cardápio com confirmação guiada',
+    description: 'O cliente que revisa o pedido pelo link agora consegue confirmar o carrinho e recebe a orientação certa para aguardar a loja ou enviar o comprovante do Pix.',
+  },
+  {
+    date: '2026-06-22',
+    category: 'hotfix',
+    title: 'Alertas de novo pedido mais confiáveis',
+    description: 'Quando um pedido entra na produção, os avisos configurados para o gerente são enviados mesmo que a IA tenha confirmado o pedido por um caminho automático.',
+  },
+  {
     date: '2026-06-08',
     category: 'big',
     title: 'IA agora cobre o WhatsApp nas suas folgas',

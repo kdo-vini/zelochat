@@ -18,7 +18,7 @@
 - `ai.ts:1778` — bug latente: query usa status `'dispatched'` (inexistente no DB) em vez de `'out_for_delivery'` → pedidos em entrega nunca aparecem no contexto da IA
 - `supabase/migrations/014_zelochat_rls_hardening.sql` — ainda marcado `DRAFT`, não aplicado em prod
 - `server/router.ts:806` / `tests/auditFixGuardrails.test.ts` — drift de webhook auth: docs/teste esperam `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT`, mas o código atual usa `WEBHOOK_REQUIRE_TOKEN` como strict opt-in e aceita token ausente por padrão para instância conhecida
-- `npm run build` — aviso de chunk >500 kB voltou; maior chunk app atual `index-BgmHYe4Y.js` = 569.66 kB / 162.59 kB gzip (ver [[DEV_SETUP]])
+- `npm run build` — aviso de chunk >500 kB voltou; maior chunk app atual `index-WPPUGIRI.js` = 597.68 kB / 168.38 kB gzip (ver [[DEV_SETUP]])
 - Dependências antigas — `npm audit` limpo após remover `localtunnel`; majors ainda pendentes exigem migração dedicada (`express@5`, `vite@8`, `stripe@22`, `typescript@6`, etc.; ver [[DEV_SETUP]])
 
 ## Dívida técnica aceita (conhecido, não prioritário)
@@ -34,13 +34,24 @@ Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA n�
 
 ## Próximas fatias recomendadas
 
-Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Fatias sugeridas:
-1. Áudio (PTT) na IA — envio automático de mensagens de voz
-2. Estados vazios — telas sem dados precisam de empty states
-3. Polimentos P2/P3 — ver [[FIXES_PROGRESS]]
+Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Novo foco estratégico aberto em [[ZELOMENU_LINEAR_PLAN]]: ZeloMenu + novo motor de pedidos do ZeloChat, com integração futura ZeloPDV.
+
+Fatias sugeridas:
+1. Fechar `ZLM-101` no fluxo de IA — trocar o resumo legado pelo link novo sem quebrar Casa dos Salgados
+2. `ZLM-104` — aceite manual no ZeloChat, materializando produção só depois da conferência humana
+3. `ZLM-205` — rollout de billing/planos/flags compartilhadas sem quebrar pricing nem clientes legados
+4. Áudio (PTT) na IA — envio automático de mensagens de voz
 
 ## Decisões recentes
 
+- Planejamento ZeloMenu/ZeloChat (2026-06-22): ZeloMenu será módulo de cardápio/carrinho/confirmação, ZeloChat passará a incluir ZeloMenu obrigatoriamente no plano de R$147, ZeloPDV continua R$59, ZeloPDV + ZeloMenu fica R$99 e bundle ZeloPDV + ZeloChat + ZeloMenu fica R$197. Backlog por fases registrado em [[ZELOMENU_LINEAR_PLAN]].
+- ZLM-002 mapeado (2026-06-22): `zelochat_orders` fica explicitamente tratado como adapter legado do piloto WhatsApp; destino canônico passa a ser PDV-owned (`pedidos`/`pedido_itens` para `whatsapp_order` e `public_order`, `comandas`/`comanda_itens` para `table_order`), sem dual-write contínuo entre `zelochat_orders` e `pedidos`. Observação de produto: a Casa dos Salgados hoje quase não usa o fluxo atual de pedidos do ZeloChat porque o motor ainda é fraco; a nova feature entra como troca real do motor, não como ajuste incremental. Próxima fatia: `ZLM-003`.
+- ZLM-003 fechado (2026-06-22): o módulo `Ordering` passa a ter interface mínima `apply(command)` + `getSnapshot(ref)`, com `ordering_id` único do carrinho até a conclusão. Estados pré-aceite ficam no aggregate `Ordering`; o destino operacional só nasce no `accept`, evitando poluir `pedidos` com fases que o PDV ainda não modela bem. Mapeamento operacional aprovado: `whatsapp_order -> pedidos.origem='zelochat'`, `public_order -> pedidos.origem='zelomenu'` (no repo PDV), `table_order -> comandas` com tickets de cozinha `origem='comanda'`. Próxima fatia recomendada: `ZLM-004`.
+- ZLM-004 fechado (2026-06-22): o catálogo comum fica explicitamente separado da camada de publicação do ZeloMenu. `produtos`/`categorias`/`subcategorias` seguem como base PDV-owned; nome público, descrição, foto, ordem, visibilidade online e modifiers vendáveis ficam em overlay de publicação também PDV-owned. Preço base continua único em `produtos.preco`; adicionais/variações entram como groups/options com `price_delta`, sem duplicar preço por canal. Próxima fatia recomendada: `ZLM-005`.
+- ZLM-005 fechado (2026-06-22): entitlements e navegação foram separados por capability (`chat_app`, `pdv_core`, `menu_publication`, `ordering_review`, `kitchen_queue`, `mesas`, `acessos`). `has_pedidos_addon` fica legado/grandfathered e o entitlement do ZeloMenu deve nascer separado no domínio compartilhado em `ZLM-205`. Chat-only continua sem acesso ao app ZeloPDV; bundle acessa ambos os apps; PDV+ZeloMenu opera pedidos online no ZeloPDV. Próxima fatia recomendada: `ZLM-101`.
+- ZLM-101 em andamento (2026-06-22): a base server-side do carrinho já existe em `zelomenu_cart_sessions` + `zelomenu_cart_tokens`, com token hash, leitura pública, edição pública, revalidação e um carrinho ativo por conversa. O legado `zelochat_pending_orders` ficou intacto. Próxima fatia recomendada: `ZLM-102` + integração do fluxo de IA para emitir o link novo.
+- ZLM-102 fechado (2026-06-22): a UI pública inicial do carrinho já está em `/menu/carrinho/:token`, consumindo os endpoints públicos do backend novo, com catálogo editável, retirada/entrega, pagamento, observações, aviso de Pix e tratamento de link `stale`. Próxima fatia recomendada: `ZLM-103`.
+- ZLM-103 fechado (2026-06-22): o carrinho público agora confirma via `/public-api/zelomenu/cart/:token/confirm`, revalida antes de fechar, move a sessão para `confirmed_waiting_review` ou `confirmed_waiting_payment`, grava a mensagem no chat e envia o próximo passo no WhatsApp sem criar pedido operacional falso em `zelochat_orders`. Próxima fatia recomendada: integrar a IA para emitir o link novo e depois `ZLM-104`.
 - Hotfix de billing/share-table (2026-06-11): acesso do ZeloChat para `chat`/`bundle` agora usa a expiração efetiva mais longa entre `current_period_end` e `manually_extended_until`. Isso evita que uma extensão manual já vencida derrube um bundle renovado via AbacatePay no ZeloPDV; caso real: Casa dos Salgados. Coberto por `tests/subscriptionExpiry.test.ts`.
 - Botão "Atualizar agora" agora depende de headers `no-store` no shell SPA e limpa `?appVersion=...` após carregar; assets Vite hashados continuam em cache longo (2026-06-01)
 - Comportamento geral da IA documentado no Obsidian: confirmações, observações, pending orders, hard buttons, emojis e estoque agora têm suíte determinística (`tests/aiTurnDecision.test.ts`) antes do prompt (2026-06-01)

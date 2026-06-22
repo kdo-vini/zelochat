@@ -115,6 +115,7 @@ import {
 } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan, setStripeCancelAtPeriodEnd } from './billing.js';
 import { parseScheduleFromDescription } from './scheduleParser.js';
+import { confirmPublicCartSession, getPublicCartSession, openWhatsAppCartSession, updatePublicCartSession } from './zelomenuCartSessions.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -943,6 +944,62 @@ function sendDriverError(res: Response, error: unknown): void {
   }
 
   res.status(500).json({ error: message });
+}
+
+function sendZeloMenuCartError(res: Response, error: unknown): void {
+  const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+
+  if (message === 'UNAUTHORIZED' || message === 'EMPRESA_NOT_FOUND' || message === 'SUBSCRIPTION_INACTIVE') {
+    sendAuthError(res, error);
+    return;
+  }
+
+  if (message === 'INVALID_REMOTE_JID') {
+    res.status(400).json({ error: 'Conversa inválida para abrir o carrinho.' });
+    return;
+  }
+
+  if (message === 'PRODUCT_NOT_FOUND') {
+    res.status(400).json({ error: 'Um item do carrinho não existe mais no cardápio.' });
+    return;
+  }
+
+  if (message === 'PRODUCT_UNAVAILABLE') {
+    res.status(409).json({ error: 'Um item do carrinho não está disponível no momento.' });
+    return;
+  }
+
+  if (message === 'PRODUCT_STOCK_EXCEEDED') {
+    res.status(409).json({ error: 'A quantidade de um item ultrapassa o estoque atual.' });
+    return;
+  }
+
+  if (message === 'DELIVERY_DISABLED') {
+    res.status(409).json({ error: 'A entrega não está disponível para este carrinho.' });
+    return;
+  }
+
+  if (message === 'INVALID_DELIVERY_NEIGHBORHOOD') {
+    res.status(400).json({ error: 'Bairro de entrega inválido.' });
+    return;
+  }
+
+  if (message === 'STALE_CART_TOKEN') {
+    res.status(409).json({ error: 'Este link do carrinho está desatualizado. Peça um link novo no WhatsApp.' });
+    return;
+  }
+
+  if (message === 'CART_ALREADY_CONFIRMED') {
+    res.status(409).json({ error: 'Este pedido já foi confirmado. Para mudar algo, chame a loja pelo WhatsApp.' });
+    return;
+  }
+
+  if (message === 'CART_ALREADY_CLOSED') {
+    res.status(409).json({ error: 'Este carrinho não pode mais ser confirmado. Chame a loja pelo WhatsApp.' });
+    return;
+  }
+
+  res.status(500).json({ error: 'Não consegui processar o carrinho agora.' });
 }
 
 function sendTriggerError(res: Response, error: unknown): void {
@@ -2699,6 +2756,72 @@ router.get('/api/produtos', async (req: Request, res: Response) => {
     const status = err?.response?.status ?? 502;
     const msg = err?.response?.data?.error ?? err?.message ?? 'Upstream error';
     res.status(status).json({ error: msg });
+  }
+});
+
+router.post('/api/zelomenu/cart-sessions/whatsapp', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const session = await openWhatsAppCartSession({
+      empresaId,
+      remoteJid: req.body?.remoteJid,
+      customerName: req.body?.customerName,
+      customerPhone: req.body?.customerPhone,
+      items: req.body?.items,
+      fulfillment: req.body?.fulfillment,
+      paymentMethod: req.body?.paymentMethod,
+      observations: req.body?.observations,
+      source: req.body?.source === 'operator' ? 'operator' : 'ai_prebuilt',
+    });
+    res.status(201).json(session);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.get('/public-api/zelomenu/cart/:token', async (req: Request, res: Response) => {
+  try {
+    const payload = await getPublicCartSession(req.params.token);
+    if (!payload) {
+      res.status(404).json({ error: 'Carrinho não encontrado.' });
+      return;
+    }
+    res.json(payload);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.patch('/public-api/zelomenu/cart/:token', async (req: Request, res: Response) => {
+  try {
+    const payload = await updatePublicCartSession(req.params.token, {
+      customerName: req.body?.customerName,
+      customerPhone: req.body?.customerPhone,
+      items: req.body?.items,
+      fulfillment: req.body?.fulfillment,
+      paymentMethod: req.body?.paymentMethod,
+      observations: req.body?.observations,
+    });
+    if (!payload) {
+      res.status(404).json({ error: 'Carrinho não encontrado.' });
+      return;
+    }
+    res.json(payload);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.post('/public-api/zelomenu/cart/:token/confirm', async (req: Request, res: Response) => {
+  try {
+    const payload = await confirmPublicCartSession(req.params.token);
+    if (!payload) {
+      res.status(404).json({ error: 'Carrinho não encontrado.' });
+      return;
+    }
+    res.json(payload);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
   }
 });
 

@@ -8,6 +8,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import OAuthCallbackPage from './pages/OAuthCallbackPage';
 import OnboardingPage from './pages/OnboardingPage';
+import ZeloMenuCartPage from './pages/ZeloMenuCartPage';
 import AppShell from './AppShell';
 import { UpdateAvailableBanner } from './components/shared/UpdateAvailableBanner';
 
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/onboarding" element={
             <AuthGuard requireProfile={false}><OnboardingPage /></AuthGuard>
           } />
+          <Route path="/menu/carrinho/:token" element={<ZeloMenuCartPage />} />
           <Route path="/app/*" element={
             <AuthGuard><AppShell /></AuthGuard>
           } />

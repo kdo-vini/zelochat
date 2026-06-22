@@ -26,7 +26,9 @@
 - Zelo PDV shared data/integration:
   - Frontend catalog CRUD reads/writes `produtos`, `categorias`, `subcategorias` directly through Supabase in `src/hooks/useCatalog.ts`.
   - Backend AI runtime hydrates shared profile/catalog from `empresa_perfil.user_id` in `server/configStore.ts`.
+  - The shared catalog consumed today is still base-product-only: no publication fields, no images/descriptions, and no explicit sellable modifier groups/options yet.
   - Shared `subscriptions` expiry for ZeloChat access must use the later valid timestamp between `current_period_end` and `manually_extended_until`; an expired manual extension must never shorten a renewed chat/bundle entitlement.
+  - Current shared subscription semantics are still legacy in code: ZeloChat frontend/backend price and gating assume `chat=97`, `bundle=147`, and the PDV repo still uses `has_pedidos_addon` / `has_mesas_addon` / `has_acessos_addon`. `ZELOMENU_LINEAR_PLAN.md` `ZLM-005` and `ZLM-205` define the migration path away from that mismatch.
 - Relevant libraries confirmed:
   - `@supabase/supabase-js`
   - `openai`
@@ -101,8 +103,17 @@
 - Frontend update/loading:
   - `src/components/shared/UpdateAvailableBanner.tsx` polls `/api/version`; refresh uses temporary `?appVersion=` cache-bust and removes it after mount.
   - `nginx.frontend.conf` must serve `index.html` and SPA fallback with `Cache-Control: no-store`; only Vite hashed `/assets/*` should be `immutable`.
+- ZeloMenu cart-session backend:
+  - `server/zelomenuCartSessions.ts` is the new ZeloChat-owned backend seam for MVP cart sessions.
+  - Authenticated open path: `POST /api/zelomenu/cart-sessions/whatsapp`.
+  - Public consume/edit/confirm paths: `GET/PATCH /public-api/zelomenu/cart/:token` and `POST /public-api/zelomenu/cart/:token/confirm`.
+  - `supabase/migrations/041_zelomenu_cart_sessions.sql` stores only `token_hash` in `zelomenu_cart_tokens`; raw public token is never persisted.
+  - Public frontend route now exists at `src/pages/ZeloMenuCartPage.tsx` under `/menu/carrinho/:token`, outside `/app/*`.
+  - Confirmation keeps the order in `zelomenu_cart_sessions` state (`confirmed_waiting_review` or `confirmed_waiting_payment`) and intentionally does not create a legacy `zelochat_orders` row before human accept.
+  - Confirmed ZeloMenu carts persist a WhatsApp/chat message that starts with "✅ Pedido recebido pelo cardápio!", which the chat feedback parser treats separately from legacy "✅ Pedido confirmado!" production orders.
 - AI behavior rules:
   - `src/domain/conversationState.ts` owns deterministic WhatsApp-turn decisions before OpenAI for pending-order confirmation, cancellation, edits, no-observation replies, emoji consent, payment proof, and semantic product matching.
+  - `src/domain/orderEventTriggers.ts` owns deterministic post-confirmation trigger selection for real order-created events. Do not rely only on the model's `dispatch_trigger` call for operational alerts such as "Novo pedido" or "pedido grande"; `server/ai.ts` calls this after `confirmPendingOrder` creates the `zelochat_orders` row.
   - `tests/aiTurnDecision.test.ts` is the primary regression suite for behavior like `sem obs`, `não muda nada`, `sim, sem cebola`, `cancelar só a coca`, exact hard buttons, and enthusiasm emoji.
   - `obsidian/AI_BEHAVIOR_RULES.md` documents this as product behavior for future AI agents.
 - Manager AI assistant:
@@ -182,7 +193,9 @@
 8. ZeloChat reads company profile/products/orders from Zelo PDV
   - Shared profile read: `src/hooks/useEmpresaPerfil.ts`, `server/configStore.ts`
   - Shared catalog read: `src/hooks/useCatalog.ts`, `server/configStore.ts`
-  - Orders are ZeloChat-owned, not PDV-owned: `src/hooks/useOrders.ts`, `server/router.ts`, `server/ai.ts`
+  - Current production order flow is still ZeloChat-owned legacy via `zelochat_orders`, but the strategic direction defined in `ZELOMENU_LINEAR_PLAN.md` is a new `Ordering` aggregate with PDV operational materialization on accept: `whatsapp_order -> pedidos.origem='zelochat'`, `public_order -> pedidos.origem='zelomenu'` (PDV repo), `table_order -> comandas` with kitchen tickets `origem='comanda'`.
+  - `ZELOMENU_LINEAR_PLAN.md` `ZLM-004` now also fixes the catalog seam: `produtos` / `categorias` / `subcategorias` remain the PDV-owned common catalog, while ZeloMenu publication fields and sellable modifier groups live in a separate publication overlay, also PDV-owned in the target architecture.
+  - `ZELOMENU_LINEAR_PLAN.md` `ZLM-005` fixes the entitlement seam: shared infrastructure does not imply shared UI access. Chat-only uses the ordering/menu infrastructure without gaining the PDV app; `has_pedidos_addon` is legacy and must not become the canonical ZeloMenu entitlement.
 
 9. AI uses Zelo PDV product/profile context to answer customer
   - Runtime config hydration: `server/configStore.ts`
@@ -209,10 +222,43 @@
   - Key fields: `empresa_id`, `session_id`, `role`, `content`, `tool_calls`, `wa_message_id`, `sent_at`.
   - Audio transcription fields are present in current code paths.
 - `zelochat_orders`
-  - ZeloChat-owned confirmed orders.
+  - ZeloChat-owned confirmed orders in the legacy production flow.
   - Current frontend status enum: `pending`, `preparing`, `ready`, `out_for_delivery`, `delivered`.
+  - Treat as transitional adapter for the Casa dos Salgados pilot, not as the final canonical cross-surface order model.
 - `zelochat_pending_orders`
   - Pending order confirmation/edit flow used by `server/ai.ts`.
+- `zelomenu_cart_sessions`
+  - ZeloChat-owned server-side cart session for the new ZeloMenu flow.
+  - Stores `ordering_id`, `context`, `source_ref`, `revision` and JSON snapshots for customer/cart/fulfillment/pricing/payment.
+  - Current MVP context is `whatsapp_order`; legacy `zelochat_pending_orders` is intentionally untouched.
+- `zelomenu_cart_tokens`
+  - ZeloChat-owned token history for cart sessions.
+  - Public token is stored only as hash; stale tokens may still read/revalidate a session but cannot mutate it.
+- Public ZeloMenu UI
+  - `src/pages/ZeloMenuCartPage.tsx` + `src/services/zelomenuApi.ts` already consume the new public API.
+  - Current public UI supports review/edit/confirm: catalog browsing, item quantity changes, delivery/pickup fields, payment, observations, Pix warning, stale-token/read-only handling, and post-confirm read-only state.
+  - ZLM-103 confirms back into the WhatsApp/chat lifecycle without touching the legacy pending-order confirmation path; the next seam is AI emission of the new link and then manual accept (`ZLM-104`).
+- Strategic ordering direction
+  - `ZELOMENU_LINEAR_PLAN.md` `ZLM-003` closes the interface for a future `Ordering` aggregate with:
+    - single `ordering_id` from cart to fulfillment
+    - external seam `apply(command)` + `getSnapshot(ref)`
+    - pre-accept states stored in ZeloChat-owned ordering tables
+    - operational materialization only on `accept`
+  - This is important because the current PDV `pedidos` model does not yet represent `confirmed_waiting_review`, `confirmed_waiting_payment`, or adjustment loops cleanly.
+- Strategic catalog/publication direction
+  - `ZELOMENU_LINEAR_PLAN.md` `ZLM-004` closes the interface for a future `Catalog/Menu Publication` module with:
+    - shared base catalog in PDV-owned `produtos` / `categorias` / `subcategorias`
+    - separate publication overlay for public name, description, image, ordering, visibility, and manual availability
+    - explicit sellable modifier groups/options attached to the base product
+    - no duplicated base price by channel; public pricing = `produto.preco + option deltas`
+- Strategic entitlement/navigation direction
+  - `ZELOMENU_LINEAR_PLAN.md` `ZLM-005` closes the access model with:
+    - capability split between `chat_app`, `pdv_core`, `menu_publication`, `ordering_review`, `kitchen_queue`, `mesas`, and `acessos`
+    - Chat-only operating only inside ZeloChat
+    - PDV+ZeloMenu operating only inside ZeloPDV
+    - bundle seeing both apps against the same underlying order state
+    - legacy `has_pedidos_addon` treated as grandfathered capability, not as the new ZeloMenu contract
+  - `ZELOMENU_LINEAR_PLAN.md` `ZLM-101` now has a concrete backend foundation: cart session state lives outside `zelochat_pending_orders`, with one active cart per `empresa_id + context + source_ref`, hashed public tokens, and public revalidation/edit routes ready for the upcoming ZeloMenu UI.
 - `zelochat_tags`
   - Tag metadata per empresa, including `ai_instructions`.
 - `zelochat_triggers`

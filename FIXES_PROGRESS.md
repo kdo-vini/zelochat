@@ -121,6 +121,49 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69g (2026-06-22) — Confirmação do carrinho ZeloMenu no ZeloChat
+
+- ✅ ZLM-103 — carrinho público agora confirma via rota dedicada, revalida antes de fechar e grava o estado canônico `confirmed_waiting_review` ou `confirmed_waiting_payment` sem criar pedido operacional falso no legado — `server/zelomenuCartSessions.ts:806`
+- ✅ ZLM-103 — confirmação envia o próximo passo ao cliente pelo WhatsApp e persiste a mensagem no chat, com card separado de "pedido recebido pelo cardápio" para não parecer produção já aceita — `server/zelomenuCartSessions.ts:876`, `src/domain/chatFeedback.ts:173`
+- ✅ ZLM-103 — UI pública exibe estado confirmado, bloqueia edição após confirmação e cobre a regra de Pix/comprovante com testes de domínio — `src/pages/ZeloMenuCartPage.tsx:177`, `tests/zelomenuCart.test.ts:52`
+
+### Sprint 69f (2026-06-22) — UI pública inicial do carrinho ZeloMenu
+
+- ✅ ZLM-102 — rota pública `/menu/carrinho/:token` criada no frontend, consumindo o backend novo de carrinho sem depender do app autenticado nem do fluxo legado de pending order — `src/App.tsx:1`, `src/pages/ZeloMenuCartPage.tsx:1`
+- ✅ ZLM-102 — tela pública cobre catálogo por categoria, carrinho editável, retirada/entrega, data/horário, pagamento, observações, banner de revalidação e tratamento de link `stale` em PT-BR — `src/pages/ZeloMenuCartPage.tsx:1`, `src/services/zelomenuApi.ts:1`
+- ✅ ZLM-102 — verificação passou em `npm run lint` e `npm run build`; `npm test` segue falhando apenas no drift conhecido e não relacionado de `tests/auditFixGuardrails.test.ts` sobre rollout de webhook — `CURRENT.md:19`
+
+### Sprint 69e (2026-06-22) — Backend base das sessões de carrinho do ZeloMenu
+
+- ✅ ZLM-101 — backend do carrinho novo criado em tabelas ZeloChat-owned (`zelomenu_cart_sessions` + `zelomenu_cart_tokens`), com `ordering_id`, snapshots de carrinho/cliente/fulfillment/preço/pagamento, token hash e índice de um carrinho ativo por conversa/contexto — `supabase/migrations/041_zelomenu_cart_sessions.sql`, `server/zelomenuCartSessions.ts`
+- ✅ ZLM-101 — rotas mínimas entregues para abrir carrinho `whatsapp_order` autenticado e consumir/editar carrinho público por token (`POST /api/zelomenu/cart-sessions/whatsapp`, `GET/PATCH /public-api/zelomenu/cart/:token`) sem tocar no fluxo legado da Casa dos Salgados — `server/router.ts`
+- ✅ ZLM-101 — suíte inicial adicionada para token/path/pricing do carrinho e `npm run lint` passou; `npm test` continua com a falha já conhecida e não relacionada em `tests/auditFixGuardrails.test.ts` sobre drift do rollout de webhook — `tests/zelomenuCart.test.ts`, `tests/run-unit-tests.ts`, `CURRENT.md:19`
+
+### Sprint 69d (2026-06-22) — Planejamento de entitlements e navegação
+
+- ✅ ZLM-005 — matriz de entitlement fechada por capability (`chat_app`, `pdv_core`, `menu_publication`, `ordering_review`, `kitchen_queue`, `mesas`, `acessos`), separando motor interno compartilhado de acesso comercial às superfícies dos apps — `ZELOMENU_LINEAR_PLAN.md:819`, `ZELOMENU_LINEAR_PLAN.md:1399`
+- ✅ ZLM-005 — rollout futuro do ZeloMenu desvinculado do legado `has_pedidos_addon`; a flag antiga fica grandfathered e o novo entitlement comercial vai para `ZLM-205` no repo PDV/shared billing — `ZELOMENU_LINEAR_PLAN.md:819`, `ZELOMENU_LINEAR_PLAN.md:1480`
+- ✅ ZLM-005 — próximo passo do MVP redefinido para `ZLM-101`, com `ZLM-205` correndo em paralelo para preços/flags compartilhadas — `CURRENT.md:39`
+
+### Sprint 69c (2026-06-22) — Planejamento do catálogo/publicação do ZeloMenu
+
+- ✅ ZLM-004 — interface do módulo `Catalog/Menu Publication` fechada com corte explícito entre catálogo base comum (`produtos`, `categorias`, `subcategorias`) e overlay de publicação do ZeloMenu, evitando poluir o produto operacional com nome público, descrição, foto, visibilidade e ordem — `ZELOMENU_LINEAR_PLAN.md:807`, `ZELOMENU_LINEAR_PLAN.md:1059`
+- ✅ ZLM-004 — adicionais/variações definidos como `modifier_groups` e `modifier_options` ligados ao produto base, com preço final calculado por `preco_base + price_delta`, sem duplicar preço base por canal — `ZELOMENU_LINEAR_PLAN.md:813`, `ZELOMENU_LINEAR_PLAN.md:1084`
+- ✅ ZLM-004 — próximo bloqueio arquitetural redefinido para `ZLM-005`, antes de qualquer UI nova ou sync visível com PDV — `CURRENT.md:40`
+
+### Sprint 69b (2026-06-22) — Planejamento do novo módulo Ordering
+
+- ✅ ZLM-003 — interface do módulo `Ordering` fechada como aggregate único com `ordering_id`, seam externo `apply(command)` + `getSnapshot(ref)`, estados pré-aceite separados do destino operacional e materialização em `pedidos`/`pedido_itens` ou `comandas` só no `accept` — `ZELOMENU_LINEAR_PLAN.md:795`
+- ✅ ZLM-003 — origem operacional por contexto documentada: `whatsapp_order -> pedidos.origem='zelochat'`, `public_order -> pedidos.origem='zelomenu'` (repo PDV), `table_order -> comandas` com tickets `origem='comanda'` — `ZELOMENU_LINEAR_PLAN.md:799`
+- ✅ ZLM-003 — próximo bloqueio técnico redefinido para `ZLM-004`, porque `Ordering` já foi fechado e agora falta travar `cart_snapshot`, publicação, adicionais e variações antes de schema/UI — `CURRENT.md:35`
+
+### Sprint 69 (2026-06-22) — Hotfix confirmação de pedido e alertas de produção
+
+- ✅ Gatilho de novo pedido desacoplado da IA — pedidos confirmados por `confirmPendingOrder` agora disparam gatilhos `notify_manager` de evento real (“Novo pedido” e pedidos grandes por quantidade) depois que entram em `zelochat_orders`, sem depender do modelo chamar `dispatch_trigger` no mesmo turno — `src/domain/orderEventTriggers.ts:45`, `server/ai.ts:121`, `server/ai.ts:692`
+- ✅ Card de conferência não parece mais pendência atual — os cards técnicos antigos do chat agora dizem que registram a etapa de conferência e orientam o operador a olhar os cards seguintes/status da produção, evitando parecer que um pedido já confirmado ainda espera o cliente — `src/domain/chatFeedback.ts:141`, `src/domain/chatFeedback.ts:190`
+- ✅ Matching de salgados assados mais robusto — a IA passa a reconhecer grafias comuns como “esfirra/esfiha” e “hambúrguer/hamburguinho” como produtos de cento assado, reduzindo escalações frias de “produto não encontrado” em pedidos da Casa dos Salgados — `src/domain/conversationState.ts:533`, `src/domain/conversationState.ts:673`
+- Verificação — `npx tsx tests/orderEventTriggers.test.ts`, `npx tsx tests/conversationState.test.ts`, `npm run lint`; `npm test` segue falhando apenas no drift conhecido de webhook em `tests/auditFixGuardrails.test.ts` já listado em [[CURRENT]].
+
 ### Sprint 68 (2026-06-11) — Hotfix bundle renovado bloqueado por extensão manual vencida
 
 - ✅ Billing/shared subscription expiry — `server/supabase.ts`, `server/subscriptionSweeper.ts`, `src/hooks/useSubscription.ts` e `src/components/billing/BillingCards.tsx` passaram a usar a expiração efetiva mais longa entre `current_period_end` e `manually_extended_until`, em vez de priorizar cegamente a extensão manual. Isso corrige o caso em que o bundle já foi renovado no ZeloPDV, mas uma extensão manual antiga e vencida ainda existia na mesma row e fazia o ZeloChat enxergar a assinatura como expirada.
