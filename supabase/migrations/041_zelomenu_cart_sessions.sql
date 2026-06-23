@@ -188,12 +188,12 @@ CREATE POLICY zelomenu_cart_tokens_delete_by_empresa
     )
   );
 
+REVOKE ALL
+  ON public.zelomenu_cart_sessions, public.zelomenu_cart_tokens
+  FROM anon, authenticated, service_role;
+
 GRANT SELECT, INSERT, UPDATE, DELETE
   ON public.zelomenu_cart_sessions, public.zelomenu_cart_tokens
   TO authenticated, service_role;
-
-REVOKE ALL
-  ON public.zelomenu_cart_sessions, public.zelomenu_cart_tokens
-  FROM anon;
 
 NOTIFY pgrst, 'reload schema';

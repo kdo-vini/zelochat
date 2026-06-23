@@ -400,7 +400,7 @@
   - Playwright specs: `tests/*.spec.ts`. Unit tests: `tests/*.test.ts`.
   - Sprint 58 guardrails: `npx tsx tests/audioTranscriptionRearm.test.ts` and `npx tsx tests/auditFixGuardrails.test.ts`
 - Database/migration commands: Unknown / not confirmed yet from this repo alone. Supabase migrations are stored under `supabase/migrations/`.
-- Rollout Supabase parcial (2026-06-23): `zelochat_fix_rls_gaps_2026_06_23` e `trial_expired_status_2026_06_17` foram aplicados; tabelas `zelomenu_cart_sessions`/`zelomenu_cart_tokens` existem em produção e foram verificadas via service role; policies/grants do carrinho e tabelas PDV-owned de publicação ainda precisam ser finalizadas/aplicadas quando o conector Supabase voltar.
+- Rollout Supabase ZeloMenu concluído (2026-06-23): `zelochat_fix_rls_gaps_2026_06_23`, `trial_expired_status_2026_06_17`, `zelomenu_cart_sessions_tables_2026_06_23`, `zelomenu_cart_sessions_policies_grants_2026_06_23` e `zelomenu_publication_schema_2026_06_23` estão aplicadas. As tabelas `zelomenu_cart_sessions`, `zelomenu_cart_tokens`, `zelomenu_product_publications`, `zelomenu_modifier_groups` e `zelomenu_modifier_options` existem em produção com RLS ligado, policies completas, `anon` sem grants e `authenticated`/`service_role` limitados a DML.
 
 ## Rules for Future Codex Sessions
 - Always read this memory file before deep ZeloChat work.

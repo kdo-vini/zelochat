@@ -1649,7 +1649,8 @@ Resultado parcial (2026-06-22):
 - Rollout Supabase (2026-06-23):
   - estruturas `zelomenu_cart_sessions` e `zelomenu_cart_tokens` criadas no Supabase real em `zelomenu_cart_sessions_tables_2026_06_23`
   - verificação via service role confirmou as duas tabelas acessíveis com `count=0`
-  - aplicação completa das policies/grants ficou pendente porque o conector Supabase passou a retornar HTTP 500/-32603; a migration local `041_zelomenu_cart_sessions.sql` já foi ajustada para grants explícitos e revogação de `anon`, mas produção ainda precisa ser finalizada/verificada
+  - policies/grants finais aplicados em `zelomenu_cart_sessions_policies_grants_2026_06_23`
+  - verificação pós-rollout confirmou RLS ligado, quatro policies por tabela, `anon` sem grants e `authenticated`/`service_role` limitados a `SELECT/INSERT/UPDATE/DELETE`
 
 #### ZLM-102 — Criar UI pública inicial do ZeloMenu
 
@@ -1807,10 +1808,10 @@ Resultado parcial (2026-06-23):
 - Validação: `node --import tsx tests/zelomenuPublication.test.ts`, `node --import tsx tests/zelomenuAbandonedCart.test.ts` e `npm run lint` passaram.
 
 Bloqueio restante:
-- O aceite completo de `ZLM-201` ainda depende da camada de publicação PDV-owned definida em `ZLM-004`: nome público, descrição, foto, ordem pública, disponibilidade/manual pause própria do ZeloMenu e modifier groups/options.
-- Este repo não deve criar esse schema nem alterar `produtos`/`categorias`/`subcategorias`; a próxima etapa precisa nascer no repo ZeloPDV/shared catalog e depois ser consumida pelo ZeloChat.
+- O aceite completo de `ZLM-201` ainda depende do adapter/UI que consome a camada de publicação PDV-owned definida em `ZLM-004`: nome público, descrição, foto, ordem pública, disponibilidade/manual pause própria do ZeloMenu e modifier groups/options.
+- Este repo não deve alterar `produtos`/`categorias`/`subcategorias`; a próxima etapa no ZeloChat deve ler/escrever a camada PDV-owned já criada, preservando o catálogo base.
 - Por isso o ticket fica `Blocked`, não `Done`: existe fundação/preview no ZeloChat, mas a publicação self-service completa ainda não está entregue.
-- Rollout Supabase (2026-06-23): verificação via service role ainda retorna `PGRST205` para `zelomenu_product_publications`; a migration PDV-owned de publicação ainda não está aplicada no Supabase real.
+- Rollout Supabase (2026-06-23): migration PDV-owned `zelomenu_publication_schema_2026_06_23` aplicada no Supabase real. Verificado: `zelomenu_product_publications`, `zelomenu_modifier_groups` e `zelomenu_modifier_options` existem com RLS ligado, policies por owner, grants mínimos para `authenticated`/`service_role` e nenhum grant para `anon`.
 
 #### ZLM-202 — Tela comum de Pedidos liberada por ZeloMenu
 
