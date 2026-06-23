@@ -834,6 +834,30 @@ Pergunta: qual storage mínimo fecha `ZLM-101` sem misturar o motor novo com `ze
 Resposta: uma sessão canônica própria + histórico de tokens, ambos ZeloChat-owned.  
 Decisão: o MVP de carrinho nasce em `zelomenu_cart_sessions` + `zelomenu_cart_tokens`, separados do legado `zelochat_pending_orders`. A sessão guarda `ordering_id`, `context`, `source_ref`, snapshots de cliente/carrinho/fulfillment/preço/pagamento e `revision`; o token público é salvo só como hash. Link antigo continua legível para revalidação (`tokenStatus='stale'`), mas não pode mutar o carrinho; apenas o token atual edita. Isso preserva o invariável "um carrinho ativo por conversa" e evita expor token bruto no banco.
 
+#### D-102 — Slug público do ZeloMenu nasce shared/PDV-owned, não ZeloChat-owned
+
+Pergunta: a fonte canônica de `slug -> empresa/publicação` para `menu.zelopdv.com.br/{slug}` nasce neste repo (ZeloChat-owned), no repo ZeloPDV ou em camada compartilhada? (resolve `ZELOMENU_OPEN_QUESTIONS` ZLM-203)  
+Resposta: shared/PDV-owned desde o início.  
+Decisão: o slug é uma **identidade pública de loja em nível de empresa**, não um conceito do ZeloChat. Por coerência com D-097 (camada de publicação tem destino final PDV-owned) e com a regra de ownership de `subscriptions`/`empresa_perfil` no `CLAUDE.md`, o slug nasce **PDV-owned** (coluna shared em `empresa_perfil`, ex.: `zelomenu_slug TEXT UNIQUE quando não-NULL`, ou tabela de mapeamento compartilhada), criado **primeiro no repo ZeloPDV** seguindo o workflow de tabela compartilhada (issue no repo PDV → migration lá → pull do schema de volta para o snapshot do ZeloChat). O backend do ZeloChat **serve** a rota pública `menu.zelopdv.com.br/{slug}` (o runtime público de carrinho já vive aqui via `/public-api/zelomenu/...`), mas **lê** o slug da coluna PDV-owned; não cria coluna própria nem fork. Consequência aceita: `ZLM-203` ganha dependência upstream dura no repo ZeloPDV e não pode começar neste repo enquanto a coluna do slug não existir lá. Trade-off explicitamente escolhido em vez do atalho "ZeloChat-owned agora, migra depois" do padrão D-101, priorizando ownership correto de longo prazo sobre velocidade do piloto.
+
+#### D-103 — Resolução de entitlement do ZeloMenu no código local enquanto `has_zelo_menu` não existe no PDV
+
+Pergunta: como o código local (ZeloChat) decide acesso ao ZeloMenu/publicação antes do PDV publicar a flag `has_zelo_menu`? (resolve a parte "não existe camada real de capabilities/entitlements no código local" de `ZELOMENU_OPEN_QUESTIONS` ZLM-205)  
+Resposta: resolver read-only local sobre sinais existentes, com seam único para a flag nova.  
+Decisão: reafirma D-099/D-100 — `has_zelo_menu` é **ZeloPDV-owned**, nasce no repo PDV junto de `subscriptions`; o ZeloChat nunca faz DDL disso. O que é executável **agora neste repo, sem migration**, é um resolver read-only de capability que computa acesso efetivo ao ZeloMenu a partir de: assinatura `chat`/`bundle` ativa (ZeloMenu incluído obrigatoriamente por D-014) **OU** `has_pedidos_addon` legado/grandfathered. O resolver é **fail-safe para ON** em `chat`/`bundle` (flipar copy de pricing nunca pode trancar quem já tem direito) e expõe **um único seam** para passar a ler `has_zelo_menu` assim que o PDV publicar a coluna. Capabilities seguem o vocabulário de D-100 (`menu_publication`, `ordering_review`, etc.), separadas de acesso à superfície do app.
+
+#### D-104 — Sequência do rollout de pricing e tratamento de clientes existentes
+
+Pergunta: em que ordem virar pricing/entitlement sem trancar ninguém, e o que acontece com clientes pagantes atuais? (resolve a parte de rollout de `ZELOMENU_OPEN_QUESTIONS` ZLM-205)  
+Resposta: ordem entitlement-antes-de-copy + grandfather só a Casa dos Salgados, migrando a Agreste.  
+Decisão: a ordem obrigatória é (1) PDV/Stripe nascem `has_zelo_menu` + novos price IDs (`STRIPE_PRICE_CHAT` para R$147, novo `STRIPE_PRICE_BUNDLE` R$197, novo `STRIPE_PRICE_MENU` R$40 addon do PDV); (2) ZeloChat lê o entitlement e só então vira a copy de preço; (3) grandfather aplicado. A ordem importa porque o resolver de D-103 precisa estar lendo o direito antes da copy mudar, senão a virada tranca cliente válido. Como `server/billing.ts` já injeta price IDs por env (sem valor hardcoded), a mudança de R$97→R$147 é troca de price ID no Stripe + nova env, não constante de código. **Tratamento de clientes existentes:** Casa dos Salgados permanece pinada na condição atual (D-017, exceção de piloto); **Agreste Salgados é migrada** para o novo R$147 com aviso prévio — exige plano de migração da subscription (operação PDV-owned, pois `subscriptions` é do webhook do PDV) + comunicação ao cliente antes da virada. Novos checkouts já usam os preços novos.
+
+#### D-105 — Storage de imagem do ZeloMenu mantém bridge no bucket `logos`
+
+Pergunta: o bridge atual (bucket compartilhado `logos` + prefixo `zelomenu-products/{userId}/...`) usado no fechamento de ZLM-201 vira solução definitiva ou migra para bucket dedicado? (resolve "Storage de imagem owned" de `ZELOMENU_OPEN_QUESTIONS`)  
+Resposta: manter o bridge por ora.  
+Decisão: manter o bucket `logos` com prefixo owned `zelomenu-products/{userId}/` como solução do v1 — funciona, o cleanup já está fiado (troca/remoção de foto, exclusão de produto, purge de conta) e o path é escopado por usuário. Revisitar um bucket dedicado (ex.: `zelomenu-media`) só quando `ZLM-203` abrir as imagens para a superfície pública por slug / volume maior justificar isolamento de políticas.
+
 ## Contradições Resolvidas
 
 - ZeloMenu começou sendo discutido como feature obrigatória do ZeloChat, mas foi refinado para módulo próprio: addon do ZeloPDV e obrigatório dentro do ZeloChat.
@@ -1784,7 +1808,7 @@ Resultado (2026-06-22):
 
 #### ZLM-201 — Publicação self-service do ZeloMenu
 
-Status: Partial
+Status: Done
 Type: Prototype  
 Depends on: ZLM-004, ZLM-005  
 Owner: Frontend/Produto  
@@ -1815,15 +1839,17 @@ Resultado parcial 2 (2026-06-23):
 - A transformação produto base + publicação vive em domínio puro (`resolveZeloMenuPublicationCatalogProduct`) e é coberta por `tests/zelomenuPublication.test.ts`.
 - Validação: `npm run lint`, `npm run build`, `node --import tsx tests/zelomenuPublication.test.ts` e `node --import tsx tests/zelomenuCart.test.ts` passaram. `npm test` rodou e segue somente com o drift conhecido de `tests/auditFixGuardrails.test.ts` ("webhook has explicit rollout bypass name").
 
-Bloqueio restante:
-- O aceite completo de `ZLM-201` ainda depende de modifiers/adicionais/variações (`zelomenu_modifier_groups`/`zelomenu_modifier_options`) e de ownership/upload de imagem, em vez de apenas URL manual.
-- Este repo não deve alterar `produtos`/`categorias`/`subcategorias`; as próximas etapas devem continuar lendo/escrevendo a camada PDV-owned já criada, preservando o catálogo base.
-- Por isso o ticket fica `Partial`, não `Done`: o básico de publicação self-service está funcional no ZeloChat, mas a publicação completa do ZeloMenu ainda não entrega modifiers.
+Resultado final (2026-06-23):
+- Modifiers/adicionais/variações entraram no runtime autenticado e público: o operador configura grupos/opções no `Cardápio`, o catálogo público expõe essas escolhas e o carrinho revalida obrigatoriedade/preço antes da confirmação e do aceite.
+- A foto do produto deixou de depender só de URL manual: a publicação agora aceita upload de imagem própria, grava a URL owned no campo `foto_url` da camada de publicação e mantém preview/remoção no modal do `Cardápio`.
+- O cleanup operacional do asset owned foi fechado neste repo: troca/remoção de foto apaga o objeto antigo em best-effort, exclusão do produto limpa a foto vinculada e o purge de conta remove o prefixo `zelomenu-products/{userId}` do bucket `logos`.
+- Este repo continua sem alterar `produtos`/`categorias`/`subcategorias`; toda a entrega permanece na camada PDV-owned de publicação definida em `ZLM-004`.
+- Validação adicional: `node --import tsx tests/zelomenuModifiers.test.ts`, `node --import tsx tests/zelomenuPublicationImages.test.ts`, `npm run lint` e `npm run build` passaram.
 - Rollout Supabase (2026-06-23): migration PDV-owned `zelomenu_publication_schema_2026_06_23` aplicada no Supabase real. Verificado: `zelomenu_product_publications`, `zelomenu_modifier_groups` e `zelomenu_modifier_options` existem com RLS ligado, policies por owner, grants mínimos para `authenticated`/`service_role` e nenhum grant para `anon`.
 
 #### ZLM-202 — Tela comum de Pedidos liberada por ZeloMenu
 
-Status: Todo  
+Status: Todo — lado ZeloChat satisfeito; núcleo (sync cross-surface) depende de ZLM-301 (Phase 3)  
 Type: Prototype  
 Depends on: ZLM-003, ZLM-005, ZLM-104  
 Owner: Engenharia/Frontend  
@@ -1840,12 +1866,29 @@ Aceite:
 - Não existe aceite duplicado.
 - ZeloPDV puro R$59 não vê a tela sem módulo que libere.
 
+Nota (2026-06-23):
+- **Lado ZeloChat já está coberto**: por D-014, todo cliente `chat`/`bundle` ativo inclui ZeloMenu, então o paywall existente (`useSubscription().isActive` = `chat`/`bundle` ativo) já é o gate de "vê Pedidos/Produção/Cardápio no ZeloChat". O resolver de capability de ZLM-205 expõe isso explicitamente (`menu_publication`/`ordering_review`) em `useSubscription().capabilities` como seam, mas no app ZeloChat hoje seria no-op (todo ativo já tem direito), então não foi adicionada trava redundante na navegação para não criar risco sem mudança de comportamento.
+- **O que falta é Phase 3**: "um aceite em uma superfície atualiza a outra" e "ZeloPDV puro não vê a tela" são o motor cross-surface e o guard PDV-owned — dependem de ZLM-301 (sync real com `pedidos`/`pedido_itens` no repo ZeloPDV) e dos helpers PDV (`hasZeloMenuAccess`/`hasOrderingReviewAccess`). Não é fechável só neste repo.
+
 #### ZLM-203 — Link público `menu.zelopdv.com.br/{slug}`
 
-Status: Todo  
+Status: Done  
 Type: Prototype  
-Depends on: ZLM-102, ZLM-201  
+Depends on: ZLM-102, ZLM-201, coluna de slug PDV-owned no repo ZeloPDV (D-102)  
 Owner: Engenharia/Infra  
+
+Resultado (2026-06-23):
+- Coluna `empresa_perfil.zelomenu_slug` (PDV-owned, única quando não-nula) criada no repo ZeloPDV (`zelomenu_entitlement_and_slug_2026_06_23.sql`) e aplicada no Supabase — desbloqueou esta task.
+- Slug domínio puro node-free (`src/domain/zelomenuSlug.ts`): normalização, validação, reservados, URL. Coberto por `tests/zelomenuSlug.test.ts`.
+- Backend ZeloChat serve a loja pública por slug: `GET /public-api/zelomenu/store/:slug` (negócio + catálogo via o mesmo overlay de publicação) e `POST /public-api/zelomenu/store/:slug/cart` (bootstrap de sessão `public_order` → token). Resolução slug→empresa lê a coluna PDV-owned; reusa `loadAiSettingsFromDb` + `filterVisibleCatalog`.
+- Frontend: rota pública `/menu/:slug` (`ZeloMenuStorePage`) com catálogo + carrinho + modifiers + nome/telefone → cria a sessão e redireciona pro carrinho público existente (`/menu/carrinho/:token`) que cuida de retirada/entrega/pagamento/confirmação. Telefone editável no carrinho para `public_order`.
+- `public_order` confirma direto na tela de Pedidos (D-037): `confirmPublicCartSession` materializa `zelochat_orders`, baixa estoque, notifica o gerente e avisa o cliente no WhatsApp dele (sem thread de chat).
+- Operador self-service (D-046): `GET/PUT /api/zelomenu/slug` + card "Link público do cardápio" em Configurações (`PublicLinkCard`).
+- Validação: `npm run lint`, `npm run build`, `tests/zelomenuSlug.test.ts`, `tests/zelomenuCart.test.ts` passaram. URL pública base configurável por `ZELOMENU_PUBLIC_BASE_URL` (default = app base) para apontar pro subdomínio `menu.` quando o DNS existir.
+
+Decisões aplicáveis (2026-06-23):
+- D-102: o slug nasce **PDV-owned/shared**, não ZeloChat-owned. Bloqueio explícito: a coluna de slug (`empresa_perfil.zelomenu_slug` ou mapeamento shared) precisa **primeiro** ser criada no repo ZeloPDV via workflow de tabela compartilhada antes de qualquer código aqui. O backend ZeloChat serve a rota e **lê** o slug; não cria coluna própria.
+- Runtime existente reaproveitado: o público hoje é 100% por token (`/public-api/zelomenu/cart/:token`). Falta `public_order` bootstrap, rota pública de loja por slug e resolução slug→empresa.
 
 Escopo:
 - Slug público por loja.
@@ -1859,7 +1902,7 @@ Aceite:
 
 #### ZLM-204 — Entrega por bairro
 
-Status: Todo  
+Status: Done  
 Type: Prototype  
 Depends on: ZLM-102  
 Owner: Produto/Engenharia  
@@ -1874,19 +1917,50 @@ Aceite:
 - Bairro listado soma taxa.
 - Bairro fora da lista permite confirmar e força conferência.
 
+Resultado (2026-06-23):
+- A tabela por bairro (`empresa_perfil.delivery_config` → `{ enabled, neighborhoods:[{name,fee}] }`) já existia; a lacuna real era o caso "bairro fora da lista", que estourava `INVALID_DELIVERY_NEIGHBORHOOD` e travava a confirmação — contradizendo D-081/D-082/D-083.
+- Agora a regra é domínio puro e compartilhada: `resolveDeliveryFeeForNeighborhood()` em `src/domain/zelomenuCart.ts` devolve `{ fee, toConfirm }`. Bairro listado soma a taxa (match case/acento-insensitive); bairro livre fora da lista — ou entrega sem bairro definido — devolve `fee 0 + toConfirm`, sem bloquear. O backend (`server/zelomenuCartSessions.ts: resolveDeliveryFee`) só estoura `DELIVERY_DISABLED` quando a loja não habilitou entrega.
+- O snapshot de fulfillment ganhou `deliveryFeeToConfirm`; a taxa "a confirmar" é propagada para a mensagem do cliente (`buildCartSummaryLines`), para o card de revisão do operador no Chat (`ChatView`), e para a notificação do gerente no aceite — fechando "força conferência humana".
+- A UI pública (`ZeloMenuCartPage`) trocou o `<select>` de bairro por `<input list>` + `<datalist>`: o cliente escolhe um bairro cadastrado (com a taxa) ou digita o seu; quando fora da tabela, o resumo mostra "Entrega: a confirmar" e um aviso. A estimativa do front espelha a mesma função pura (sem importar `zelomenuCart`, que puxa `node:crypto`).
+- Validação: `node --import tsx tests/zelomenuCart.test.ts` (inclui 5 casos novos de bairro/taxa a confirmar), `npm run lint` e `npm run build` passaram.
+
 #### ZLM-205 — Billing e planos novos
 
-Status: Todo  
+Status: Done (rollout 2026-06-23; faltam só envs Dokploy + migração comercial do Agreste com aviso)  
 Type: Research  
 Depends on: ZLM-001, ZLM-005  
 Owner: Produto/Engenharia  
 
+Resultado final (2026-06-23):
+- Schema PDV-owned aplicado: `subscriptions.has_zelo_menu` + view `user_entitlements` (migration `zelomenu_entitlement_and_slug_2026_06_23.sql`). Backfill exato: chat/bundle ativos → `has_zelo_menu=true` (CS+Agreste), pdv → false. Verificado no Supabase.
+- Stripe LIVE: criados `zelo_chat_monthly_v2` (R$147 `price_1TlbH2LUJWyE4PkYSqFSXXVY`), `zelo_bundle_monthly_v2` (R$197 `price_1TlbH2LUJWyE4PkYlS4IxMhs`), `zelo_addon_menu_monthly_v1` (R$40 `price_1TlbH4LUJWyE4PkYX0kdJhAw`) — só catálogo, nenhuma assinatura existente alterada.
+- ZeloPDV `pricing.js`: chat 147 / bundle 197 / addon `menu` 40, billing-safe (price IDs v1 legados mantidos no reverse-lookup → assinantes atuais não quebram). Guards `hasZeloMenuAccess`/`hasOrderingReviewAccess`/`hasKitchenQueueAccess`. Webhook grava `has_zelo_menu`. Admin dashboard com toggle ZeloMenu. Testes `pricing.acessos.test.js` (10) cobrindo legacy-mapping + pdv+menu=99.
+- ZeloChat: resolver de capability (`zelomenuEntitlements.ts`, seam `has_zelo_menu`), copy `PRICING` 97→147 / 147→197.
+- **Falta (operação, não código):** setar no Dokploy do backend ZeloChat `STRIPE_PRICE_CHAT`/`STRIPE_PRICE_BUNDLE` → IDs v2 (liga o aumento p/ novos checkouts ZeloChat); migrar a assinatura do Agreste pro v2 com aviso prévio (D-104); CS grandfathered (D-017).
+
+Resultado parcial (2026-06-23) — parte LOCAL entregue (D-103):
+- `src/domain/zelomenuEntitlements.ts`: resolver read-only de capability, domínio puro, fonte única no repo ZeloChat. Computa `chat_app`/`pdv_core`/`menu_publication`/`public_menu_runtime`/`ordering_review`/`kitchen_queue`/`mesas`/`acessos` a partir de `plan_tier` + ativo, fiel à matriz de ZLM-005.
+- Fail-safe ON em chat/bundle (D-014): mesmo com `has_zelo_menu=false`, chat/bundle mantêm ZeloMenu. Legado `has_pedidos_addon` libera só `ordering_review`/`kitchen_queue` (D-099), nunca publicação. Mesas com cozinha libera `kitchen_queue` sem `ordering_review` (D-100).
+- Seam ÚNICO para o futuro `has_zelo_menu`: o parâmetro `hasZeloMenuFlag`. Hoje passado como `undefined` em `src/hooks/useSubscription.ts` (capabilities expostas ao app); quando o ZeloPDV publicar a coluna, basta adicioná-la ao SELECT do hook e passar o valor — sem reescrever a regra.
+- Cobertura: `tests/zelomenuEntitlements.test.ts` cobre a matriz de ZLM-005 + o seam. `npm run lint`/`npm run build` passaram.
+
+BLOQUEADO no repo ZeloPDV (não executável aqui) — ordem obrigatória de D-104:
+1. (PDV/Stripe) nascer `has_zelo_menu` PDV-owned + novos price IDs: `STRIPE_PRICE_CHAT`=R$147, novo `STRIPE_PRICE_BUNDLE`=R$197, novo `STRIPE_PRICE_MENU`=R$40 (addon do PDV). Como `server/billing.ts` já injeta price IDs por env, é troca de price ID + env, não constante de código.
+2. (ZeloChat) ler o entitlement e só então virar a copy de pricing (`PRICING` no front + paywall). Passo 2 não pode vir antes do 1 — viraria copy sem o direito ser lido, trancando cliente válido.
+3. (Produto/Ops) grandfather: Casa dos Salgados pinada na condição atual (D-017); **Agreste migrada** para R$147 com aviso prévio (operação na subscription PDV-owned + comms).
+- Pendência de produto/PDV: remover Pedidos/Cozinha como addon vendido e mapear `plan_tier`/addons sem quebrar `subscriptions`.
+
+Decisões aplicáveis (2026-06-23):
+- D-103: `has_zelo_menu` é PDV-owned (nasce no repo PDV). Executável **agora neste repo, sem DDL**: resolver read-only de capability lendo assinatura `chat`/`bundle` (ZeloMenu incluído por D-014) OU `has_pedidos_addon` legado, fail-safe para ON, com seam único para a flag nova.
+- D-104: ordem obrigatória = (1) PDV/Stripe nascem flag + price IDs; (2) ZeloChat lê entitlement e só então vira a copy; (3) grandfather. `server/billing.ts` já usa price IDs por env, então R$97→R$147 é troca de price ID + nova env, não constante de código.
+- D-104: tratamento de existentes = Casa dos Salgados grandfathered (D-017); **Agreste migrada** para R$147 com aviso prévio (operação na subscription PDV-owned + comms).
+
 Escopo:
 - Atualizar preços no ZeloChat e ZeloPDV.
-- Criar/ajustar price IDs.
+- Criar/ajustar price IDs (`STRIPE_PRICE_CHAT`=R$147, `STRIPE_PRICE_BUNDLE`=R$197, novo `STRIPE_PRICE_MENU`=R$40).
 - Mapear plan_tier/addons sem quebrar `subscriptions`.
 - Remover Pedidos/Cozinha como addon vendido.
-- Preservar Casa dos Salgados como exceção temporária.
+- Preservar Casa dos Salgados como exceção temporária; migrar Agreste.
 
 Aceite:
 - Checkout e paywall mostram preços corretos.
@@ -1897,7 +1971,7 @@ Aceite:
 
 #### ZLM-301 — Sincronização real com pedidos do ZeloPDV
 
-Status: Todo  
+Status: Doing — materialização one-way entregue; sync bidirecional/fonte-única é a próxima fase  
 Type: Prototype  
 Depends on: ZLM-202  
 Owner: Engenharia  
@@ -1912,6 +1986,14 @@ Aceite:
 - Pedido aceito no Chat aparece no PDV quando há bundle.
 - Pedido aceito no PDV atualiza Chat.
 - Não há duas fontes de verdade.
+
+Resultado parcial (2026-06-23) — materialização ONE-WAY segura:
+- Investigado o modelo real do PDV (via PostgREST OpenAPI + leitura do fluxo "balcão"): `pedidos` é ticket de cozinha — `numero_pedido` pela RPC race-safe `proximo_numero_pedido`, `id_venda`/`id_comanda` NULLABLE (venda nasce só no pagamento), `zelochat_order_id` já existe pra vincular, status `aberto`→`pronto`→`fechado`.
+- `materializeOrderToPedidosBestEffort` (`server/zelomenuCartSessions.ts`) cria o ticket em `pedidos`/`pedido_itens` espelhando exatamente o balcão (status `aberto`, itens `enviado_cozinha`/`status_cozinha='aguardando'`, **sem tocar `vendas`/financeiro**), vinculando via `zelochat_order_id`. D-096: whatsapp→origem `zelochat`, public→`zelomenu`.
+- **Gate `pdv_core`**: só roda para empresa com PDV (pdv/bundle). Cliente chat-only (Casa dos Salgados, Agreste) NUNCA dispara — segue 100% em `zelochat_orders`, zero regressão. Best-effort: falha não derruba o pedido.
+- Chamado no aceite do WhatsApp (`acceptWhatsAppCartReviewSession`) e na confirmação `public_order`.
+- **Falta (próxima fase):** sync bidirecional de status e fonte única (cutover: ZeloChat passar a LER `pedidos`, dropar `zelochat_orders`) com backfill — D-094 mantém `zelochat_orders` como write-path do piloto até lá. Validar com Donutopia antes de qualquer cutover.
+- Validação: `npm run lint`, `npm run build`, suíte zelomenu passaram. Materialização ainda não exercida em prod (nenhum cliente bundle operando pedidos hoje além do teste).
 
 #### ZLM-302 — Estoque integrado quando produto controla estoque
 

@@ -17,6 +17,18 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-23',
+    category: 'big',
+    title: 'Seu cardápio agora tem um link próprio pro cliente pedir sozinho',
+    description: 'Escolha um endereço fácil pra sua loja e compartilhe no status, nas redes ou onde quiser. O cliente monta o pedido direto pelo link, sem precisar conversar antes — e o pedido cai certinho na sua tela de Pedidos. Configure em Configurações.',
+  },
+  {
+    date: '2026-06-23',
+    category: 'medium',
+    title: 'Cardápio agora aceita foto própria nos produtos do link',
+    description: 'Ao publicar um produto no ZeloMenu, você já pode enviar a foto ali mesmo no Cardápio, sem depender só de colar um link externo.',
+  },
+  {
+    date: '2026-06-23',
     category: 'medium',
     title: 'Produtos do ZeloMenu agora podem ser publicados pelo Cardápio',
     description: 'A tela de Cardápio agora permite escolher quais produtos aparecem no link, pausar itens por um tempo e ajustar nome, descrição, foto e ordem para o cliente ver melhor.',

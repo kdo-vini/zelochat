@@ -121,13 +121,41 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69q (2026-06-23) — Rollout ZeloMenu completo (ZLM-205 pricing + ZLM-203 link público + T5 pedidos)
+
+- ✅ ZLM-205 — schema PDV-owned aplicado no Supabase real: `subscriptions.has_zelo_menu` + `empresa_perfil.zelomenu_slug` (única) + coluna na view `user_entitlements`; backfill exato (chat/bundle→true, pdv→false) verificado via PostgREST — `/home/vinicius/code/zelopdv/.ai/migrations/zelomenu_entitlement_and_slug_2026_06_23.sql`
+- ✅ ZLM-205 — 3 prices Stripe LIVE criados (catálogo, sem tocar assinatura): chat v2 R$147 `price_1TlbH2LUJWyE4PkYSqFSXXVY`, bundle v2 R$197 `price_1TlbH2LUJWyE4PkYlS4IxMhs`, addon menu R$40 `price_1TlbH4LUJWyE4PkYX0kdJhAw`
+- ✅ ZLM-205 — ZeloPDV `pricing.js` billing-safe (legacy price IDs no reverse-lookup → assinantes atuais não quebram), guards de capability, webhook grava `has_zelo_menu`, admin toggle — `zelopdv/src/lib/pricing.js`, `zelopdv/src/lib/guards.js:311`, `zelopdv/src/routes/api/billing/webhook/+server.js`, `zelopdv/admin-dashboard/src/routes/subscriptions/+page.svelte`
+- ✅ ZLM-205 — ZeloChat copy 97→147 / 147→197 — `src/data/pricing.ts`
+- ✅ ZLM-203 — link público por slug ponta a ponta: domínio `zelomenuSlug.ts`, endpoints `GET /public-api/zelomenu/store/:slug` + `POST .../store/:slug/cart`, bootstrap `public_order`, confirm→Pedidos, `GET/PUT /api/zelomenu/slug`, página `/menu/:slug` e card self-service — `src/domain/zelomenuSlug.ts`, `server/zelomenuCartSessions.ts`, `server/router.ts`, `src/pages/ZeloMenuStorePage.tsx:1`, `src/components/zelomenu/PublicLinkCard.tsx:1`, `src/App.tsx`
+- ✅ T5/ZLM-301 — materialização one-way segura em `pedidos`/`pedido_itens` (gate `pdv_core`, espelha o balcão do PDV via RPC `proximo_numero_pedido`, sem tocar `vendas`; chat-only intocado) — `server/zelomenuCartSessions.ts` (`materializeOrderToPedidosBestEffort`)
+- ✅ Validação — `npm run lint`, `npm run build`, `tests/zelomenuSlug.test.ts`, `tests/zelomenuEntitlements.test.ts`, `tests/zelomenuCart.test.ts` (ZeloChat) e `tests/pricing.acessos.test.js` (ZeloPDV) passaram; `npm test` segue só com `auditFixGuardrails` (drift conhecido)
+- 🟥 Pendências de operação (não código) — envs Dokploy `STRIPE_PRICE_CHAT`/`STRIPE_PRICE_BUNDLE`→v2 (liga aumento ZeloChat); migrar Agreste pro R$147 com aviso (D-104); sync bidirecional de pedidos (cutover) validar no Donutopia antes
+
+### Sprint 69p (2026-06-23) — ZLM-204 entrega por bairro + ZLM-205 resolver de capability (local)
+
+- ✅ ZLM-204 — bairro fora da tabela estourava `INVALID_DELIVERY_NEIGHBORHOOD` e travava a confirmação → agora `resolveDeliveryFeeForNeighborhood()` (domínio puro, compartilhado server+front) devolve `{ fee, toConfirm }`: bairro listado soma taxa (match case/acento-insensitive), bairro livre/ausente vira taxa "a confirmar" sem bloquear (D-081/D-082/D-083) — `src/domain/zelomenuCart.ts:148`, `server/zelomenuCartSessions.ts:536`
+- ✅ ZLM-204 — taxa "a confirmar" propagada para forçar conferência humana: snapshot `deliveryFeeToConfirm`, mensagem ao cliente, card de revisão do Chat e aviso ao gerente no aceite — `src/domain/zelomenuCart.ts:53`, `server/zelomenuCartSessions.ts:962`, `src/components/views/ChatView.tsx:3326`
+- ✅ ZLM-204 — UI pública trocou o `<select>` de bairro por `<input list>`+`<datalist>` (escolhe cadastrado com a taxa ou digita o seu); resumo mostra "Entrega: a confirmar" para bairro fora da tabela — `src/pages/ZeloMenuCartPage.tsx:725`, `src/pages/ZeloMenuCartPage.tsx:146`
+- ✅ ZLM-205 (parte local / D-103) — resolver read-only de capability do ZeloMenu, domínio puro, fonte única no repo: computa a matriz de ZLM-005 a partir de `plan_tier`+ativo, fail-safe ON em chat/bundle (D-014), legado `has_pedidos_addon` só libera pedidos/cozinha (D-099), mesas-com-cozinha libera `kitchen_queue` (D-100) — `src/domain/zelomenuEntitlements.ts:1`
+- ✅ ZLM-205 (parte local) — seam ÚNICO para o futuro `has_zelo_menu` (`hasZeloMenuFlag`), exposto em `useSubscription().capabilities`; quando o ZeloPDV publicar a coluna, basta adicioná-la ao SELECT do hook e passar o valor — `src/hooks/useSubscription.ts:88`
+- 🟥 ZLM-205 restante — price IDs Stripe (`chat`=147/`bundle`=197/novo `menu`=40), coluna `has_zelo_menu` e grandfather (CS pinada, Agreste migrada) seguem **bloqueados no repo ZeloPDV** (D-104); nada disso é DDL/Stripe executável neste repo
+- ✅ Validação — `npm run lint`, `npm run build`, `node --import tsx tests/zelomenuEntitlements.test.ts` e `node --import tsx tests/zelomenuCart.test.ts` passaram; `npm test` segue somente com a falha conhecida `tests/auditFixGuardrails.test.ts` → "webhook has explicit rollout bypass name" — `tests/zelomenuEntitlements.test.ts:1`, `tests/zelomenuCart.test.ts:1`
+
+### Sprint 69o (2026-06-23) — ZLM-201 fechado com imagem owned
+
+- ✅ ZLM-201 — o modal de publicação do `Cardápio` agora aceita upload de imagem própria com preview, mantém a opção de link HTTPS e grava a URL owned em `foto_url` sem mexer em `produtos`; a publicação pública continua vindo da camada `zelomenu_product_publications` — `src/components/views/catalog/CatalogModals.tsx:435`, `src/services/zelomenuPublicationImages.ts:1`, `src/domain/zelomenuPublicationImages.ts:1`
+- ✅ ZLM-201 — cleanup operacional da foto owned fechado: troca/remoção de imagem apaga o objeto antigo em best-effort, exclusão do produto limpa a foto vinculada e o purge de conta remove o prefixo `zelomenu-products/{userId}` do bucket `logos` — `src/components/views/CatalogView.tsx:386`, `src/hooks/useCatalog.ts:373`, `server/accountDeletionSweeper.ts:62`
+- ✅ ZLM-201 — ticket de publicação self-service agora cobre publicação real, modifiers/adicionais/variações e imagem própria ponta a ponta; próximos gaps end-to-end saem de `ZLM-201` e passam para `ZLM-203` (slug/public_order) e `ZLM-205` (billing/entitlements) — `CURRENT.md:40`, `ZELOMENU_LINEAR_PLAN.md:1785`
+- ✅ Validação ZLM-201 — `npm run lint`, `npm run build`, `node --import tsx tests/zelomenuPublication.test.ts`, `node --import tsx tests/zelomenuCart.test.ts`, `node --import tsx tests/zelomenuModifiers.test.ts` e `node --import tsx tests/zelomenuPublicationImages.test.ts` passaram; `npm test` segue somente com a falha conhecida `tests/auditFixGuardrails.test.ts` → "webhook has explicit rollout bypass name" — `tests/zelomenuPublicationImages.test.ts:1`
+
 ### Sprint 69n (2026-06-23) — Publicação real do ZeloMenu no Cardápio
 
 - ✅ ZLM-201 parcial — `useCatalog` passou a carregar e gravar `zelomenu_product_publications`, mantendo a separação entre produto base e publicação online e limpando a publicação do estado local quando um produto é excluído — `src/hooks/useCatalog.ts:96`, `src/hooks/useCatalog.ts:318`
 - ✅ ZLM-201 parcial — tela `Cardápio` agora mostra estados reais `Publicado`, `Não publicado`, `Pausado`, `Inativo`, `Sem estoque` e `Sem categoria`; o operador abre a publicação por produto e configura publicar/despublicar, pausa, nome público, descrição, foto por link e ordem — `src/components/views/CatalogView.tsx:126`, `src/components/views/catalog/CatalogModals.tsx:436`
 - ✅ ZLM-201 parcial — carrinho público e IA passam a receber catálogo já resolvido pela publicação: só item publicado e disponível fica `available`, nome/descrição/foto/ordem vêm do overlay e preço base continua em `produtos.preco` — `server/configStore.ts:544`, `src/domain/zelomenuPublication.ts:157`, `src/pages/ZeloMenuCartPage.tsx:752`
 - ✅ Validação ZLM-201 — `npm run lint`, `npm run build`, `node --import tsx tests/zelomenuPublication.test.ts` e `node --import tsx tests/zelomenuCart.test.ts` passaram; `npm test` rodou e segue somente com a falha conhecida `tests/auditFixGuardrails.test.ts` → "webhook has explicit rollout bypass name" — `tests/zelomenuPublication.test.ts:1`
-- 🟨 ZLM-201 restante — modifiers/adicionais/variações (`zelomenu_modifier_groups`/`zelomenu_modifier_options`) e ownership/upload de imagem ainda não entraram nesta fatia.
+- 🟨 ZLM-201 restante naquela fatia — modifiers/adicionais/variações (`zelomenu_modifier_groups`/`zelomenu_modifier_options`) e ownership/upload de imagem ainda não tinham entrado; o fechamento veio na Sprint 69o.
 
 ### Sprint 69l (2026-06-23) — Prontidão de publicação do ZeloMenu
 
