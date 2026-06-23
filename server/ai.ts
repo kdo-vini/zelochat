@@ -62,7 +62,7 @@ const PENDING_ORDER_TTL_MIN = 30;
 const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 50000;
 const IMAGE_HISTORY_CAP = 3;
 
-function getPublicAppBaseUrl(): string {
+export function getPublicAppBaseUrl(): string {
   const explicit = process.env.PUBLIC_APP_URL?.trim();
   if (explicit) return explicit.replace(/\/$/, '');
 

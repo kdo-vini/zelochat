@@ -121,6 +121,20 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69k (2026-06-22) — Impressão no aceite + reimpressão manual (ZeloMenu)
+
+- ✅ ZLM-106 — confirmado que o pedido aceito já imprime no momento certo: o aceite do ZeloMenu (ZLM-104) cria a row em `zelochat_orders` só no aceite humano, e o INSERT realtime dispara `autoPrintOrder` — ou seja, impressão no aceite, não na confirmação do cliente — `src/hooks/useOrders.ts:161`, `src/AppShell.tsx:342`
+- ✅ ZLM-106 — auto-impressão passou a respeitar "se configurado": só dispara quando a integração de impressão está ativa (`printer.connected`), eliminando toast de erro a cada pedido em máquinas sem Zelo Impressão; toast do pedido manual ficou preciso conforme a conexão — `src/AppShell.tsx:342`, `src/AppShell.tsx:840`
+- ✅ ZLM-106 — adicionada reimpressão manual: botão "Imprimir pedido" no drawer de detalhe da Produção, com estado de envio e feedback explícito de sucesso/falha (falha nunca silenciosa); aviso quando a impressão não está conectada — `src/AppShell.tsx:359` (`reprintOrder`), `src/components/views/ProductionView.tsx:607`
+- ✅ ZLM-106 — validação: `npm run lint` e `npm run build` passaram; `npm test` segue falhando só no drift conhecido de `tests/auditFixGuardrails.test.ts`. Sem teste automatizado novo — a mudança é fiação de UI + gate sobre o caminho de impressão client-side (fala com o app desktop em `127.0.0.1`, sem harness de teste existente)
+
+### Sprint 69j (2026-06-22) — Recuperação de carrinho abandonado do ZeloMenu
+
+- ✅ ZLM-105 — novo sweeper de fundo manda UMA mensagem de recuperação para carrinho `cart_open` parado entre 2h e 24h, com link fresco; roda 3min após o boot e a cada 15min — `server/abandonedCartSweeper.ts:1`, `server/index.ts:441`
+- ✅ ZLM-105 — invariante "no máximo uma recuperação" garantida por claim race-safe na flag `metadata.recoveryNudgeSentAt`; nunca dispara para carrinho confirmado/aguardando pagamento/aceito/cancelado/arquivado e respeita o gate global da IA (não nuda com IA desligada nem fora da janela) — `server/zelomenuCartSessions.ts:1308`, `src/domain/zelomenuCart.ts:227`
+- ✅ ZLM-105 — tail de emissão de token público extraído para `issueFreshCartToken` e reusado na abertura do carrinho e na recuperação (o token original não é recuperável do banco, só o hash) — `server/zelomenuCartSessions.ts:566`
+- ✅ ZLM-105 — cobertura nova do predicado puro de elegibilidade + builder da mensagem (PT-BR, sem jargão técnico); `npm run lint` e `npm run build` passaram, `npm test` segue falhando só no drift conhecido de `tests/auditFixGuardrails.test.ts` sobre rollout de webhook — `tests/zelomenuAbandonedCart.test.ts:1`
+
 ### Sprint 69i (2026-06-22) — Aceite manual do ZeloMenu no Chat
 
 - ✅ ZLM-104 — ZeloChat ganhou revisão autenticada do pedido do cardápio por conversa (`GET /api/zelomenu/cart-sessions/review`) e ação de aceite (`POST /api/zelomenu/cart-sessions/:id/accept`) sem depender do fluxo legado de `zelochat_pending_orders` — `server/router.ts:2803`, `server/zelomenuCartSessions.ts:946`

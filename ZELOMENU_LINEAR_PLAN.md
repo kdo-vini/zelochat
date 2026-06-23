@@ -1726,7 +1726,7 @@ Resultado (2026-06-22):
 
 #### ZLM-105 — Recuperação simples de carrinho abandonado
 
-Status: Todo  
+Status: Done  
 Type: Prototype  
 Depends on: ZLM-101  
 Owner: Engenharia  
@@ -1740,9 +1740,18 @@ Aceite:
 - Carrinho abandonado gera no máximo uma recuperação.
 - Recuperação não dispara para carrinho confirmado/cancelado.
 
+Resultado (2026-06-22):
+- Novo sweeper `server/abandonedCartSweeper.ts` roda 3min após o boot e a cada 15min; busca sessões `whatsapp_order` em `cart_open`, não arquivadas, paradas entre 2h e 24h (`updated_at`) e ainda sem recuperação, e envia UMA mensagem de lembrete com um link público fresco.
+- A unicidade ("no máximo uma recuperação") é garantida por claim race-safe que grava `metadata.recoveryNudgeSentAt` somente enquanto o carrinho continua `cart_open`/não arquivado/não nudado; um segundo tick ou um confirm concorrente nunca produzem nudge duplicado.
+- A elegibilidade vive no predicado puro `isCartEligibleForAbandonedRecovery` (`src/domain/zelomenuCart.ts`): só `cart_open`, nunca confirmado/aguardando pagamento/aceito/recusado/cancelado/arquivado, dentro da janela [2h, 24h]. O teto de 24h evita lembrete velho/spam.
+- O nudge respeita o gate global da IA (`isAiGloballyEnabledNow`): não envia com a IA desligada (kill-switch) nem fora da janela agendada — a checagem acontece antes do claim, então um carrinho abandonado em horário humano ainda é recuperável quando a automação volta.
+- Como o token público não é recuperável do banco (só o hash é salvo), o tail de emissão de token foi extraído para `issueFreshCartToken` e reusado na abertura do carrinho e na recuperação; o link novo entra na mensagem e fica registrado como mensagem do assistente no chat.
+- Sem migration: usa a coluna `metadata` (JSONB) já existente em `zelomenu_cart_sessions` — nada de schema compartilhado tocado.
+- Validação: `tests/zelomenuAbandonedCart.test.ts` cobre o predicado puro (estado, janela, flag, arquivado, data inválida) e o builder PT-BR sem jargão; `npm run lint` e `npm run build` passaram; `npm test` segue falhando só no drift conhecido de `tests/auditFixGuardrails.test.ts`.
+
 #### ZLM-106 — Impressão no aceite via Zelo Impressão
 
-Status: Todo  
+Status: Done  
 Type: Prototype  
 Depends on: ZLM-104  
 Owner: Engenharia  
@@ -1756,6 +1765,15 @@ Escopo:
 Aceite:
 - Pedido aceito imprime quando integração está ativa.
 - Falha não fica silenciosa.
+
+Resultado (2026-06-22):
+- **Impressão é client-side**: o navegador fala com o app desktop Zelo Impressão em `http://127.0.0.1:17321` (`src/services/zeloImpressaoClient.ts`/`printerService.ts`/`usePrinter.ts`). O servidor não alcança a impressora do operador, então o disparo vive no frontend.
+- **Timing já correto no aceite**: como ZLM-104 cria a row em `zelochat_orders` somente no aceite humano, o INSERT realtime (`useOrders`) dispara `autoPrintOrder` — ou seja, imprime no aceite, não na confirmação do cliente. A preocupação "imprime cedo demais" do ZLM-002 era do fluxo legado `confirmPendingOrder`; o motor novo não a tem.
+- **"Se configurado"**: `autoPrintOrder` agora só dispara quando `printer.connected` (integração ativa). Antes, todo pedido em máquina sem Zelo Impressão gerava um toast de erro de impressão; agora não há ruído para quem não usa impressora. O toast do pedido manual reflete se foi enviado à impressão.
+- **Falha não silenciosa**: auto-impressão com a integração ativa que falhar continua mostrando toast de erro; a reimpressão manual mostra sucesso/falha explícito.
+- **Reimpressão manual**: novo botão "Imprimir pedido" no drawer de detalhe da Produção (`ProductionView`), com estado de envio e feedback. `AppShell.reprintOrder` sempre tenta imprimir (ação explícita do operador) e reporta o resultado; um aviso aparece quando a integração não está conectada.
+- **Pedido inteiro / setor**: V1 imprime o pedido inteiro via `buildOrderText` (uma impressão). A divisão por setor/categoria (D-090) fica para depois; a arquitetura client-side já permite trocar o builder sem mexer no disparo.
+- Validação: `npm run lint` e `npm run build` passaram; `npm test` segue só com o drift conhecido de `tests/auditFixGuardrails.test.ts`. Sem teste automatizado novo — fiação de UI + gate sobre o caminho de impressão client-side, que depende do app desktop e não tem harness existente.
 
 ### Phase 2 — Produto Comercial ZeloMenu para Base ZeloPDV
 

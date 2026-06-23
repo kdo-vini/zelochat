@@ -24,6 +24,7 @@ import { ensureAiSettingsHydrated, isAiGloballyEnabledNow } from './configStore.
 import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
 import { startAccountDeletionSweepLoop } from './accountDeletionSweeper.js';
+import { startAbandonedCartRecoverySweeper } from './abandonedCartSweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
@@ -436,6 +437,11 @@ httpServer.listen(PORT, () => {
   // elapsed (delete_account RPC + Whatsmiau + storage). Runs 3 min after startup,
   // then hourly. Idempotent.
   startAccountDeletionSweepLoop();
+
+  // ZLM-105 — abandoned ZeloMenu cart recovery. Sends ONE recovery nudge for a
+  // cart left open 2–24h. Runs 3 min after startup, then every 15 min. Respects
+  // the global AI gate; one-shot guaranteed by a race-safe metadata claim.
+  startAbandonedCartRecoverySweeper();
 
   // Onboarding follow-up — Day 3, 7, 14, 21, 28 nutrition + conversion sequence
   // (Day 0 fires synchronously via /api/onboarding/welcome). Idempotent: re-run

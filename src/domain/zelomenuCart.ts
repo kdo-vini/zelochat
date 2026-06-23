@@ -223,3 +223,45 @@ export function buildWhatsAppCartLinkMessage(input: {
     : '';
   return `${greeting} Montei seu pedido no link abaixo para você revisar com calma, ajustar se precisar e confirmar:\n\n${input.publicUrl}\n\n${input.summary}${pixLine}`;
 }
+
+// ZLM-105 — recuperação de carrinho abandonado.
+// Só carrinho ainda aberto (`cart_open`), não arquivado e que nunca recebeu
+// nudge pode ser recuperado. A janela [min, max] evita lembrar cedo demais
+// (cliente ainda decidindo) e tarde demais (lembrete velho vira spam).
+export const ABANDONED_CART_RECOVERY_MIN_AGE_MS = 2 * 60 * 60 * 1000; // 2h
+export const ABANDONED_CART_RECOVERY_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+
+export function isCartEligibleForAbandonedRecovery(params: {
+  state: ZeloMenuCartState;
+  archivedAt: string | null;
+  recoveryNudgeSentAt: string | null;
+  updatedAt: string;
+  now?: number;
+  minAgeMs?: number;
+  maxAgeMs?: number;
+}): boolean {
+  // Apenas carrinho aberto pode ser abandonado. Confirmado / aguardando pagamento /
+  // aceito / recusado / cancelado / arquivado NUNCA recebem recuperação.
+  if (params.state !== 'cart_open') return false;
+  if (params.archivedAt) return false;
+  // "No máximo uma recuperação": uma vez nudado, nunca mais para este carrinho.
+  if (params.recoveryNudgeSentAt) return false;
+
+  const now = params.now ?? Date.now();
+  const updatedAtMs = Date.parse(params.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) return false;
+  const age = now - updatedAtMs;
+  const minAge = params.minAgeMs ?? ABANDONED_CART_RECOVERY_MIN_AGE_MS;
+  const maxAge = params.maxAgeMs ?? ABANDONED_CART_RECOVERY_MAX_AGE_MS;
+  return age >= minAge && age <= maxAge;
+}
+
+export function buildAbandonedCartRecoveryMessage(input: {
+  customerName: string | null;
+  itemsLine: string | null;
+  publicUrl: string;
+}): string {
+  const greeting = input.customerName ? `Oi, ${input.customerName}!` : 'Oi!';
+  const itemsBlock = input.itemsLine ? `\n\n📦 ${input.itemsLine}` : '';
+  return `${greeting} 👋 Vi que seu pedido ficou pela metade por aqui.${itemsBlock}\n\nQuando quiser, é só tocar no link para revisar e finalizar:\n${input.publicUrl}\n\nSe precisar de ajuda ou quiser mudar algo, é só me chamar por aqui! 😊`;
+}

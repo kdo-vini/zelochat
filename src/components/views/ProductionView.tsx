@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import {
   X, Phone, MapPin, Clock, Plus, Package, ChevronRight,
-  User, ShoppingBag, Pencil, Trash2, CreditCard, Truck, Store, Calendar, StickyNote,
+  User, ShoppingBag, Pencil, Trash2, CreditCard, Truck, Store, Calendar, StickyNote, Printer,
 } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
@@ -431,6 +431,8 @@ function OrderDrawer({
   onEdit,
   onDelete,
   onUpdateStatus,
+  onReprint,
+  canPrint,
 }: {
   order: Order;
   onClose: () => void;
@@ -438,8 +440,11 @@ function OrderDrawer({
   onEdit: () => void;
   onDelete: (id: string) => void;
   onUpdateStatus: (id: string, status: Order['status']) => void;
+  onReprint?: (order: Order) => Promise<void>;
+  canPrint?: boolean;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [reprinting, setReprinting] = useState(false);
   const titleId = useModalTitleId();
 
   return (
@@ -605,6 +610,31 @@ function OrderDrawer({
         </div>
 
         <div className="p-5 border-t border-[var(--color-line)] space-y-2">
+          {onReprint && (
+            <button
+              onClick={async () => {
+                if (reprinting) return;
+                setReprinting(true);
+                try {
+                  await onReprint(order);
+                } catch {
+                  // toast já é exibido pelo handler; mantém o drawer aberto para nova tentativa
+                } finally {
+                  setReprinting(false);
+                }
+              }}
+              disabled={reprinting}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-[13.5px] font-semibold bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] hover:bg-[var(--color-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Printer className="w-3.5 h-3.5" strokeWidth={1.8} />
+              {reprinting ? 'Enviando para impressão…' : 'Imprimir pedido'}
+            </button>
+          )}
+          {onReprint && !canPrint && (
+            <p className="text-[11.5px] text-[var(--color-ink-faint)] text-center leading-snug">
+              Conecte o Zelo Impressão para imprimir automaticamente. Você ainda pode tentar imprimir manualmente.
+            </p>
+          )}
           <div className="flex gap-2">
             <button
               onClick={onEdit}
@@ -725,6 +755,8 @@ export const ProductionView = ({
   onEditOrder,
   onDeleteOrder,
   onUpdateStatus,
+  onReprintOrder,
+  canPrint,
   isAuthenticated,
   focusedOrderRequest,
   focusedOrderRequestKey,
@@ -736,6 +768,8 @@ export const ProductionView = ({
   onEditOrder: (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   onDeleteOrder: (id: string) => Promise<void>;
   onUpdateStatus: (id: string, status: Order['status']) => void;
+  onReprintOrder?: (order: Order) => Promise<void>;
+  canPrint?: boolean;
   isAuthenticated: boolean;
   focusedOrderRequest?: OrderFocusRequest | null;
   focusedOrderRequestKey?: number | null;
@@ -1014,6 +1048,8 @@ export const ProductionView = ({
             onEdit={() => { setEditingOrder(liveSelectedOrder); setSelectedOrder(null); }}
             onDelete={async (id) => { await onDeleteOrder(id); }}
             onUpdateStatus={onUpdateStatus}
+            onReprint={onReprintOrder}
+            canPrint={canPrint}
           />
         )}
         {showAddModal && (

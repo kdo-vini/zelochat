@@ -340,6 +340,13 @@ export default function AppShell() {
   const printer = usePrinter();
   const autoPrintedOrdersRef = useRef(new Map<string, number>());
   const autoPrintOrder = useCallback((order: Order) => {
+    // ZLM-106 — only auto-print "se configurado": when the Zelo Impressão
+    // integration is actually active. Without this gate, every accepted order
+    // (the ZeloMenu accept flow inserts a real order row, which triggers this)
+    // would fire a failed print + error toast on machines that never set up a
+    // printer. Manual reprint stays available regardless via reprintOrder().
+    if (!printer.connected) return;
+
     const now = Date.now();
     for (const [orderId, ts] of autoPrintedOrdersRef.current) {
       if (now - ts > AUTO_PRINT_DEDUPE_WINDOW_MS) autoPrintedOrdersRef.current.delete(orderId);
@@ -354,6 +361,19 @@ export default function AppShell() {
       console.error('[printer] auto-print falhou para pedido', order.id, err);
       toast.error('Não consegui imprimir o pedido automaticamente. Verifique a impressora.');
     });
+  }, [printer, state.businessInfo.name, toast]);
+
+  // ZLM-106 — manual reprint. Always attempts (an explicit operator action),
+  // unlike auto-print, and reports the outcome so a failure is never silent.
+  const reprintOrder = useCallback(async (order: Order) => {
+    try {
+      await printer.print(order, state.businessInfo.name || 'ZeloChat');
+      toast.success('Pedido enviado para a impressora.');
+    } catch (err) {
+      console.error('[printer] reimpressão falhou para pedido', order.id, err);
+      toast.error(err instanceof Error ? err.message : 'Não consegui imprimir o pedido. Verifique a impressora.');
+      throw err;
+    }
   }, [printer, state.businessInfo.name, toast]);
 
   const {
@@ -837,7 +857,7 @@ export default function AppShell() {
       const order = await addOrderToSupabase(payload);
       setState((prev) => ({ ...prev, orders: [order, ...prev.orders] }));
       autoPrintOrder(order);
-      toast.success('Pedido adicionado e enviado para impressão.');
+      toast.success(printer.connected ? 'Pedido adicionado e enviado para impressão.' : 'Pedido adicionado.');
     } catch (err) {
       console.error('[App] handleAddOrder failed:', err);
       toast.error('Não consegui adicionar o pedido. Tente de novo.');
@@ -1289,6 +1309,8 @@ export default function AppShell() {
                     onEditOrder={handleEditOrder}
                     onDeleteOrder={handleDeleteOrder}
                     onUpdateStatus={updateOrderStatus}
+                    onReprintOrder={reprintOrder}
+                    canPrint={printer.connected}
                     isAuthenticated={!!token}
                     focusedOrderRequest={pendingOrderFocus?.request ?? null}
                     focusedOrderRequestKey={pendingOrderFocus?.key ?? null}

@@ -1,17 +1,22 @@
-import { getConfig, loadAiSettingsFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
-import { evaluateCreateOrderScheduleGuard } from './ai.js';
+import { getConfig, isAiGloballyEnabledNow, loadAiSettingsFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
+import { evaluateCreateOrderScheduleGuard, getPublicAppBaseUrl } from './ai.js';
 import { addAssistantMessage } from './messageHandler.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { sendTextMessage } from './whatsapp.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
 import {
+  ABANDONED_CART_RECOVERY_MAX_AGE_MS,
+  ABANDONED_CART_RECOVERY_MIN_AGE_MS,
+  buildAbandonedCartRecoveryMessage,
   buildAcceptedCartCustomerMessage,
   buildConfirmedCartCustomerMessage,
   buildPublicCartPath,
+  buildPublicCartUrl,
   computeCartPricing,
   createPublicCartToken,
   hashPublicCartToken,
+  isCartEligibleForAbandonedRecovery,
   normalizePublicCartToken,
   resolveConfirmedCartState,
   type ZeloMenuCartContext,
@@ -563,6 +568,51 @@ async function touchToken(tokenId: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Rotate the public token for a session: revoke any active token, mint a fresh
+ * one and promote it to the session's `current_token_hash`. The plaintext token
+ * is never persisted — only its hash — so the only place to obtain a usable link
+ * is the return value here, at issue time. Used both when opening a cart and when
+ * sending the abandoned-cart recovery nudge (ZLM-105), since the original token
+ * cannot be reconstructed from the DB.
+ */
+async function issueFreshCartToken(
+  sessionId: string,
+  revision: number,
+  now: string,
+): Promise<{ token: string; tokenHash: string; tokenLast4: string }> {
+  const tokenData = createPublicCartToken();
+  const { error: revokeTokenError } = await getServiceSupabase()
+    .from('zelomenu_cart_tokens')
+    .update({ revoked_at: now })
+    .eq('session_id', sessionId)
+    .is('revoked_at', null);
+  if (revokeTokenError) throw revokeTokenError;
+
+  const { error: tokenError } = await getServiceSupabase()
+    .from('zelomenu_cart_tokens')
+    .insert({
+      session_id: sessionId,
+      token_hash: tokenData.tokenHash,
+      token_last4: tokenData.tokenLast4,
+      issued_for_revision: revision,
+      created_at: now,
+    });
+  if (tokenError) throw tokenError;
+
+  const { error: sessionTokenError } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .update({
+      current_token_hash: tokenData.tokenHash,
+      current_token_last4: tokenData.tokenLast4,
+      updated_at: now,
+    })
+    .eq('id', sessionId);
+  if (sessionTokenError) throw sessionTokenError;
+
+  return tokenData;
+}
+
 async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCartRevalidation> {
   const currentInput = toCartItemInputs(session.cart);
   const issues: ZeloMenuCartRevalidationIssue[] = [];
@@ -905,34 +955,7 @@ export async function openWhatsAppCartSession(input: OpenWhatsAppCartInput): Pro
     sessionRow = data as SessionRow;
   }
 
-  const tokenData = createPublicCartToken();
-  const { error: revokeTokenError } = await getServiceSupabase()
-    .from('zelomenu_cart_tokens')
-    .update({ revoked_at: now })
-    .eq('session_id', sessionRow.id)
-    .is('revoked_at', null);
-  if (revokeTokenError) throw revokeTokenError;
-
-  const { error: tokenError } = await getServiceSupabase()
-    .from('zelomenu_cart_tokens')
-    .insert({
-      session_id: sessionRow.id,
-      token_hash: tokenData.tokenHash,
-      token_last4: tokenData.tokenLast4,
-      issued_for_revision: sessionRow.revision,
-      created_at: now,
-    });
-  if (tokenError) throw tokenError;
-
-  const { error: sessionTokenError } = await getServiceSupabase()
-    .from('zelomenu_cart_sessions')
-    .update({
-      current_token_hash: tokenData.tokenHash,
-      current_token_last4: tokenData.tokenLast4,
-      updated_at: now,
-    })
-    .eq('id', sessionRow.id);
-  if (sessionTokenError) throw sessionTokenError;
+  const tokenData = await issueFreshCartToken(sessionRow.id, sessionRow.revision, now);
 
   return {
     sessionId: sessionRow.id,
@@ -1297,4 +1320,127 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
       customerMessage,
     },
   };
+}
+
+// ─── ZLM-105 — Recuperação de carrinho abandonado ──────────────────────────────
+//
+// Um carrinho `cart_open` parado por mais de 2h (e até 24h) é "abandonado": o
+// cliente recebeu o link mas não confirmou. O sweeper envia UMA única mensagem
+// de lembrete com um link fresco. Invariantes (D-064 / ZLM-105):
+//   - no máximo uma recuperação por carrinho (flag `metadata.recoveryNudgeSentAt`);
+//   - nunca para carrinho confirmado/aguardando pagamento/aceito/cancelado/arquivado;
+//   - respeita o gate global da IA — não manda nudge automático com a IA desligada
+//     (kill-switch) nem fora da janela agendada (evita lembrete às 3h da manhã).
+
+const RECOVERY_NUDGE_METADATA_KEY = 'recoveryNudgeSentAt';
+
+function parseRecoveryNudgeSentAt(metadata: Record<string, unknown>): string | null {
+  return typeof metadata[RECOVERY_NUDGE_METADATA_KEY] === 'string'
+    ? (metadata[RECOVERY_NUDGE_METADATA_KEY] as string)
+    : null;
+}
+
+export async function listAbandonedCartCandidates(params: {
+  minAgeMs?: number;
+  maxAgeMs?: number;
+  limit?: number;
+} = {}): Promise<SessionRow[]> {
+  const now = Date.now();
+  const minAge = params.minAgeMs ?? ABANDONED_CART_RECOVERY_MIN_AGE_MS;
+  const maxAge = params.maxAgeMs ?? ABANDONED_CART_RECOVERY_MAX_AGE_MS;
+  const limit = params.limit ?? 100;
+  const olderThan = new Date(now - minAge).toISOString();
+  const newerThan = new Date(now - maxAge).toISOString();
+
+  const { data, error } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .select(CART_SESSION_COLUMNS)
+    .eq('context', 'whatsapp_order')
+    .eq('state', 'cart_open')
+    .is('archived_at', null)
+    .is(`metadata->>${RECOVERY_NUDGE_METADATA_KEY}`, null)
+    .lt('updated_at', olderThan)
+    .gt('updated_at', newerThan)
+    .order('updated_at', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as SessionRow[];
+}
+
+/**
+ * Send the one-shot recovery nudge for a single abandoned cart, idempotently.
+ *
+ * Returns:
+ *   - `'sent'`    — nudge delivered (or queued) and recorded in the chat.
+ *   - `'skipped'` — not eligible, AI globally off, or another tick already claimed it.
+ *   - `'failed'`  — the claim succeeded but the outbound WhatsApp send threw.
+ *
+ * The race-safe claim stamps `metadata.recoveryNudgeSentAt` only while the cart
+ * is still `cart_open`, unarchived and un-nudged, so a second tick (or a
+ * concurrent confirm) can never produce a duplicate nudge.
+ */
+export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sent' | 'skipped' | 'failed'> {
+  if (sessionRow.context !== 'whatsapp_order') return 'skipped';
+
+  const metadata = parseMetadata(sessionRow.metadata);
+  if (!isCartEligibleForAbandonedRecovery({
+    state: sessionRow.state,
+    archivedAt: sessionRow.archived_at,
+    recoveryNudgeSentAt: parseRecoveryNudgeSentAt(metadata),
+    updatedAt: sessionRow.updated_at,
+  })) {
+    return 'skipped';
+  }
+
+  // Respeita o operador: sem nudge automático com a IA desligada ou fora da
+  // janela. Checamos ANTES de marcar a flag para que um carrinho abandonado em
+  // horário humano ainda possa ser recuperado quando a automação voltar.
+  await loadAiSettingsFromDb(sessionRow.empresa_id);
+  if (!isAiGloballyEnabledNow(sessionRow.empresa_id)) return 'skipped';
+
+  const now = new Date().toISOString();
+  const mergedMetadata = { ...metadata, [RECOVERY_NUDGE_METADATA_KEY]: now };
+  const { data: claimed, error: claimError } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .update({ metadata: mergedMetadata })
+    .eq('id', sessionRow.id)
+    .eq('state', 'cart_open')
+    .is('archived_at', null)
+    .is(`metadata->>${RECOVERY_NUDGE_METADATA_KEY}`, null)
+    .select(CART_SESSION_COLUMNS)
+    .maybeSingle();
+  if (claimError) throw claimError;
+  if (!claimed) return 'skipped';
+
+  const claimedRow = claimed as SessionRow;
+  const session = mapSessionRow(claimedRow);
+  const tokenData = await issueFreshCartToken(claimedRow.id, claimedRow.revision, now);
+  const publicUrl = buildPublicCartUrl(getPublicAppBaseUrl(), tokenData.token);
+  const itemsLine = session.cart.items.length > 0
+    ? session.cart.items.map((item) => `${item.quantity}x ${item.productName}`).join(', ')
+    : null;
+  const message = buildAbandonedCartRecoveryMessage({
+    customerName: session.customer.name,
+    itemsLine,
+    publicUrl,
+  });
+
+  let waMessageId: string | undefined;
+  let sendOk = true;
+  try {
+    waMessageId = await sendTextMessage(claimedRow.source_ref, message, claimedRow.empresa_id);
+  } catch (sendErr) {
+    sendOk = false;
+    console.error('[ZeloMenu] recoverAbandonedCart: recovery message failed:', sendErr);
+  }
+  await addAssistantMessage(
+    claimedRow.source_ref,
+    sendOk ? message : `[FALHA NO ENVIO — reenviar manualmente]\n${message}`,
+    undefined,
+    claimedRow.empresa_id,
+    undefined,
+    { waMessageId },
+  );
+
+  return sendOk ? 'sent' : 'failed';
 }

@@ -18,20 +18,20 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-22',
     category: 'medium',
+    title: 'Lembrete automático para quem deixou o pedido pela metade',
+    description: 'Se o cliente montou um pedido pelo link mas não finalizou, o ZeloChat manda um lembrete amigável depois de um tempo, com o link para concluir — uma vez só, sem encher o saco.',
+  },
+  {
+    date: '2026-06-22',
+    category: 'medium',
     title: 'Loja agora confirma o pedido do link direto no chat',
     description: 'Depois que o cliente fecha o pedido pelo link, sua equipe pode revisar e aceitar ali mesmo no chat. Só depois disso o pedido entra na produção.',
   },
   {
     date: '2026-06-22',
     category: 'medium',
-    title: 'Pedidos no WhatsApp agora podem ir para um link de revisão',
-    description: 'Quando a IA monta seu pedido, ela pode te mandar para um link onde você revisa os itens, ajusta o que precisar e confirma com mais clareza.',
-  },
-  {
-    date: '2026-06-22',
-    category: 'medium',
-    title: 'Pedido pelo cardápio com confirmação guiada',
-    description: 'O cliente que revisa o pedido pelo link agora consegue confirmar o carrinho e recebe a orientação certa para aguardar a loja ou enviar o comprovante do Pix.',
+    title: 'Pedido pelo link do cardápio para revisar e confirmar',
+    description: 'Quando a IA monta o pedido, ela pode mandar o cliente para um link onde ele revisa os itens, ajusta o que precisar e confirma com clareza — e recebe a orientação certa para aguardar a loja ou enviar o comprovante do Pix.',
   },
   {
     date: '2026-06-22',
