@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-06-23',
+    category: 'medium',
+    title: 'Cardápio mostra o que já está pronto para o link',
+    description: 'A tela de Cardápio agora mostra quais produtos estão prontos para aparecer no link e quais precisam de ajuste, como itens sem estoque, inativos ou sem categoria.',
+  },
+  {
     date: '2026-06-22',
     category: 'medium',
     title: 'Lembrete automático para quem deixou o pedido pela metade',

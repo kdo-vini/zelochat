@@ -1779,7 +1779,7 @@ Resultado (2026-06-22):
 
 #### ZLM-201 — Publicação self-service do ZeloMenu
 
-Status: Todo  
+Status: Blocked
 Type: Prototype  
 Depends on: ZLM-004, ZLM-005  
 Owner: Frontend/Produto  
@@ -1794,6 +1794,18 @@ Escopo:
 Aceite:
 - Cliente configura sozinho o básico.
 - Equipe Zelo não precisa cadastrar tudo manualmente.
+
+Resultado parcial (2026-06-23):
+- Entrega segura no repo ZeloChat: a tela `Cardápio` ganhou um painel de prontidão de "Publicação no ZeloMenu", mostrando contadores de produtos prontos para o link, inativos, sem estoque e sem categoria, além de uma lista acionável para editar os itens que precisam de atenção.
+- A regra atual é derivada do runtime existente do carrinho público: produto oculto fica inativo, produto com estoque controlado zerado não publica, e produto sem categoria precisa de organização porque o catálogo público é servido por hierarquia de categorias.
+- A lógica vive em domínio puro (`src/domain/zelomenuPublication.ts`) com cobertura em `tests/zelomenuPublication.test.ts`, evitando espalhar regra de publicação dentro do React.
+- O slice também adicionou `PRODUCT.md` e `.impeccable/live/config.json` como contexto de design para futuras mudanças de UI.
+- Validação: `node --import tsx tests/zelomenuPublication.test.ts`, `node --import tsx tests/zelomenuAbandonedCart.test.ts` e `npm run lint` passaram.
+
+Bloqueio restante:
+- O aceite completo de `ZLM-201` ainda depende da camada de publicação PDV-owned definida em `ZLM-004`: nome público, descrição, foto, ordem pública, disponibilidade/manual pause própria do ZeloMenu e modifier groups/options.
+- Este repo não deve criar esse schema nem alterar `produtos`/`categorias`/`subcategorias`; a próxima etapa precisa nascer no repo ZeloPDV/shared catalog e depois ser consumida pelo ZeloChat.
+- Por isso o ticket fica `Blocked`, não `Done`: existe fundação/preview no ZeloChat, mas a publicação self-service completa ainda não está entregue.
 
 #### ZLM-202 — Tela comum de Pedidos liberada por ZeloMenu
 

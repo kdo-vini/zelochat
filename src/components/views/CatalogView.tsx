@@ -1,8 +1,12 @@
 import React, { useMemo, useState, type ReactNode } from 'react';
 import {
+  AlertCircle,
   ChevronDown,
   ChevronRight,
+  CircleCheck,
+  EyeOff,
   FolderPlus,
+  Globe2,
   Pencil,
   Plus,
   RefreshCw,
@@ -12,6 +16,11 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import type { Categoria, ProdutoRow, Subcategoria } from '../../hooks/useCatalog';
+import {
+  getZeloMenuPublicationStatus,
+  summarizeZeloMenuPublication,
+  type ZeloMenuPublicationStatus,
+} from '../../domain/zelomenuPublication';
 import {
   CategoriaModal,
   ConfirmDelete,
@@ -98,6 +107,14 @@ export const CatalogView = ({
 
   const tree = useMemo(() => buildTree(categorias, subcategorias, filtered), [categorias, subcategorias, filtered]);
   const orphanProducts = useMemo(() => filtered.filter((p) => p.id_categoria == null), [filtered]);
+  const publicationSummary = useMemo(() => summarizeZeloMenuPublication(produtos), [produtos]);
+  const publicationIssues = useMemo(
+    () => produtos
+      .map((produto) => ({ produto, details: getZeloMenuPublicationStatus(produto) }))
+      .filter((item) => item.details.issue !== null)
+      .slice(0, 8),
+    [produtos],
+  );
 
   const toggleCat = (id: number) => {
     setExpanded((prev) => {
@@ -148,6 +165,15 @@ export const CatalogView = ({
             </button>
           </div>
         </header>
+
+        <ZeloMenuPublicationPanel
+          totalProdutos={produtos.length}
+          summary={publicationSummary}
+          issues={publicationIssues}
+          onEditProduto={(produto) =>
+            setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria })
+          }
+        />
 
         <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -545,6 +571,139 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({ produto, onEdit, onDele
     </div>
   );
 };
+
+type ZeloMenuPublicationPanelProps = {
+  totalProdutos: number;
+  summary: ReturnType<typeof summarizeZeloMenuPublication>;
+  issues: Array<{ produto: ProdutoRow; details: ReturnType<typeof getZeloMenuPublicationStatus> }>;
+  onEditProduto: (produto: ProdutoRow) => void;
+};
+
+const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
+  totalProdutos,
+  summary,
+  issues,
+  onEditProduto,
+}) => {
+  const readyPercent = totalProdutos > 0 ? Math.round((summary.published / totalProdutos) * 100) : 0;
+
+  return (
+    <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+            <Globe2 className="h-5 w-5" strokeWidth={1.9} />
+          </div>
+          <div>
+            <h3 className="text-[15px] font-bold text-[var(--color-ink)]">Publicação no ZeloMenu</h3>
+            <p className="mt-1 max-w-2xl text-[13px] leading-5 text-[var(--color-ink-muted)]">
+              Produtos prontos para o link, itens inativos e ajustes que deixam o cardápio mais claro para o cliente.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <PublicationMetric label="Prontos" value={summary.published} detail={`${readyPercent}% do cardápio`} tone="published" />
+        <PublicationMetric label="Inativos" value={summary.hidden} detail="Ocultos no cardápio atual" tone="hidden" />
+        <PublicationMetric label="Sem estoque" value={summary.outOfStock} detail="Bloqueados pelo estoque" tone="out_of_stock" />
+        <PublicationMetric label="Sem categoria" value={summary.missingCategory} detail="Precisam de organização" tone="missing_category" />
+      </div>
+
+      {issues.length > 0 ? (
+        <div className="mt-5 border-t border-gray-100 pt-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[13px] font-semibold text-[var(--color-ink)]">Ajustes pendentes</p>
+              <p className="text-[12px] text-[var(--color-ink-muted)]">
+                Itens que ainda reduzem a clareza do cardápio no link.
+              </p>
+            </div>
+            {summary.attention > issues.length && (
+              <span className="shrink-0 text-[12px] font-medium text-[var(--color-ink-faint)]">
+                +{summary.attention - issues.length} restantes
+              </span>
+            )}
+          </div>
+          <div className="divide-y divide-gray-100 rounded-xl border border-gray-100">
+            {issues.map(({ produto, details }) => (
+              <button
+                key={produto.id}
+                type="button"
+                onClick={() => onEditProduto(produto)}
+                className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+              >
+                <PublicationStatusPill status={details.status} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium text-[var(--color-ink)]">{produto.nome}</p>
+                  <p className="text-[12px] text-[var(--color-ink-muted)]">{details.description}</p>
+                </div>
+                <Pencil className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)]" />
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-5 flex items-center gap-2 rounded-xl border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)] px-3 py-2.5 text-[13px] text-[var(--color-brand-deep)]">
+          <CircleCheck className="h-4 w-4 shrink-0" />
+          Produtos ativos estão prontos para aparecer no link do cardápio.
+        </div>
+      )}
+    </section>
+  );
+};
+
+function PublicationMetric({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: number;
+  detail: string;
+  tone: ZeloMenuPublicationStatus;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">{label}</span>
+        <PublicationStatusIcon status={tone} />
+      </div>
+      <p className="text-2xl font-bold tabular-nums text-[var(--color-ink)]">{value}</p>
+      <p className="mt-0.5 text-[11.5px] text-[var(--color-ink-muted)]">{detail}</p>
+    </div>
+  );
+}
+
+function PublicationStatusPill({ status }: { status: ZeloMenuPublicationStatus }) {
+  const details = publicationTone(status);
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold ${details.className}`}>
+      <PublicationStatusIcon status={status} />
+      {details.label}
+    </span>
+  );
+}
+
+function PublicationStatusIcon({ status }: { status: ZeloMenuPublicationStatus }) {
+  if (status === 'published') return <CircleCheck className="h-3.5 w-3.5" />;
+  if (status === 'hidden') return <EyeOff className="h-3.5 w-3.5" />;
+  return <AlertCircle className="h-3.5 w-3.5" />;
+}
+
+function publicationTone(status: ZeloMenuPublicationStatus): { label: string; className: string } {
+  if (status === 'published') {
+    return { label: 'Pronto', className: 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]' };
+  }
+  if (status === 'hidden') {
+    return { label: 'Inativo', className: 'bg-gray-100 text-gray-600' };
+  }
+  if (status === 'out_of_stock') {
+    return { label: 'Sem estoque', className: 'bg-red-50 text-red-700' };
+  }
+  return { label: 'Sem categoria', className: 'bg-amber-50 text-amber-700' };
+}
 
 function IconBtn({
   title,

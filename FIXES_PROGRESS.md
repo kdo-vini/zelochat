@@ -121,6 +121,13 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69l (2026-06-23) — Prontidão de publicação do ZeloMenu
+
+- ✅ ZLM-201 parcial — criado painel de "Publicação no ZeloMenu" dentro do Cardápio, mostrando quantos produtos estão prontos para o link, quantos estão inativos, sem estoque ou sem categoria, e uma lista acionável para editar os itens com atenção — `src/components/views/CatalogView.tsx:598`
+- ✅ ZLM-201 parcial — regras de prontidão saíram do React para domínio puro (`published`, `hidden`, `out_of_stock`, `missing_category`), permitindo trocar a regra derivada atual por uma publicação real sem reescrever a UI — `src/domain/zelomenuPublication.ts:1`
+- ✅ ZLM-201 parcial — cobertura nova para os estados de publicação e resumo; `npm run lint` passou junto com os testes focados de publicação e recuperação de carrinho — `tests/zelomenuPublication.test.ts:1`, `tests/run-unit-tests.ts:30`
+- 🟥 ZLM-201 bloqueio restante — nome público, descrição, foto, ordem pública e modifiers dependem da camada de publicação PDV-owned definida em ZLM-004; este repo não deve criar esse schema nem alterar `produtos`/`categorias`/`subcategorias`
+
 ### Sprint 69k (2026-06-22) — Impressão no aceite + reimpressão manual (ZeloMenu)
 
 - ✅ ZLM-106 — confirmado que o pedido aceito já imprime no momento certo: o aceite do ZeloMenu (ZLM-104) cria a row em `zelochat_orders` só no aceite humano, e o INSERT realtime dispara `autoPrintOrder` — ou seja, impressão no aceite, não na confirmação do cliente — `src/hooks/useOrders.ts:161`, `src/AppShell.tsx:342`

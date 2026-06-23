@@ -26,6 +26,8 @@ const tests = [
   'tests/routerWebhookGuardrails.test.ts',
   'tests/zelomenuCart.test.ts',
   'tests/zelomenuReviewGuardrails.test.ts',
+  'tests/zelomenuAbandonedCart.test.ts',
+  'tests/zelomenuPublication.test.ts',
   'tests/updateReloadGuardrails.test.ts',
   'tests/billingPix.test.ts',
   'tests/subscriptionExpiry.test.ts',
