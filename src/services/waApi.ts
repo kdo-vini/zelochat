@@ -64,6 +64,7 @@ export interface ZeloMenuReviewSession {
     deliveryAddress: string | null;
     deliveryNeighborhood: string | null;
     deliveryFee: number;
+    deliveryFeeToConfirm: boolean;
   };
   pricing: {
     subtotal: number;
@@ -168,6 +169,23 @@ export async function bindEmpresa(token: string): Promise<void> {
   });
 
   await parseResponse(response);
+}
+
+// ZLM-203 — slug público da loja (menu.zelopdv.com.br/{slug}).
+export type ZeloMenuSlugResponse = { slug: string | null; publicUrl: string | null };
+
+export async function getZeloMenuSlug(token: string): Promise<ZeloMenuSlugResponse> {
+  const response = await apiFetch(apiUrl('/api/zelomenu/slug'), { headers: authHeaders(token) });
+  return parseResponse<ZeloMenuSlugResponse>(response);
+}
+
+export async function setZeloMenuSlug(token: string, slug: string): Promise<ZeloMenuSlugResponse> {
+  const response = await apiFetch(apiUrl('/api/zelomenu/slug'), {
+    method: 'PUT',
+    headers: authHeaders(token),
+    body: JSON.stringify({ slug }),
+  });
+  return parseResponse<ZeloMenuSlugResponse>(response);
 }
 
 export async function getSessions(token: string, query: ChatSessionsQuery = {}): Promise<ChatSessionsPage> {

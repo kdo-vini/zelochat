@@ -1,8 +1,16 @@
 import { apiFetch, apiUrl } from '../config';
 
+import type {
+  ZeloMenuModifierGroup,
+  ZeloMenuModifierSelectionInput,
+  ZeloMenuSelectedModifierGroup,
+} from '../domain/zelomenuModifiers';
+
 export type ZeloMenuCatalogProduct = {
+  id: number;
   name: string;
   price: number;
+  basePrice: number;
   available: boolean;
   description?: string | null;
   photoUrl?: string | null;
@@ -10,6 +18,7 @@ export type ZeloMenuCatalogProduct = {
   unitBased?: boolean;
   stockControlled?: boolean;
   stockQuantity?: number;
+  modifierGroups: ZeloMenuModifierGroup[];
 };
 
 export type ZeloMenuCatalogGroup = {
@@ -19,7 +28,11 @@ export type ZeloMenuCatalogGroup = {
 };
 
 export type ZeloMenuCartItem = {
+  productId: number | null;
   productName: string;
+  baseUnitPrice: number;
+  selectedModifiers: ZeloMenuSelectedModifierGroup[];
+  modifierDeltaTotal: number;
   quantity: number;
   unitPrice: number;
   lineTotal: number;
@@ -47,6 +60,7 @@ export type ZeloMenuCartSessionPayload = {
     deliveryAddress: string | null;
     deliveryNeighborhood: string | null;
     deliveryFee: number;
+    deliveryFeeToConfirm: boolean;
   };
   pricing: {
     subtotal: number;
@@ -68,7 +82,13 @@ export type ZeloMenuCartSessionPayload = {
 };
 
 export type ZeloMenuCartRevalidationIssue = {
-  code: 'product_missing' | 'product_unavailable' | 'stock_insufficient' | 'price_changed' | 'schedule_unavailable';
+  code:
+    | 'product_missing'
+    | 'product_unavailable'
+    | 'stock_insufficient'
+    | 'price_changed'
+    | 'schedule_unavailable'
+    | 'modifier_invalid';
   message: string;
   productName?: string;
   requestedQuantity?: number;
@@ -126,7 +146,13 @@ export type ZeloMenuConfirmCartResponse = ZeloMenuPublicCartResponse & {
 export type ZeloMenuUpdateCartPayload = {
   customerName?: string | null;
   customerPhone?: string | null;
-  items?: Array<{ productName: string; quantity: number; notes?: string | null }>;
+  items?: Array<{
+    productId?: number | null;
+    productName: string;
+    quantity: number;
+    notes?: string | null;
+    selectedOptions?: ZeloMenuModifierSelectionInput[];
+  }>;
   fulfillment?: {
     type?: 'pickup' | 'delivery';
     pickupDate?: string | null;
@@ -170,4 +196,39 @@ export async function confirmPublicCart(token: string): Promise<ZeloMenuConfirmC
     method: 'POST',
   });
   return parseResponse<ZeloMenuConfirmCartResponse>(response);
+}
+
+// ─── ZLM-203 — loja pública por slug ───────────────────────────────────────────
+export type ZeloMenuPublicStoreResponse = {
+  business: {
+    name: string;
+    address: string;
+    pixEnabled: boolean;
+    deliveryEnabled: boolean;
+    deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+  };
+  catalog: ZeloMenuCatalogGroup[];
+};
+
+export async function getPublicStore(slug: string): Promise<ZeloMenuPublicStoreResponse> {
+  const response = await apiFetch(apiUrl(`/public-api/zelomenu/store/${encodeURIComponent(slug)}`), {
+    cache: 'no-store',
+  });
+  return parseResponse<ZeloMenuPublicStoreResponse>(response);
+}
+
+export async function startPublicOrder(
+  slug: string,
+  payload: {
+    customerName?: string | null;
+    customerPhone?: string | null;
+    items: ZeloMenuUpdateCartPayload['items'];
+  },
+): Promise<{ token: string; path: string; orderingId: string }> {
+  const response = await apiFetch(apiUrl(`/public-api/zelomenu/store/${encodeURIComponent(slug)}/cart`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<{ token: string; path: string; orderingId: string }>(response);
 }

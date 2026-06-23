@@ -1,10 +1,19 @@
+import { randomUUID } from 'node:crypto';
 import { getConfig, isAiGloballyEnabledNow, loadAiSettingsFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { evaluateCreateOrderScheduleGuard, getPublicAppBaseUrl } from './ai.js';
+import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
+import { isSubscriptionCurrentlyActive } from '../src/domain/subscription.js';
 import { addAssistantMessage } from './messageHandler.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { sendTextMessage } from './whatsapp.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
+import {
+  buildModifierSelectionKey,
+  formatModifierAwareCartItem,
+  resolveModifierSelections,
+  type ZeloMenuModifierSelectionInput,
+} from '../src/domain/zelomenuModifiers.js';
 import {
   ABANDONED_CART_RECOVERY_MAX_AGE_MS,
   ABANDONED_CART_RECOVERY_MIN_AGE_MS,
@@ -19,6 +28,7 @@ import {
   isCartEligibleForAbandonedRecovery,
   normalizePublicCartToken,
   resolveConfirmedCartState,
+  resolveDeliveryFeeForNeighborhood,
   type ZeloMenuCartContext,
   type ZeloMenuCartItemInput,
   type ZeloMenuCartItemSnapshot,
@@ -236,19 +246,30 @@ function parseCartSnapshot(value: unknown): ZeloMenuCartSnapshot {
     ? row.items.flatMap((item) => {
       if (!item || typeof item !== 'object') return [];
       const typed = item as {
+        productId?: unknown;
         productName?: unknown;
+        baseUnitPrice?: unknown;
+        selectedModifiers?: unknown;
+        modifierDeltaTotal?: unknown;
         quantity?: unknown;
         unitPrice?: unknown;
         lineTotal?: unknown;
         notes?: unknown;
       };
+      const productId = typed.productId == null ? null : Number(typed.productId);
       const productName = sanitizeText(typed.productName, 120);
+      const baseUnitPrice = Number(typed.baseUnitPrice ?? typed.unitPrice);
       const quantity = normalizePositiveInt(typed.quantity);
       const unitPrice = Number(typed.unitPrice);
       const lineTotal = Number(typed.lineTotal);
+      const modifierDeltaTotal = Number(typed.modifierDeltaTotal ?? 0);
       if (!productName || quantity === null || !Number.isFinite(unitPrice) || !Number.isFinite(lineTotal)) return [];
       return [{
+        productId: Number.isFinite(productId) ? productId : null,
         productName,
+        baseUnitPrice: Number.isFinite(baseUnitPrice) ? baseUnitPrice : unitPrice,
+        selectedModifiers: parseSelectedModifiers(typed.selectedModifiers),
+        modifierDeltaTotal: Number.isFinite(modifierDeltaTotal) ? modifierDeltaTotal : 0,
         quantity,
         unitPrice,
         lineTotal,
@@ -271,6 +292,7 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
       deliveryAddress: null,
       deliveryNeighborhood: null,
       deliveryFee: 0,
+      deliveryFeeToConfirm: false,
     };
   }
   const row = value as {
@@ -280,6 +302,7 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
     deliveryAddress?: unknown;
     deliveryNeighborhood?: unknown;
     deliveryFee?: unknown;
+    deliveryFeeToConfirm?: unknown;
   };
   return {
     type: row.type === 'delivery' ? 'delivery' : 'pickup',
@@ -288,6 +311,7 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
     deliveryAddress: sanitizeText(row.deliveryAddress, 250),
     deliveryNeighborhood: sanitizeText(row.deliveryNeighborhood, 120),
     deliveryFee: Number.isFinite(Number(row.deliveryFee)) ? Number(row.deliveryFee) : 0,
+    deliveryFeeToConfirm: row.deliveryFeeToConfirm === true,
   };
 }
 
@@ -331,6 +355,43 @@ function parseRevalidation(value: unknown): ZeloMenuCartRevalidation | null {
     previewPricing: row.previewPricing ?? null,
     previewPayment: row.previewPayment ?? null,
   };
+}
+
+function parseSelectedModifiers(value: unknown): ZeloMenuCartItemSnapshot['selectedModifiers'] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((group) => {
+    if (!group || typeof group !== 'object') return [];
+    const typed = group as {
+      groupId?: unknown;
+      groupName?: unknown;
+      kind?: unknown;
+      selectedOptions?: unknown;
+    };
+    const groupId = sanitizeText(typed.groupId, 64);
+    const groupName = sanitizeText(typed.groupName, 120);
+    if (!groupId || !groupName) return [];
+    const selectedOptions = Array.isArray(typed.selectedOptions)
+      ? typed.selectedOptions.flatMap((option) => {
+        if (!option || typeof option !== 'object') return [];
+        const candidate = option as {
+          optionId?: unknown;
+          optionName?: unknown;
+          priceDelta?: unknown;
+        };
+        const optionId = sanitizeText(candidate.optionId, 64);
+        const optionName = sanitizeText(candidate.optionName, 120);
+        const priceDelta = Number(candidate.priceDelta ?? 0);
+        if (!optionId || !optionName || !Number.isFinite(priceDelta)) return [];
+        return [{ optionId, optionName, priceDelta }];
+      })
+      : [];
+    return [{
+      groupId,
+      groupName,
+      kind: typed.kind === 'variacao' ? 'variacao' : 'adicional',
+      selectedOptions,
+    }];
+  });
 }
 
 function parseMetadata(value: unknown): Record<string, unknown> {
@@ -397,9 +458,14 @@ function mapReviewSessionRow(row: SessionRow): ReviewCartSession {
 
 function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
   return cart.items.map((item) => ({
+    productId: item.productId,
     productName: item.productName,
     quantity: item.quantity,
     notes: item.notes ?? null,
+    selectedOptions: item.selectedModifiers.map((group) => ({
+      groupId: group.groupId,
+      optionIds: group.selectedOptions.map((option) => option.optionId),
+    })),
   }));
 }
 
@@ -422,8 +488,15 @@ function filterVisibleCatalog(groups: CatalogCategoriaGroup[]): CatalogCategoria
     .filter((group) => group.subcategorias.length > 0 || group.produtosDireto.length > 0);
 }
 
-function findCatalogProduct(products: CatalogProduct[], productName: string): CatalogProduct | null {
-  const normalizedTarget = normalizeComparableText(productName);
+function findCatalogProduct(
+  products: CatalogProduct[],
+  productRef: { productId?: number | null; productName: string },
+): CatalogProduct | null {
+  if (productRef.productId != null) {
+    const byId = products.find((product) => product.id === productRef.productId);
+    if (byId) return byId;
+  }
+  const normalizedTarget = normalizeComparableText(productRef.productName);
   if (!normalizedTarget) return null;
   return products.find((product) => normalizeComparableText(product.name) === normalizedTarget) ?? null;
 }
@@ -432,35 +505,60 @@ function normalizeIncomingItems(items: unknown): ZeloMenuCartItemInput[] {
   if (!Array.isArray(items)) return [];
   return items.flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
-    const typed = item as { productName?: unknown; quantity?: unknown; notes?: unknown };
+    const typed = item as {
+      productId?: unknown;
+      productName?: unknown;
+      quantity?: unknown;
+      notes?: unknown;
+      selectedOptions?: unknown;
+    };
     const productName = sanitizeText(typed.productName, 120);
+    const productId = typed.productId == null ? null : Number(typed.productId);
     const quantity = normalizePositiveInt(typed.quantity);
     if (!productName || quantity === null) return [];
     return [{
+      productId: Number.isFinite(productId) ? productId : null,
       productName,
       quantity,
       notes: sanitizeText(typed.notes, 200),
+      selectedOptions: normalizeIncomingModifierSelections(typed.selectedOptions),
     }];
   }).slice(0, 50);
+}
+
+function normalizeIncomingModifierSelections(value: unknown): ZeloMenuModifierSelectionInput[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((selection) => {
+    if (!selection || typeof selection !== 'object') return [];
+    const typed = selection as { groupId?: unknown; optionIds?: unknown };
+    const groupId = sanitizeText(typed.groupId, 64);
+    if (!groupId || !Array.isArray(typed.optionIds)) return [];
+    const optionIds = typed.optionIds
+      .map((optionId) => sanitizeText(optionId, 64))
+      .filter((optionId): optionId is string => Boolean(optionId));
+    return [{ groupId, optionIds }];
+  });
 }
 
 function resolveDeliveryFee(
   deliveryType: 'pickup' | 'delivery',
   deliveryNeighborhood: string | null,
   deliveryConfig: ReturnType<typeof getConfig>['deliveryConfig'],
-): number {
-  if (deliveryType !== 'delivery') return 0;
+): { fee: number; toConfirm: boolean } {
+  if (deliveryType !== 'delivery') return { fee: 0, toConfirm: false };
+  // Loja que não habilitou entrega não consegue precificar uma entrega — guard
+  // explícito, separado do caso de bairro livre tratado pela função pura.
   if (!deliveryConfig?.enabled) {
     throw new Error('DELIVERY_DISABLED');
   }
-  if (!deliveryNeighborhood) return 0;
-  const neighborhood = deliveryConfig.neighborhoods.find(
-    (item) => normalizeComparableText(item.name) === normalizeComparableText(deliveryNeighborhood),
-  );
-  if (!neighborhood) {
-    throw new Error('INVALID_DELIVERY_NEIGHBORHOOD');
-  }
-  return neighborhood.fee;
+  // ZLM-204 (D-081/D-082/D-083): bairro fora da tabela não estoura mais erro —
+  // a função pura devolve fee 0 + toConfirm, deixando o pedido confirmar com a
+  // taxa "a confirmar" e força conferência humana antes do aceite.
+  return resolveDeliveryFeeForNeighborhood({
+    type: 'delivery',
+    neighborhood: deliveryNeighborhood,
+    neighborhoods: deliveryConfig.neighborhoods,
+  });
 }
 
 async function resolveSnapshots(
@@ -477,16 +575,28 @@ async function resolveSnapshots(
   const resolvedItems: ZeloMenuCartItemSnapshot[] = [];
 
   for (const item of params.items) {
-    const product = findCatalogProduct(config.products, item.productName);
+    const product = findCatalogProduct(config.products, {
+      productId: item.productId ?? null,
+      productName: item.productName,
+    });
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
     if (!product.available) throw new Error('PRODUCT_UNAVAILABLE');
     if (product.stockControlled) {
       const stockQuantity = Number(product.stockQuantity ?? 0);
       if (item.quantity > stockQuantity) throw new Error('PRODUCT_STOCK_EXCEEDED');
     }
-    const unitPrice = Number(product.price);
+    const modifierResolution = resolveModifierSelections(product.modifierGroups, item.selectedOptions ?? []);
+    if (modifierResolution.ok === false) {
+      throw new Error(`MODIFIER_INVALID:${modifierResolution.message}`);
+    }
+    const baseUnitPrice = Number(product.basePrice ?? product.price);
+    const unitPrice = Number((baseUnitPrice + modifierResolution.deltaTotal).toFixed(2));
     resolvedItems.push({
+      productId: product.id ?? null,
       productName: product.name,
+      baseUnitPrice,
+      selectedModifiers: modifierResolution.selectedGroups,
+      modifierDeltaTotal: modifierResolution.deltaTotal,
       quantity: item.quantity,
       unitPrice,
       lineTotal: Number((unitPrice * item.quantity).toFixed(2)),
@@ -496,16 +606,17 @@ async function resolveSnapshots(
 
   const fulfillmentType = params.fulfillment?.type === 'delivery' ? 'delivery' : 'pickup';
   const deliveryNeighborhood = sanitizeText(params.fulfillment?.deliveryNeighborhood, 120);
-  const deliveryFee = resolveDeliveryFee(fulfillmentType, deliveryNeighborhood, config.deliveryConfig);
+  const delivery = resolveDeliveryFee(fulfillmentType, deliveryNeighborhood, config.deliveryConfig);
   const fulfillment: ZeloMenuFulfillmentSnapshot = {
     type: fulfillmentType,
     pickupDate: normalizeDate(params.fulfillment?.pickupDate),
     pickupTime: normalizeTime(params.fulfillment?.pickupTime),
     deliveryAddress: sanitizeText(params.fulfillment?.deliveryAddress, 250),
     deliveryNeighborhood,
-    deliveryFee,
+    deliveryFee: delivery.fee,
+    deliveryFeeToConfirm: delivery.toConfirm,
   };
-  const pricing = computeCartPricing(resolvedItems, deliveryFee);
+  const pricing = computeCartPricing(resolvedItems, delivery.fee);
   const declaredMethod = sanitizeText(params.paymentMethod, 40);
   const payment: ZeloMenuPaymentSnapshot = {
     declaredMethod,
@@ -633,12 +744,27 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
 
     for (const storedItem of session.cart.items) {
       const resolvedItem = resolved.cart.items.find(
-        (item) => normalizeComparableText(item.productName) === normalizeComparableText(storedItem.productName),
+        (item) =>
+          (
+            item.productId === storedItem.productId
+            || normalizeComparableText(item.productName) === normalizeComparableText(storedItem.productName)
+          )
+          && buildModifierSelectionKey(
+            item.selectedModifiers.map((group) => ({
+              groupId: group.groupId,
+              optionIds: group.selectedOptions.map((option) => option.optionId),
+            })),
+          ) === buildModifierSelectionKey(
+            storedItem.selectedModifiers.map((group) => ({
+              groupId: group.groupId,
+              optionIds: group.selectedOptions.map((option) => option.optionId),
+            })),
+          ),
       );
       if (!resolvedItem) {
         issues.push({
           code: 'product_missing',
-          message: `O item ${storedItem.productName} não está mais disponível nesse carrinho.`,
+          message: `O item ${formatModifierAwareCartItem(storedItem)} não está mais disponível nesse carrinho.`,
           productName: storedItem.productName,
         });
         continue;
@@ -661,8 +787,12 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
       issues.push({ code: 'product_unavailable', message: 'Um item desse carrinho não está disponível no momento.' });
     } else if (message === 'PRODUCT_STOCK_EXCEEDED') {
       issues.push({ code: 'stock_insufficient', message: 'A quantidade de um item ultrapassa o estoque atual.' });
-    } else if (message === 'DELIVERY_DISABLED' || message === 'INVALID_DELIVERY_NEIGHBORHOOD') {
+    } else if (message === 'DELIVERY_DISABLED') {
+      // Loja não habilitou entrega. Bairro livre fora da lista NÃO cai aqui —
+      // vira taxa "a confirmar" (ZLM-204) e não bloqueia a confirmação.
       issues.push({ code: 'schedule_unavailable', message: 'A entrega precisa ser revista antes da confirmação.' });
+    } else if (message.startsWith('MODIFIER_INVALID:')) {
+      issues.push({ code: 'modifier_invalid', message: message.slice('MODIFIER_INVALID:'.length) });
     } else {
       throw error;
     }
@@ -759,7 +889,7 @@ async function createAcceptedOrderRecord(input: {
       customer_name: input.customer.name || 'Cliente',
       customer_phone: input.customer.phone || null,
       items: input.cart.items.map((item) => ({
-        product: item.productName,
+        product: formatModifierAwareCartItem(item),
         quantity: item.quantity,
       })),
       pickup_date: input.fulfillment.pickupDate,
@@ -790,6 +920,96 @@ async function decrementAcceptedOrderStockBestEffort(
     p_id_usuario: userId,
     p_items: items.map((item) => ({ name: item.productName, qty: item.quantity })),
   });
+}
+
+// ─── ZLM-301 / T5 — materialização do pedido na tela comum de Pedidos do PDV ────
+//
+// Só vale para quem TEM PDV (pdv/bundle): cliente chat-only (ex.: Casa dos
+// Salgados, Agreste) nunca dispara isto — eles seguem operando em
+// `zelochat_orders` sem nenhuma mudança. Para bundle, cria um TICKET DE COZINHA
+// em `pedidos`/`pedido_itens` espelhando exatamente o fluxo "balcão" do PDV:
+//   - numero_pedido pela RPC race-safe `proximo_numero_pedido`;
+//   - status 'aberto', itens enviado_cozinha=true/status_cozinha 'aguardando';
+//   - NÃO cria `venda` (o financeiro nasce só no fechamento/pagamento no PDV,
+//     idêntico ao balcão) — zero risco de mexer em dado financeiro;
+//   - vincula via `pedidos.zelochat_order_id` (hook já existente no schema).
+//
+// É uma materialização ONE-WAY (visibilidade na cozinha do PDV). A sincronização
+// bidirecional de status / fonte única (cutover completo, dropar zelochat_orders)
+// é a próxima fase de ZLM-301. Best-effort: falha aqui nunca derruba o pedido.
+
+async function empresaHasPdvCore(empresaId: string): Promise<boolean> {
+  const userId = await getEmpresaUserId(empresaId);
+  if (!userId) return false;
+  const { data, error } = await getServiceSupabase()
+    .from('subscriptions')
+    .select('status, plan_tier, current_period_end, manually_extended_until')
+    .eq('user_id', userId)
+    .in('plan_tier', ['pdv', 'bundle'])
+    .order('current_period_end', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return false;
+  return isSubscriptionCurrentlyActive(data as {
+    status: string | null;
+    current_period_end: string | null;
+    manually_extended_until: string | null;
+  });
+}
+
+async function materializeOrderToPedidosBestEffort(input: {
+  empresaId: string;
+  zelochatOrderId: string;
+  context: ZeloMenuCartContext;
+  customer: ZeloMenuCustomerSnapshot;
+  cart: ZeloMenuCartSnapshot;
+}): Promise<void> {
+  if (!(await empresaHasPdvCore(input.empresaId))) return; // chat-only: não materializa
+  const userId = await getEmpresaUserId(input.empresaId);
+  if (!userId) return;
+
+  // D-096: whatsapp_order → origem 'zelochat'; public_order → origem 'zelomenu'.
+  const origem = input.context === 'public_order' ? 'zelomenu' : 'zelochat';
+  const observacoes = input.cart.observations || null;
+
+  let pedidoId: string | null = null;
+  for (let attempt = 0; attempt < 3 && !pedidoId; attempt += 1) {
+    const { data: numero, error: rpcError } = await getServiceSupabase()
+      .rpc('proximo_numero_pedido', { p_id_usuario: userId });
+    if (rpcError) throw rpcError;
+    const { data, error } = await getServiceSupabase()
+      .from('pedidos')
+      .insert({
+        id_usuario: userId,
+        status: 'aberto',
+        numero_pedido: numero,
+        origem,
+        nome_cliente: input.customer.name || null,
+        observacoes,
+        zelochat_order_id: input.zelochatOrderId,
+      })
+      .select('id')
+      .single();
+    if (!error) {
+      pedidoId = (data as { id: string }).id;
+      break;
+    }
+    if ((error as { code?: string }).code !== '23505') throw error; // só re-tenta colisão de numero_pedido
+  }
+  if (!pedidoId) throw new Error('PEDIDO_NUMERO_RETRY_EXHAUSTED');
+
+  const itens = input.cart.items.map((item) => ({
+    id_pedido: pedidoId,
+    id_produto: item.productId ?? null,
+    nome: formatModifierAwareCartItem(item),
+    preco_unitario: item.unitPrice,
+    quantidade: item.quantity,
+    subtotal: item.lineTotal,
+    enviado_cozinha: true,
+    status_cozinha: 'aguardando',
+  }));
+  const { error: itensError } = await getServiceSupabase().from('pedido_itens').insert(itens);
+  if (itensError) throw itensError;
 }
 
 async function notifyManagerForAcceptedOrder(input: {
@@ -823,7 +1043,7 @@ async function notifyManagerForAcceptedOrder(input: {
       naturalInput: trigger.natural_input ?? null,
       active: trigger.active !== false,
     })),
-    input.cart.items.map((item) => ({ product: item.productName, quantity: item.quantity })),
+    input.cart.items.map((item) => ({ product: formatModifierAwareCartItem(item), quantity: item.quantity })),
   );
   if (matches.length === 0) return;
 
@@ -831,7 +1051,12 @@ async function notifyManagerForAcceptedOrder(input: {
   if (!managerPhone) return;
   const managerJid = `${managerPhone.startsWith('55') ? managerPhone : `55${managerPhone}`}@s.whatsapp.net`;
   const schedule = `${input.fulfillment.pickupDate || 'data a combinar'}${input.fulfillment.pickupTime ? ` às ${input.fulfillment.pickupTime}` : ''}`;
-  const itemsList = input.cart.items.map((item) => `${item.quantity}x ${item.productName}`).join(', ');
+  const itemsList = input.cart.items.map((item) => `${item.quantity}x ${formatModifierAwareCartItem(item)}`).join(', ');
+  // ZLM-204: taxa "a confirmar" precisa chegar ao operador para ele definir o
+  // valor real no aceite (força conferência humana).
+  const deliveryFeeLine = input.fulfillment.type === 'delivery' && input.fulfillment.deliveryFeeToConfirm
+    ? '\n⚠️ Taxa de entrega: a confirmar (bairro fora da tabela)'
+    : '';
 
   for (const match of matches) {
     await sendTextMessage(
@@ -839,7 +1064,7 @@ async function notifyManagerForAcceptedOrder(input: {
       `🔔 *${match.trigger.name}*\n` +
         `Cliente: ${input.customer.name || 'Cliente'}${input.customer.phone ? ` (${input.customer.phone})` : ''}\n` +
         `Pedido: ${itemsList || 'Itens a revisar'}\n` +
-        `Retirada/entrega: ${schedule}\n` +
+        `Retirada/entrega: ${schedule}${deliveryFeeLine}\n` +
         `Pagamento: ${input.payment.declaredMethod || 'Não informado'}\n` +
         `Total: R$ ${input.pricing.total.toFixed(2)}\n` +
         `Motivo: ${match.reason}`,
@@ -875,6 +1100,145 @@ function buildReviewResponse(
       canAccept,
       blockingReason,
     },
+  };
+}
+
+// ─── ZLM-203 — Loja pública por slug (public_order) ────────────────────────────
+//
+// O slug é PDV-owned (`empresa_perfil.zelomenu_slug`, D-102). O backend ZeloChat
+// SERVE a rota pública e LÊ o slug; resolve a empresa, carrega o catálogo (mesmo
+// overlay de publicação do fluxo WhatsApp) e abre uma sessão `public_order`.
+// Confirmação reusa `confirmPublicCartSession` (que materializa o pedido no
+// branch public_order — ver lá).
+
+export async function getEmpresaZeloMenuSlug(empresaId: string): Promise<string | null> {
+  const { data, error } = await getServiceSupabase()
+    .from('empresa_perfil')
+    .select('zelomenu_slug')
+    .eq('id', empresaId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as { zelomenu_slug?: string | null } | null)?.zelomenu_slug ?? null;
+}
+
+/**
+ * Define o slug público da loja (operador self-service, D-046). Valida formato e
+ * palavras reservadas; o índice único do banco garante unicidade cross-loja —
+ * traduzimos a violação 23505 em SLUG_TAKEN para a UI.
+ */
+export async function setEmpresaZeloMenuSlug(empresaId: string, rawSlug: string): Promise<string> {
+  const normalized = normalizeZeloMenuSlug(rawSlug);
+  if (!normalized) throw new Error('INVALID_SLUG');
+  if (isReservedZeloMenuSlug(normalized)) throw new Error('RESERVED_SLUG');
+  const { error } = await getServiceSupabase()
+    .from('empresa_perfil')
+    .update({ zelomenu_slug: normalized })
+    .eq('id', empresaId);
+  if (error) {
+    if ((error as { code?: string }).code === '23505') throw new Error('SLUG_TAKEN');
+    throw error;
+  }
+  return normalized;
+}
+
+async function resolveEmpresaIdBySlug(slug: string): Promise<string | null> {
+  const normalized = normalizeZeloMenuSlug(slug);
+  if (!normalized) return null;
+  const { data, error } = await getServiceSupabase()
+    .from('empresa_perfil')
+    .select('id')
+    .eq('zelomenu_slug', normalized)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as { id?: string } | null)?.id ?? null;
+}
+
+export async function getPublicStoreBySlug(slug: string): Promise<{
+  empresaId: string;
+  business: PublicCartResponse['business'];
+  catalog: CatalogCategoriaGroup[];
+} | null> {
+  const empresaId = await resolveEmpresaIdBySlug(slug);
+  if (!empresaId) return null;
+  await loadAiSettingsFromDb(empresaId);
+  const config = getConfig(empresaId);
+  return {
+    empresaId,
+    business: {
+      name: config.name,
+      address: config.address,
+      pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
+      deliveryEnabled: config.deliveryConfig?.enabled === true,
+      deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
+    },
+    catalog: filterVisibleCatalog(config.catalogHierarchy),
+  };
+}
+
+export async function openPublicOrderCartSession(input: {
+  slug: string;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  items?: ZeloMenuCartItemInput[];
+  fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
+  paymentMethod?: string | null;
+  observations?: string | null;
+}): Promise<{
+  sessionId: string;
+  orderingId: string;
+  revision: number;
+  publicToken: string;
+  publicPath: string;
+} | null> {
+  const empresaId = await resolveEmpresaIdBySlug(input.slug);
+  if (!empresaId) return null;
+
+  const items = normalizeIncomingItems(input.items ?? []);
+  if (items.length === 0) throw new Error('EMPTY_CART');
+
+  const customer: ZeloMenuCustomerSnapshot = {
+    name: sanitizeText(input.customerName, 120),
+    phone: sanitizeText(input.customerPhone, 40),
+  };
+  const resolved = await resolveSnapshots(empresaId, {
+    items,
+    fulfillment: input.fulfillment,
+    paymentMethod: input.paymentMethod,
+    observations: input.observations,
+  });
+
+  // Público não tem JID. source_ref é um id único por carrinho público.
+  const sourceRef = `public:${randomUUID()}`;
+  const now = new Date().toISOString();
+  const { data, error } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .insert({
+      empresa_id: empresaId,
+      context: 'public_order',
+      state: 'cart_open',
+      source_ref: sourceRef,
+      customer_snapshot: customer,
+      cart_snapshot: resolved.cart,
+      fulfillment_snapshot: resolved.fulfillment,
+      pricing_snapshot: resolved.pricing,
+      payment_snapshot: resolved.payment,
+      metadata: { source: 'public_link', slug: normalizeZeloMenuSlug(input.slug) },
+      revision: 1,
+      created_at: now,
+      updated_at: now,
+    })
+    .select(CART_SESSION_COLUMNS)
+    .single();
+  if (error) throw error;
+  const sessionRow = data as SessionRow;
+
+  const tokenData = await issueFreshCartToken(sessionRow.id, sessionRow.revision, now);
+  return {
+    sessionId: sessionRow.id,
+    orderingId: sessionRow.ordering_id,
+    revision: sessionRow.revision,
+    publicToken: tokenData.token,
+    publicPath: buildPublicCartPath(tokenData.token),
   };
 }
 
@@ -1085,6 +1449,15 @@ export async function acceptWhatsAppCartReviewSession(input: {
 
   void decrementAcceptedOrderStockBestEffort(sessionRow.empresa_id, revalidation.previewCart.items)
     .catch((err) => console.error('[ZeloMenu] stock decrement failed after accept:', err));
+
+  // T5/ZLM-301: bundle (pdv_core) também recebe o ticket de cozinha no PDV. Chat-only não.
+  void materializeOrderToPedidosBestEffort({
+    empresaId: sessionRow.empresa_id,
+    zelochatOrderId: orderId,
+    context: 'whatsapp_order',
+    customer: nextCustomer,
+    cart: revalidation.previewCart,
+  }).catch((err) => console.error('[ZeloMenu] pedidos materialization failed after accept:', err));
 
   void notifyManagerForAcceptedOrder({
     empresaId: sessionRow.empresa_id,
@@ -1308,6 +1681,53 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
       undefined,
       { waMessageId },
     );
+  } else if (confirmedRow.context === 'public_order') {
+    // Público não tem thread de chat para "aceite": o pedido confirmado cai
+    // direto na tela de Pedidos (D-037). Materializa zelochat_orders, baixa
+    // estoque, notifica o gerente e avisa o cliente no WhatsApp dele.
+    const customer = current.customer;
+    try {
+      const orderId = await createAcceptedOrderRecord({
+        empresaId: confirmedRow.empresa_id,
+        customer,
+        cart: revalidation.previewCart,
+        fulfillment: current.fulfillment,
+        pricing: revalidation.previewPricing,
+        payment: revalidation.previewPayment,
+      });
+      await getServiceSupabase()
+        .from('zelomenu_cart_sessions')
+        .update({ metadata: { ...parseMetadata(confirmedRow.metadata), productionOrderId: orderId } })
+        .eq('id', confirmedRow.id);
+      void decrementAcceptedOrderStockBestEffort(confirmedRow.empresa_id, revalidation.previewCart.items)
+        .catch((err) => console.error('[ZeloMenu] public_order stock decrement failed:', err));
+      void materializeOrderToPedidosBestEffort({
+        empresaId: confirmedRow.empresa_id,
+        zelochatOrderId: orderId,
+        context: 'public_order',
+        customer,
+        cart: revalidation.previewCart,
+      }).catch((err) => console.error('[ZeloMenu] public_order pedidos materialization failed:', err));
+      void notifyManagerForAcceptedOrder({
+        empresaId: confirmedRow.empresa_id,
+        customer,
+        cart: revalidation.previewCart,
+        fulfillment: current.fulfillment,
+        pricing: revalidation.previewPricing,
+        payment: revalidation.previewPayment,
+      }).catch((err) => console.error('[ZeloMenu] public_order manager notify failed:', err));
+    } catch (orderErr) {
+      console.error('[ZeloMenu] public_order: failed to materialize order on confirm:', orderErr);
+    }
+    const phone = (customer.phone || '').replace(/\D/g, '');
+    if (phone) {
+      const customerJid = `${phone.startsWith('55') ? phone : `55${phone}`}@s.whatsapp.net`;
+      try {
+        await sendTextMessage(customerJid, customerMessage, confirmedRow.empresa_id);
+      } catch (sendErr) {
+        console.error('[ZeloMenu] public_order: customer WhatsApp notice failed:', sendErr);
+      }
+    }
   }
 
   const payload = await buildPublicResponse(normalized, confirmedRow, tokenRow);
@@ -1417,7 +1837,7 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
   const tokenData = await issueFreshCartToken(claimedRow.id, claimedRow.revision, now);
   const publicUrl = buildPublicCartUrl(getPublicAppBaseUrl(), tokenData.token);
   const itemsLine = session.cart.items.length > 0
-    ? session.cart.items.map((item) => `${item.quantity}x ${item.productName}`).join(', ')
+    ? session.cart.items.map((item) => `${item.quantity}x ${formatModifierAwareCartItem(item)}`).join(', ')
     : null;
   const message = buildAbandonedCartRecoveryMessage({
     customerName: session.customer.name,

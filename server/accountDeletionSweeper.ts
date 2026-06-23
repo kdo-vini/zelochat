@@ -65,6 +65,7 @@ async function purgeAccount(acc: DueAccount): Promise<void> {
     removePrefix('zelochat-media', `send/${acc.empresaId}`),
     removePrefix('zelochat-media', `received/${acc.empresaId}`),
     removePrefix('delivery-assets', acc.empresaId),
+    removePrefix('logos', `zelomenu-products/${acc.userId}`),
     getServiceSupabase()
       .storage.from('logos')
       .remove([`${acc.userId}.png`, `${acc.userId}.jpg`, `${acc.userId}.jpeg`, `${acc.userId}.webp`])

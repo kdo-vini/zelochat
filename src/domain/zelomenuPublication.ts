@@ -1,3 +1,5 @@
+import type { ZeloMenuModifierGroup } from './zelomenuModifiers';
+
 export type ZeloMenuPublicationProduct = {
   id: number;
   nome: string;
@@ -6,6 +8,7 @@ export type ZeloMenuPublicationProduct = {
   estoque_atual: number;
   ocultar_no_pdv: boolean;
   publication?: ZeloMenuProductPublication | null;
+  modifierGroups?: ZeloMenuModifierGroup[] | null;
 };
 
 export type ZeloMenuProductPublication = {
@@ -47,6 +50,7 @@ export type ZeloMenuPublicationSummary = {
 };
 
 export type ZeloMenuPublicationCatalogProduct = ZeloMenuPublicationProduct & {
+  id: number;
   name: string;
   price: number;
   unitBased?: boolean;
@@ -55,8 +59,10 @@ export type ZeloMenuPublicationCatalogProduct = ZeloMenuPublicationProduct & {
 };
 
 export type ZeloMenuResolvedCatalogProduct = {
+  id: number;
   name: string;
   price: number;
+  basePrice: number;
   available: boolean;
   description: string | null;
   photoUrl: string | null;
@@ -64,6 +70,7 @@ export type ZeloMenuResolvedCatalogProduct = {
   unitBased?: boolean;
   stockControlled?: boolean;
   stockQuantity?: number;
+  modifierGroups: ZeloMenuModifierGroup[];
 };
 
 export function getZeloMenuPublicationStatus(
@@ -160,8 +167,10 @@ export function resolveZeloMenuPublicationCatalogProduct(
   const details = getZeloMenuPublicationStatus(product);
 
   return {
+    id: product.id,
     name: product.publication?.nome_publico || product.name,
     price: product.price,
+    basePrice: product.price,
     available: details.status === 'published',
     description: product.publication?.descricao_publica ?? null,
     photoUrl: product.publication?.foto_url ?? null,
@@ -169,5 +178,6 @@ export function resolveZeloMenuPublicationCatalogProduct(
     unitBased: product.unitBased,
     stockControlled: product.stockControlled,
     stockQuantity: product.stockQuantity,
+    modifierGroups: product.modifierGroups ?? [],
   };
 }

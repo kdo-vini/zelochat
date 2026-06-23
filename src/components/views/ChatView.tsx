@@ -78,6 +78,7 @@ import { getFriendlyErrorMessage } from '../../services/errorMessages';
 import { PushPermissionBanner } from '../PushPermissionBanner';
 import { compressImage } from '../../services/imageCompress';
 import { sendContact, sendPresence } from '../../services/waApi';
+import { formatModifierAwareCartItem } from '../../domain/zelomenuModifiers';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
 
 /* ─── Utilities ───────────────────────────────────────────────── */
@@ -3288,7 +3289,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                     {reviewData.session.cart.items.map((item, index) => (
                       <div key={`${item.productName}-${index}`} className="flex items-start justify-between gap-3 text-[13px]">
                         <div>
-                          <p className="font-medium text-[var(--color-ink)]">{item.quantity}x {item.productName}</p>
+                          <p className="font-medium text-[var(--color-ink)]">{item.quantity}x {formatModifierAwareCartItem(item)}</p>
                           {item.notes && (
                             <p className="text-[12px] text-[var(--color-ink-muted)]">Obs do item: {item.notes}</p>
                           )}
@@ -3321,6 +3322,12 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                     </p>
                     {reviewData.session.fulfillment.deliveryAddress && (
                       <p className="mt-2 text-[12px] text-[var(--color-ink-muted)]">{reviewData.session.fulfillment.deliveryAddress}</p>
+                    )}
+                    {reviewData.session.fulfillment.type === 'delivery' && reviewData.session.fulfillment.deliveryNeighborhood && (
+                      <p className="mt-1 text-[12px] text-[var(--color-ink-muted)]">Bairro: {reviewData.session.fulfillment.deliveryNeighborhood}</p>
+                    )}
+                    {reviewData.session.fulfillment.deliveryFeeToConfirm && (
+                      <p className="mt-2 text-[12px] font-medium text-amber-700">⚠️ Taxa de entrega a confirmar com a loja (bairro fora da tabela).</p>
                     )}
                   </div>
                   <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3">

@@ -5,6 +5,7 @@ import {
   summarizeZeloMenuPublication,
   type ZeloMenuPublicationProduct,
 } from '../src/domain/zelomenuPublication.js';
+import type { ZeloMenuModifierGroup } from '../src/domain/zelomenuModifiers.js';
 
 const base: ZeloMenuPublicationProduct = {
   id: 1,
@@ -22,7 +23,25 @@ const base: ZeloMenuPublicationProduct = {
     pausado_manualmente: false,
     ordem: 0,
   },
+  modifierGroups: [],
 };
+
+const baseModifierGroups: ZeloMenuModifierGroup[] = [
+  {
+    id: 'group-1',
+    productId: 1,
+    name: 'Molhos',
+    kind: 'adicional',
+    minSelections: 0,
+    maxSelections: 2,
+    active: true,
+    order: 1,
+    options: [
+      { id: 'option-1', name: 'Ketchup', priceDelta: 0, active: true, order: 1 },
+      { id: 'option-2', name: 'Maionese verde', priceDelta: 1.5, active: true, order: 2 },
+    ],
+  },
+];
 
 const tests = [
   {
@@ -98,6 +117,7 @@ const tests = [
         unitBased: true,
         stockControlled: true,
         stockQuantity: 12,
+        modifierGroups: baseModifierGroups,
         publication: {
           id_produto: 1,
           nome_publico: 'Coxinha especial',
@@ -110,8 +130,10 @@ const tests = [
       });
 
       assert.deepEqual(resolved, {
+        id: 1,
         name: 'Coxinha especial',
         price: 7.5,
+        basePrice: 7.5,
         available: true,
         description: 'Massa crocante com recheio cremoso.',
         photoUrl: 'https://cdn.exemplo.com/coxinha.jpg',
@@ -119,6 +141,7 @@ const tests = [
         unitBased: true,
         stockControlled: true,
         stockQuantity: 12,
+        modifierGroups: baseModifierGroups,
       });
     },
   },

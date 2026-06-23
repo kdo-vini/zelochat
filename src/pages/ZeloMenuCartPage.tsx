@@ -20,16 +20,31 @@ import {
   confirmPublicCart,
   getPublicCart,
   updatePublicCart,
-  type ZeloMenuCartItem,
   type ZeloMenuCatalogGroup,
   type ZeloMenuCatalogProduct,
   type ZeloMenuPublicCartResponse,
 } from '../services/zelomenuApi';
+import {
+  formatModifierAwareCartItem,
+  resolveModifierSelections,
+  type ZeloMenuModifierSelectionInput,
+  type ZeloMenuSelectedModifierGroup,
+} from '../domain/zelomenuModifiers';
+import { resolveDeliveryFeeForNeighborhood } from '../domain/zelomenuDelivery';
 
 type DraftState = {
   customerName: string;
   customerPhone: string;
-  items: Array<{ productName: string; quantity: number; notes: string }>;
+  items: Array<{
+    productId: number | null;
+    productName: string;
+    quantity: number;
+    notes: string;
+    selectedOptions: ZeloMenuModifierSelectionInput[];
+    selectedModifiers: ZeloMenuSelectedModifierGroup[];
+    baseUnitPrice: number;
+    modifierDeltaTotal: number;
+  }>;
   fulfillmentType: 'pickup' | 'delivery';
   pickupDate: string;
   pickupTime: string;
@@ -62,9 +77,17 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
     customerName: payload.session.customer.name ?? '',
     customerPhone: payload.session.customer.phone ?? '',
     items: payload.session.cart.items.map((item) => ({
+      productId: item.productId,
       productName: item.productName,
       quantity: item.quantity,
       notes: item.notes ?? '',
+      selectedOptions: item.selectedModifiers.map((group) => ({
+        groupId: group.groupId,
+        optionIds: group.selectedOptions.map((option) => option.optionId),
+      })),
+      selectedModifiers: item.selectedModifiers,
+      baseUnitPrice: item.baseUnitPrice,
+      modifierDeltaTotal: item.modifierDeltaTotal,
     })),
     fulfillmentType: payload.session.fulfillment.type,
     pickupDate: payload.session.fulfillment.pickupDate ?? '',
@@ -76,15 +99,15 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
   };
 }
 
-function catalogProductMap(groups: ZeloMenuCatalogGroup[]): Map<string, ZeloMenuCatalogProduct> {
-  const next = new Map<string, ZeloMenuCatalogProduct>();
+function catalogProductMap(groups: ZeloMenuCatalogGroup[]): Map<number, ZeloMenuCatalogProduct> {
+  const next = new Map<number, ZeloMenuCatalogProduct>();
   for (const group of groups) {
     for (const product of group.produtosDireto) {
-      next.set(product.name, product);
+      next.set(product.id, product);
     }
     for (const subcategory of group.subcategorias) {
       for (const product of subcategory.produtos) {
-        next.set(product.name, product);
+        next.set(product.id, product);
       }
     }
   }
@@ -98,33 +121,88 @@ function estimateDraftTotals(
 ) {
   const products = catalogProductMap(catalog);
   const items = draft.items.flatMap((item) => {
-    const product = products.get(item.productName);
-    if (!product) return [];
+    const product = item.productId != null ? products.get(item.productId) : null;
     const quantity = Math.max(0, Math.floor(Number(item.quantity) || 0));
     if (quantity === 0) return [];
-    const lineTotal = quantity * Number(product.price || 0);
+    let unitPrice = item.baseUnitPrice + item.modifierDeltaTotal;
+    let selectedModifiers = item.selectedModifiers;
+    if (product) {
+      const resolved = resolveModifierSelections(product.modifierGroups, item.selectedOptions);
+      if (resolved.ok) {
+        unitPrice = Number((product.basePrice + resolved.deltaTotal).toFixed(2));
+        selectedModifiers = resolved.selectedGroups;
+      }
+    }
+    const lineTotal = quantity * Number(unitPrice || 0);
     return [{
-      productName: product.name,
+      productId: item.productId,
+      productName: product?.name ?? item.productName,
+      selectedModifiers,
       quantity,
-      unitPrice: product.price,
+      unitPrice,
       lineTotal,
       notes: item.notes || null,
     }];
   });
   const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
-  const deliveryFee = draft.fulfillmentType === 'delivery'
-    ? neighborhoods.find((item) => item.name === draft.deliveryNeighborhood)?.fee ?? 0
-    : 0;
+  // Mesma função pura que o servidor usa ao revalidar (FONTE ÚNICA, node-free):
+  // o total exibido aqui nunca diverge do total confirmado pelo backend.
+  const { fee: deliveryFee, toConfirm: deliveryFeeToConfirm } = resolveDeliveryFeeForNeighborhood({
+    type: draft.fulfillmentType,
+    neighborhood: draft.fulfillmentType === 'delivery' ? draft.deliveryNeighborhood : null,
+    neighborhoods,
+  });
   return {
     items,
     subtotal,
     deliveryFee,
+    deliveryFeeToConfirm,
     total: subtotal + deliveryFee,
   };
 }
 
 function isKnownPaymentMethod(value: string): boolean {
   return PAYMENT_OPTIONS.some((option) => option === value);
+}
+
+function draftItemKey(item: DraftState['items'][number]): string {
+  const idPart = item.productId ?? item.productName;
+  const selections = item.selectedOptions
+    .map((group) => `${group.groupId}:${[...group.optionIds].sort().join(',')}`)
+    .sort()
+    .join('|');
+  return `${idPart}::${selections || 'plain'}`;
+}
+
+function selectedOptionsFromSelectedModifiers(
+  selectedModifiers: ZeloMenuSelectedModifierGroup[],
+): ZeloMenuModifierSelectionInput[] {
+  return selectedModifiers.map((group) => ({
+    groupId: group.groupId,
+    optionIds: group.selectedOptions.map((option) => option.optionId),
+  }));
+}
+
+function estimatedItemKey(
+  item: {
+    productId: number | null;
+    productName: string;
+    quantity: number;
+    notes?: string | null;
+    selectedModifiers: ZeloMenuSelectedModifierGroup[];
+    unitPrice: number;
+  },
+): string {
+  return draftItemKey({
+    productId: item.productId,
+    productName: item.productName,
+    quantity: item.quantity,
+    notes: item.notes ?? '',
+    selectedOptions: selectedOptionsFromSelectedModifiers(item.selectedModifiers),
+    selectedModifiers: item.selectedModifiers,
+    baseUnitPrice: item.unitPrice,
+    modifierDeltaTotal: 0,
+  });
 }
 
 export default function ZeloMenuCartPage() {
@@ -137,6 +215,10 @@ export default function ZeloMenuCartPage() {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inlineMessage, setInlineMessage] = useState<string | null>(null);
+  const [modifierPicker, setModifierPicker] = useState<{
+    product: ZeloMenuCatalogProduct;
+    selections: Record<string, string[]>;
+  } | null>(null);
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
     try {
@@ -175,6 +257,7 @@ export default function ZeloMenuCartPage() {
 
   const isStale = payload?.link.tokenStatus === 'stale';
   const isOpen = payload?.session.state === 'cart_open';
+  const isPublicOrder = payload?.session.context === 'public_order';
   const isConfirmed = payload?.session.state === 'confirmed_waiting_review' || payload?.session.state === 'confirmed_waiting_payment';
   const isWaitingPayment = payload?.session.state === 'confirmed_waiting_payment';
   const paymentSelection = draft?.paymentMethod && isKnownPaymentMethod(draft.paymentMethod)
@@ -193,10 +276,13 @@ export default function ZeloMenuCartPage() {
       setInlineMessage(null);
       const next = await updatePublicCart(token, {
         customerName: draft.customerName || null,
+        customerPhone: draft.customerPhone || null,
         items: draft.items.map((item) => ({
+          productId: item.productId,
           productName: item.productName,
           quantity: item.quantity,
           notes: item.notes || null,
+          selectedOptions: item.selectedOptions,
         })),
         fulfillment: {
           type: draft.fulfillmentType,
@@ -239,21 +325,87 @@ export default function ZeloMenuCartPage() {
     }
   };
 
-  const changeItemQuantity = (productName: string, nextQuantity: number) => {
+  const changeItemQuantity = (itemKey: string, nextQuantity: number) => {
     if (!isOpen) return;
     setDraft((current) => {
       if (!current) return current;
       const normalizedQuantity = Math.max(0, Math.floor(nextQuantity));
-      const existing = current.items.find((item) => item.productName === productName);
+      const existing = current.items.find((item) => draftItemKey(item) === itemKey);
       if (!existing && normalizedQuantity === 0) return current;
       const items = existing
         ? current.items
-          .map((item) => item.productName === productName ? { ...item, quantity: normalizedQuantity } : item)
+          .map((item) => draftItemKey(item) === itemKey ? { ...item, quantity: normalizedQuantity } : item)
           .filter((item) => item.quantity > 0)
-        : [...current.items, { productName, quantity: normalizedQuantity, notes: '' }];
+        : current.items;
       return { ...current, items };
     });
     setInlineMessage(null);
+  };
+
+  const addDraftItem = (
+    product: ZeloMenuCatalogProduct,
+    selectedOptions: ZeloMenuModifierSelectionInput[],
+    selectedModifiers: ZeloMenuSelectedModifierGroup[],
+  ) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const nextItem: DraftState['items'][number] = {
+        productId: product.id,
+        productName: product.name,
+        quantity: 1,
+        notes: '',
+        selectedOptions,
+        selectedModifiers,
+        baseUnitPrice: product.basePrice,
+        modifierDeltaTotal: Number(
+          selectedModifiers.reduce(
+            (sum, group) => sum + group.selectedOptions.reduce((groupSum, option) => groupSum + option.priceDelta, 0),
+            0,
+          ).toFixed(2),
+        ),
+      };
+      const nextKey = draftItemKey(nextItem);
+      const existing = current.items.find((item) => draftItemKey(item) === nextKey);
+      if (!existing) {
+        return { ...current, items: [...current.items, nextItem] };
+      }
+      return {
+        ...current,
+        items: current.items.map((item) => (
+          draftItemKey(item) === nextKey
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        )),
+      };
+    });
+    setInlineMessage(null);
+  };
+
+  const beginAddProduct = (product: ZeloMenuCatalogProduct) => {
+    if (!isOpen) return;
+    if (product.modifierGroups.length === 0) {
+      addDraftItem(product, [], []);
+      return;
+    }
+    setModifierPicker({
+      product,
+      selections: Object.fromEntries(product.modifierGroups.map((group) => [group.id, []])),
+    });
+  };
+
+  const confirmModifierSelection = () => {
+    if (!modifierPicker) return;
+    const selectedOptions = (Object.entries(modifierPicker.selections) as Array<[string, string[]]>)
+      .map(([groupId, optionIds]) => ({ groupId, optionIds }))
+      .filter((selection) => selection.optionIds.length > 0);
+    const resolved = resolveModifierSelections(modifierPicker.product.modifierGroups, selectedOptions);
+    if (resolved.ok === false) {
+      setError(resolved.message);
+      return;
+    }
+    addDraftItem(modifierPicker.product, selectedOptions, resolved.selectedGroups);
+    setModifierPicker(null);
+    setError(null);
   };
 
   const updateField = <K extends keyof DraftState>(key: K, value: DraftState[K]) => {
@@ -421,9 +573,9 @@ export default function ZeloMenuCartPage() {
               ) : (
                 <div className="space-y-3">
                   {estimated.items.map((item) => (
-                    <div key={item.productName} className="grid gap-3 rounded-lg border border-[var(--color-line)] px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <div key={estimatedItemKey(item)} className="grid gap-3 rounded-lg border border-[var(--color-line)] px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                       <div className="min-w-0">
-                        <p className="truncate text-[14px] font-medium">{item.productName}</p>
+                        <p className="text-[14px] font-medium">{formatModifierAwareCartItem(item)}</p>
                         <p className="mt-0.5 text-[12px] text-[var(--color-ink-muted)]">
                           {toBRL(item.unitPrice)} cada
                         </p>
@@ -432,9 +584,9 @@ export default function ZeloMenuCartPage() {
                         <div className="inline-flex h-9 items-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
                           <button
                             type="button"
-                            onClick={() => changeItemQuantity(item.productName, item.quantity - 1)}
+                            onClick={() => changeItemQuantity(estimatedItemKey(item), item.quantity - 1)}
                             className="inline-flex h-9 w-9 items-center justify-center text-[var(--color-ink-soft)]"
-                            aria-label={`Diminuir ${item.productName}`}
+                            aria-label={`Diminuir ${formatModifierAwareCartItem(item)}`}
                           >
                             <Minus className="h-4 w-4" strokeWidth={1.8} />
                           </button>
@@ -443,9 +595,9 @@ export default function ZeloMenuCartPage() {
                           </span>
                           <button
                             type="button"
-                            onClick={() => changeItemQuantity(item.productName, item.quantity + 1)}
+                            onClick={() => changeItemQuantity(estimatedItemKey(item), item.quantity + 1)}
                             className="inline-flex h-9 w-9 items-center justify-center text-[var(--color-ink-soft)]"
-                            aria-label={`Aumentar ${item.productName}`}
+                            aria-label={`Aumentar ${formatModifierAwareCartItem(item)}`}
                           >
                             <Plus className="h-4 w-4" strokeWidth={1.8} />
                           </button>
@@ -481,8 +633,8 @@ export default function ZeloMenuCartPage() {
                         <div key={`${group.nome}-${product.name}`}>
                           <ProductRow
                             product={product}
-                            quantity={draft.items.find((item) => item.productName === product.name)?.quantity ?? 0}
-                            onAdd={() => changeItemQuantity(product.name, (draft.items.find((item) => item.productName === product.name)?.quantity ?? 0) + 1)}
+                            quantity={draft.items.filter((item) => item.productId === product.id).reduce((sum, item) => sum + item.quantity, 0)}
+                            onAdd={() => beginAddProduct(product)}
                           />
                         </div>
                       ))}
@@ -499,8 +651,8 @@ export default function ZeloMenuCartPage() {
                           <div key={`${group.nome}-${subcategory.nome}-${product.name}`}>
                             <ProductRow
                               product={product}
-                              quantity={draft.items.find((item) => item.productName === product.name)?.quantity ?? 0}
-                              onAdd={() => changeItemQuantity(product.name, (draft.items.find((item) => item.productName === product.name)?.quantity ?? 0) + 1)}
+                              quantity={draft.items.filter((item) => item.productId === product.id).reduce((sum, item) => sum + item.quantity, 0)}
+                              onAdd={() => beginAddProduct(product)}
                             />
                           </div>
                         ))}
@@ -570,8 +722,15 @@ export default function ZeloMenuCartPage() {
                 <span className="text-[12px] font-medium text-[var(--color-ink-muted)]">WhatsApp</span>
                 <input
                   value={draft.customerPhone}
-                  readOnly
-                  className="h-11 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 text-[14px] text-[var(--color-ink-muted)]"
+                  onChange={(event) => updateField('customerPhone', event.target.value)}
+                  inputMode="tel"
+                  readOnly={!isOpen || !isPublicOrder}
+                  className={`h-11 w-full rounded-lg border border-[var(--color-line)] px-3 text-[14px] ${
+                    isPublicOrder
+                      ? 'bg-[var(--color-surface)]'
+                      : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'
+                  }`}
+                  placeholder="(XX) XXXXX-XXXX"
                 />
               </label>
 
@@ -579,19 +738,24 @@ export default function ZeloMenuCartPage() {
                 <>
                   <label className="space-y-1.5">
                     <span className="text-[12px] font-medium text-[var(--color-ink-muted)]">Bairro</span>
-                    <select
+                    <input
+                      list="zelomenu-bairros"
                       value={draft.deliveryNeighborhood}
                       onChange={(event) => updateField('deliveryNeighborhood', event.target.value)}
-                      disabled={!isOpen}
+                      readOnly={!isOpen}
                       className="h-11 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[14px]"
-                    >
-                      <option value="">Selecione</option>
+                      placeholder="Selecione ou digite seu bairro"
+                    />
+                    <datalist id="zelomenu-bairros">
                       {payload.business.deliveryNeighborhoods.map((item) => (
-                        <option key={item.name} value={item.name}>
-                          {item.name} • {toBRL(item.fee)}
-                        </option>
+                        <option key={item.name} value={item.name}>{`${item.name} • ${toBRL(item.fee)}`}</option>
                       ))}
-                    </select>
+                    </datalist>
+                    {estimated?.deliveryFeeToConfirm ? (
+                      <span className="block text-[11.5px] leading-4 text-[var(--color-ink-muted)]">
+                        Bairro fora da tabela — a taxa de entrega será confirmada pela loja.
+                      </span>
+                    ) : null}
                   </label>
 
                   <label className="space-y-1.5 md:col-span-2">
@@ -687,7 +851,9 @@ export default function ZeloMenuCartPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Entrega</span>
-                  <span className="tabular-nums">{toBRL(estimated.deliveryFee)}</span>
+                  <span className="tabular-nums">
+                    {estimated.deliveryFeeToConfirm ? 'a confirmar' : toBRL(estimated.deliveryFee)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between border-t border-[var(--color-line)] pt-3 text-[15px] font-semibold text-[var(--color-ink)]">
                   <span>Total</span>
@@ -737,6 +903,36 @@ export default function ZeloMenuCartPage() {
           </section>
         </aside>
       </main>
+
+      {modifierPicker ? (
+        <ModifierPickerModal
+          product={modifierPicker.product}
+          selections={modifierPicker.selections}
+          onClose={() => setModifierPicker(null)}
+          onToggleOption={(groupId, optionId) => {
+            setModifierPicker((current) => {
+              if (!current) return current;
+              const group = current.product.modifierGroups.find((entry) => entry.id === groupId);
+              if (!group) return current;
+              const currentIds = current.selections[groupId] ?? [];
+              const alreadySelected = currentIds.includes(optionId);
+              let nextIds: string[];
+              if (alreadySelected) {
+                nextIds = currentIds.filter((entry) => entry !== optionId);
+              } else if (group.maxSelections === 1) {
+                nextIds = [optionId];
+              } else {
+                nextIds = [...currentIds, optionId];
+              }
+              return {
+                ...current,
+                selections: { ...current.selections, [groupId]: nextIds },
+              };
+            });
+          }}
+          onConfirm={confirmModifierSelection}
+        />
+      ) : null}
     </div>
   );
 }
@@ -769,11 +965,16 @@ function ProductRow({
             </p>
           ) : null}
           <p className="mt-0.5 text-[12px] text-[var(--color-ink-muted)]">
-            {toBRL(product.price)}
+            A partir de {toBRL(product.basePrice)}
             {product.stockControlled && typeof product.stockQuantity === 'number'
               ? ` • estoque ${product.stockQuantity}`
               : ''}
           </p>
+          {product.modifierGroups.length > 0 ? (
+            <p className="mt-1 text-[12px] text-[var(--color-brand-deep)]">
+              {product.modifierGroups.length} grupo{product.modifierGroups.length === 1 ? '' : 's'} de escolha
+            </p>
+          ) : null}
         </div>
       </div>
       <button
@@ -782,8 +983,125 @@ function ProductRow({
         className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 text-[13px] font-medium text-[var(--color-ink-soft)]"
       >
         <Plus className="h-4 w-4" strokeWidth={1.8} />
-        {quantity > 0 ? `Adicionar mais (${quantity})` : 'Adicionar'}
+        {product.modifierGroups.length > 0
+          ? quantity > 0 ? `Escolher opções (${quantity})` : 'Escolher opções'
+          : quantity > 0 ? `Adicionar mais (${quantity})` : 'Adicionar'}
       </button>
+    </div>
+  );
+}
+
+function ModifierPickerModal({
+  product,
+  selections,
+  onClose,
+  onToggleOption,
+  onConfirm,
+}: {
+  product: ZeloMenuCatalogProduct;
+  selections: Record<string, string[]>;
+  onClose: () => void;
+  onToggleOption: (groupId: string, optionId: string) => void;
+  onConfirm: () => void;
+}) {
+  const resolution = resolveModifierSelections(
+    product.modifierGroups,
+    Object.entries(selections)
+      .map(([groupId, optionIds]) => ({ groupId, optionIds }))
+      .filter((selection) => selection.optionIds.length > 0),
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-4 py-6 sm:items-center">
+      <div className="w-full max-w-2xl rounded-2xl bg-[var(--color-surface)] shadow-2xl">
+        <div className="border-b border-[var(--color-line)] px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-[18px] font-semibold text-[var(--color-ink)]">{product.name}</h3>
+              <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">
+                Escolha as opções antes de adicionar ao carrinho.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg px-3 py-2 text-[13px] font-medium text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto px-4 py-4">
+          {product.modifierGroups.map((group) => {
+            const selectedIds = selections[group.id] ?? [];
+            return (
+              <section key={group.id} className="rounded-xl border border-[var(--color-line)] p-3">
+                <div className="mb-3">
+                  <p className="text-[14px] font-semibold text-[var(--color-ink)]">{group.name}</p>
+                  <p className="text-[12px] text-[var(--color-ink-muted)]">
+                    {group.minSelections > 0
+                      ? `Escolha pelo menos ${group.minSelections}.`
+                      : 'Opcional.'}
+                    {group.maxSelections != null ? ` Máximo ${group.maxSelections}.` : ''}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {group.options.filter((option) => option.active).map((option) => {
+                    const checked = selectedIds.includes(option.id);
+                    return (
+                      <label key={option.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-[var(--color-line)] px-3 py-2.5">
+                        <div className="flex items-center gap-3">
+                          <input
+                            type={group.maxSelections === 1 ? 'radio' : 'checkbox'}
+                            name={group.id}
+                            checked={checked}
+                            onChange={() => onToggleOption(group.id, option.id)}
+                            className="h-4 w-4"
+                          />
+                          <span className="text-[13px] text-[var(--color-ink)]">{option.name}</span>
+                        </div>
+                        <span className="text-[12px] font-medium text-[var(--color-ink-soft)]">
+                          {option.priceDelta > 0 ? `+ ${toBRL(option.priceDelta)}` : 'sem custo extra'}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+
+          {resolution.ok === false ? (
+            <div className="rounded-lg border border-[var(--color-alert)] bg-[var(--color-alert-soft)] px-3 py-3 text-[13px] text-[var(--color-alert)]">
+              {resolution.message}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--color-line)] px-4 py-4">
+          <div className="text-[13px] text-[var(--color-ink-soft)]">
+            {resolution.ok ? `Preço desta unidade: ${toBRL(product.basePrice + resolution.deltaTotal)}` : 'Revise as escolhas'}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-10 items-center rounded-lg px-4 text-[13px] font-medium text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={!resolution.ok}
+              className="inline-flex h-10 items-center rounded-lg bg-[var(--color-ink)] px-4 text-[13px] font-medium text-white disabled:cursor-not-allowed disabled:bg-[var(--color-line-strong)]"
+            >
+              Adicionar ao carrinho
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -39,10 +39,17 @@ import {
   resolveZeloMenuPublicationCatalogProduct,
   type ZeloMenuProductPublication,
 } from '../src/domain/zelomenuPublication.js';
+import {
+  sortModifierGroups,
+  type ZeloMenuModifierGroup,
+  type ZeloMenuModifierOption,
+} from '../src/domain/zelomenuModifiers.js';
 
 export type CatalogProduct = {
+  id?: number;
   name: string;
   price: number;
+  basePrice?: number;
   available: boolean;
   description?: string | null;
   photoUrl?: string | null;
@@ -50,6 +57,7 @@ export type CatalogProduct = {
   unitBased?: boolean;
   stockControlled?: boolean;
   stockQuantity?: number;
+  modifierGroups?: ZeloMenuModifierGroup[];
 };
 
 export interface BusinessConfig {
@@ -286,9 +294,62 @@ function normalizeProductPublicationRow(row: unknown): ZeloMenuProductPublicatio
   };
 }
 
+function normalizeModifierGroupRow(row: unknown): Omit<ZeloMenuModifierGroup, 'options'> | null {
+  if (!row || typeof row !== 'object') return null;
+  const group = row as {
+    id?: unknown;
+    id_produto?: unknown;
+    nome?: unknown;
+    tipo?: unknown;
+    min_selecoes?: unknown;
+    max_selecoes?: unknown;
+    ativo?: unknown;
+    ordem?: unknown;
+  };
+  const id = normalizeText(group.id);
+  const productId = normalizeNumber(group.id_produto);
+  const name = normalizeText(group.nome);
+  if (!id || !productId || !name) return null;
+  return {
+    id,
+    productId,
+    name,
+    kind: group.tipo === 'variacao' ? 'variacao' : 'adicional',
+    minSelections: Math.max(0, Math.trunc(normalizeNumber(group.min_selecoes))),
+    maxSelections: group.max_selecoes == null ? null : Math.max(1, Math.trunc(normalizeNumber(group.max_selecoes))),
+    active: group.ativo !== false,
+    order: Math.max(0, Math.trunc(normalizeNumber(group.ordem))),
+  };
+}
+
+function normalizeModifierOptionRow(row: unknown): (ZeloMenuModifierOption & { groupId: string }) | null {
+  if (!row || typeof row !== 'object') return null;
+  const option = row as {
+    id?: unknown;
+    id_grupo?: unknown;
+    nome?: unknown;
+    price_delta?: unknown;
+    ativo?: unknown;
+    ordem?: unknown;
+  };
+  const id = normalizeText(option.id);
+  const groupId = normalizeText(option.id_grupo);
+  const name = normalizeText(option.nome);
+  if (!id || !groupId || !name) return null;
+  return {
+    id,
+    groupId,
+    name,
+    priceDelta: normalizeNumber(option.price_delta),
+    active: option.ativo !== false,
+    order: Math.max(0, Math.trunc(normalizeNumber(option.ordem))),
+  };
+}
+
 function applyZeloMenuPublicationOverlay(
   product: CatalogProductWithPlacement,
   publicationsByProductId: Map<number, ZeloMenuProductPublication>,
+  modifierGroupsByProductId: Map<number, ZeloMenuModifierGroup[]>,
 ): CatalogProductWithPlacement {
   const publication = publicationsByProductId.get(product.id) ?? null;
   const resolved = resolveZeloMenuPublicationCatalogProduct({
@@ -304,22 +365,28 @@ function applyZeloMenuPublicationOverlay(
     stockControlled: product.stockControlled,
     stockQuantity: product.stockQuantity,
     publication,
+    modifierGroups: modifierGroupsByProductId.get(product.id) ?? [],
   });
 
   return {
     ...product,
+    id: resolved.id,
     name: resolved.name,
+    price: resolved.price,
     available: resolved.available,
     description: resolved.description,
     photoUrl: resolved.photoUrl,
     sortOrder: resolved.sortOrder,
+    modifierGroups: resolved.modifierGroups,
   };
 }
 
 function toPublicCatalogProduct(product: CatalogProductWithPlacement): CatalogProduct {
   return {
+    id: product.id,
     name: product.name,
     price: product.price,
+    basePrice: product.price,
     available: product.available,
     description: product.description ?? null,
     photoUrl: product.photoUrl ?? null,
@@ -327,6 +394,7 @@ function toPublicCatalogProduct(product: CatalogProductWithPlacement): CatalogPr
     unitBased: product.unitBased,
     stockControlled: product.stockControlled,
     stockQuantity: product.stockQuantity,
+    modifierGroups: product.modifierGroups ?? [],
   };
 }
 
@@ -541,7 +609,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   const userId = normalizeText(row.user_id);
   if (!userId) throw new Error(`empresa_perfil.user_id missing for ${empresaId}`);
 
-  const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes] = await Promise.all([
+  const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes] = await Promise.all([
     supabase
       .from('categorias')
       .select('id, nome, ordem')
@@ -565,20 +633,66 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
       .eq('id_usuario', userId)
       .order('ordem')
       .limit(2000),
+    supabase
+      .from('zelomenu_modifier_groups')
+      .select('id, id_produto, nome, tipo, min_selecoes, max_selecoes, ativo, ordem')
+      .eq('id_usuario', userId)
+      .order('ordem')
+      .limit(4000),
+    supabase
+      .from('zelomenu_modifier_options')
+      .select('id, id_grupo, nome, price_delta, ativo, ordem')
+      .eq('id_usuario', userId)
+      .order('ordem')
+      .limit(8000),
   ]);
   if (categoriasRes.error) throw categoriasRes.error;
   if (subcategoriasRes.error) throw subcategoriasRes.error;
   if (produtosRes.error) throw produtosRes.error;
   if (publicationsRes.error) throw publicationsRes.error;
+  if (modifierGroupsRes.error) throw modifierGroupsRes.error;
+  if (modifierOptionsRes.error) throw modifierOptionsRes.error;
 
   const publicationsByProductId = new Map<number, ZeloMenuProductPublication>();
   for (const row of publicationsRes.data ?? []) {
     const publication = normalizeProductPublicationRow(row);
     if (publication) publicationsByProductId.set(publication.id_produto, publication);
   }
+  const optionsByGroupId = new Map<string, ZeloMenuModifierOption[]>();
+  for (const row of modifierOptionsRes.data ?? []) {
+    const option = normalizeModifierOptionRow(row);
+    if (!option) continue;
+    const existing = optionsByGroupId.get(option.groupId) ?? [];
+    existing.push({
+      id: option.id,
+      name: option.name,
+      priceDelta: option.priceDelta,
+      active: option.active,
+      order: option.order,
+    });
+    optionsByGroupId.set(option.groupId, existing);
+  }
+  const modifierGroupsByProductId = new Map<number, ZeloMenuModifierGroup[]>();
+  for (const row of modifierGroupsRes.data ?? []) {
+    const group = normalizeModifierGroupRow(row);
+    if (!group) continue;
+    const existing = modifierGroupsByProductId.get(group.productId) ?? [];
+    existing.push({
+      ...group,
+      options: optionsByGroupId.get(group.id) ?? [],
+    });
+    modifierGroupsByProductId.set(group.productId, existing);
+  }
+  for (const [productId, groups] of modifierGroupsByProductId.entries()) {
+    modifierGroupsByProductId.set(productId, sortModifierGroups(groups));
+  }
   const productsWithPlacement = (produtosRes.data ?? [])
     .map(normalizeProductRow)
-    .map((product) => product ? applyZeloMenuPublicationOverlay(product, publicationsByProductId) : null);
+    .map((product) => (
+      product
+        ? applyZeloMenuPublicationOverlay(product, publicationsByProductId, modifierGroupsByProductId)
+        : null
+    ));
   const products = productsWithPlacement
     .filter((item): item is CatalogProductWithPlacement => item !== null)
     .sort(sortCatalogProducts)

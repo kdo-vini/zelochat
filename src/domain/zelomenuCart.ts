@@ -1,4 +1,19 @@
 import { createHash, randomBytes } from 'node:crypto';
+import {
+  resolveDeliveryFeeForNeighborhood,
+  roundCurrency,
+  type ZeloMenuResolvedDeliveryFee,
+} from './zelomenuDelivery';
+import {
+  formatModifierAwareCartItem,
+  type ZeloMenuModifierSelectionInput,
+  type ZeloMenuSelectedModifierGroup,
+} from './zelomenuModifiers';
+
+// Re-export da fonte única node-free (ZLM-204 / hardening Q5) para manter os
+// importadores existentes (`server/zelomenuCartSessions.ts`, testes) funcionando.
+export { resolveDeliveryFeeForNeighborhood, roundCurrency };
+export type { ZeloMenuResolvedDeliveryFee };
 
 export const ZELOMENU_CART_CONTEXTS = ['whatsapp_order', 'public_order', 'table_order'] as const;
 export type ZeloMenuCartContext = (typeof ZELOMENU_CART_CONTEXTS)[number];
@@ -16,13 +31,19 @@ export const ZELOMENU_CART_STATES = [
 export type ZeloMenuCartState = (typeof ZELOMENU_CART_STATES)[number];
 
 export type ZeloMenuCartItemInput = {
+  productId?: number | null;
   productName: string;
   quantity: number;
   notes?: string | null;
+  selectedOptions?: ZeloMenuModifierSelectionInput[] | null;
 };
 
 export type ZeloMenuCartItemSnapshot = {
+  productId: number | null;
   productName: string;
+  baseUnitPrice: number;
+  selectedModifiers: ZeloMenuSelectedModifierGroup[];
+  modifierDeltaTotal: number;
   quantity: number;
   unitPrice: number;
   lineTotal: number;
@@ -46,6 +67,13 @@ export type ZeloMenuFulfillmentSnapshot = {
   deliveryAddress: string | null;
   deliveryNeighborhood: string | null;
   deliveryFee: number;
+  /**
+   * ZLM-204 / D-082 / D-083: a taxa não pôde ser resolvida pela tabela de
+   * bairros (bairro livre fora da lista, ou entrega sem bairro definido). O
+   * pedido pode ser confirmado, mas a taxa fica "a confirmar" e o pedido força
+   * conferência humana antes do aceite.
+   */
+  deliveryFeeToConfirm: boolean;
 };
 
 export type ZeloMenuPricingSnapshot = {
@@ -65,7 +93,8 @@ export type ZeloMenuCartRevalidationIssueCode =
   | 'product_unavailable'
   | 'stock_insufficient'
   | 'price_changed'
-  | 'schedule_unavailable';
+  | 'schedule_unavailable'
+  | 'modifier_invalid';
 
 export type ZeloMenuCartRevalidationIssue = {
   code: ZeloMenuCartRevalidationIssueCode;
@@ -127,9 +156,6 @@ export function computeCartPricing(
   };
 }
 
-export function roundCurrency(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 export function resolveConfirmedCartState(payment: Pick<ZeloMenuPaymentSnapshot, 'pixReceiptRequired' | 'pixReceiptApproved'>): Extract<ZeloMenuCartState, 'confirmed_waiting_review' | 'confirmed_waiting_payment'> {
   return payment.pixReceiptRequired && !payment.pixReceiptApproved
@@ -162,13 +188,18 @@ function buildCartSummaryLines(input: {
   totalLine: string;
 } {
   const itemsLine = input.cart.items.length > 0
-    ? input.cart.items.map((item) => `${item.quantity}x ${item.productName}`).join(', ')
+    ? input.cart.items.map((item) => `${item.quantity}x ${formatModifierAwareCartItem(item)}`).join(', ')
     : 'Itens a revisar';
   const scheduleLabel = input.fulfillment.type === 'delivery' ? '🛵 Entrega' : '📅 Retirada';
   const scheduleLine = `${scheduleLabel}: ${formatDateBR(input.fulfillment.pickupDate)}${input.fulfillment.pickupTime ? ` às ${input.fulfillment.pickupTime}` : ''}`;
-  const deliveryLine = input.fulfillment.type === 'delivery' && input.fulfillment.deliveryAddress
-    ? `\n📍 ${input.fulfillment.deliveryAddress}${input.fulfillment.deliveryNeighborhood ? `\n🏘️ Bairro: ${input.fulfillment.deliveryNeighborhood}` : ''}`
-    : '';
+  let deliveryLine = '';
+  if (input.fulfillment.type === 'delivery') {
+    const parts: string[] = [];
+    if (input.fulfillment.deliveryAddress) parts.push(`📍 ${input.fulfillment.deliveryAddress}`);
+    if (input.fulfillment.deliveryNeighborhood) parts.push(`🏘️ Bairro: ${input.fulfillment.deliveryNeighborhood}`);
+    if (input.fulfillment.deliveryFeeToConfirm) parts.push('💸 Taxa de entrega: a confirmar com a loja');
+    if (parts.length > 0) deliveryLine = `\n${parts.join('\n')}`;
+  }
   const observationsLine = input.cart.observations ? `\n📝 Obs: ${input.cart.observations}` : '';
   return {
     itemsLine,

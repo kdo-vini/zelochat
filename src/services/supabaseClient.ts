@@ -1,7 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const env = (import.meta as ImportMeta & {
+  env?: Record<string, string | undefined>;
+}).env;
+
+const supabaseUrl = env?.VITE_SUPABASE_URL;
+const supabaseAnonKey = env?.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   // Mantém o app funcionando sem auth em dev, mas deixa claro o erro ao usar.
@@ -11,5 +15,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '');
-
+export const supabase = createClient(
+  supabaseUrl ?? 'http://127.0.0.1:54321',
+  supabaseAnonKey ?? 'public-anon-key-placeholder',
+);

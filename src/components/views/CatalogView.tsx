@@ -20,9 +20,11 @@ import type {
   Categoria,
   ProdutoRow,
   Subcategoria,
+  ZeloMenuModifierGroupRow,
   ZeloMenuProductPublicationInput,
   ZeloMenuProductPublicationRow,
 } from '../../hooks/useCatalog';
+import type { ZeloMenuModifierGroupDraft } from '../../domain/zelomenuModifiers';
 import {
   getZeloMenuPublicationStatus,
   summarizeZeloMenuPublication,
@@ -46,6 +48,7 @@ interface Props {
   subcategorias: Subcategoria[];
   produtos: ProdutoRow[];
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
+  productModifierGroups: Record<number, ZeloMenuModifierGroupRow[]>;
   refresh: () => Promise<void>;
   createCategoria: (input: { nome: string; ordem?: number }) => Promise<Categoria>;
   updateCategoria: (id: number, patch: { nome?: string; ordem?: number }) => Promise<void>;
@@ -72,6 +75,9 @@ interface Props {
   ) => Promise<void>;
   deleteProduto: (id: number) => Promise<void>;
   upsertProductPublication: (productId: number, patch: ZeloMenuProductPublicationInput) => Promise<ZeloMenuProductPublicationRow>;
+  replaceProductModifierGroups: (productId: number, groups: ZeloMenuModifierGroupDraft[]) => Promise<ZeloMenuModifierGroupRow[]>;
+  uploadProductPublicationImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
+  deleteProductPublicationImage: (url: string | null | undefined) => Promise<void>;
 }
 
 type CatModalState =
@@ -98,6 +104,7 @@ export const CatalogView = ({
   subcategorias,
   produtos,
   productPublications,
+  productModifierGroups,
   refresh,
   createCategoria,
   updateCategoria,
@@ -109,6 +116,9 @@ export const CatalogView = ({
   updateProduto,
   deleteProduto,
   upsertProductPublication,
+  replaceProductModifierGroups,
+  uploadProductPublicationImage,
+  deleteProductPublicationImage,
 }: Props) => {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -312,7 +322,7 @@ export const CatalogView = ({
           )}
 
           <p className="mt-6 border-t border-gray-100 pt-4 text-[12px] text-gray-500">
-            Para detalhes avançados (complementos, variações, imagens), acesse o{' '}
+            Para imagens próprias do produto, acesse o{' '}
             <a
               href="https://zelopdv.com.br"
               target="_blank"
@@ -376,10 +386,22 @@ export const CatalogView = ({
         open={modal?.kind === 'publication'}
         product={modal?.kind === 'publication' ? modal.product : null}
         initial={modal?.kind === 'publication' ? productPublications[modal.product.id] ?? null : null}
+        modifierGroups={modal?.kind === 'publication' ? productModifierGroups[modal.product.id] ?? [] : []}
+        uploadImage={uploadProductPublicationImage}
         onClose={() => setModal(null)}
-        onSubmit={async (input) => {
+        onSubmit={async (input, groups) => {
           if (modal?.kind !== 'publication') return;
+          const previousPhotoUrl = productPublications[modal.product.id]?.foto_url ?? null;
+          const nextPhotoUrl = Object.prototype.hasOwnProperty.call(input, 'foto_url')
+            ? input.foto_url ?? null
+            : previousPhotoUrl;
           await upsertProductPublication(modal.product.id, input);
+          await replaceProductModifierGroups(modal.product.id, groups);
+          if (previousPhotoUrl && previousPhotoUrl !== nextPhotoUrl) {
+            deleteProductPublicationImage(previousPhotoUrl).catch((error) => {
+              console.warn('[Catalog] Failed to remove previous owned publication image:', error);
+            });
+          }
         }}
       />
 

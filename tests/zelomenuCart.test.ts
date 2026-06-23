@@ -10,6 +10,7 @@ import {
   hashPublicCartToken,
   normalizePublicCartToken,
   resolveConfirmedCartState,
+  resolveDeliveryFeeForNeighborhood,
 } from '../src/domain/zelomenuCart.js';
 
 const tests = [
@@ -79,7 +80,21 @@ const tests = [
         orderingId: '12345678-aaaa-bbbb-cccc-123456789012',
         state: 'confirmed_waiting_review',
         cart: {
-          items: [{ productName: 'Coxinha', quantity: 2, unitPrice: 5, lineTotal: 10 }],
+          items: [{
+            productId: 1,
+            productName: 'Coxinha',
+            baseUnitPrice: 5,
+            selectedModifiers: [{
+              groupId: 'group-1',
+              groupName: 'Molhos',
+              kind: 'adicional',
+              selectedOptions: [{ optionId: 'option-1', optionName: 'Maionese verde', priceDelta: 1.5 }],
+            }],
+            modifierDeltaTotal: 1.5,
+            quantity: 2,
+            unitPrice: 6.5,
+            lineTotal: 13,
+          }],
           observations: 'sem cebola',
         },
         fulfillment: {
@@ -89,12 +104,14 @@ const tests = [
           deliveryAddress: null,
           deliveryNeighborhood: null,
           deliveryFee: 0,
+          deliveryFeeToConfirm: false,
         },
-        pricing: { subtotal: 10, deliveryFee: 0, total: 10 },
+        pricing: { subtotal: 13, deliveryFee: 0, total: 13 },
         payment: { declaredMethod: 'Dinheiro', pixReceiptRequired: false, pixReceiptApproved: false },
       });
 
       assert.match(message, /Pedido recebido pelo cardápio/);
+      assert.match(message, /Molhos: Maionese verde/);
       assert.match(message, /A loja vai conferir/);
       assert.doesNotMatch(message, /produção/i);
     },
@@ -121,7 +138,21 @@ const tests = [
       const message = buildAcceptedCartCustomerMessage({
         orderId: 'abcdef12-aaaa-bbbb-cccc-123456789012',
         cart: {
-          items: [{ productName: 'Coxinha', quantity: 2, unitPrice: 5, lineTotal: 10 }],
+          items: [{
+            productId: 1,
+            productName: 'Coxinha',
+            baseUnitPrice: 5,
+            selectedModifiers: [{
+              groupId: 'group-1',
+              groupName: 'Molhos',
+              kind: 'adicional',
+              selectedOptions: [{ optionId: 'option-1', optionName: 'Maionese verde', priceDelta: 1.5 }],
+            }],
+            modifierDeltaTotal: 1.5,
+            quantity: 2,
+            unitPrice: 6.5,
+            lineTotal: 13,
+          }],
           observations: 'sem cebola',
         },
         fulfillment: {
@@ -131,14 +162,84 @@ const tests = [
           deliveryAddress: null,
           deliveryNeighborhood: null,
           deliveryFee: 0,
+          deliveryFeeToConfirm: false,
         },
-        pricing: { subtotal: 10, deliveryFee: 0, total: 10 },
+        pricing: { subtotal: 13, deliveryFee: 0, total: 13 },
         payment: { declaredMethod: 'Pix', pixReceiptRequired: false, pixReceiptApproved: false },
       });
 
       assert.match(message, /Pedido confirmado!/);
+      assert.match(message, /Molhos: Maionese verde/);
       assert.match(message, /entrou na produção/i);
       assert.doesNotMatch(message, /cardápio/i);
+    },
+  },
+  {
+    name: 'bairro listado soma a taxa cadastrada (D-082)',
+    run() {
+      const neighborhoods = [{ name: 'Centro', fee: 5 }, { name: 'Zona Sul', fee: 7.5 }];
+      const resolved = resolveDeliveryFeeForNeighborhood({
+        type: 'delivery',
+        neighborhood: 'centro', // case/acento-insensitive
+        neighborhoods,
+      });
+      assert.deepEqual(resolved, { fee: 5, toConfirm: false });
+    },
+  },
+  {
+    name: 'retirada nunca tem taxa nem precisa confirmar',
+    run() {
+      const resolved = resolveDeliveryFeeForNeighborhood({
+        type: 'pickup',
+        neighborhood: 'Centro',
+        neighborhoods: [{ name: 'Centro', fee: 5 }],
+      });
+      assert.deepEqual(resolved, { fee: 0, toConfirm: false });
+    },
+  },
+  {
+    name: 'bairro livre fora da lista vira taxa a confirmar (D-081/D-083)',
+    run() {
+      const resolved = resolveDeliveryFeeForNeighborhood({
+        type: 'delivery',
+        neighborhood: 'Bairro Novo que ninguém cadastrou',
+        neighborhoods: [{ name: 'Centro', fee: 5 }],
+      });
+      assert.deepEqual(resolved, { fee: 0, toConfirm: true });
+    },
+  },
+  {
+    name: 'entrega sem bairro definido fica a confirmar, não bloqueia',
+    run() {
+      const resolved = resolveDeliveryFeeForNeighborhood({
+        type: 'delivery',
+        neighborhood: '',
+        neighborhoods: [{ name: 'Centro', fee: 5 }],
+      });
+      assert.deepEqual(resolved, { fee: 0, toConfirm: true });
+    },
+  },
+  {
+    name: 'mensagem de confirmação avisa taxa a confirmar quando bairro é livre',
+    run() {
+      const message = buildConfirmedCartCustomerMessage({
+        orderingId: '12345678-aaaa-bbbb-cccc-123456789012',
+        state: 'confirmed_waiting_review',
+        cart: { items: [], observations: null },
+        fulfillment: {
+          type: 'delivery',
+          pickupDate: '2026-06-23',
+          pickupTime: '19:00',
+          deliveryAddress: 'Rua das Flores, 100',
+          deliveryNeighborhood: 'Bairro Distante',
+          deliveryFee: 0,
+          deliveryFeeToConfirm: true,
+        },
+        pricing: { subtotal: 20, deliveryFee: 0, total: 20 },
+        payment: { declaredMethod: 'Dinheiro', pixReceiptRequired: false, pixReceiptApproved: false },
+      });
+      assert.match(message, /Taxa de entrega: a confirmar/i);
+      assert.match(message, /Bairro: Bairro Distante/);
     },
   },
 ];

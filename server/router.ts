@@ -65,7 +65,9 @@ import {
   getPendingOrder,
   pendingOrderRequiresPixReceipt,
   sendPixReceiptRequiredMessage,
+  getPublicAppBaseUrl,
 } from './ai.js';
+import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { redactInstance, redactJid } from './redact.js';
@@ -118,9 +120,13 @@ import { parseScheduleFromDescription } from './scheduleParser.js';
 import {
   acceptWhatsAppCartReviewSession,
   confirmPublicCartSession,
+  getEmpresaZeloMenuSlug,
   getPublicCartSession,
+  getPublicStoreBySlug,
   getWhatsAppCartReviewSession,
+  openPublicOrderCartSession,
   openWhatsAppCartSession,
+  setEmpresaZeloMenuSlug,
   updatePublicCartSession,
 } from './zelomenuCartSessions.js';
 
@@ -1001,10 +1007,29 @@ function sendZeloMenuCartError(res: Response, error: unknown): void {
     return;
   }
 
-  if (message === 'INVALID_DELIVERY_NEIGHBORHOOD') {
-    res.status(400).json({ error: 'Bairro de entrega inválido.' });
+  if (message === 'EMPTY_CART') {
+    res.status(400).json({ error: 'Adicione pelo menos um item ao pedido.' });
     return;
   }
+
+  if (message === 'INVALID_SLUG') {
+    res.status(400).json({ error: 'Use de 3 a 40 letras, números ou hífens (ex.: casa-dos-salgados).' });
+    return;
+  }
+
+  if (message === 'RESERVED_SLUG') {
+    res.status(409).json({ error: 'Esse endereço é reservado. Escolha outro.' });
+    return;
+  }
+
+  if (message === 'SLUG_TAKEN') {
+    res.status(409).json({ error: 'Esse endereço já está em uso por outra loja. Escolha outro.' });
+    return;
+  }
+
+  // ZLM-204: bairro fora da tabela não é mais erro — vira taxa "a confirmar"
+  // (resolveDeliveryFeeForNeighborhood), então não há mais mapeamento de
+  // INVALID_DELIVERY_NEIGHBORHOOD aqui.
 
   if (message === 'STALE_CART_TOKEN') {
     res.status(409).json({ error: 'Este link do carrinho está desatualizado. Peça um link novo no WhatsApp.' });
@@ -2833,6 +2858,70 @@ router.post('/api/zelomenu/cart-sessions/:id/accept', async (req: Request, res: 
       return;
     }
     res.json(payload);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+// ZLM-203 — Loja pública por slug (menu.zelopdv.com.br/{slug}).
+// GET resolve slug→empresa e devolve negócio + catálogo (sem sessão, só browse).
+router.get('/public-api/zelomenu/store/:slug', async (req: Request, res: Response) => {
+  try {
+    const store = await getPublicStoreBySlug(req.params.slug);
+    if (!store) {
+      res.status(404).json({ error: 'Loja não encontrada.' });
+      return;
+    }
+    res.json({ business: store.business, catalog: store.catalog });
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+// POST cria uma sessão public_order e devolve o token; o front redireciona pro
+// carrinho público existente (/menu/carrinho/:token) pra revisar/confirmar.
+router.post('/public-api/zelomenu/store/:slug/cart', async (req: Request, res: Response) => {
+  try {
+    const result = await openPublicOrderCartSession({
+      slug: req.params.slug,
+      customerName: req.body?.customerName,
+      customerPhone: req.body?.customerPhone,
+      items: req.body?.items,
+      fulfillment: req.body?.fulfillment,
+      paymentMethod: req.body?.paymentMethod,
+      observations: req.body?.observations,
+    });
+    if (!result) {
+      res.status(404).json({ error: 'Loja não encontrada.' });
+      return;
+    }
+    res.json({ token: result.publicToken, path: result.publicPath, orderingId: result.orderingId });
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+// ZLM-203 — operador define/lê o slug público da própria loja (self-service, D-046).
+// Atrás do paywall global (/api/* exige assinatura chat/bundle ativa = ZeloMenu por D-014).
+function zelomenuPublicBaseUrl(): string {
+  return process.env.ZELOMENU_PUBLIC_BASE_URL || getPublicAppBaseUrl();
+}
+
+router.get('/api/zelomenu/slug', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const slug = await getEmpresaZeloMenuSlug(empresaId);
+    res.json({ slug, publicUrl: slug ? buildPublicStoreUrl(zelomenuPublicBaseUrl(), slug) : null });
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.put('/api/zelomenu/slug', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const slug = await setEmpresaZeloMenuSlug(empresaId, String(req.body?.slug ?? ''));
+    res.json({ slug, publicUrl: buildPublicStoreUrl(zelomenuPublicBaseUrl(), slug) });
   } catch (error) {
     sendZeloMenuCartError(res, error);
   }

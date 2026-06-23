@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
+import {
+  deleteOwnedZeloMenuPublicationImage,
+  uploadOwnedZeloMenuPublicationImage,
+} from '../services/zelomenuPublicationImages';
+import type {
+  ZeloMenuModifierGroup,
+  ZeloMenuModifierGroupDraft,
+  ZeloMenuModifierOption,
+} from '../domain/zelomenuModifiers';
+import { sortModifierGroups } from '../domain/zelomenuModifiers';
 
 export type Categoria = {
   id: number;
@@ -38,6 +48,12 @@ export type ZeloMenuProductPublicationRow = {
   ordem: number;
 };
 
+export type ZeloMenuModifierGroupRow = ZeloMenuModifierGroup;
+
+export type ZeloMenuModifierOptionRow = ZeloMenuModifierOption & {
+  groupId: string;
+};
+
 export type ProdutoInput = {
   nome: string;
   preco: number;
@@ -66,13 +82,22 @@ type CatalogState = {
   subcategorias: Subcategoria[];
   produtos: ProdutoRow[];
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
+  productModifierGroups: Record<number, ZeloMenuModifierGroupRow[]>;
 };
 
-const EMPTY: CatalogState = { categorias: [], subcategorias: [], produtos: [], productPublications: {} };
+const EMPTY: CatalogState = {
+  categorias: [],
+  subcategorias: [],
+  produtos: [],
+  productPublications: {},
+  productModifierGroups: {},
+};
 const CATALOG_CATEGORY_LIMIT = 500;
 const CATALOG_SUBCATEGORY_LIMIT = 1000;
 const CATALOG_PRODUCT_LIMIT = 2000;
 const CATALOG_PUBLICATION_LIMIT = 2000;
+const CATALOG_MODIFIER_GROUP_LIMIT = 4000;
+const CATALOG_MODIFIER_OPTION_LIMIT = 8000;
 
 type UseCatalogOptions = {
   enabled?: boolean;
@@ -96,7 +121,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     setLoading(true);
     setError(null);
     try {
-      const [catsRes, subsRes, prodsRes, publicationsRes] = await Promise.all([
+      const [catsRes, subsRes, prodsRes, publicationsRes, modifierGroupsRes, modifierOptionsRes] = await Promise.all([
         supabase
           .from('categorias')
           .select('id, nome, ordem')
@@ -123,11 +148,47 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .eq('id_usuario', userId)
           .order('ordem')
           .limit(CATALOG_PUBLICATION_LIMIT),
+        supabase
+          .from('zelomenu_modifier_groups')
+          .select('id, id_produto, nome, tipo, min_selecoes, max_selecoes, ativo, ordem')
+          .eq('id_usuario', userId)
+          .order('ordem')
+          .limit(CATALOG_MODIFIER_GROUP_LIMIT),
+        supabase
+          .from('zelomenu_modifier_options')
+          .select('id, id_grupo, nome, price_delta, ativo, ordem')
+          .eq('id_usuario', userId)
+          .order('ordem')
+          .limit(CATALOG_MODIFIER_OPTION_LIMIT),
       ]);
       if (catsRes.error) throw catsRes.error;
       if (subsRes.error) throw subsRes.error;
       if (prodsRes.error) throw prodsRes.error;
       if (publicationsRes.error) throw publicationsRes.error;
+      if (modifierGroupsRes.error) throw modifierGroupsRes.error;
+      if (modifierOptionsRes.error) throw modifierOptionsRes.error;
+      const optionsByGroupId = new Map<string, ZeloMenuModifierOptionRow[]>();
+      for (const row of modifierOptionsRes.data ?? []) {
+        const option = normalizeModifierOptionRow(row);
+        const existing = optionsByGroupId.get(option.groupId) ?? [];
+        existing.push(option);
+        optionsByGroupId.set(option.groupId, existing);
+      }
+      const productModifierGroups = Object.fromEntries(
+        (modifierGroupsRes.data ?? [])
+          .map((row: any) => normalizeModifierGroupRow(row, optionsByGroupId))
+          .filter((group): group is ZeloMenuModifierGroupRow => group !== null)
+          .reduce<Array<[number, ZeloMenuModifierGroupRow[]]>>((entries, group) => {
+            const match = entries.find((entry) => entry[0] === group.productId);
+            if (match) {
+              match[1].push(group);
+              return entries;
+            }
+            entries.push([group.productId, [group]]);
+            return entries;
+          }, [])
+          .map(([productId, groups]) => [productId, sortModifierGroups(groups)]),
+      );
       const nextData: CatalogState = {
         categorias: (catsRes.data ?? []) as Categoria[],
         subcategorias: (subsRes.data ?? []).map((r: any) => ({
@@ -153,6 +214,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
             return [publication.id_produto, publication];
           }),
         ),
+        productModifierGroups,
       };
       setData(nextData);
       setHasLoaded(true);
@@ -308,13 +370,25 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
 
   const deleteProduto = useCallback(async (id: number): Promise<void> => {
     if (!userId) throw new Error('Faça login para continuar.');
+    const publicationPhotoUrl = data.productPublications[id]?.foto_url ?? null;
     const { error: dbError } = await supabase.from('produtos').delete().eq('id', id).eq('id_usuario', userId);
     if (dbError) throw dbError;
+    if (publicationPhotoUrl) {
+      deleteOwnedZeloMenuPublicationImage(publicationPhotoUrl).catch((error) => {
+        console.warn('[Catalog] Failed to remove owned publication image after product deletion:', error);
+      });
+    }
     setData((prev) => {
       const { [id]: _removed, ...productPublications } = prev.productPublications;
-      return { ...prev, produtos: prev.produtos.filter((p) => p.id !== id), productPublications };
+      const { [id]: _removedGroups, ...productModifierGroups } = prev.productModifierGroups;
+      return {
+        ...prev,
+        produtos: prev.produtos.filter((p) => p.id !== id),
+        productPublications,
+        productModifierGroups,
+      };
     });
-  }, [userId]);
+  }, [data.productPublications, userId]);
 
   const upsertProductPublication = useCallback(async (
     productId: number,
@@ -355,6 +429,126 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     return saved;
   }, [data.productPublications, userId]);
 
+  const replaceProductModifierGroups = useCallback(async (
+    productId: number,
+    groups: ZeloMenuModifierGroupDraft[],
+  ): Promise<ZeloMenuModifierGroupRow[]> => {
+    if (!userId) throw new Error('Faça login para continuar.');
+
+    const currentGroups = data.productModifierGroups[productId] ?? [];
+    const nextGroups = groups.map((group, groupIndex) => {
+      const groupId = group.id ?? globalThis.crypto.randomUUID();
+      return {
+        id: groupId,
+        productId,
+        name: group.name.trim(),
+        kind: group.kind,
+        minSelections: Math.max(0, Math.trunc(group.minSelections)),
+        maxSelections: group.maxSelections == null ? null : Math.max(1, Math.trunc(group.maxSelections)),
+        active: group.active,
+        order: Math.max(0, Math.trunc(group.order ?? groupIndex)),
+        options: group.options.map((option, optionIndex) => ({
+          id: option.id ?? globalThis.crypto.randomUUID(),
+          name: option.name.trim(),
+          priceDelta: Number(option.priceDelta ?? 0),
+          active: option.active,
+          order: Math.max(0, Math.trunc(option.order ?? optionIndex)),
+        })),
+      };
+    });
+
+    const currentGroupIds = new Set<string>(currentGroups.map((group) => group.id));
+    const nextGroupIds = new Set<string>(nextGroups.map((group) => group.id));
+    const currentOptionIds = new Set<string>(
+      currentGroups.flatMap((group) => group.options.map((option) => option.id)),
+    );
+    const nextOptionIds = new Set<string>(
+      nextGroups.flatMap((group) => group.options.map((option) => option.id)),
+    );
+
+    const groupsPayload = nextGroups.map((group) => ({
+      id: group.id,
+      id_usuario: userId,
+      id_produto: productId,
+      nome: group.name,
+      tipo: group.kind,
+      min_selecoes: group.minSelections,
+      max_selecoes: group.maxSelections,
+      ativo: group.active,
+      ordem: group.order,
+      updated_at: new Date().toISOString(),
+    }));
+
+    const optionsPayload = nextGroups.flatMap((group) => group.options.map((option) => ({
+      id: option.id,
+      id_usuario: userId,
+      id_grupo: group.id,
+      nome: option.name,
+      price_delta: option.priceDelta,
+      ativo: option.active,
+      ordem: option.order,
+      updated_at: new Date().toISOString(),
+    })));
+
+    if (groupsPayload.length > 0) {
+      const { error: upsertGroupsError } = await supabase
+        .from('zelomenu_modifier_groups')
+        .upsert(groupsPayload, { onConflict: 'id' });
+      if (upsertGroupsError) throw upsertGroupsError;
+    }
+
+    if (optionsPayload.length > 0) {
+      const { error: upsertOptionsError } = await supabase
+        .from('zelomenu_modifier_options')
+        .upsert(optionsPayload, { onConflict: 'id' });
+      if (upsertOptionsError) throw upsertOptionsError;
+    }
+
+    const staleOptionIds = [...currentOptionIds].filter((id) => !nextOptionIds.has(id));
+    if (staleOptionIds.length > 0) {
+      const { error: deleteOptionsError } = await supabase
+        .from('zelomenu_modifier_options')
+        .delete()
+        .eq('id_usuario', userId)
+        .in('id', staleOptionIds);
+      if (deleteOptionsError) throw deleteOptionsError;
+    }
+
+    const staleGroupIds = [...currentGroupIds].filter((id) => !nextGroupIds.has(id));
+    if (staleGroupIds.length > 0) {
+      const { error: deleteGroupsError } = await supabase
+        .from('zelomenu_modifier_groups')
+        .delete()
+        .eq('id_usuario', userId)
+        .in('id', staleGroupIds);
+      if (deleteGroupsError) throw deleteGroupsError;
+    }
+
+    const saved = sortModifierGroups(nextGroups);
+    setData((prev) => ({
+      ...prev,
+      productModifierGroups: {
+        ...prev.productModifierGroups,
+        [productId]: saved,
+      },
+    }));
+    return saved;
+  }, [data.productModifierGroups, userId]);
+
+  const uploadProductPublicationImage = useCallback(async (
+    productId: number,
+    file: File,
+    previousUrl?: string | null,
+  ): Promise<string> => {
+    if (!userId) throw new Error('Faça login para continuar.');
+    return uploadOwnedZeloMenuPublicationImage(userId, productId, file, previousUrl);
+  }, [userId]);
+
+  const deleteProductPublicationImage = useCallback(async (url: string | null | undefined): Promise<void> => {
+    if (!userId) throw new Error('Faça login para continuar.');
+    await deleteOwnedZeloMenuPublicationImage(url);
+  }, [userId]);
+
   return {
     ...data,
     loading,
@@ -370,6 +564,9 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     updateProduto,
     deleteProduto,
     upsertProductPublication,
+    replaceProductModifierGroups,
+    uploadProductPublicationImage,
+    deleteProductPublicationImage,
     hasLoaded,
   };
 }
@@ -403,6 +600,44 @@ function normalizeProductPublicationRow(row: any): ZeloMenuProductPublicationRow
     visivel_online: !!row.visivel_online,
     pausado_manualmente: !!row.pausado_manualmente,
     ordem: Math.max(0, Number(row.ordem ?? 0)),
+  };
+}
+
+function normalizeModifierGroupRow(
+  row: any,
+  optionsByGroupId: Map<string, ZeloMenuModifierOptionRow[]>,
+): ZeloMenuModifierGroupRow | null {
+  const id = String(row.id ?? '').trim();
+  const productId = Number(row.id_produto ?? 0);
+  const name = normalizeOptionalText(row.nome);
+  if (!id || !productId || !name) return null;
+  return {
+    id,
+    productId,
+    name,
+    kind: row.tipo === 'variacao' ? 'variacao' : 'adicional',
+    minSelections: Math.max(0, Number(row.min_selecoes ?? 0)),
+    maxSelections: row.max_selecoes == null ? null : Math.max(1, Number(row.max_selecoes)),
+    active: row.ativo !== false,
+    order: Math.max(0, Number(row.ordem ?? 0)),
+    options: (optionsByGroupId.get(id) ?? []).map((option) => ({
+      id: option.id,
+      name: option.name,
+      priceDelta: option.priceDelta,
+      active: option.active,
+      order: option.order,
+    })),
+  };
+}
+
+function normalizeModifierOptionRow(row: any): ZeloMenuModifierOptionRow {
+  return {
+    id: String(row.id),
+    groupId: String(row.id_grupo),
+    name: normalizeOptionalText(row.nome) ?? '',
+    priceDelta: Number(row.price_delta ?? 0),
+    active: row.ativo !== false,
+    order: Math.max(0, Number(row.ordem ?? 0)),
   };
 }
 

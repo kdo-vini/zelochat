@@ -1,7 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
 import { isSubscriptionCurrentlyActive } from '../domain/subscription.js';
+import {
+  resolveZeloMenuCapabilities,
+  type ZeloMenuCapabilitySet,
+} from '../domain/zelomenuEntitlements.js';
 
 export interface ZeloChatSubscription {
   id: string;
@@ -19,6 +23,12 @@ interface UseSubscriptionResult {
   isActive: boolean;
   /** True se user tem plan_tier='pdv' ativo (precisa fazer upgrade pra acessar Chat). */
   hasPdvOnly: boolean;
+  /**
+   * Capabilities efetivas do ZeloMenu (ZLM-205, D-103). Derivadas do plan_tier
+   * ativo via resolver de domínio puro. Hoje, no app ZeloChat, todo cliente
+   * chat/bundle ativo já recebe `menu_publication`/`ordering_review` por D-014.
+   */
+  capabilities: ZeloMenuCapabilitySet;
   loading: boolean;
   refresh: () => Promise<void>;
 }
@@ -71,10 +81,24 @@ export function useSubscription(session: Session | null): UseSubscriptionResult 
     !!subscription &&
     subscription.plan_tier === 'pdv';
 
+  const capabilities = useMemo(
+    () => resolveZeloMenuCapabilities({
+      planTier: subscription?.plan_tier ?? null,
+      active: isSubscriptionActive(subscription),
+      // SEAM ÚNICO (D-103): quando o ZeloPDV publicar `has_zelo_menu`, basta
+      // adicionar a coluna ao SELECT acima e passar o valor aqui. Enquanto a
+      // coluna não existir, chat/bundle seguem fail-safe ON e `pdv` puro fica
+      // sem ZeloMenu — exatamente o comportamento atual.
+      hasZeloMenuFlag: undefined,
+    }),
+    [subscription],
+  );
+
   return {
     subscription,
     isActive,
     hasPdvOnly,
+    capabilities,
     loading,
     refresh: load,
   };

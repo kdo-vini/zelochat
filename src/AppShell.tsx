@@ -1334,6 +1334,7 @@ export default function AppShell() {
                   subcategorias={catalog.subcategorias}
                   produtos={catalog.produtos}
                   productPublications={catalog.productPublications}
+                  productModifierGroups={catalog.productModifierGroups}
                   refresh={catalog.refresh}
                   createCategoria={catalog.createCategoria}
                   updateCategoria={catalog.updateCategoria}
@@ -1345,6 +1346,9 @@ export default function AppShell() {
                   updateProduto={catalog.updateProduto}
                   deleteProduto={catalog.deleteProduto}
                   upsertProductPublication={catalog.upsertProductPublication}
+                  replaceProductModifierGroups={catalog.replaceProductModifierGroups}
+                  uploadProductPublicationImage={catalog.uploadProductPublicationImage}
+                  deleteProductPublicationImage={catalog.deleteProductPublicationImage}
                 />
               )}
               {activeView === 'ai-configs' && (
