@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-23',
     category: 'medium',
+    title: 'Produtos do ZeloMenu agora podem ser publicados pelo Cardápio',
+    description: 'A tela de Cardápio agora permite escolher quais produtos aparecem no link, pausar itens por um tempo e ajustar nome, descrição, foto e ordem para o cliente ver melhor.',
+  },
+  {
+    date: '2026-06-23',
+    category: 'medium',
     title: 'Cardápio mostra o que já está pronto para o link',
     description: 'A tela de Cardápio agora mostra quais produtos estão prontos para aparecer no link e quais precisam de ajuste, como itens sem estoque, inativos ou sem categoria.',
   },

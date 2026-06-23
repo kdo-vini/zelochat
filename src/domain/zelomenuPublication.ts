@@ -5,10 +5,23 @@ export type ZeloMenuPublicationProduct = {
   controlar_estoque: boolean;
   estoque_atual: number;
   ocultar_no_pdv: boolean;
+  publication?: ZeloMenuProductPublication | null;
+};
+
+export type ZeloMenuProductPublication = {
+  id_produto: number;
+  nome_publico: string | null;
+  descricao_publica: string | null;
+  foto_url: string | null;
+  visivel_online: boolean;
+  pausado_manualmente: boolean;
+  ordem: number;
 };
 
 export type ZeloMenuPublicationStatus =
   | 'published'
+  | 'unpublished'
+  | 'paused'
   | 'hidden'
   | 'out_of_stock'
   | 'missing_category';
@@ -25,15 +38,55 @@ export type ZeloMenuPublicationStatusDetails = {
 export type ZeloMenuPublicationSummary = {
   total: number;
   published: number;
+  unpublished: number;
+  paused: number;
   hidden: number;
   outOfStock: number;
   missingCategory: number;
   attention: number;
 };
 
+export type ZeloMenuPublicationCatalogProduct = ZeloMenuPublicationProduct & {
+  name: string;
+  price: number;
+  unitBased?: boolean;
+  stockControlled?: boolean;
+  stockQuantity?: number;
+};
+
+export type ZeloMenuResolvedCatalogProduct = {
+  name: string;
+  price: number;
+  available: boolean;
+  description: string | null;
+  photoUrl: string | null;
+  sortOrder: number;
+  unitBased?: boolean;
+  stockControlled?: boolean;
+  stockQuantity?: number;
+};
+
 export function getZeloMenuPublicationStatus(
   product: ZeloMenuPublicationProduct,
 ): ZeloMenuPublicationStatusDetails {
+  if (!product.publication?.visivel_online) {
+    return {
+      status: 'unpublished',
+      label: 'Não publicado',
+      description: 'Ative a publicação para este produto aparecer no ZeloMenu.',
+      issue: 'unpublished',
+    };
+  }
+
+  if (product.publication.pausado_manualmente) {
+    return {
+      status: 'paused',
+      label: 'Pausado',
+      description: 'Produto pausado manualmente no ZeloMenu.',
+      issue: 'paused',
+    };
+  }
+
   if (product.ocultar_no_pdv) {
     return {
       status: 'hidden',
@@ -63,8 +116,8 @@ export function getZeloMenuPublicationStatus(
 
   return {
     status: 'published',
-    label: 'Pronto',
-    description: 'Produto ativo para o link do cardápio.',
+    label: 'Publicado',
+    description: 'Produto publicado e disponível no link do cardápio.',
     issue: null,
   };
 }
@@ -75,6 +128,8 @@ export function summarizeZeloMenuPublication(
   const summary: ZeloMenuPublicationSummary = {
     total: products.length,
     published: 0,
+    unpublished: 0,
+    paused: 0,
     hidden: 0,
     outOfStock: 0,
     missingCategory: 0,
@@ -89,10 +144,30 @@ export function summarizeZeloMenuPublication(
     }
 
     summary.attention += 1;
+    if (details.status === 'unpublished') summary.unpublished += 1;
+    if (details.status === 'paused') summary.paused += 1;
     if (details.status === 'hidden') summary.hidden += 1;
     if (details.status === 'out_of_stock') summary.outOfStock += 1;
     if (details.status === 'missing_category') summary.missingCategory += 1;
   }
 
   return summary;
+}
+
+export function resolveZeloMenuPublicationCatalogProduct(
+  product: ZeloMenuPublicationCatalogProduct,
+): ZeloMenuResolvedCatalogProduct {
+  const details = getZeloMenuPublicationStatus(product);
+
+  return {
+    name: product.publication?.nome_publico || product.name,
+    price: product.price,
+    available: details.status === 'published',
+    description: product.publication?.descricao_publica ?? null,
+    photoUrl: product.publication?.foto_url ?? null,
+    sortOrder: product.publication?.ordem ?? 0,
+    unitBased: product.unitBased,
+    stockControlled: product.stockControlled,
+    stockQuantity: product.stockQuantity,
+  };
 }

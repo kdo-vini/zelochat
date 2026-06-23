@@ -1784,7 +1784,7 @@ Resultado (2026-06-22):
 
 #### ZLM-201 — Publicação self-service do ZeloMenu
 
-Status: Blocked
+Status: Partial
 Type: Prototype  
 Depends on: ZLM-004, ZLM-005  
 Owner: Frontend/Produto  
@@ -1807,10 +1807,18 @@ Resultado parcial (2026-06-23):
 - O slice também adicionou `PRODUCT.md` e `.impeccable/live/config.json` como contexto de design para futuras mudanças de UI.
 - Validação: `node --import tsx tests/zelomenuPublication.test.ts`, `node --import tsx tests/zelomenuAbandonedCart.test.ts` e `npm run lint` passaram.
 
+Resultado parcial 2 (2026-06-23):
+- O ZeloChat agora consome a camada real `zelomenu_product_publications` já aplicada no Supabase: `useCatalog` carrega/grava publicações por produto sem alterar `produtos`, `categorias` ou `subcategorias`.
+- A UI de `Cardápio` permite configurar publicar/despublicar, pausar temporariamente, nome público, descrição pública, foto por link e ordem pública por produto.
+- O backend público passa a resolver o catálogo com o overlay de publicação: só item publicado, não pausado e ainda válido pelo produto base fica disponível no link; nome/descrição/foto/ordem vêm da publicação e o preço base continua em `produtos.preco`.
+- A UI pública do carrinho exibe descrição e foto quando a publicação tiver esses dados.
+- A transformação produto base + publicação vive em domínio puro (`resolveZeloMenuPublicationCatalogProduct`) e é coberta por `tests/zelomenuPublication.test.ts`.
+- Validação: `npm run lint`, `npm run build`, `node --import tsx tests/zelomenuPublication.test.ts` e `node --import tsx tests/zelomenuCart.test.ts` passaram. `npm test` rodou e segue somente com o drift conhecido de `tests/auditFixGuardrails.test.ts` ("webhook has explicit rollout bypass name").
+
 Bloqueio restante:
-- O aceite completo de `ZLM-201` ainda depende do adapter/UI que consome a camada de publicação PDV-owned definida em `ZLM-004`: nome público, descrição, foto, ordem pública, disponibilidade/manual pause própria do ZeloMenu e modifier groups/options.
-- Este repo não deve alterar `produtos`/`categorias`/`subcategorias`; a próxima etapa no ZeloChat deve ler/escrever a camada PDV-owned já criada, preservando o catálogo base.
-- Por isso o ticket fica `Blocked`, não `Done`: existe fundação/preview no ZeloChat, mas a publicação self-service completa ainda não está entregue.
+- O aceite completo de `ZLM-201` ainda depende de modifiers/adicionais/variações (`zelomenu_modifier_groups`/`zelomenu_modifier_options`) e de ownership/upload de imagem, em vez de apenas URL manual.
+- Este repo não deve alterar `produtos`/`categorias`/`subcategorias`; as próximas etapas devem continuar lendo/escrevendo a camada PDV-owned já criada, preservando o catálogo base.
+- Por isso o ticket fica `Partial`, não `Done`: o básico de publicação self-service está funcional no ZeloChat, mas a publicação completa do ZeloMenu ainda não entrega modifiers.
 - Rollout Supabase (2026-06-23): migration PDV-owned `zelomenu_publication_schema_2026_06_23` aplicada no Supabase real. Verificado: `zelomenu_product_publications`, `zelomenu_modifier_groups` e `zelomenu_modifier_options` existem com RLS ligado, policies por owner, grants mínimos para `authenticated`/`service_role` e nenhum grant para `anon`.
 
 #### ZLM-202 — Tela comum de Pedidos liberada por ZeloMenu

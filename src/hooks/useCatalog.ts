@@ -27,6 +27,17 @@ export type ProdutoRow = {
   ocultar_no_pdv: boolean;
 };
 
+export type ZeloMenuProductPublicationRow = {
+  id: string;
+  id_produto: number;
+  nome_publico: string | null;
+  descricao_publica: string | null;
+  foto_url: string | null;
+  visivel_online: boolean;
+  pausado_manualmente: boolean;
+  ordem: number;
+};
+
 export type ProdutoInput = {
   nome: string;
   preco: number;
@@ -38,6 +49,15 @@ export type ProdutoInput = {
   ocultar_no_pdv?: boolean;
 };
 
+export type ZeloMenuProductPublicationInput = {
+  nome_publico?: string | null;
+  descricao_publica?: string | null;
+  foto_url?: string | null;
+  visivel_online?: boolean;
+  pausado_manualmente?: boolean;
+  ordem?: number;
+};
+
 export type CategoriaInput = { nome: string; ordem?: number };
 export type SubcategoriaInput = { nome: string; id_categoria: number; ordem?: number };
 
@@ -45,12 +65,14 @@ type CatalogState = {
   categorias: Categoria[];
   subcategorias: Subcategoria[];
   produtos: ProdutoRow[];
+  productPublications: Record<number, ZeloMenuProductPublicationRow>;
 };
 
-const EMPTY: CatalogState = { categorias: [], subcategorias: [], produtos: [] };
+const EMPTY: CatalogState = { categorias: [], subcategorias: [], produtos: [], productPublications: {} };
 const CATALOG_CATEGORY_LIMIT = 500;
 const CATALOG_SUBCATEGORY_LIMIT = 1000;
 const CATALOG_PRODUCT_LIMIT = 2000;
+const CATALOG_PUBLICATION_LIMIT = 2000;
 
 type UseCatalogOptions = {
   enabled?: boolean;
@@ -74,7 +96,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     setLoading(true);
     setError(null);
     try {
-      const [catsRes, subsRes, prodsRes] = await Promise.all([
+      const [catsRes, subsRes, prodsRes, publicationsRes] = await Promise.all([
         supabase
           .from('categorias')
           .select('id, nome, ordem')
@@ -95,10 +117,17 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .eq('id_usuario', userId)
           .order('nome')
           .limit(CATALOG_PRODUCT_LIMIT),
+        supabase
+          .from('zelomenu_product_publications')
+          .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem')
+          .eq('id_usuario', userId)
+          .order('ordem')
+          .limit(CATALOG_PUBLICATION_LIMIT),
       ]);
       if (catsRes.error) throw catsRes.error;
       if (subsRes.error) throw subsRes.error;
       if (prodsRes.error) throw prodsRes.error;
+      if (publicationsRes.error) throw publicationsRes.error;
       const nextData: CatalogState = {
         categorias: (catsRes.data ?? []) as Categoria[],
         subcategorias: (subsRes.data ?? []).map((r: any) => ({
@@ -118,11 +147,18 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           eh_item_por_unidade: !!r.eh_item_por_unidade,
           ocultar_no_pdv: !!r.ocultar_no_pdv,
         })),
+        productPublications: Object.fromEntries(
+          (publicationsRes.data ?? []).map((row: any) => {
+            const publication = normalizeProductPublicationRow(row);
+            return [publication.id_produto, publication];
+          }),
+        ),
       };
       setData(nextData);
       setHasLoaded(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível carregar o catálogo.');
+      console.error('[Catalog] Failed to load catalog:', err);
+      setError('Não foi possível carregar o catálogo. Tente novamente.');
       setHasLoaded(false);
     } finally {
       setLoading(false);
@@ -274,8 +310,50 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     if (!userId) throw new Error('Faça login para continuar.');
     const { error: dbError } = await supabase.from('produtos').delete().eq('id', id).eq('id_usuario', userId);
     if (dbError) throw dbError;
-    setData((prev) => ({ ...prev, produtos: prev.produtos.filter((p) => p.id !== id) }));
+    setData((prev) => {
+      const { [id]: _removed, ...productPublications } = prev.productPublications;
+      return { ...prev, produtos: prev.produtos.filter((p) => p.id !== id), productPublications };
+    });
   }, [userId]);
+
+  const upsertProductPublication = useCallback(async (
+    productId: number,
+    patch: ZeloMenuProductPublicationInput,
+  ): Promise<ZeloMenuProductPublicationRow> => {
+    if (!userId) throw new Error('Faça login para continuar.');
+
+    const current = data.productPublications[productId];
+    const nextText = (field: keyof Pick<ZeloMenuProductPublicationInput, 'nome_publico' | 'descricao_publica' | 'foto_url'>) => (
+      Object.prototype.hasOwnProperty.call(patch, field)
+        ? normalizeOptionalText(patch[field] ?? null)
+        : normalizeOptionalText(current?.[field] ?? null)
+    );
+    const payload = {
+      id_usuario: userId,
+      id_produto: productId,
+      nome_publico: nextText('nome_publico'),
+      descricao_publica: nextText('descricao_publica'),
+      foto_url: nextText('foto_url'),
+      visivel_online: patch.visivel_online ?? current?.visivel_online ?? false,
+      pausado_manualmente: patch.pausado_manualmente ?? current?.pausado_manualmente ?? false,
+      ordem: Math.max(0, Math.trunc(patch.ordem ?? current?.ordem ?? 0)),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: row, error: dbError } = await supabase
+      .from('zelomenu_product_publications')
+      .upsert(payload, { onConflict: 'id_usuario,id_produto' })
+      .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem')
+      .single();
+    if (dbError) throw dbError;
+
+    const saved = normalizeProductPublicationRow(row);
+    setData((prev) => ({
+      ...prev,
+      productPublications: { ...prev.productPublications, [productId]: saved },
+    }));
+    return saved;
+  }, [data.productPublications, userId]);
 
   return {
     ...data,
@@ -291,6 +369,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     createProduto,
     updateProduto,
     deleteProduto,
+    upsertProductPublication,
     hasLoaded,
   };
 }
@@ -312,4 +391,23 @@ function normalizeProdutoRow(row: any): ProdutoRow {
     eh_item_por_unidade: !!row.eh_item_por_unidade,
     ocultar_no_pdv: !!row.ocultar_no_pdv,
   };
+}
+
+function normalizeProductPublicationRow(row: any): ZeloMenuProductPublicationRow {
+  return {
+    id: String(row.id),
+    id_produto: Number(row.id_produto),
+    nome_publico: normalizeOptionalText(row.nome_publico),
+    descricao_publica: normalizeOptionalText(row.descricao_publica),
+    foto_url: normalizeOptionalText(row.foto_url),
+    visivel_online: !!row.visivel_online,
+    pausado_manualmente: !!row.pausado_manualmente,
+    ordem: Math.max(0, Number(row.ordem ?? 0)),
+  };
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }

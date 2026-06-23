@@ -1,11 +1,13 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { X, ExternalLink } from 'lucide-react';
+import { Globe2, X, ExternalLink } from 'lucide-react';
 import { ConfirmModal } from '../../ConfirmModal';
 import { Modal, useModalTitleId } from '../../Modal';
 import type {
   Categoria,
   Subcategoria,
   ProdutoRow,
+  ZeloMenuProductPublicationInput,
+  ZeloMenuProductPublicationRow,
   CategoriaInput,
   SubcategoriaInput,
   ProdutoInput,
@@ -417,6 +419,177 @@ export function ProductModal({
 
         {err && <p className="text-xs text-red-600">{err}</p>}
         <ActionBar onCancel={onClose} submitLabel={initial ? 'Salvar' : 'Criar produto'} loading={loading} />
+      </form>
+    </ModalShell>
+  );
+}
+
+// ---------- Publicação ZeloMenu ----------
+type ProductPublicationModalProps = {
+  open: boolean;
+  product: ProdutoRow | null;
+  initial?: ZeloMenuProductPublicationRow | null;
+  onClose: () => void;
+  onSubmit: (patch: ZeloMenuProductPublicationInput) => Promise<void>;
+};
+
+export function ProductPublicationModal({
+  open,
+  product,
+  initial,
+  onClose,
+  onSubmit,
+}: ProductPublicationModalProps) {
+  const [visivelOnline, setVisivelOnline] = useState(false);
+  const [pausado, setPausado] = useState(false);
+  const [nomePublico, setNomePublico] = useState('');
+  const [descricaoPublica, setDescricaoPublica] = useState('');
+  const [fotoUrl, setFotoUrl] = useState('');
+  const [ordem, setOrdem] = useState('0');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setVisivelOnline(initial?.visivel_online ?? false);
+      setPausado(initial?.pausado_manualmente ?? false);
+      setNomePublico(initial?.nome_publico ?? '');
+      setDescricaoPublica(initial?.descricao_publica ?? '');
+      setFotoUrl(initial?.foto_url ?? '');
+      setOrdem(String(initial?.ordem ?? 0));
+      setErr(null);
+    }
+  }, [open, initial]);
+
+  if (!open || !product) return null;
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const parsedOrder = Number.parseInt(ordem, 10);
+    if (!Number.isFinite(parsedOrder) || parsedOrder < 0) {
+      setErr('Informe uma ordem válida.');
+      return;
+    }
+
+    const trimmedFoto = fotoUrl.trim();
+    if (trimmedFoto && !/^https:\/\//i.test(trimmedFoto)) {
+      setErr('Use um link de foto começando com https://.');
+      return;
+    }
+
+    setLoading(true);
+    setErr(null);
+    try {
+      await onSubmit({
+        visivel_online: visivelOnline,
+        pausado_manualmente: visivelOnline ? pausado : false,
+        nome_publico: nomePublico,
+        descricao_publica: descricaoPublica,
+        foto_url: trimmedFoto || null,
+        ordem: parsedOrder,
+      });
+      onClose();
+    } catch {
+      setErr('Não foi possível salvar a publicação. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      title="Publicação no ZeloMenu"
+      subtitle="Controle como este produto aparece no link do cardápio."
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#25D366]/10 text-[#0B7A3B]">
+              <Globe2 className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-gray-800">{product.nome}</p>
+              <p className="text-xs text-gray-500">Produto base do cardápio operacional.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex items-start gap-2 rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={visivelOnline}
+              onChange={(e) => setVisivelOnline(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+            />
+            <span>
+              <span className="block font-semibold text-gray-800">Publicado no ZeloMenu</span>
+              <span className="text-xs text-gray-500">Aparece no link do cardápio quando estiver disponível.</span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={pausado}
+              disabled={!visivelOnline}
+              onChange={(e) => setPausado(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30 disabled:cursor-not-allowed disabled:opacity-40"
+            />
+            <span>
+              <span className="block font-semibold text-gray-800">Pausar temporariamente</span>
+              <span className="text-xs text-gray-500">Mantém configurado, mas esconde do link por enquanto.</span>
+            </span>
+          </label>
+        </div>
+
+        <div>
+          <label className={LABEL_CLS}>Nome público</label>
+          <input
+            value={nomePublico}
+            onChange={(e) => setNomePublico(e.target.value)}
+            placeholder={product.nome}
+            className={INPUT_CLS}
+          />
+        </div>
+
+        <div>
+          <label className={LABEL_CLS}>Descrição pública</label>
+          <textarea
+            value={descricaoPublica}
+            onChange={(e) => setDescricaoPublica(e.target.value)}
+            placeholder="Ingredientes, tamanho ou detalhe importante para o cliente."
+            rows={3}
+            className={`${INPUT_CLS} min-h-24 resize-y`}
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
+          <div>
+            <label className={LABEL_CLS}>Foto (link)</label>
+            <input
+              value={fotoUrl}
+              onChange={(e) => setFotoUrl(e.target.value)}
+              placeholder="https://..."
+              className={INPUT_CLS}
+            />
+          </div>
+          <div>
+            <label className={LABEL_CLS}>Ordem</label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={ordem}
+              onChange={(e) => setOrdem(e.target.value)}
+              className={INPUT_CLS}
+            />
+          </div>
+        </div>
+
+        {err && <p className="text-xs text-red-600">{err}</p>}
+        <ActionBar onCancel={onClose} submitLabel="Salvar publicação" loading={loading} />
       </form>
     </ModalShell>
   );

@@ -8,6 +8,7 @@ import {
   FolderPlus,
   Globe2,
   Pencil,
+  PauseCircle,
   Plus,
   RefreshCw,
   Search,
@@ -15,16 +16,24 @@ import {
   Trash2,
   ExternalLink,
 } from 'lucide-react';
-import type { Categoria, ProdutoRow, Subcategoria } from '../../hooks/useCatalog';
+import type {
+  Categoria,
+  ProdutoRow,
+  Subcategoria,
+  ZeloMenuProductPublicationInput,
+  ZeloMenuProductPublicationRow,
+} from '../../hooks/useCatalog';
 import {
   getZeloMenuPublicationStatus,
   summarizeZeloMenuPublication,
+  type ZeloMenuPublicationProduct,
   type ZeloMenuPublicationStatus,
 } from '../../domain/zelomenuPublication';
 import {
   CategoriaModal,
   ConfirmDelete,
   ProductModal,
+  ProductPublicationModal,
   SubcategoriaModal,
 } from './catalog/CatalogModals';
 
@@ -36,6 +45,7 @@ interface Props {
   categorias: Categoria[];
   subcategorias: Subcategoria[];
   produtos: ProdutoRow[];
+  productPublications: Record<number, ZeloMenuProductPublicationRow>;
   refresh: () => Promise<void>;
   createCategoria: (input: { nome: string; ordem?: number }) => Promise<Categoria>;
   updateCategoria: (id: number, patch: { nome?: string; ordem?: number }) => Promise<void>;
@@ -61,12 +71,14 @@ interface Props {
     },
   ) => Promise<void>;
   deleteProduto: (id: number) => Promise<void>;
+  upsertProductPublication: (productId: number, patch: ZeloMenuProductPublicationInput) => Promise<ZeloMenuProductPublicationRow>;
 }
 
 type CatModalState =
   | { kind: 'categoria'; initial: Categoria | null }
   | { kind: 'subcategoria'; initial: Subcategoria | null; defaultCategoriaId: number | null }
   | { kind: 'produto'; initial: ProdutoRow | null; defaultCategoriaId: number | null; defaultSubcategoriaId: number | null }
+  | { kind: 'publication'; product: ProdutoRow }
   | null;
 
 type DeleteState =
@@ -74,6 +86,8 @@ type DeleteState =
   | { kind: 'subcategoria'; item: Subcategoria }
   | { kind: 'produto'; item: ProdutoRow }
   | null;
+
+type ProdutoWithPublication = ProdutoRow & ZeloMenuPublicationProduct;
 
 export const CatalogView = ({
   isAuthenticated,
@@ -83,6 +97,7 @@ export const CatalogView = ({
   categorias,
   subcategorias,
   produtos,
+  productPublications,
   refresh,
   createCategoria,
   updateCategoria,
@@ -93,6 +108,7 @@ export const CatalogView = ({
   createProduto,
   updateProduto,
   deleteProduto,
+  upsertProductPublication,
 }: Props) => {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -107,13 +123,17 @@ export const CatalogView = ({
 
   const tree = useMemo(() => buildTree(categorias, subcategorias, filtered), [categorias, subcategorias, filtered]);
   const orphanProducts = useMemo(() => filtered.filter((p) => p.id_categoria == null), [filtered]);
-  const publicationSummary = useMemo(() => summarizeZeloMenuPublication(produtos), [produtos]);
+  const publicationProducts = useMemo(
+    () => produtos.map((produto) => withPublication(produto, productPublications)),
+    [produtos, productPublications],
+  );
+  const publicationSummary = useMemo(() => summarizeZeloMenuPublication(publicationProducts), [publicationProducts]);
   const publicationIssues = useMemo(
-    () => produtos
+    () => publicationProducts
       .map((produto) => ({ produto, details: getZeloMenuPublicationStatus(produto) }))
       .filter((item) => item.details.issue !== null)
       .slice(0, 8),
-    [produtos],
+    [publicationProducts],
   );
 
   const toggleCat = (id: number) => {
@@ -173,6 +193,7 @@ export const CatalogView = ({
           onEditProduto={(produto) =>
             setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria })
           }
+          onConfigurePublication={(produto) => setModal({ kind: 'publication', product: produto })}
         />
 
         <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
@@ -257,6 +278,8 @@ export const CatalogView = ({
                     setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
                   }
                   onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
+                  productPublications={productPublications}
+                  onConfigurePublication={(p) => setModal({ kind: 'publication', product: p })}
                 />
               ))}
 
@@ -272,6 +295,8 @@ export const CatalogView = ({
                           setModal({ kind: 'produto', initial: p, defaultCategoriaId: null, defaultSubcategoriaId: null })
                         }
                         onDelete={() => setDel({ kind: 'produto', item: p })}
+                        publication={productPublications[p.id] ?? null}
+                        onConfigurePublication={() => setModal({ kind: 'publication', product: p })}
                       />
                     ))}
                   </div>
@@ -347,6 +372,17 @@ export const CatalogView = ({
         }}
       />
 
+      <ProductPublicationModal
+        open={modal?.kind === 'publication'}
+        product={modal?.kind === 'publication' ? modal.product : null}
+        initial={modal?.kind === 'publication' ? productPublications[modal.product.id] ?? null : null}
+        onClose={() => setModal(null)}
+        onSubmit={async (input) => {
+          if (modal?.kind !== 'publication') return;
+          await upsertProductPublication(modal.product.id, input);
+        }}
+      />
+
       <ConfirmDelete
         open={del !== null}
         title={
@@ -398,6 +434,16 @@ function buildTree(categorias: Categoria[], subcategorias: Subcategoria[], produ
   });
 }
 
+function withPublication(
+  produto: ProdutoRow,
+  productPublications: Record<number, ZeloMenuProductPublicationRow>,
+): ProdutoWithPublication {
+  return {
+    ...produto,
+    publication: productPublications[produto.id] ?? null,
+  };
+}
+
 type CategoriaCardProps = {
   node: TreeNode;
   expanded: boolean;
@@ -411,6 +457,8 @@ type CategoriaCardProps = {
   onDeleteSubcategoria: (sub: Subcategoria) => void;
   onEditProduto: (p: ProdutoRow) => void;
   onDeleteProduto: (p: ProdutoRow) => void;
+  productPublications: Record<number, ZeloMenuProductPublicationRow>;
+  onConfigurePublication: (p: ProdutoRow) => void;
 };
 
 const CategoriaCard: React.FC<CategoriaCardProps> = ({
@@ -426,6 +474,8 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
   onDeleteSubcategoria,
   onEditProduto,
   onDeleteProduto,
+  productPublications,
+  onConfigurePublication,
 }) => {
   const isOpen = expanded || forceExpanded;
   const totalProdutos = node.produtosDireto.length + node.subcategorias.reduce((acc, s) => acc + s.produtos.length, 0);
@@ -469,7 +519,13 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
         <div className="divide-y divide-gray-100">
           {node.produtosDireto.map((p) => (
             <div key={p.id} className="px-4 py-2">
-              <ProdutoRowItem produto={p} onEdit={() => onEditProduto(p)} onDelete={() => onDeleteProduto(p)} />
+              <ProdutoRowItem
+                produto={p}
+                publication={productPublications[p.id] ?? null}
+                onEdit={() => onEditProduto(p)}
+                onDelete={() => onDeleteProduto(p)}
+                onConfigurePublication={() => onConfigurePublication(p)}
+              />
             </div>
           ))}
 
@@ -496,7 +552,14 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
               </div>
               <div className="space-y-1.5">
                 {produtos.map((p) => (
-                  <ProdutoRowItem key={p.id} produto={p} onEdit={() => onEditProduto(p)} onDelete={() => onDeleteProduto(p)} />
+                  <ProdutoRowItem
+                    key={p.id}
+                    produto={p}
+                    publication={productPublications[p.id] ?? null}
+                    onEdit={() => onEditProduto(p)}
+                    onDelete={() => onDeleteProduto(p)}
+                    onConfigurePublication={() => onConfigurePublication(p)}
+                  />
                 ))}
                 {produtos.length === 0 && (
                   <p className="py-1 text-[12px] italic text-gray-400">
@@ -526,22 +589,39 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
 
 type ProdutoRowItemProps = {
   produto: ProdutoRow;
+  publication?: ZeloMenuProductPublicationRow | null;
   onEdit: () => void;
   onDelete: () => void;
+  onConfigurePublication: () => void;
 };
 
-const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({ produto, onEdit, onDelete }) => {
+const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
+  produto,
+  publication,
+  onEdit,
+  onDelete,
+  onConfigurePublication,
+}) => {
+  const publicationStatus = getZeloMenuPublicationStatus({ ...produto, publication: publication ?? null });
+
   return (
     <div className="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-50">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-gray-800">{produto.nome}</span>
           {produto.ocultar_no_pdv && (
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
               Oculto
             </span>
           )}
+          <PublicationStatusPill status={publicationStatus.status} />
         </div>
+        {(publication?.nome_publico || publication?.descricao_publica) && (
+          <p className="mt-0.5 truncate text-[11.5px] text-gray-500">
+            {publication.nome_publico || produto.nome}
+            {publication.descricao_publica ? ` · ${publication.descricao_publica}` : ''}
+          </p>
+        )}
       </div>
 
       <span className="font-mono text-sm text-gray-700">R$ {produto.preco.toFixed(2)}</span>
@@ -561,6 +641,9 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({ produto, onEdit, onDele
       )}
 
       <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <IconBtn title="Publicação no ZeloMenu" onClick={onConfigurePublication}>
+          <Globe2 className="h-3.5 w-3.5" />
+        </IconBtn>
         <IconBtn title="Editar produto" onClick={onEdit}>
           <Pencil className="h-3.5 w-3.5" />
         </IconBtn>
@@ -575,8 +658,9 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({ produto, onEdit, onDele
 type ZeloMenuPublicationPanelProps = {
   totalProdutos: number;
   summary: ReturnType<typeof summarizeZeloMenuPublication>;
-  issues: Array<{ produto: ProdutoRow; details: ReturnType<typeof getZeloMenuPublicationStatus> }>;
+  issues: Array<{ produto: ProdutoWithPublication; details: ReturnType<typeof getZeloMenuPublicationStatus> }>;
   onEditProduto: (produto: ProdutoRow) => void;
+  onConfigurePublication: (produto: ProdutoRow) => void;
 };
 
 const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
@@ -584,6 +668,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
   summary,
   issues,
   onEditProduto,
+  onConfigurePublication,
 }) => {
   const readyPercent = totalProdutos > 0 ? Math.round((summary.published / totalProdutos) * 100) : 0;
 
@@ -603,9 +688,10 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-4">
-        <PublicationMetric label="Prontos" value={summary.published} detail={`${readyPercent}% do cardápio`} tone="published" />
-        <PublicationMetric label="Inativos" value={summary.hidden} detail="Ocultos no cardápio atual" tone="hidden" />
+      <div className="mt-5 grid gap-3 md:grid-cols-5">
+        <PublicationMetric label="Publicados" value={summary.published} detail={`${readyPercent}% do cardápio`} tone="published" />
+        <PublicationMetric label="Não publicados" value={summary.unpublished} detail="Fora do link" tone="unpublished" />
+        <PublicationMetric label="Pausados" value={summary.paused} detail="Ocultos por agora" tone="paused" />
         <PublicationMetric label="Sem estoque" value={summary.outOfStock} detail="Bloqueados pelo estoque" tone="out_of_stock" />
         <PublicationMetric label="Sem categoria" value={summary.missingCategory} detail="Precisam de organização" tone="missing_category" />
       </div>
@@ -630,7 +716,13 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
               <button
                 key={produto.id}
                 type="button"
-                onClick={() => onEditProduto(produto)}
+                onClick={() => {
+                  if (details.status === 'unpublished' || details.status === 'paused') {
+                    onConfigurePublication(produto);
+                  } else {
+                    onEditProduto(produto);
+                  }
+                }}
                 className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
               >
                 <PublicationStatusPill status={details.status} />
@@ -688,16 +780,24 @@ function PublicationStatusPill({ status }: { status: ZeloMenuPublicationStatus }
 
 function PublicationStatusIcon({ status }: { status: ZeloMenuPublicationStatus }) {
   if (status === 'published') return <CircleCheck className="h-3.5 w-3.5" />;
+  if (status === 'unpublished') return <Globe2 className="h-3.5 w-3.5" />;
+  if (status === 'paused') return <PauseCircle className="h-3.5 w-3.5" />;
   if (status === 'hidden') return <EyeOff className="h-3.5 w-3.5" />;
   return <AlertCircle className="h-3.5 w-3.5" />;
 }
 
 function publicationTone(status: ZeloMenuPublicationStatus): { label: string; className: string } {
   if (status === 'published') {
-    return { label: 'Pronto', className: 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]' };
+    return { label: 'Publicado', className: 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]' };
+  }
+  if (status === 'unpublished') {
+    return { label: 'Não publicado', className: 'bg-gray-100 text-gray-600' };
+  }
+  if (status === 'paused') {
+    return { label: 'Pausado', className: 'bg-blue-50 text-blue-700' };
   }
   if (status === 'hidden') {
-    return { label: 'Inativo', className: 'bg-gray-100 text-gray-600' };
+    return { label: 'Inativo', className: 'bg-slate-100 text-slate-700' };
   }
   if (status === 'out_of_stock') {
     return { label: 'Sem estoque', className: 'bg-red-50 text-red-700' };

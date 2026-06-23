@@ -752,14 +752,29 @@ function ProductRow({
 }) {
   return (
     <div className="grid gap-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-      <div className="min-w-0">
-        <p className="truncate text-[14px] font-medium">{product.name}</p>
-        <p className="mt-0.5 text-[12px] text-[var(--color-ink-muted)]">
-          {toBRL(product.price)}
-          {product.stockControlled && typeof product.stockQuantity === 'number'
-            ? ` • estoque ${product.stockQuantity}`
-            : ''}
-        </p>
+      <div className="flex min-w-0 gap-3">
+        {product.photoUrl ? (
+          <img
+            src={product.photoUrl}
+            alt={product.name}
+            loading="lazy"
+            className="h-14 w-14 shrink-0 rounded-md object-cover"
+          />
+        ) : null}
+        <div className="min-w-0">
+          <p className="truncate text-[14px] font-medium">{product.name}</p>
+          {product.description ? (
+            <p className="mt-0.5 line-clamp-2 text-[12px] leading-4 text-[var(--color-ink-muted)]">
+              {product.description}
+            </p>
+          ) : null}
+          <p className="mt-0.5 text-[12px] text-[var(--color-ink-muted)]">
+            {toBRL(product.price)}
+            {product.stockControlled && typeof product.stockQuantity === 'number'
+              ? ` • estoque ${product.stockQuantity}`
+              : ''}
+          </p>
+        </div>
       </div>
       <button
         type="button"

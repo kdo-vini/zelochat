@@ -121,6 +121,14 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69n (2026-06-23) — Publicação real do ZeloMenu no Cardápio
+
+- ✅ ZLM-201 parcial — `useCatalog` passou a carregar e gravar `zelomenu_product_publications`, mantendo a separação entre produto base e publicação online e limpando a publicação do estado local quando um produto é excluído — `src/hooks/useCatalog.ts:96`, `src/hooks/useCatalog.ts:318`
+- ✅ ZLM-201 parcial — tela `Cardápio` agora mostra estados reais `Publicado`, `Não publicado`, `Pausado`, `Inativo`, `Sem estoque` e `Sem categoria`; o operador abre a publicação por produto e configura publicar/despublicar, pausa, nome público, descrição, foto por link e ordem — `src/components/views/CatalogView.tsx:126`, `src/components/views/catalog/CatalogModals.tsx:436`
+- ✅ ZLM-201 parcial — carrinho público e IA passam a receber catálogo já resolvido pela publicação: só item publicado e disponível fica `available`, nome/descrição/foto/ordem vêm do overlay e preço base continua em `produtos.preco` — `server/configStore.ts:544`, `src/domain/zelomenuPublication.ts:157`, `src/pages/ZeloMenuCartPage.tsx:752`
+- ✅ Validação ZLM-201 — `npm run lint`, `npm run build`, `node --import tsx tests/zelomenuPublication.test.ts` e `node --import tsx tests/zelomenuCart.test.ts` passaram; `npm test` rodou e segue somente com a falha conhecida `tests/auditFixGuardrails.test.ts` → "webhook has explicit rollout bypass name" — `tests/zelomenuPublication.test.ts:1`
+- 🟨 ZLM-201 restante — modifiers/adicionais/variações (`zelomenu_modifier_groups`/`zelomenu_modifier_options`) e ownership/upload de imagem ainda não entraram nesta fatia.
+
 ### Sprint 69l (2026-06-23) — Prontidão de publicação do ZeloMenu
 
 - ✅ ZLM-201 parcial — criado painel de "Publicação no ZeloMenu" dentro do Cardápio, mostrando quantos produtos estão prontos para o link, quantos estão inativos, sem estoque ou sem categoria, e uma lista acionável para editar os itens com atenção — `src/components/views/CatalogView.tsx:598`

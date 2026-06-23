@@ -4,6 +4,9 @@ export type ZeloMenuCatalogProduct = {
   name: string;
   price: number;
   available: boolean;
+  description?: string | null;
+  photoUrl?: string | null;
+  sortOrder?: number;
   unitBased?: boolean;
   stockControlled?: boolean;
   stockQuantity?: number;
