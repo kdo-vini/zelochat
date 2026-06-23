@@ -38,6 +38,82 @@ export interface AiHealthReport {
   blockedDatesCount: number;
   safeSummaryStatus: AiHealthSummaryStatus;
 }
+export interface ZeloMenuReviewSession {
+  id: string;
+  orderingId: string;
+  state: 'cart_open' | 'confirmed_waiting_review' | 'confirmed_waiting_payment' | 'needs_customer_adjustment' | 'accepted' | 'rejected' | 'cancelled' | 'archived';
+  revision: number;
+  customer: {
+    name: string | null;
+    phone: string | null;
+  };
+  cart: {
+    items: Array<{
+      productName: string;
+      quantity: number;
+      unitPrice: number;
+      lineTotal: number;
+      notes?: string | null;
+    }>;
+    observations: string | null;
+  };
+  fulfillment: {
+    type: 'pickup' | 'delivery';
+    pickupDate: string | null;
+    pickupTime: string | null;
+    deliveryAddress: string | null;
+    deliveryNeighborhood: string | null;
+    deliveryFee: number;
+  };
+  pricing: {
+    subtotal: number;
+    deliveryFee: number;
+    total: number;
+  };
+  payment: {
+    declaredMethod: string | null;
+    pixReceiptRequired: boolean;
+    pixReceiptApproved: boolean;
+  };
+  acceptance: {
+    acceptedAt: string | null;
+    acceptedByUserId: string | null;
+    acceptedByName: string | null;
+  };
+  productionOrder: {
+    id: string | null;
+    shortId: string | null;
+  };
+  confirmedAt: string | null;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+export interface ZeloMenuReviewRevalidation {
+  checkedAt: string;
+  ok: boolean;
+  issues: Array<{
+    code: string;
+    message: string;
+    productName?: string;
+    requestedQuantity?: number;
+    availableQuantity?: number | null;
+    previousUnitPrice?: number;
+    currentUnitPrice?: number;
+  }>;
+}
+export interface ZeloMenuReviewResponse {
+  session: ZeloMenuReviewSession;
+  revalidation: ZeloMenuReviewRevalidation | null;
+  review: {
+    canAccept: boolean;
+    blockingReason: string | null;
+  };
+}
+export interface ZeloMenuReviewAcceptResponse extends ZeloMenuReviewResponse {
+  accepted: boolean;
+  alreadyAccepted: boolean;
+  customerMessage: string | null;
+}
 export interface ManagerAssistantStatePatch {
   blockedDates?: { date: string; reason: string }[];
   dailyContext?: { id: string; text: string }[];
@@ -121,6 +197,32 @@ export async function getSession(token: string, jid: string): Promise<ChatSessio
 
   const body = await parseResponse<SessionResponse & { hasMore?: boolean }>(response);
   return { ...body.session, hasMore: body.hasMore ?? false };
+}
+
+export async function getZeloMenuReviewSession(
+  token: string,
+  input: { remoteJid: string; shortId?: string | null },
+): Promise<ZeloMenuReviewResponse> {
+  const params = new URLSearchParams({ remoteJid: input.remoteJid });
+  if (input.shortId?.trim()) params.set('shortId', input.shortId.trim());
+  const response = await apiFetch(
+    apiUrl(`/api/zelomenu/cart-sessions/review?${params.toString()}`),
+    { headers: authHeaders(token) },
+  );
+  return parseResponse<ZeloMenuReviewResponse>(response);
+}
+
+export async function acceptZeloMenuReviewSession(
+  token: string,
+  sessionId: string,
+  acceptedByName?: string | null,
+): Promise<ZeloMenuReviewAcceptResponse> {
+  const response = await apiFetch(apiUrl(`/api/zelomenu/cart-sessions/${encodeURIComponent(sessionId)}/accept`), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ acceptedByName: acceptedByName ?? null }),
+  });
+  return parseResponse<ZeloMenuReviewAcceptResponse>(response);
 }
 
 export async function getOlderMessages(

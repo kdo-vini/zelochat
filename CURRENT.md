@@ -37,10 +37,10 @@ Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA n�
 Ver [[AI_BACKEND_ROADMAP]] para backlog priorizado. Novo foco estratégico aberto em [[ZELOMENU_LINEAR_PLAN]]: ZeloMenu + novo motor de pedidos do ZeloChat, com integração futura ZeloPDV.
 
 Fatias sugeridas:
-1. `ZLM-104` — aceite manual no ZeloChat, materializando produção só depois da conferência humana
-2. `ZLM-205` — rollout de billing/planos/flags compartilhadas sem quebrar pricing nem clientes legados
-3. Áudio (PTT) na IA — envio automático de mensagens de voz
-4. Estados vazios/polimentos de pedidos novos nas superfícies Chat/Menu
+1. `ZLM-105` — recuperação simples de carrinho abandonado
+2. `ZLM-106` — impressão no aceite via Zelo Impressão
+3. `ZLM-205` — rollout de billing/planos/flags compartilhadas sem quebrar pricing nem clientes legados
+4. Áudio (PTT) na IA — envio automático de mensagens de voz
 
 ## Decisões recentes
 
@@ -52,6 +52,7 @@ Fatias sugeridas:
 - ZLM-101 fechado (2026-06-22): além da base server-side do carrinho em `zelomenu_cart_sessions` + `zelomenu_cart_tokens`, a IA agora abre o link novo do ZeloMenu no fim da tool `criar_pedido`, com fallback explícito para o resumo legado de `zelochat_pending_orders` se a sessão nova falhar. Próxima fatia recomendada: `ZLM-104`.
 - ZLM-102 fechado (2026-06-22): a UI pública inicial do carrinho já está em `/menu/carrinho/:token`, consumindo os endpoints públicos do backend novo, com catálogo editável, retirada/entrega, pagamento, observações, aviso de Pix e tratamento de link `stale`. Próxima fatia recomendada: `ZLM-103`.
 - ZLM-103 fechado (2026-06-22): o carrinho público agora confirma via `/public-api/zelomenu/cart/:token/confirm`, revalida antes de fechar, move a sessão para `confirmed_waiting_review` ou `confirmed_waiting_payment`, grava a mensagem no chat e envia o próximo passo no WhatsApp sem criar pedido operacional falso em `zelochat_orders`. Próxima fatia recomendada: integrar a IA para emitir o link novo e depois `ZLM-104`.
+- ZLM-104 fechado (2026-06-22): o Chat do ZeloChat agora revisa e aceita o pedido do cardápio dentro da própria conversa, grava quem aceitou e quando no metadata da sessão, revalida antes do aceite e só então materializa `zelochat_orders`, envia a confirmação final ao cliente e arquiva a sessão de carrinho para liberar o próximo pedido. Próxima fatia recomendada: `ZLM-105`.
 - Hotfix de billing/share-table (2026-06-11): acesso do ZeloChat para `chat`/`bundle` agora usa a expiração efetiva mais longa entre `current_period_end` e `manually_extended_until`. Isso evita que uma extensão manual já vencida derrube um bundle renovado via AbacatePay no ZeloPDV; caso real: Casa dos Salgados. Coberto por `tests/subscriptionExpiry.test.ts`.
 - Botão "Atualizar agora" agora depende de headers `no-store` no shell SPA e limpa `?appVersion=...` após carregar; assets Vite hashados continuam em cache longo (2026-06-01)
 - Comportamento geral da IA documentado no Obsidian: confirmações, observações, pending orders, hard buttons, emojis e estoque agora têm suíte determinística (`tests/aiTurnDecision.test.ts`) antes do prompt (2026-06-01)

@@ -121,6 +121,13 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69i (2026-06-22) — Aceite manual do ZeloMenu no Chat
+
+- ✅ ZLM-104 — ZeloChat ganhou revisão autenticada do pedido do cardápio por conversa (`GET /api/zelomenu/cart-sessions/review`) e ação de aceite (`POST /api/zelomenu/cart-sessions/:id/accept`) sem depender do fluxo legado de `zelochat_pending_orders` — `server/router.ts:2803`, `server/zelomenuCartSessions.ts:946`
+- ✅ ZLM-104 — o aceite agora revalida antes de materializar produção, bloqueia Pix pendente/ajuste necessário, grava `acceptedAt` + `acceptedBy*` + `productionOrderId` no metadata da sessão e arquiva o carrinho aceito para liberar o próximo pedido da conversa — `server/zelomenuCartSessions.ts:988`
+- ✅ ZLM-104 — o Chat ganhou modal de revisão/aceite em cima do card “Pedido recebido pelo cardápio”, sem jogar o operador para o Kanban cedo demais; a confirmação final ao cliente passa a usar copy própria de “pedido confirmado” já em produção — `src/components/views/ChatView.tsx:1016`, `src/domain/chatFeedback.ts:173`, `src/domain/zelomenuCart.ts:200`
+- ✅ ZLM-104 — cobertura ampliada com guardrail do review flow e mensagem final de aceite; `npm run lint` e `npm run build` passaram, `npm test` segue falhando só no drift conhecido de `tests/auditFixGuardrails.test.ts` sobre rollout de webhook — `tests/zelomenuReviewGuardrails.test.ts:1`, `tests/zelomenuCart.test.ts:121`
+
 ### Sprint 69h (2026-06-22) — IA passa a abrir o carrinho novo do ZeloMenu
 
 - ✅ ZLM-101 — a tool `criar_pedido` agora abre `zelomenu_cart_sessions` no fluxo `whatsapp_order`, gera link absoluto de revisão/confirmação e envia o handoff novo ao cliente pelo WhatsApp — `server/ai.ts:4248`, `src/domain/zelomenuCart.ts:111`

@@ -115,7 +115,14 @@ import {
 } from './instanceManager.js';
 import { createCheckoutSession, createPortalSession, syncFromStripe, changePlan, setStripeCancelAtPeriodEnd } from './billing.js';
 import { parseScheduleFromDescription } from './scheduleParser.js';
-import { confirmPublicCartSession, getPublicCartSession, openWhatsAppCartSession, updatePublicCartSession } from './zelomenuCartSessions.js';
+import {
+  acceptWhatsAppCartReviewSession,
+  confirmPublicCartSession,
+  getPublicCartSession,
+  getWhatsAppCartReviewSession,
+  openWhatsAppCartSession,
+  updatePublicCartSession,
+} from './zelomenuCartSessions.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -956,6 +963,21 @@ function sendZeloMenuCartError(res: Response, error: unknown): void {
 
   if (message === 'INVALID_REMOTE_JID') {
     res.status(400).json({ error: 'Conversa inválida para abrir o carrinho.' });
+    return;
+  }
+
+  if (message === 'REVIEW_NOT_READY') {
+    res.status(409).json({ error: 'Este pedido ainda não está pronto para entrar na produção.' });
+    return;
+  }
+
+  if (message === 'REVIEW_NEEDS_ADJUSTMENT') {
+    res.status(409).json({ error: 'O pedido precisa de ajuste antes do aceite. Revise estoque, preço ou agenda.' });
+    return;
+  }
+
+  if (message === 'PIX_RECEIPT_PENDING') {
+    res.status(409).json({ error: 'Ainda falta o comprovante Pix antes do aceite.' });
     return;
   }
 
@@ -2774,6 +2796,43 @@ router.post('/api/zelomenu/cart-sessions/whatsapp', async (req: Request, res: Re
       source: req.body?.source === 'operator' ? 'operator' : 'ai_prebuilt',
     });
     res.status(201).json(session);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.get('/api/zelomenu/cart-sessions/review', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const payload = await getWhatsAppCartReviewSession({
+      empresaId,
+      remoteJid: String(req.query.remoteJid ?? ''),
+      shortId: typeof req.query.shortId === 'string' ? req.query.shortId : null,
+    });
+    if (!payload) {
+      res.status(404).json({ error: 'Pedido do cardápio não encontrado nesta conversa.' });
+      return;
+    }
+    res.json(payload);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.post('/api/zelomenu/cart-sessions/:id/accept', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const payload = await acceptWhatsAppCartReviewSession({
+      empresaId,
+      sessionId: req.params.id,
+      acceptedByUserId: userId,
+      acceptedByName: req.body?.acceptedByName,
+    });
+    if (!payload) {
+      res.status(404).json({ error: 'Pedido do cardápio não encontrado nesta conversa.' });
+      return;
+    }
+    res.json(payload);
   } catch (error) {
     sendZeloMenuCartError(res, error);
   }

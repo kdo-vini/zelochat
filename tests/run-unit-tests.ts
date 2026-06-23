@@ -25,6 +25,7 @@ const tests = [
   'tests/aiTurnDecision.test.ts',
   'tests/routerWebhookGuardrails.test.ts',
   'tests/zelomenuCart.test.ts',
+  'tests/zelomenuReviewGuardrails.test.ts',
   'tests/updateReloadGuardrails.test.ts',
   'tests/billingPix.test.ts',
   'tests/subscriptionExpiry.test.ts',

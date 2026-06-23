@@ -26,6 +26,11 @@ export type ChatEventCardData = {
   sendFailed?: boolean;
 };
 
+type ParseChatEventContext = {
+  customerPhone?: string;
+  remoteJid?: string;
+};
+
 function stripSendFailurePrefix(text: string): { cleanText: string; sendFailed: boolean } {
   const marker = '[FALHA NO ENVIO — reenviar manualmente]';
   if (!text.startsWith(marker)) return { cleanText: text.trim(), sendFailed: false };
@@ -63,7 +68,7 @@ function parseMoney(value: string): number | undefined {
 
 function parseOrderContextFromLines(
   lines: string[],
-  customerPhone?: string,
+  context?: ParseChatEventContext,
 ): OrderFocusRequest | undefined {
   const joined = lines.join('\n');
   const shortIdMatch = joined.match(/#([A-Z0-9]{6,8})/i);
@@ -84,7 +89,8 @@ function parseOrderContextFromLines(
   const focusRequest: OrderFocusRequest = {
     source: 'chat',
     shortId: shortIdMatch?.[1]?.toUpperCase(),
-    customerPhone,
+    remoteJid: context?.remoteJid,
+    customerPhone: context?.customerPhone,
     pickupDate,
     pickupTime: scheduleMatch?.[2],
     total: totalMatch ? parseMoney(totalMatch[1]) : undefined,
@@ -98,13 +104,13 @@ function parseOrderContextFromLines(
 function parsePendingSummary(
   rawText: string,
   prefix: string,
-  customerPhone?: string,
+  context?: ParseChatEventContext,
 ): Pick<ChatEventCardData, 'lines' | 'focusRequest'> {
   const summary = stripPrefix(rawText, prefix);
   const lines = splitNonEmptyLines(summary);
   return {
     lines,
-    focusRequest: parseOrderContextFromLines(lines, customerPhone),
+    focusRequest: parseOrderContextFromLines(lines, context),
   };
 }
 
@@ -122,7 +128,7 @@ function getToolCallNames(message: ChatMessage): string[] {
 
 export function parseChatEventCard(
   message: ChatMessage,
-  customerPhone?: string,
+  context?: ParseChatEventContext,
 ): ChatEventCardData | null {
   if (message.kind !== 'text') return null;
 
@@ -143,7 +149,7 @@ export function parseChatEventCard(
       subtitle: 'A IA montou o resumo neste ponto da conversa. Veja os cards seguintes para o status atual.',
       tone: 'pending',
       lines,
-      focusRequest: parseOrderContextFromLines(lines, customerPhone),
+      focusRequest: parseOrderContextFromLines(lines, context),
       sendFailed,
     };
   }
@@ -152,7 +158,7 @@ export function parseChatEventCard(
     const lines = splitNonEmptyLines(cleanText)
       .slice(1)
       .filter((line) => !/^Qualquer dúvida/i.test(line));
-    const focusRequest = parseOrderContextFromLines(splitNonEmptyLines(cleanText), customerPhone);
+    const focusRequest = parseOrderContextFromLines(splitNonEmptyLines(cleanText), context);
     return {
       kind: 'order_confirmed',
       title: sendFailed
@@ -173,7 +179,7 @@ export function parseChatEventCard(
   if (message.role === 'assistant' && cleanText.startsWith('✅ Pedido recebido pelo cardápio!')) {
     const lines = splitNonEmptyLines(cleanText)
       .slice(1);
-    const focusRequest = parseOrderContextFromLines(splitNonEmptyLines(cleanText), customerPhone);
+    const baseFocusRequest = parseOrderContextFromLines(splitNonEmptyLines(cleanText), context);
     const waitingPayment = /comprovante do pix/i.test(cleanText);
     return {
       kind: 'zelomenu_order_received',
@@ -185,10 +191,13 @@ export function parseChatEventCard(
         : waitingPayment
           ? 'Aguardando comprovante Pix antes da conferência da loja.'
           : 'Aguardando conferência da loja. Ainda não entrou na produção.',
-      badge: focusRequest?.shortId ? `#${focusRequest.shortId}` : undefined,
+      badge: baseFocusRequest?.shortId ? `#${baseFocusRequest.shortId}` : undefined,
       tone: sendFailed ? 'warning' : waitingPayment ? 'warning' : 'pending',
       lines,
-      focusRequest,
+      focusRequest: baseFocusRequest?.shortId
+        ? { ...baseFocusRequest, source: 'zelomenu_review' }
+        : undefined,
+      actionLabel: baseFocusRequest?.shortId ? 'Revisar pedido' : undefined,
       sendFailed,
     };
   }
@@ -200,15 +209,15 @@ export function parseChatEventCard(
       subtitle: 'Esse toque do cliente não abriu um pedido novo. O sistema só confirmou o que já existia.',
       tone: 'info',
       lines: splitNonEmptyLines(cleanText),
-      focusRequest: customerPhone ? { source: 'chat', customerPhone } : undefined,
-      actionLabel: customerPhone ? 'Conferir pedido' : undefined,
+      focusRequest: context?.customerPhone ? { source: 'chat', customerPhone: context.customerPhone } : undefined,
+      actionLabel: context?.customerPhone ? 'Conferir pedido' : undefined,
     };
   }
 
   if (message.role !== 'tool' || !cleanText) return null;
 
   if (cleanText.startsWith('Aguardando confirmação do cliente:')) {
-    const parsed = parsePendingSummary(cleanText, 'Aguardando confirmação do cliente:', customerPhone);
+    const parsed = parsePendingSummary(cleanText, 'Aguardando confirmação do cliente:', context);
     return {
       kind: 'pending_confirmation',
       title: 'Resumo enviado para confirmação',
@@ -219,7 +228,7 @@ export function parseChatEventCard(
   }
 
   if (cleanText.startsWith('Aguardando confirmação por texto:')) {
-    const parsed = parsePendingSummary(cleanText, 'Aguardando confirmação por texto:', customerPhone);
+    const parsed = parsePendingSummary(cleanText, 'Aguardando confirmação por texto:', context);
     return {
       kind: 'pending_text_confirmation',
       title: 'Resumo enviado para confirmação por texto',
@@ -230,7 +239,7 @@ export function parseChatEventCard(
   }
 
   if (cleanText.startsWith('Aguardando comprovante Pix:')) {
-    const parsed = parsePendingSummary(cleanText, 'Aguardando comprovante Pix:', customerPhone);
+    const parsed = parsePendingSummary(cleanText, 'Aguardando comprovante Pix:', context);
     return {
       kind: 'pending_pix_receipt',
       title: 'Comprovante Pix solicitado',

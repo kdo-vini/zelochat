@@ -148,6 +148,38 @@ function formatDateBR(value: string | null): string {
   return `${day}/${month}/${year}`;
 }
 
+function buildCartSummaryLines(input: {
+  cart: ZeloMenuCartSnapshot;
+  fulfillment: ZeloMenuFulfillmentSnapshot;
+  pricing: ZeloMenuPricingSnapshot;
+  payment: ZeloMenuPaymentSnapshot;
+}): {
+  itemsLine: string;
+  deliveryLine: string;
+  observationsLine: string;
+  scheduleLine: string;
+  paymentLine: string;
+  totalLine: string;
+} {
+  const itemsLine = input.cart.items.length > 0
+    ? input.cart.items.map((item) => `${item.quantity}x ${item.productName}`).join(', ')
+    : 'Itens a revisar';
+  const scheduleLabel = input.fulfillment.type === 'delivery' ? '🛵 Entrega' : '📅 Retirada';
+  const scheduleLine = `${scheduleLabel}: ${formatDateBR(input.fulfillment.pickupDate)}${input.fulfillment.pickupTime ? ` às ${input.fulfillment.pickupTime}` : ''}`;
+  const deliveryLine = input.fulfillment.type === 'delivery' && input.fulfillment.deliveryAddress
+    ? `\n📍 ${input.fulfillment.deliveryAddress}${input.fulfillment.deliveryNeighborhood ? `\n🏘️ Bairro: ${input.fulfillment.deliveryNeighborhood}` : ''}`
+    : '';
+  const observationsLine = input.cart.observations ? `\n📝 Obs: ${input.cart.observations}` : '';
+  return {
+    itemsLine,
+    deliveryLine,
+    observationsLine,
+    scheduleLine,
+    paymentLine: `💳 Pagamento: ${input.payment.declaredMethod || 'Não informado'}`,
+    totalLine: `💰 Total: ${formatBRL(input.pricing.total)}`,
+  };
+}
+
 export function buildConfirmedCartCustomerMessage(input: {
   orderingId: string;
   state: Extract<ZeloMenuCartState, 'confirmed_waiting_review' | 'confirmed_waiting_payment'>;
@@ -157,20 +189,24 @@ export function buildConfirmedCartCustomerMessage(input: {
   payment: ZeloMenuPaymentSnapshot;
 }): string {
   const shortId = input.orderingId.slice(0, 8).toUpperCase();
-  const itemsList = input.cart.items.length > 0
-    ? input.cart.items.map((item) => `${item.quantity}x ${item.productName}`).join(', ')
-    : 'Itens a revisar';
-  const scheduleLabel = input.fulfillment.type === 'delivery' ? '🛵 Entrega' : '📅 Retirada';
-  const scheduleLine = `${scheduleLabel}: ${formatDateBR(input.fulfillment.pickupDate)}${input.fulfillment.pickupTime ? ` às ${input.fulfillment.pickupTime}` : ''}`;
-  const deliveryLine = input.fulfillment.type === 'delivery' && input.fulfillment.deliveryAddress
-    ? `\n📍 ${input.fulfillment.deliveryAddress}${input.fulfillment.deliveryNeighborhood ? `\n🏘️ Bairro: ${input.fulfillment.deliveryNeighborhood}` : ''}`
-    : '';
-  const observationsLine = input.cart.observations ? `\n📝 Obs: ${input.cart.observations}` : '';
+  const summary = buildCartSummaryLines(input);
   const nextStep = input.state === 'confirmed_waiting_payment'
     ? 'Agora envie o comprovante do Pix aqui no WhatsApp para a loja conferir.'
     : 'A loja vai conferir o pedido e te chamar por aqui com o próximo passo.';
 
-  return `✅ Pedido recebido pelo cardápio! Número: *#${shortId}*\n\n📦 ${itemsList}${deliveryLine}${observationsLine}\n${scheduleLine}\n💳 Pagamento: ${input.payment.declaredMethod || 'Não informado'}\n💰 Total: ${formatBRL(input.pricing.total)}\n\n${nextStep}`;
+  return `✅ Pedido recebido pelo cardápio! Número: *#${shortId}*\n\n📦 ${summary.itemsLine}${summary.deliveryLine}${summary.observationsLine}\n${summary.scheduleLine}\n${summary.paymentLine}\n${summary.totalLine}\n\n${nextStep}`;
+}
+
+export function buildAcceptedCartCustomerMessage(input: {
+  orderId: string;
+  cart: ZeloMenuCartSnapshot;
+  fulfillment: ZeloMenuFulfillmentSnapshot;
+  pricing: ZeloMenuPricingSnapshot;
+  payment: ZeloMenuPaymentSnapshot;
+}): string {
+  const shortId = input.orderId.slice(0, 8).toUpperCase();
+  const summary = buildCartSummaryLines(input);
+  return `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${summary.itemsLine}${summary.deliveryLine}${summary.observationsLine}\n${summary.scheduleLine}\n${summary.paymentLine}\n${summary.totalLine}\n\nSeu pedido já entrou na produção da loja. Qualquer dúvida, fale com a gente por aqui!`;
 }
 
 export function buildWhatsAppCartLinkMessage(input: {

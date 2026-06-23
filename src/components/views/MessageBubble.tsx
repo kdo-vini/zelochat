@@ -512,6 +512,7 @@ export interface MessageBubbleProps {
   isLastInGroup: boolean;
   profilePicUrl?: string;
   customerName: string;
+  sessionRemoteJid?: string;
   sessionCustomerPhone?: string;
   onDelete?: (message: ChatMessage) => void | Promise<void>;
   isDeleting?: boolean;
@@ -526,6 +527,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   isLastInGroup,
   profilePicUrl,
   customerName,
+  sessionRemoteJid,
   sessionCustomerPhone,
   onDelete,
   isDeleting = false,
@@ -549,7 +551,10 @@ const MessageBubbleInner = React.memo(function MessageBubble({
 
   const parsed = parseStructuredMessage(message.content ?? '');
   const displayText = parsed.text ?? '';
-  const eventCard = parseChatEventCard(message, sessionCustomerPhone);
+  const eventCard = parseChatEventCard(message, {
+    customerPhone: sessionCustomerPhone,
+    remoteJid: sessionRemoteJid,
+  });
 
   const deleteMenuButton = isOutgoing && message.waMessageId && onDelete ? (
     <div className="absolute right-1 top-1 z-30">

@@ -1703,7 +1703,7 @@ Resultado (2026-06-22):
 
 #### ZLM-104 — Aceite manual no ZeloChat
 
-Status: Todo  
+Status: Done  
 Type: Prototype  
 Depends on: ZLM-103  
 Owner: Frontend/Backend  
@@ -1718,6 +1718,11 @@ Aceite:
 - Pedido só entra em produção após aceite.
 - Ação fica auditável.
 - Estado muda em tempo real na UI.
+
+Resultado (2026-06-22):
+- O ZeloChat ganhou revisão autenticada do pedido do cardápio por conversa e ação explícita de aceite no próprio Chat.
+- O aceite revalida novamente antes de materializar produção, bloqueia Pix pendente e inconsistências de estoque/agenda e grava `acceptedAt`/`acceptedBy*`/`productionOrderId` no metadata da sessão.
+- Só depois do aceite humano o sistema cria a row real em `zelochat_orders`, envia a confirmação final ao cliente e arquiva a sessão aceita para liberar o próximo pedido da conversa.
 
 #### ZLM-105 — Recuperação simples de carrinho abandonado
 

@@ -58,7 +58,14 @@ import {
 import type { ChatAttachment, ChatListFilter, ChatMessage, ChatSession, Order, QuickResponse, Tag } from '../../types';
 import { useCustomerStats } from '../../hooks/useCustomerStats';
 import { useTags } from '../../hooks/useTags';
-import { getSessionTagsMap, applyTagToSession, removeTagFromSession } from '../../services/waApi';
+import {
+  acceptZeloMenuReviewSession,
+  applyTagToSession,
+  getSessionTagsMap,
+  getZeloMenuReviewSession,
+  removeTagFromSession,
+  type ZeloMenuReviewResponse,
+} from '../../services/waApi';
 import { MessageBubble } from './MessageBubble';
 import { EscaladoBadge } from '../shared/EscaladoBadge';
 import { SlaTimer } from '../shared/SlaTimer';
@@ -125,6 +132,41 @@ function orderStatusBadge(status: Order['status']): { label: string; bg: string;
     case 'out_for_delivery': return { label: 'Saiu p/ entrega',    bg: '#ede9fe', color: '#5b21b6' };
     case 'delivered':        return { label: 'Entregue',           bg: '#f3f4f6', color: '#6b7280' };
   }
+}
+
+function formatCurrencyBRL(value: number): string {
+  return `R$ ${value.toFixed(2).replace('.', ',')}`;
+}
+
+function reviewStateBadge(state: ZeloMenuReviewResponse['session']['state']): { label: string; className: string } {
+  switch (state) {
+    case 'confirmed_waiting_review':
+      return { label: 'Aguardando conferência', className: 'bg-amber-100 text-amber-800' };
+    case 'confirmed_waiting_payment':
+      return { label: 'Aguardando Pix', className: 'bg-orange-100 text-orange-800' };
+    case 'needs_customer_adjustment':
+      return { label: 'Precisa de ajuste', className: 'bg-rose-100 text-rose-800' };
+    case 'accepted':
+      return { label: 'Na produção', className: 'bg-emerald-100 text-emerald-800' };
+    case 'cancelled':
+      return { label: 'Cancelado', className: 'bg-slate-100 text-slate-700' };
+    case 'rejected':
+      return { label: 'Recusado', className: 'bg-rose-100 text-rose-800' };
+    default:
+      return { label: 'Carrinho aberto', className: 'bg-slate-100 text-slate-700' };
+  }
+}
+
+function formatReviewTimestamp(value: string | null): string {
+  if (!value) return '—';
+  return new Date(value).toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 const WA_MARKDOWN_RE = /[*_~`]/;
@@ -536,6 +578,7 @@ export interface ChatViewProps {
   orders?: Order[];
   onUpdateOrderStatus?: (id: string, status: Order['status']) => void;
   empresaName?: string;
+  operatorName?: string;
 }
 
 /* ─── Component ───────────────────────────────────────────────── */
@@ -576,10 +619,16 @@ export function ChatView({
   orders = [],
   onUpdateOrderStatus,
   empresaName,
+  operatorName,
 }: ChatViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [ownerInput, setOwnerInput] = useState('');
   const [chatActionError, setChatActionError] = useState<string | null>(null);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewAccepting, setReviewAccepting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewData, setReviewData] = useState<ZeloMenuReviewResponse | null>(null);
 
   const FILTER_STORAGE_KEY = 'zelochat:chatFilter';
   const TAGS_CACHE_KEY = 'zelochat:sessionTagsMap:v1';
@@ -725,6 +774,7 @@ export function ChatView({
   const [manualOrderSaving, setManualOrderSaving] = useState(false);
   const [manualOrderError, setManualOrderError] = useState<string | null>(null);
   const newChatTitleId = useModalTitleId();
+  const reviewModalTitleId = useModalTitleId();
   const contactModalTitleId = useModalTitleId();
   const chatListRef = useRef<HTMLDivElement>(null);
   const [chatListScrollTop, setChatListScrollTop] = useState(0);
@@ -968,6 +1018,57 @@ export function ChatView({
       setChatActionError(getFriendlyErrorMessage(err) ?? 'Não foi possível fixar a conversa.');
     }
   }, [togglePin]);
+
+  const loadZeloMenuReview = useCallback(async (request: OrderFocusRequest) => {
+    if (!token || request.source !== 'zelomenu_review' || !request.remoteJid || !request.shortId) return;
+    setReviewModalOpen(true);
+    setReviewLoading(true);
+    setReviewError(null);
+    setReviewData(null);
+    try {
+      const payload = await getZeloMenuReviewSession(token, {
+        remoteJid: request.remoteJid,
+        shortId: request.shortId,
+      });
+      setReviewData(payload);
+    } catch (error) {
+      setReviewData(null);
+      setReviewError(getFriendlyErrorMessage(error) || 'Não foi possível carregar o pedido do cardápio.');
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [token]);
+
+  const handleOpenOrderRequest = useCallback((request: OrderFocusRequest) => {
+    if (request.source === 'zelomenu_review') {
+      void loadZeloMenuReview(request);
+      return;
+    }
+    onOpenOrder?.(request);
+  }, [loadZeloMenuReview, onOpenOrder]);
+
+  const handleAcceptReviewOrder = useCallback(async () => {
+    if (!token || !reviewData) return;
+    setReviewAccepting(true);
+    setReviewError(null);
+    try {
+      const payload = await acceptZeloMenuReviewSession(token, reviewData.session.id, operatorName ?? null);
+      setReviewData(payload);
+    } catch (error) {
+      setReviewError(getFriendlyErrorMessage(error) || 'Não foi possível aceitar o pedido agora.');
+      try {
+        const refreshed = await getZeloMenuReviewSession(token, {
+          remoteJid: activeSessionId ?? '',
+          shortId: reviewData.session.orderingId.slice(0, 8).toUpperCase(),
+        });
+        setReviewData(refreshed);
+      } catch {
+        // best-effort refresh so the modal shows any state transition after a blocked accept
+      }
+    } finally {
+      setReviewAccepting(false);
+    }
+  }, [activeSessionId, operatorName, reviewData, token]);
 
   const chatListWindow = useMemo(() => {
     const shouldVirtualize = filteredSessions.length > CHAT_LIST_VIRTUALIZE_AFTER;
@@ -2286,10 +2387,11 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                             isLastInGroup={isLastInGroup}
                             profilePicUrl={profilePics[activeSession.id]}
                             customerName={activeSession.customerName}
+                            sessionRemoteJid={activeSession.id}
                             sessionCustomerPhone={activeSession.customerPhone}
                             onDelete={handleDeleteMessage}
                             isDeleting={deletingMessageId === message.id}
-                            onOpenOrder={onOpenOrder}
+                            onOpenOrder={handleOpenOrderRequest}
                             onReply={message.waMessageId ? setReplyingTo : undefined}
                           />
                         </motion.div>
@@ -3102,6 +3204,203 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
           </>
         )}
       </div>
+
+      {reviewModalOpen && (
+        <Modal
+          open
+          onClose={() => {
+            if (!reviewAccepting) {
+              setReviewModalOpen(false);
+              setReviewError(null);
+            }
+          }}
+          titleId={reviewModalTitleId}
+          disableEscape={reviewAccepting}
+          panelClassName="w-[560px] max-w-[calc(100vw-2rem)] bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-pop)] border border-[var(--color-line)] overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-line)]">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-[var(--color-brand-soft)] flex items-center justify-center">
+                <ShoppingBag className="w-4 h-4 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
+              </div>
+              <div>
+                <h3 id={reviewModalTitleId} className="text-[14px] font-semibold text-[var(--color-ink)]">Revisar pedido do cardápio</h3>
+                <p className="text-[11.5px] text-[var(--color-ink-faint)]">Só entra na produção depois deste aceite.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (!reviewAccepting) {
+                  setReviewModalOpen(false);
+                  setReviewError(null);
+                }
+              }}
+              disabled={reviewAccepting}
+              aria-label="Fechar"
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-ink-faint)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <X className="w-4 h-4" strokeWidth={1.8} />
+            </button>
+          </div>
+
+          <div className="px-5 py-4">
+            {reviewLoading ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[var(--color-ink-muted)]">
+                <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} />
+                Carregando pedido...
+              </div>
+            ) : reviewData ? (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${reviewStateBadge(reviewData.session.state).className}`}>
+                    {reviewStateBadge(reviewData.session.state).label}
+                  </span>
+                  <span className="rounded-full bg-[var(--color-surface-muted)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-ink-muted)]">
+                    #{reviewData.session.orderingId.slice(0, 8).toUpperCase()}
+                  </span>
+                  {reviewData.session.productionOrder.shortId && (
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                      Produção #{reviewData.session.productionOrder.shortId}
+                    </span>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[13px] font-semibold text-[var(--color-ink)]">
+                        {reviewData.session.customer.name || activeSession?.customerName || 'Cliente'}
+                      </p>
+                      <p className="text-[12px] text-[var(--color-ink-muted)]">
+                        {reviewData.session.customer.phone || activeSession?.customerPhone || 'Telefone não informado'}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] text-[var(--color-ink-faint)]">Confirmado pelo cliente</p>
+                      <p className="text-[12px] font-medium text-[var(--color-ink)]">{formatReviewTimestamp(reviewData.session.confirmedAt)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)] mb-2">Itens</p>
+                  <div className="space-y-2">
+                    {reviewData.session.cart.items.map((item, index) => (
+                      <div key={`${item.productName}-${index}`} className="flex items-start justify-between gap-3 text-[13px]">
+                        <div>
+                          <p className="font-medium text-[var(--color-ink)]">{item.quantity}x {item.productName}</p>
+                          {item.notes && (
+                            <p className="text-[12px] text-[var(--color-ink-muted)]">Obs do item: {item.notes}</p>
+                          )}
+                        </div>
+                        <span className="font-semibold text-[var(--color-ink)]">{formatCurrencyBRL(item.lineTotal)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {reviewData.session.cart.observations && (
+                    <div className="mt-3 rounded-xl bg-[var(--color-surface-muted)] px-3 py-2 text-[12px] text-[var(--color-ink-muted)]">
+                      {reviewData.session.cart.observations}
+                    </div>
+                  )}
+                  <div className="mt-3 flex items-center justify-between border-t border-[var(--color-line)] pt-3">
+                    <span className="text-[12px] text-[var(--color-ink-muted)]">Total</span>
+                    <span className="text-[15px] font-bold text-[var(--color-ink)]">{formatCurrencyBRL(reviewData.session.pricing.total)}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)] mb-2">Entrega</p>
+                    <p className="text-[13px] font-medium text-[var(--color-ink)]">
+                      {reviewData.session.fulfillment.type === 'delivery' ? 'Entrega' : 'Retirada'}
+                    </p>
+                    <p className="mt-1 text-[12px] text-[var(--color-ink-muted)]">
+                      {reviewData.session.fulfillment.pickupDate
+                        ? `${formatIsoToBR(reviewData.session.fulfillment.pickupDate)}${reviewData.session.fulfillment.pickupTime ? ` às ${reviewData.session.fulfillment.pickupTime}` : ''}`
+                        : 'Data a combinar'}
+                    </p>
+                    {reviewData.session.fulfillment.deliveryAddress && (
+                      <p className="mt-2 text-[12px] text-[var(--color-ink-muted)]">{reviewData.session.fulfillment.deliveryAddress}</p>
+                    )}
+                  </div>
+                  <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)] mb-2">Pagamento</p>
+                    <p className="text-[13px] font-medium text-[var(--color-ink)]">
+                      {reviewData.session.payment.declaredMethod || 'Não informado'}
+                    </p>
+                    <p className="mt-1 text-[12px] text-[var(--color-ink-muted)]">
+                      {reviewData.session.payment.pixReceiptRequired
+                        ? reviewData.session.payment.pixReceiptApproved
+                          ? 'Comprovante Pix validado.'
+                          : 'Comprovante Pix ainda pendente.'
+                        : 'Sem comprovante obrigatório.'}
+                    </p>
+                  </div>
+                </div>
+
+                {reviewData.revalidation && reviewData.revalidation.issues.length > 0 && (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700 mb-2">Bloqueios de aceite</p>
+                    <div className="space-y-1.5">
+                      {reviewData.revalidation.issues.map((issue, index) => (
+                        <p key={`${issue.code}-${index}`} className="text-[12.5px] text-rose-800">{issue.message}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {reviewData.review.blockingReason && !reviewData.revalidation?.issues.length && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    <p className="text-[12.5px] text-amber-800">{reviewData.review.blockingReason}</p>
+                  </div>
+                )}
+
+                {reviewData.session.acceptance.acceptedAt && (
+                  <div className="rounded-2xl border border-[var(--color-line)] bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
+                    Aceito em {formatReviewTimestamp(reviewData.session.acceptance.acceptedAt)}
+                    {reviewData.session.acceptance.acceptedByName ? ` por ${reviewData.session.acceptance.acceptedByName}.` : '.'}
+                  </div>
+                )}
+
+                {reviewError && (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                    <p className="text-[12.5px] text-rose-800">{reviewError}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="py-6 text-center text-[13px] text-[var(--color-ink-muted)]">Pedido não encontrado nesta conversa.</p>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-[var(--color-line)] px-5 py-4">
+            <button
+              onClick={() => {
+                if (!reviewAccepting) {
+                  setReviewModalOpen(false);
+                  setReviewError(null);
+                }
+              }}
+              disabled={reviewAccepting}
+              className="px-4 py-2 rounded-xl text-[13px] font-medium text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Fechar
+            </button>
+            <button
+              onClick={() => void handleAcceptReviewOrder()}
+              disabled={!reviewData?.review.canAccept || reviewAccepting || reviewLoading}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-medium bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-deep)] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-[var(--shadow-card)]"
+            >
+              {reviewAccepting ? (
+                <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} />
+              ) : (
+                <Check className="w-3.5 h-3.5" strokeWidth={2.2} />
+              )}
+              {reviewData?.session.state === 'accepted' ? 'Pedido já aceito' : 'Aceitar e mandar para produção'}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Nova conversa modal ──────────────────────────────────── */}
       {showNewChatModal && (

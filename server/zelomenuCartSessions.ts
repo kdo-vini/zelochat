@@ -1,10 +1,12 @@
 import { getConfig, loadAiSettingsFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { evaluateCreateOrderScheduleGuard } from './ai.js';
 import { addAssistantMessage } from './messageHandler.js';
-import { getServiceSupabase } from './supabase.js';
+import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
+import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { sendTextMessage } from './whatsapp.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
 import {
+  buildAcceptedCartCustomerMessage,
   buildConfirmedCartCustomerMessage,
   buildPublicCartPath,
   computeCartPricing,
@@ -132,6 +134,33 @@ type PublicCartConfirmResponse = PublicCartResponse & {
     state: ZeloMenuCartState;
     customerMessage: string | null;
   };
+};
+
+type ReviewCartSession = PublicCartSession & {
+  acceptance: {
+    acceptedAt: string | null;
+    acceptedByUserId: string | null;
+    acceptedByName: string | null;
+  };
+  productionOrder: {
+    id: string | null;
+    shortId: string | null;
+  };
+};
+
+type ReviewCartResponse = {
+  session: ReviewCartSession;
+  revalidation: ZeloMenuCartRevalidation | null;
+  review: {
+    canAccept: boolean;
+    blockingReason: string | null;
+  };
+};
+
+type ReviewCartAcceptResponse = ReviewCartResponse & {
+  accepted: boolean;
+  alreadyAccepted: boolean;
+  customerMessage: string | null;
 };
 
 const CART_SESSION_COLUMNS = `
@@ -305,6 +334,22 @@ function parseMetadata(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function parseAcceptedByUserId(metadata: Record<string, unknown>): string | null {
+  return sanitizeText(metadata.acceptedByUserId, 64);
+}
+
+function parseAcceptedByName(metadata: Record<string, unknown>): string | null {
+  return sanitizeText(metadata.acceptedByName, 120);
+}
+
+function parseAcceptedAt(metadata: Record<string, unknown>): string | null {
+  return typeof metadata.acceptedAt === 'string' ? metadata.acceptedAt : null;
+}
+
+function parseProductionOrderId(metadata: Record<string, unknown>): string | null {
+  return sanitizeText(metadata.productionOrderId, 64);
+}
+
 function mapSessionRow(row: SessionRow): PublicCartSession {
   return {
     id: row.id,
@@ -324,6 +369,24 @@ function mapSessionRow(row: SessionRow): PublicCartSession {
     updatedAt: row.updated_at,
     confirmedAt: row.confirmed_at,
     archivedAt: row.archived_at,
+  };
+}
+
+function mapReviewSessionRow(row: SessionRow): ReviewCartSession {
+  const session = mapSessionRow(row);
+  const metadata = parseMetadata(row.metadata);
+  const productionOrderId = parseProductionOrderId(metadata);
+  return {
+    ...session,
+    acceptance: {
+      acceptedAt: parseAcceptedAt(metadata),
+      acceptedByUserId: parseAcceptedByUserId(metadata),
+      acceptedByName: parseAcceptedByName(metadata),
+    },
+    productionOrder: {
+      id: productionOrderId,
+      shortId: productionOrderId ? productionOrderId.slice(0, 8).toUpperCase() : null,
+    },
   };
 }
 
@@ -631,6 +694,140 @@ async function buildPublicResponse(
   };
 }
 
+async function createAcceptedOrderRecord(input: {
+  empresaId: string;
+  customer: ZeloMenuCustomerSnapshot;
+  cart: ZeloMenuCartSnapshot;
+  fulfillment: ZeloMenuFulfillmentSnapshot;
+  pricing: ZeloMenuPricingSnapshot;
+  payment: ZeloMenuPaymentSnapshot;
+}): Promise<string> {
+  const { data, error } = await getServiceSupabase()
+    .from('zelochat_orders')
+    .insert({
+      empresa_id: input.empresaId,
+      customer_name: input.customer.name || 'Cliente',
+      customer_phone: input.customer.phone || null,
+      items: input.cart.items.map((item) => ({
+        product: item.productName,
+        quantity: item.quantity,
+      })),
+      pickup_date: input.fulfillment.pickupDate,
+      pickup_time: input.fulfillment.pickupTime,
+      payment_method: input.payment.declaredMethod || null,
+      delivery_address: input.fulfillment.deliveryAddress || null,
+      delivery_neighborhood: input.fulfillment.deliveryNeighborhood || null,
+      delivery_fee: input.fulfillment.deliveryFee || null,
+      observations: input.cart.observations || null,
+      driver_id: null,
+      status: 'pending',
+      total: input.pricing.total,
+      source: 'whatsapp',
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return (data as { id: string }).id;
+}
+
+async function decrementAcceptedOrderStockBestEffort(
+  empresaId: string,
+  items: ZeloMenuCartSnapshot['items'],
+): Promise<void> {
+  const userId = await getEmpresaUserId(empresaId);
+  if (!userId) return;
+  await getServiceSupabase().rpc('zelochat_decrement_stock', {
+    p_id_usuario: userId,
+    p_items: items.map((item) => ({ name: item.productName, qty: item.quantity })),
+  });
+}
+
+async function notifyManagerForAcceptedOrder(input: {
+  empresaId: string;
+  customer: ZeloMenuCustomerSnapshot;
+  cart: ZeloMenuCartSnapshot;
+  fulfillment: ZeloMenuFulfillmentSnapshot;
+  pricing: ZeloMenuPricingSnapshot;
+  payment: ZeloMenuPaymentSnapshot;
+}): Promise<void> {
+  const { data, error } = await getServiceSupabase()
+    .from('zelochat_triggers')
+    .select('id, kind, name, condition_description, natural_input, active')
+    .eq('empresa_id', input.empresaId)
+    .eq('active', true);
+  if (error) throw error;
+
+  const matches = selectOrderCreatedNotifyTriggers(
+    ((data ?? []) as Array<{
+      id: string;
+      kind: string;
+      name: string;
+      condition_description?: string | null;
+      natural_input?: string | null;
+      active?: boolean;
+    }>).map((trigger) => ({
+      id: trigger.id,
+      kind: trigger.kind,
+      name: trigger.name,
+      conditionDescription: trigger.condition_description ?? null,
+      naturalInput: trigger.natural_input ?? null,
+      active: trigger.active !== false,
+    })),
+    input.cart.items.map((item) => ({ product: item.productName, quantity: item.quantity })),
+  );
+  if (matches.length === 0) return;
+
+  const managerPhone = getConfig(input.empresaId).managerPhone?.replace(/\D/g, '') ?? '';
+  if (!managerPhone) return;
+  const managerJid = `${managerPhone.startsWith('55') ? managerPhone : `55${managerPhone}`}@s.whatsapp.net`;
+  const schedule = `${input.fulfillment.pickupDate || 'data a combinar'}${input.fulfillment.pickupTime ? ` às ${input.fulfillment.pickupTime}` : ''}`;
+  const itemsList = input.cart.items.map((item) => `${item.quantity}x ${item.productName}`).join(', ');
+
+  for (const match of matches) {
+    await sendTextMessage(
+      managerJid,
+      `🔔 *${match.trigger.name}*\n` +
+        `Cliente: ${input.customer.name || 'Cliente'}${input.customer.phone ? ` (${input.customer.phone})` : ''}\n` +
+        `Pedido: ${itemsList || 'Itens a revisar'}\n` +
+        `Retirada/entrega: ${schedule}\n` +
+        `Pagamento: ${input.payment.declaredMethod || 'Não informado'}\n` +
+        `Total: R$ ${input.pricing.total.toFixed(2)}\n` +
+        `Motivo: ${match.reason}`,
+      input.empresaId,
+    );
+  }
+}
+
+function buildReviewResponse(
+  sessionRow: SessionRow,
+  revalidation: ZeloMenuCartRevalidation | null,
+): ReviewCartResponse {
+  const session = mapReviewSessionRow(sessionRow);
+  let blockingReason: string | null = null;
+  let canAccept = false;
+
+  if (session.state === 'accepted') {
+    blockingReason = 'Este pedido já entrou na produção.';
+  } else if (session.state === 'confirmed_waiting_payment' && !session.payment.pixReceiptApproved) {
+    blockingReason = 'Aguardando comprovante Pix antes do aceite.';
+  } else if (session.state !== 'confirmed_waiting_review' && session.state !== 'confirmed_waiting_payment') {
+    blockingReason = 'Este pedido não está pronto para aceite.';
+  } else if (revalidation && !revalidation.ok) {
+    blockingReason = 'Este pedido precisa de ajuste antes de entrar na produção.';
+  } else if (session.state === 'confirmed_waiting_review') {
+    canAccept = true;
+  }
+
+  return {
+    session,
+    revalidation,
+    review: {
+      canAccept,
+      blockingReason,
+    },
+  };
+}
+
 export async function openWhatsAppCartSession(input: OpenWhatsAppCartInput): Promise<{
   sessionId: string;
   orderingId: string;
@@ -743,6 +940,195 @@ export async function openWhatsAppCartSession(input: OpenWhatsAppCartInput): Pro
     revision: sessionRow.revision,
     publicToken: tokenData.token,
     publicPath: buildPublicCartPath(tokenData.token),
+  };
+}
+
+export async function getWhatsAppCartReviewSession(input: {
+  empresaId: string;
+  remoteJid: string;
+  shortId?: string | null;
+}): Promise<ReviewCartResponse | null> {
+  const remoteJid = sanitizeText(input.remoteJid, 160);
+  const shortId = sanitizeText(input.shortId, 8)?.replace(/^#/, '').toUpperCase() ?? null;
+  if (!remoteJid) throw new Error('INVALID_REMOTE_JID');
+
+  const { data, error } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .select(CART_SESSION_COLUMNS)
+    .eq('empresa_id', input.empresaId)
+    .eq('context', 'whatsapp_order')
+    .eq('source_ref', remoteJid)
+    .order('updated_at', { ascending: false })
+    .limit(20);
+  if (error) throw error;
+
+  const rows = (data ?? []) as SessionRow[];
+  if (rows.length === 0) return null;
+  const matchedRow = shortId
+    ? rows.find((row) => row.ordering_id.slice(0, 8).toUpperCase() === shortId) ?? null
+    : rows[0] ?? null;
+  if (!matchedRow) return null;
+
+  let revalidation = parseRevalidation(matchedRow.last_revalidation);
+  if (matchedRow.state === 'confirmed_waiting_review' || matchedRow.state === 'confirmed_waiting_payment') {
+    const session = mapSessionRow(matchedRow);
+    revalidation = await runRevalidation({
+      ...session,
+      metadata: { ...session.metadata, empresaId: matchedRow.empresa_id },
+    });
+    await persistRevalidation(matchedRow.id, revalidation);
+    matchedRow.last_revalidated_at = revalidation.checkedAt;
+    matchedRow.last_revalidation = revalidation;
+    matchedRow.updated_at = revalidation.checkedAt;
+  }
+
+  return buildReviewResponse(matchedRow, revalidation);
+}
+
+export async function acceptWhatsAppCartReviewSession(input: {
+  empresaId: string;
+  sessionId: string;
+  acceptedByUserId: string;
+  acceptedByName?: string | null;
+}): Promise<ReviewCartAcceptResponse | null> {
+  const sessionRow = await findSessionById(input.sessionId);
+  if (!sessionRow || sessionRow.empresa_id !== input.empresaId || sessionRow.context !== 'whatsapp_order') {
+    return null;
+  }
+
+  if (sessionRow.state === 'accepted') {
+    return {
+      ...buildReviewResponse(sessionRow, parseRevalidation(sessionRow.last_revalidation)),
+      accepted: true,
+      alreadyAccepted: true,
+      customerMessage: null,
+    };
+  }
+
+  if (sessionRow.state !== 'confirmed_waiting_review' && sessionRow.state !== 'confirmed_waiting_payment') {
+    throw new Error('REVIEW_NOT_READY');
+  }
+
+  const current = mapSessionRow(sessionRow);
+  const revalidation = await runRevalidation({
+    ...current,
+    metadata: { ...current.metadata, empresaId: sessionRow.empresa_id },
+  });
+  await persistRevalidation(sessionRow.id, revalidation);
+
+  if (!revalidation.ok || !revalidation.previewCart || !revalidation.previewPricing || !revalidation.previewPayment) {
+    const now = new Date().toISOString();
+    const { data, error } = await getServiceSupabase()
+      .from('zelomenu_cart_sessions')
+      .update({
+        state: 'needs_customer_adjustment',
+        last_revalidated_at: revalidation.checkedAt,
+        last_revalidation: revalidation,
+        updated_at: now,
+      })
+      .eq('id', sessionRow.id)
+      .select(CART_SESSION_COLUMNS)
+      .single();
+    if (error) throw error;
+    throw new Error('REVIEW_NEEDS_ADJUSTMENT');
+  }
+
+  if (revalidation.previewPayment.pixReceiptRequired && !revalidation.previewPayment.pixReceiptApproved) {
+    const { data, error } = await getServiceSupabase()
+      .from('zelomenu_cart_sessions')
+      .update({
+        last_revalidated_at: revalidation.checkedAt,
+        last_revalidation: revalidation,
+        payment_snapshot: revalidation.previewPayment,
+        updated_at: revalidation.checkedAt,
+      })
+      .eq('id', sessionRow.id)
+      .select(CART_SESSION_COLUMNS)
+      .single();
+    if (error) throw error;
+    throw new Error('PIX_RECEIPT_PENDING');
+  }
+
+  const nextCustomer: ZeloMenuCustomerSnapshot = current.customer;
+  const nextFulfillment = current.fulfillment;
+  const orderId = await createAcceptedOrderRecord({
+    empresaId: sessionRow.empresa_id,
+    customer: nextCustomer,
+    cart: revalidation.previewCart,
+    fulfillment: nextFulfillment,
+    pricing: revalidation.previewPricing,
+    payment: revalidation.previewPayment,
+  });
+
+  void decrementAcceptedOrderStockBestEffort(sessionRow.empresa_id, revalidation.previewCart.items)
+    .catch((err) => console.error('[ZeloMenu] stock decrement failed after accept:', err));
+
+  void notifyManagerForAcceptedOrder({
+    empresaId: sessionRow.empresa_id,
+    customer: nextCustomer,
+    cart: revalidation.previewCart,
+    fulfillment: nextFulfillment,
+    pricing: revalidation.previewPricing,
+    payment: revalidation.previewPayment,
+  }).catch((err) => console.error('[ZeloMenu] manager notification failed after accept:', err));
+
+  const now = new Date().toISOString();
+  const mergedMetadata = {
+    ...parseMetadata(sessionRow.metadata),
+    acceptedAt: now,
+    acceptedByUserId: input.acceptedByUserId,
+    acceptedByName: sanitizeText(input.acceptedByName, 120),
+    productionOrderId: orderId,
+  };
+  const { data, error } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .update({
+      state: 'accepted',
+      cart_snapshot: revalidation.previewCart,
+      pricing_snapshot: revalidation.previewPricing,
+      payment_snapshot: revalidation.previewPayment,
+      metadata: mergedMetadata,
+      last_revalidated_at: revalidation.checkedAt,
+      last_revalidation: revalidation,
+      archived_at: now,
+      updated_at: now,
+    })
+    .eq('id', sessionRow.id)
+    .select(CART_SESSION_COLUMNS)
+    .single();
+  if (error) throw error;
+
+  const acceptedRow = data as SessionRow;
+  const customerMessage = buildAcceptedCartCustomerMessage({
+    orderId,
+    cart: revalidation.previewCart,
+    fulfillment: nextFulfillment,
+    pricing: revalidation.previewPricing,
+    payment: revalidation.previewPayment,
+  });
+
+  let waMessageId: string | undefined;
+  let sendOk = true;
+  try {
+    waMessageId = await sendTextMessage(acceptedRow.source_ref, customerMessage, acceptedRow.empresa_id);
+  } catch (sendErr) {
+    sendOk = false;
+    console.error('[ZeloMenu] acceptWhatsAppCartReviewSession: customer message failed after accept:', sendErr);
+  }
+  await addAssistantMessage(
+    acceptedRow.source_ref,
+    sendOk ? customerMessage : `[FALHA NO ENVIO — reenviar manualmente]\n${customerMessage}`,
+    undefined,
+    acceptedRow.empresa_id,
+    undefined,
+    { waMessageId },
+  );
+
+  return {
+    ...buildReviewResponse(acceptedRow, revalidation),
+    accepted: true,
+    alreadyAccepted: false,
+    customerMessage,
   };
 }
 

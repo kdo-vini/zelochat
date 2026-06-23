@@ -2,8 +2,9 @@ import type { Order } from '../types';
 import { normalizePhoneNumber } from './chat';
 
 export interface OrderFocusRequest {
-  source: 'chat' | 'calendar' | 'production';
+  source: 'chat' | 'calendar' | 'production' | 'zelomenu_review';
   shortId?: string;
+  remoteJid?: string;
   customerPhone?: string;
   pickupDate?: string;
   pickupTime?: string;

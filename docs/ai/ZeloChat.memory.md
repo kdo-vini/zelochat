@@ -112,6 +112,9 @@
   - `server/ai.ts` now uses `openWhatsAppCartSession()` at the end of `criar_pedido` to hand the customer off to the public cart link instead of always persisting `zelochat_pending_orders`.
   - The AI integration intentionally keeps the legacy pending-order/button path as fallback when cart-session opening fails, so rollout can happen without losing order capture.
   - Confirmation keeps the order in `zelomenu_cart_sessions` state (`confirmed_waiting_review` or `confirmed_waiting_payment`) and intentionally does not create a legacy `zelochat_orders` row before human accept.
+  - `server/router.ts` now exposes authenticated review/accept endpoints for chat operators: `GET /api/zelomenu/cart-sessions/review` and `POST /api/zelomenu/cart-sessions/:id/accept`.
+  - `server/zelomenuCartSessions.ts` now materializes the legacy operational adapter only on manual accept: it revalidates again, blocks Pix pending / broken stock or agenda, writes acceptance audit into `metadata`, creates the real `zelochat_orders` row, sends the final customer confirmation, and archives the accepted cart session so the next WhatsApp order can open a fresh row.
+  - `src/components/views/ChatView.tsx` now opens a dedicated review modal from the “Pedido recebido pelo cardápio” card instead of forcing the operator into Kanban before the order exists in production.
   - Confirmed ZeloMenu carts persist a WhatsApp/chat message that starts with "✅ Pedido recebido pelo cardápio!", which the chat feedback parser treats separately from legacy "✅ Pedido confirmado!" production orders.
 - AI behavior rules:
   - `src/domain/conversationState.ts` owns deterministic WhatsApp-turn decisions before OpenAI for pending-order confirmation, cancellation, edits, no-observation replies, emoji consent, payment proof, and semantic product matching.
@@ -236,10 +239,10 @@
 - `zelomenu_cart_tokens`
   - ZeloChat-owned token history for cart sessions.
   - Public token is stored only as hash; stale tokens may still read/revalidate a session but cannot mutate it.
-- Public ZeloMenu UI
+  - Public ZeloMenu UI
   - `src/pages/ZeloMenuCartPage.tsx` + `src/services/zelomenuApi.ts` already consume the new public API.
   - Current public UI supports review/edit/confirm: catalog browsing, item quantity changes, delivery/pickup fields, payment, observations, Pix warning, stale-token/read-only handling, and post-confirm read-only state.
-  - ZLM-103 confirms back into the WhatsApp/chat lifecycle without touching production rows; the AI already emits the new link, and the next seam is manual accept (`ZLM-104`).
+  - ZLM-103 confirms back into the WhatsApp/chat lifecycle without touching production rows; ZLM-104 now completes the loop with manual accept inside the chat, and the next seam is abandoned-cart recovery (`ZLM-105`).
 - Strategic ordering direction
   - `ZELOMENU_LINEAR_PLAN.md` `ZLM-003` closes the interface for a future `Ordering` aggregate with:
     - single `ordering_id` from cart to fulfillment

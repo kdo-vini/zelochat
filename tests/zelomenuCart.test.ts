@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  buildAcceptedCartCustomerMessage,
   buildConfirmedCartCustomerMessage,
   buildPublicCartUrl,
   buildWhatsAppCartLinkMessage,
@@ -112,6 +113,32 @@ const tests = [
       assert.match(message, /https:\/\/chat\.zelopdv\.com\.br\/menu\/carrinho\/token123/);
       assert.match(message, /revisar com calma, ajustar se precisar e confirmar/i);
       assert.match(message, /comprovante será pedido no WhatsApp/i);
+    },
+  },
+  {
+    name: 'mensagem de aceite final entra em produção sem citar cardápio',
+    run() {
+      const message = buildAcceptedCartCustomerMessage({
+        orderId: 'abcdef12-aaaa-bbbb-cccc-123456789012',
+        cart: {
+          items: [{ productName: 'Coxinha', quantity: 2, unitPrice: 5, lineTotal: 10 }],
+          observations: 'sem cebola',
+        },
+        fulfillment: {
+          type: 'pickup',
+          pickupDate: '2026-06-22',
+          pickupTime: '18:30',
+          deliveryAddress: null,
+          deliveryNeighborhood: null,
+          deliveryFee: 0,
+        },
+        pricing: { subtotal: 10, deliveryFee: 0, total: 10 },
+        payment: { declaredMethod: 'Pix', pixReceiptRequired: false, pixReceiptApproved: false },
+      });
+
+      assert.match(message, /Pedido confirmado!/);
+      assert.match(message, /entrou na produção/i);
+      assert.doesNotMatch(message, /cardápio/i);
     },
   },
 ];

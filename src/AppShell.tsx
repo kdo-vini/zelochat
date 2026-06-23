@@ -1260,6 +1260,7 @@ export default function AppShell() {
             orders={state.orders}
             onUpdateOrderStatus={updateOrderStatus}
             empresaName={empresa?.nome_exibicao}
+            operatorName={state.profile.name}
           />
         ) : (
           /* ── Other views (lazy-loaded) ──────────────────────────── */
