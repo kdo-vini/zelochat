@@ -187,3 +187,13 @@ CREATE POLICY zelomenu_cart_tokens_delete_by_empresa
         AND ep.user_id = auth.uid()
     )
   );
+
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON public.zelomenu_cart_sessions, public.zelomenu_cart_tokens
+  TO authenticated, service_role;
+
+REVOKE ALL
+  ON public.zelomenu_cart_sessions, public.zelomenu_cart_tokens
+  FROM anon;
+
+NOTIFY pgrst, 'reload schema';

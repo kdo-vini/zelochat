@@ -128,6 +128,13 @@ These are out of scope or unsafe to change from this branch:
 - ✅ ZLM-201 parcial — cobertura nova para os estados de publicação e resumo; `npm run lint` passou junto com os testes focados de publicação e recuperação de carrinho — `tests/zelomenuPublication.test.ts:1`, `tests/run-unit-tests.ts:30`
 - 🟥 ZLM-201 bloqueio restante — nome público, descrição, foto, ordem pública e modifiers dependem da camada de publicação PDV-owned definida em ZLM-004; este repo não deve criar esse schema nem alterar `produtos`/`categorias`/`subcategorias`
 
+### Sprint 69m (2026-06-23) — Rollout parcial de migrations Supabase
+
+- ✅ Segurança/RPC — aplicado no Supabase real `zelochat_fix_rls_gaps_2026_06_23`: policies de INSERT/DELETE do bucket `zelochat-media` restritas a `service_role`, `zelochat_decrement_stock` recriada com `search_path` seguro e execute revogado de `public`/`anon`/`authenticated`; `zelochat_increment_unread` também teve execute revogado para papéis públicos — `supabase/migrations/034_fix_rls_gaps.sql:1`
+- ✅ Billing compartilhado — aplicado/registrado `trial_expired_status_2026_06_17`; auditoria antes da execução mostrou 0 assinaturas locais vencidas ainda em `trialing`, então não houve reclassificação visível nesta rodada — `/home/vinicius/code/zelopdv/.ai/migrations/trial_expired_status_2026_06_17.sql:1`
+- 🟡 ZLM-101 prod schema — estruturas `zelomenu_cart_sessions` e `zelomenu_cart_tokens` criadas no Supabase real e verificadas via service role (`count=0` nas duas tabelas). A migration local agora inclui grants explícitos para `authenticated`/`service_role` e revoga `anon`, mas a aplicação/validação completa das policies/grants ficou incompleta porque o conector Supabase passou a retornar HTTP 500/-32603 — `supabase/migrations/041_zelomenu_cart_sessions.sql:1`
+- 🟥 ZLM-201/ZLM-004 prod schema — camada PDV-owned de publicação (`zelomenu_product_publications`, `zelomenu_modifier_groups`, `zelomenu_modifier_options`) ainda não foi aplicada; ver repo ZeloPDV. Verificação via service role retornou `PGRST205` para `zelomenu_product_publications`.
+
 ### Sprint 69k (2026-06-22) — Impressão no aceite + reimpressão manual (ZeloMenu)
 
 - ✅ ZLM-106 — confirmado que o pedido aceito já imprime no momento certo: o aceite do ZeloMenu (ZLM-104) cria a row em `zelochat_orders` só no aceite humano, e o INSERT realtime dispara `autoPrintOrder` — ou seja, impressão no aceite, não na confirmação do cliente — `src/hooks/useOrders.ts:161`, `src/AppShell.tsx:342`

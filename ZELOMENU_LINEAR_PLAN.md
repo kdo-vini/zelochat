@@ -1646,6 +1646,10 @@ Resultado parcial (2026-06-22):
 - Fechamento do ticket (2026-06-22):
   - `server/ai.ts` agora tenta abrir `openWhatsAppCartSession()` ao fim de `criar_pedido`, gera o link absoluto do carrinho novo e envia o handoff ao cliente em vez do resumo legado
   - o fluxo legado de `zelochat_pending_orders` + botões continua como fallback explícito se a abertura da sessão nova falhar, para rollout seguro do piloto
+- Rollout Supabase (2026-06-23):
+  - estruturas `zelomenu_cart_sessions` e `zelomenu_cart_tokens` criadas no Supabase real em `zelomenu_cart_sessions_tables_2026_06_23`
+  - verificação via service role confirmou as duas tabelas acessíveis com `count=0`
+  - aplicação completa das policies/grants ficou pendente porque o conector Supabase passou a retornar HTTP 500/-32603; a migration local `041_zelomenu_cart_sessions.sql` já foi ajustada para grants explícitos e revogação de `anon`, mas produção ainda precisa ser finalizada/verificada
 
 #### ZLM-102 — Criar UI pública inicial do ZeloMenu
 
@@ -1806,6 +1810,7 @@ Bloqueio restante:
 - O aceite completo de `ZLM-201` ainda depende da camada de publicação PDV-owned definida em `ZLM-004`: nome público, descrição, foto, ordem pública, disponibilidade/manual pause própria do ZeloMenu e modifier groups/options.
 - Este repo não deve criar esse schema nem alterar `produtos`/`categorias`/`subcategorias`; a próxima etapa precisa nascer no repo ZeloPDV/shared catalog e depois ser consumida pelo ZeloChat.
 - Por isso o ticket fica `Blocked`, não `Done`: existe fundação/preview no ZeloChat, mas a publicação self-service completa ainda não está entregue.
+- Rollout Supabase (2026-06-23): verificação via service role ainda retorna `PGRST205` para `zelomenu_product_publications`; a migration PDV-owned de publicação ainda não está aplicada no Supabase real.
 
 #### ZLM-202 — Tela comum de Pedidos liberada por ZeloMenu
 
