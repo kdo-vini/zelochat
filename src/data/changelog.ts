@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-24',
     category: 'minor',
+    title: 'Fotos mais alinhadas no cardápio',
+    description: 'As fotos dos produtos agora ficam em espaços do mesmo tamanho, mostrando a imagem inteira sem esticar ou cortar embalagens.',
+  },
+  {
+    date: '2026-06-24',
+    category: 'minor',
     title: 'Quantidade mais rápida de ajustar no carrinho',
     description: 'Além dos botões de mais e menos, o cliente pode tocar no número e digitar a quantidade pelo teclado numérico. Alterações e remoções ficam salvas ao atualizar ou voltar ao cardápio, sem trazer itens antigos de volta.',
   },

@@ -599,7 +599,7 @@ function ProductGrid({
     return (
       <div className="grid grid-cols-2 gap-3">
         {products.map((p) => (
-          <div key={p.id}>
+          <div key={p.id} className="h-full">
             <PhotoCard product={p} items={items} onAdd={() => onAdd(p)} onChangeQty={onChangeQty} onSetQty={onSetQty} />
           </div>
         ))}
@@ -645,21 +645,20 @@ function PhotoCard({
   const isUnit = product.unitBased === true;
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
       {/* Photo */}
-      <div className="relative" style={{ aspectRatio: '1 / 1' }}>
+      <div
+        className="relative flex aspect-square items-center justify-center overflow-hidden bg-[var(--color-canvas)] p-3"
+      >
         {product.photoUrl ? (
           <img
             src={product.photoUrl}
             alt={product.name}
             loading="lazy"
-            className="h-full w-full object-cover"
+            className="h-full w-full object-contain"
           />
         ) : (
-          <div
-            className="flex h-full w-full items-center justify-center"
-            style={{ background: 'var(--color-canvas)' }}
-          >
+          <div className="flex h-full w-full items-center justify-center">
             <ShoppingBag className="h-8 w-8 text-[var(--color-line-strong)]" strokeWidth={1.5} />
           </div>
         )}
@@ -674,7 +673,7 @@ function PhotoCard({
       </div>
 
       {/* Info + action */}
-      <div className="flex flex-1 flex-col gap-1 p-3">
+      <div className="flex min-h-[108px] flex-1 flex-col gap-1 p-3">
         <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-[var(--color-ink)]">
           {product.name}
         </p>
@@ -777,12 +776,14 @@ function ListRow({
       className={`flex items-center gap-3 px-4 py-3 ${divider ? 'border-b border-[var(--color-line)]' : ''}`}
     >
       {product.photoUrl ? (
-        <img
-          src={product.photoUrl}
-          alt={product.name}
-          loading="lazy"
-          className="h-16 w-16 shrink-0 rounded-xl object-cover"
-        />
+        <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--color-canvas)] p-1.5">
+          <img
+            src={product.photoUrl}
+            alt={product.name}
+            loading="lazy"
+            className="h-full w-full object-contain"
+          />
+        </div>
       ) : null}
       <div className="min-w-0 flex-1">
         <p className="text-[14px] font-semibold text-[var(--color-ink)]">{product.name}</p>

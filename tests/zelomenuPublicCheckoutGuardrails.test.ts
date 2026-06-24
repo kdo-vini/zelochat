@@ -59,4 +59,12 @@ await runSuite('ZeloMenu public checkout guardrails', [
       assertIncludes(cartPage, /await flushPendingAutosave\(\);[\s\S]*window\.history\.back\(\)/, 'voltar aguarda cache e servidor');
     },
   },
+  {
+    name: 'fotos usam moldura fixa sem cortar produtos',
+    run() {
+      assertIncludes(storePage, /aspect-square/, 'cards usam área de imagem quadrada');
+      assertIncludes(storePage, /object-contain/, 'imagem inteira permanece visível');
+      assertIncludes(storePage, /min-h-\[108px\]/, 'área de informações mantém cards alinhados');
+    },
+  },
 ]);
