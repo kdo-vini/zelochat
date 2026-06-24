@@ -255,6 +255,7 @@ export default function ZeloMenuCartPage() {
   const [step, setStep] = useState(0);
   const [scheduleMode, setScheduleMode] = useState<'asap' | 'scheduled'>('asap');
   const [showErrors, setShowErrors] = useState(false);
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const revalidationToastShownRef = useRef('');
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
@@ -415,6 +416,11 @@ export default function ZeloMenuCartPage() {
 
   const changeItemQuantity = (itemKey: string, nextQuantity: number) => {
     if (!isOpen) return;
+    setQuantityDrafts((current) => {
+      if (!(itemKey in current)) return current;
+      const { [itemKey]: _removed, ...rest } = current;
+      return rest;
+    });
     setDraft((current) => {
       if (!current) return current;
       const normalizedQuantity = Math.max(0, Math.floor(nextQuantity));
@@ -426,6 +432,29 @@ export default function ZeloMenuCartPage() {
           .filter((item) => item.quantity > 0)
         : current.items;
       return { ...current, items };
+    });
+  };
+
+  const editItemQuantity = (itemKey: string, rawValue: string) => {
+    if (!isOpen) return;
+    const digits = rawValue.replace(/\D/g, '').slice(0, 4);
+    setQuantityDrafts((current) => ({ ...current, [itemKey]: digits }));
+    if (!digits) return;
+    const quantity = Number.parseInt(digits, 10);
+    if (quantity >= 1) {
+      setDraft((current) => current ? {
+        ...current,
+        items: current.items.map((item) =>
+          draftItemKey(item) === itemKey ? { ...item, quantity } : item),
+      } : current);
+    }
+  };
+
+  const finishEditingItemQuantity = (itemKey: string) => {
+    setQuantityDrafts((current) => {
+      if (!(itemKey in current)) return current;
+      const { [itemKey]: _removed, ...rest } = current;
+      return rest;
     });
   };
 
@@ -706,7 +735,21 @@ export default function ZeloMenuCartPage() {
                                     ? <Trash2 className="h-4 w-4" strokeWidth={1.8} />
                                     : <Minus className="h-4 w-4" strokeWidth={1.8} />}
                                 </button>
-                                <span className="min-w-7 text-center text-[13px] font-semibold tabular-nums">{item.quantity}</span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  aria-label={`Quantidade de ${label}`}
+                                  value={quantityDrafts[key] ?? String(item.quantity)}
+                                  onFocus={(event) => event.currentTarget.select()}
+                                  onChange={(event) => editItemQuantity(key, event.target.value)}
+                                  onBlur={() => finishEditingItemQuantity(key)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') event.currentTarget.blur();
+                                  }}
+                                  readOnly={!isOpen}
+                                  className="h-9 w-9 border-x border-[var(--color-line)] bg-transparent px-0 text-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)] outline-none focus:bg-[var(--color-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand)]"
+                                />
                                 <button
                                   type="button"
                                   onClick={() => changeItemQuantity(key, item.quantity + 1)}

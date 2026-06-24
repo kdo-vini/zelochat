@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-24',
+    category: 'minor',
+    title: 'Quantidade mais rápida de ajustar no carrinho',
+    description: 'Além dos botões de mais e menos, o cliente agora pode tocar no número da quantidade e digitar o valor direto pelo teclado numérico.',
+  },
+  {
+    date: '2026-06-24',
     category: 'medium',
     title: 'Fechar o pedido pelo link ficou mais simples no celular',
     description: 'Ao tocar em Continuar pedido, o cliente vai direto para a finalização. Nome, WhatsApp, data e horário são conferidos antes de avançar; na entrega, o endereço também é obrigatório. Ao escolher Pra já, o cardápio preenche hoje e o horário atual automaticamente.',

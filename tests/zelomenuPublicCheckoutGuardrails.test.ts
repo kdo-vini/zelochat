@@ -31,4 +31,13 @@ await runSuite('ZeloMenu public checkout guardrails', [
       assertIncludes(cartPage, /updateField\('pickupTime', ''\)/, 'agendamento exige horário explícito');
     },
   },
+  {
+    name: 'quantidade pode ser digitada pelo teclado numérico',
+    run() {
+      assertIncludes(cartPage, /inputMode="numeric"/, 'quantidade abre teclado numérico');
+      assertIncludes(cartPage, /pattern="\[0-9\]\*"/, 'quantidade aceita somente dígitos');
+      assertIncludes(cartPage, /editItemQuantity\(key, event\.target\.value\)/, 'digitação atualiza a quantidade');
+      assertIncludes(cartPage, /event\.currentTarget\.select\(\)/, 'toque seleciona a quantidade atual');
+    },
+  },
 ]);
