@@ -7,6 +7,8 @@
 
 **Latest hotfix note (2026-06-11 Sprint 68):** Bundle renovado via AbacatePay no ZeloPDV não pode perder acesso no ZeloChat por causa de `manually_extended_until` vencido. A expiração efetiva agora usa o timestamp mais longo entre `current_period_end` e `manually_extended_until` no backend, frontend e sweeper; o caso real da Casa dos Salgados foi destravado com hotfix na row compartilhada `subscriptions`.
 
+**Latest UI note (2026-06-24):** Checkout público do ZeloMenu (`src/pages/ZeloMenuCartPage.tsx`) virou um wizard mobile-first de 3 passos (sacola → entrega/retirada → confirmar) com slide horizontal por CSS transform e total/CTA fixos no rodapé. Passo de entrega é adaptativo (endereço colapsa na retirada); "Pra já" vs "Agendar (encomenda)" expõe o date/time picker só quando o cliente quer encomendar. Toda a lógica de dados foi preservada (revalidação de preço, cart token, loja fechada/`isOpen`, pedido público, Pix, estado confirmado virou tela de sucesso). Sem frete grátis (não existe no backend). Render only — nenhuma mudança em rota, API ou estado compartilhado.
+
 ## 📊 Status atual (2026-05-01 Sprint 46)
 
 | Tier | Total | Closed | Pending | Deferred | % |

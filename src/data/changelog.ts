@@ -17,9 +17,15 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-06-24',
+    category: 'medium',
+    title: 'Fechar o pedido pelo link ficou mais simples no celular',
+    description: 'Quando o cliente vai finalizar pelo seu link do cardápio, agora ele segue por etapas curtas — sacola, entrega ou retirada e pagamento — com o total sempre à vista e o resumo no fim. Quem só vai retirar nem vê os campos de endereço, e dá pra escolher se é pra já ou uma encomenda agendada. Mais rápido de concluir e menos pedido abandonado.',
+  },
+  {
+    date: '2026-06-24',
     category: 'minor',
     title: 'Link do cardápio ficou mais claro para o cliente',
-    description: 'O cliente vê quando a loja está fora do horário e o carrinho confirma em um passo só, avisando por notificação se algum preço mudou antes de fechar.',
+    description: 'O cliente vê quando a loja está fora do horário e é avisado por notificação se algum preço mudar antes de fechar o pedido.',
   },
   {
     date: '2026-06-23',
