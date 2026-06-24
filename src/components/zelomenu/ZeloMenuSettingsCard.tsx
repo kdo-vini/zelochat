@@ -33,7 +33,14 @@ export function ZeloMenuSettingsCard({ token }: { token: string }) {
         setWelcomeText(s.welcomeText ?? '');
         setFeaturedEnabled(s.featuredEnabled);
         setFeaturedIds(s.featuredProductIds);
-        setCategoryOrder(s.categoryOrder.length > 0 ? s.categoryOrder : s.availableCategories);
+        // Reconcilia a ordem salva com o catálogo atual: descarta categorias que
+        // não existem mais (renomeadas/excluídas no PDV) e anexa as novas no fim,
+        // pra lista de arrastar sempre refletir o cardápio de verdade.
+        {
+          const saved = s.categoryOrder.filter((c) => s.availableCategories.includes(c));
+          const missing = s.availableCategories.filter((c) => !saved.includes(c));
+          setCategoryOrder([...saved, ...missing]);
+        }
       } catch {
         // silencioso — card mostra spinner e some
       } finally {
@@ -107,10 +114,6 @@ export function ZeloMenuSettingsCard({ token }: { token: string }) {
         p.categoryName.toLowerCase().includes(productSearch.toLowerCase()),
       )
     : settings.availableProducts;
-
-  const selectedProductNames = featuredIds
-    .map((id) => settings.availableProducts.find((p) => p.id === id)?.name)
-    .filter(Boolean);
 
   return (
     <SectionCard icon={Store} title="Cardápio digital">
@@ -280,24 +283,28 @@ export function ZeloMenuSettingsCard({ token }: { token: string }) {
                 ) : null}
               </div>
 
-              {/* Selected pills (reorderable) */}
+              {/* Selected pills */}
               {featuredIds.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {selectedProductNames.map((name, i) => (
-                    <span
-                      key={featuredIds[i]}
-                      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-brand-soft)] px-2.5 py-1 text-[12px] font-medium text-[var(--color-brand-deep)]"
-                    >
-                      {name}
-                      <button
-                        type="button"
-                        onClick={() => toggleProduct(featuredIds[i])}
-                        aria-label={`Remover ${name}`}
+                  {featuredIds.map((id) => {
+                    const name = settings.availableProducts.find((p) => p.id === id)?.name;
+                    if (!name) return null;
+                    return (
+                      <span
+                        key={id}
+                        className="inline-flex items-center gap-1 rounded-full bg-[var(--color-brand-soft)] px-2.5 py-1 text-[12px] font-medium text-[var(--color-brand-deep)]"
                       >
-                        <X className="h-3 w-3" strokeWidth={2.5} />
-                      </button>
-                    </span>
-                  ))}
+                        {name}
+                        <button
+                          type="button"
+                          onClick={() => toggleProduct(id)}
+                          aria-label={`Remover ${name}`}
+                        >
+                          <X className="h-3 w-3" strokeWidth={2.5} />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>
