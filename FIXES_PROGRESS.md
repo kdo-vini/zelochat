@@ -121,6 +121,14 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69r (2026-06-23) — Bulk selection no Cardápio do ZeloChat
+
+- ✅ CAT-301 — Cardápio era 100% item-a-item → tela agora tem modo de seleção em lote com checkboxes por produto, categoria, subcategoria e itens sem categoria, reaproveitando o padrão operacional de bulk action do app sem inflar o CRUD base — `src/components/views/CatalogView.tsx:101`
+- ✅ CAT-302 — publicar vários itens no link exigia abrir produto por produto → ação em lote "Publicar no link" entregue no Cardápio, visível só quando a assinatura libera `menu_publication`, com sucesso parcial tratado e seleção preservada só para falhas — `src/components/views/CatalogView.tsx:170` · `src/hooks/useCatalogBulkController.ts:120` · `src/AppShell.tsx:1332`
+- ✅ CAT-303 — exclusão em lote não existia no Cardápio → ação "Excluir selecionados" entregue com confirmação explícita e reaproveitando o fluxo seguro de `deleteProduto` para manter cleanup de publicação/imagem — `src/components/views/CatalogView.tsx:186` · `src/hooks/useCatalogBulkController.ts:120`
+- ✅ ZLM-206 — rollout comercial do ZeloMenu estava pouco claro no tracker canônico → `ZELOMENU_LINEAR_PLAN.md` agora separa explicitamente o que já foi entregue (entitlement novo, pricing, guards, addon `menu` de R$40 / PDV+Menu R$99) do que ainda falta no repo ZeloPDV (páginas `/assinatura` e `/extensoes`, retirada do addon novo de Pedidos/Cozinha e limpeza da copy comercial) — `ZELOMENU_LINEAR_PLAN.md:1931`
+- ✅ ZLM-207 — campo de WhatsApp do menu público aceitava letras e feedback transitório aparecia como texto inline → jornada pública do ZeloMenu agora mascara o telefone enquanto digita, limita a 11 dígitos, envia só números para a API e usa toast visual para erros/confirmações de store/cart, com container melhor no mobile — `src/pages/ZeloMenuStorePage.tsx:42` · `src/pages/ZeloMenuCartPage.tsx:64` · `src/contexts/ToastContext.tsx:85`
+
 ### Sprint 69q (2026-06-23) — Rollout ZeloMenu completo (ZLM-205 pricing + ZLM-203 link público + T5 pedidos)
 
 - ✅ ZLM-205 — schema PDV-owned aplicado no Supabase real: `subscriptions.has_zelo_menu` + `empresa_perfil.zelomenu_slug` (única) + coluna na view `user_entitlements`; backfill exato (chat/bundle→true, pdv→false) verificado via PostgREST — `/home/vinicius/code/zelopdv/.ai/migrations/zelomenu_entitlement_and_slug_2026_06_23.sql`

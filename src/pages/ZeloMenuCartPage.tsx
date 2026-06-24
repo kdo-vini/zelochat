@@ -31,6 +31,8 @@ import {
   type ZeloMenuSelectedModifierGroup,
 } from '../domain/zelomenuModifiers';
 import { resolveDeliveryFeeForNeighborhood } from '../domain/zelomenuDelivery';
+import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
+import { useToast } from '../contexts/ToastContext';
 
 type DraftState = {
   customerName: string;
@@ -75,7 +77,7 @@ function formatDateTime(value: string | null): string | null {
 function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState {
   return {
     customerName: payload.session.customer.name ?? '',
-    customerPhone: payload.session.customer.phone ?? '',
+    customerPhone: maskBrazilianPhone(payload.session.customer.phone ?? ''),
     items: payload.session.cart.items.map((item) => ({
       productId: item.productId,
       productName: item.productName,
@@ -207,6 +209,7 @@ function estimatedItemKey(
 
 export default function ZeloMenuCartPage() {
   const { token = '' } = useParams();
+  const toast = useToast();
   const [payload, setPayload] = useState<ZeloMenuPublicCartResponse | null>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -214,7 +217,6 @@ export default function ZeloMenuCartPage() {
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [inlineMessage, setInlineMessage] = useState<string | null>(null);
   const [modifierPicker, setModifierPicker] = useState<{
     product: ZeloMenuCatalogProduct;
     selections: Record<string, string[]>;
@@ -223,7 +225,6 @@ export default function ZeloMenuCartPage() {
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
     try {
       setError(null);
-      setInlineMessage(null);
       if (mode === 'initial') setLoading(true);
       else setRefreshing(true);
       const next = await getPublicCart(token);
@@ -231,7 +232,12 @@ export default function ZeloMenuCartPage() {
       setDraft(buildDraftFromPayload(next));
       document.title = next.business.name ? `${next.business.name} | Revisar pedido` : 'Revisar pedido';
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não consegui carregar o carrinho.');
+      const message = err instanceof Error ? err.message : 'Não consegui carregar o carrinho.';
+      if (mode === 'initial' || !payload) {
+        setError(message);
+      } else {
+        toast.error(message);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -270,13 +276,17 @@ export default function ZeloMenuCartPage() {
 
   const saveDraft = async () => {
     if (!draft || !isOpen) return;
+    const customerPhoneDigits = normalizePhoneNumber(draft.customerPhone).slice(0, 11);
+    if (isPublicOrder && customerPhoneDigits.length < 10) {
+      toast.error('Informe um WhatsApp válido com DDD para a loja te encontrar.');
+      return;
+    }
     try {
       setSaving(true);
       setError(null);
-      setInlineMessage(null);
       const next = await updatePublicCart(token, {
         customerName: draft.customerName || null,
-        customerPhone: draft.customerPhone || null,
+        customerPhone: customerPhoneDigits || null,
         items: draft.items.map((item) => ({
           productId: item.productId,
           productName: item.productName,
@@ -296,9 +306,9 @@ export default function ZeloMenuCartPage() {
       });
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
-      setInlineMessage('Carrinho atualizado.');
+      toast.success('Carrinho atualizado.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não consegui atualizar o carrinho.');
+      toast.error(err instanceof Error ? err.message : 'Não consegui atualizar o carrinho.');
     } finally {
       setSaving(false);
     }
@@ -306,20 +316,30 @@ export default function ZeloMenuCartPage() {
 
   const confirmCart = async () => {
     if (!draft || !payload) return;
+    if (isPublicOrder) {
+      const customerPhoneDigits = normalizePhoneNumber(draft.customerPhone).slice(0, 11);
+      if (customerPhoneDigits.length < 10) {
+        toast.error('Informe um WhatsApp válido com DDD para a loja te encontrar.');
+        return;
+      }
+    }
     try {
       setConfirming(true);
       setError(null);
-      setInlineMessage(null);
       const next = await confirmPublicCart(token);
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
-      setInlineMessage(next.confirmation.confirmed
-        ? next.confirmation.alreadyConfirmed
-          ? 'Este pedido já estava confirmado.'
-          : 'Pedido confirmado. A loja recebeu o resumo no WhatsApp.'
-        : 'Revise os avisos do carrinho antes de confirmar.');
+      if (next.confirmation.confirmed) {
+        toast.success(
+          next.confirmation.alreadyConfirmed
+            ? 'Este pedido já estava confirmado.'
+            : 'Pedido confirmado. A loja recebeu o resumo no WhatsApp.',
+        );
+      } else {
+        toast.info('Revise os avisos do carrinho antes de confirmar.');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não consegui confirmar o pedido.');
+      toast.error(err instanceof Error ? err.message : 'Não consegui confirmar o pedido.');
     } finally {
       setConfirming(false);
     }
@@ -339,7 +359,6 @@ export default function ZeloMenuCartPage() {
         : current.items;
       return { ...current, items };
     });
-    setInlineMessage(null);
   };
 
   const addDraftItem = (
@@ -378,7 +397,6 @@ export default function ZeloMenuCartPage() {
         )),
       };
     });
-    setInlineMessage(null);
   };
 
   const beginAddProduct = (product: ZeloMenuCatalogProduct) => {
@@ -400,7 +418,7 @@ export default function ZeloMenuCartPage() {
       .filter((selection) => selection.optionIds.length > 0);
     const resolved = resolveModifierSelections(modifierPicker.product.modifierGroups, selectedOptions);
     if (resolved.ok === false) {
-      setError(resolved.message);
+      toast.error(resolved.message);
       return;
     }
     addDraftItem(modifierPicker.product, selectedOptions, resolved.selectedGroups);
@@ -410,8 +428,12 @@ export default function ZeloMenuCartPage() {
 
   const updateField = <K extends keyof DraftState>(key: K, value: DraftState[K]) => {
     if (!isOpen) return;
-    setDraft((current) => current ? { ...current, [key]: value } : current);
-    setInlineMessage(null);
+    setDraft((current) => current ? {
+      ...current,
+      [key]: key === 'customerPhone'
+        ? maskBrazilianPhone(String(value ?? '')) as DraftState[K]
+        : value,
+    } : current);
   };
 
   if (loading) {
@@ -867,18 +889,6 @@ export default function ZeloMenuCartPage() {
                   <p>{draft.deliveryNeighborhood}</p>
                 ) : null}
               </div>
-
-              {error ? (
-                <div className="rounded-lg border border-[var(--color-alert)] bg-[var(--color-alert-soft)] px-3 py-3 text-[13px] text-[var(--color-alert)]">
-                  {error}
-                </div>
-              ) : null}
-
-              {inlineMessage ? (
-                <div className="rounded-lg border border-[var(--color-brand)] bg-[var(--color-brand-soft)] px-3 py-3 text-[13px] text-[var(--color-brand-deep)]">
-                  {inlineMessage}
-                </div>
-              ) : null}
 
               <button
                 type="button"

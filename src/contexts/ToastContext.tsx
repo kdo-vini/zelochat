@@ -93,7 +93,7 @@ interface ContainerProps {
 
 function ToastContainer({ toasts, onDismiss }: ContainerProps) {
   return (
-    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none max-w-sm">
+    <div className="fixed inset-x-4 top-4 z-[100] flex flex-col gap-2 pointer-events-none sm:inset-x-auto sm:right-4 sm:max-w-sm">
       <AnimatePresence>
         {toasts.map((t) => (
           // wrapper div carries the React `key`; ToastItem doesn't need it in its props type

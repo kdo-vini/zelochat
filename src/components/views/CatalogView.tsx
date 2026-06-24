@@ -1,4 +1,4 @@
-import React, { useMemo, useState, type ReactNode } from 'react';
+import React, { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   ChevronDown,
@@ -15,6 +15,7 @@ import {
   ShoppingBag,
   Trash2,
   ExternalLink,
+  X,
 } from 'lucide-react';
 import type {
   Categoria,
@@ -24,6 +25,7 @@ import type {
   ZeloMenuProductPublicationInput,
   ZeloMenuProductPublicationRow,
 } from '../../hooks/useCatalog';
+import { useCatalogBulkController } from '../../hooks/useCatalogBulkController';
 import type { ZeloMenuModifierGroupDraft } from '../../domain/zelomenuModifiers';
 import {
   getZeloMenuPublicationStatus,
@@ -42,6 +44,7 @@ import {
 interface Props {
   isAuthenticated: boolean;
   authLoading: boolean;
+  canPublishToMenu: boolean;
   loading: boolean;
   error: string | null;
   categorias: Categoria[];
@@ -98,6 +101,7 @@ type ProdutoWithPublication = ProdutoRow & ZeloMenuPublicationProduct;
 export const CatalogView = ({
   isAuthenticated,
   authLoading,
+  canPublishToMenu,
   loading,
   error,
   categorias,
@@ -124,6 +128,8 @@ export const CatalogView = ({
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modal, setModal] = useState<CatModalState>(null);
   const [del, setDel] = useState<DeleteState>(null);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [bulkFeedback, setBulkFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
   const normalized = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -133,6 +139,16 @@ export const CatalogView = ({
 
   const tree = useMemo(() => buildTree(categorias, subcategorias, filtered), [categorias, subcategorias, filtered]);
   const orphanProducts = useMemo(() => filtered.filter((p) => p.id_categoria == null), [filtered]);
+  const visibleProducts = useMemo(
+    () => [
+      ...tree.flatMap((node) => [
+        ...node.produtosDireto,
+        ...node.subcategorias.flatMap((subNode) => subNode.produtos),
+      ]),
+      ...orphanProducts,
+    ],
+    [orphanProducts, tree],
+  );
   const publicationProducts = useMemo(
     () => produtos.map((produto) => withPublication(produto, productPublications)),
     [produtos, productPublications],
@@ -145,6 +161,44 @@ export const CatalogView = ({
       .slice(0, 8),
     [publicationProducts],
   );
+  const bulk = useCatalogBulkController({
+    visibleProducts,
+    deleteProduto,
+    upsertProductPublication,
+  });
+
+  const handleBulkPublish = async () => {
+    const result = await bulk.run({ type: 'set-publication', state: 'published' });
+    if (result.total === 0) return;
+    if (result.failed.length === 0) {
+      setBulkFeedback({
+        tone: 'success',
+        message: `${result.changed} produto${result.changed === 1 ? '' : 's'} publicado${result.changed === 1 ? '' : 's'} no link.`,
+      });
+      return;
+    }
+    setBulkFeedback({
+      tone: 'error',
+      message: `${result.changed} produto${result.changed === 1 ? '' : 's'} publicado${result.changed === 1 ? '' : 's'}, mas ${result.failed.length} não puderam ser atualizados.`,
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    const result = await bulk.run({ type: 'delete' });
+    setBulkDeleteConfirm(false);
+    if (result.total === 0) return;
+    if (result.failed.length === 0) {
+      setBulkFeedback({
+        tone: 'success',
+        message: `${result.changed} produto${result.changed === 1 ? '' : 's'} excluído${result.changed === 1 ? '' : 's'}.`,
+      });
+      return;
+    }
+    setBulkFeedback({
+      tone: 'error',
+      message: `${result.changed} produto${result.changed === 1 ? '' : 's'} excluído${result.changed === 1 ? '' : 's'}, mas ${result.failed.length} falharam.`,
+    });
+  };
 
   const toggleCat = (id: number) => {
     setExpanded((prev) => {
@@ -229,17 +283,101 @@ export const CatalogView = ({
               >
                 Recolher tudo
               </button>
+              <span className="text-gray-300">·</span>
+              {bulk.selectionMode ? (
+                <button
+                  onClick={() => {
+                    bulk.exitSelection();
+                    setBulkFeedback(null);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-800"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancelar seleção
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    bulk.enterSelection();
+                    setBulkFeedback(null);
+                  }}
+                  disabled={visibleProducts.length === 0}
+                  className="text-xs font-semibold text-gray-500 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Selecionar
+                </button>
+              )}
               <div className="ml-2 flex items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
                 <Search className="h-4 w-4 text-gray-400" />
                 <input
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setBulkFeedback(null);
+                  }}
                   placeholder="Buscar produto..."
                   className="w-full bg-transparent text-sm outline-none md:w-56"
                 />
               </div>
             </div>
           </div>
+
+          {bulk.selectionMode && (
+            <div className="mb-4 flex flex-col gap-3 rounded-xl border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)]/40 p-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3">
+                <SelectionCheckbox
+                  checked={bulk.allVisibleSelected}
+                  indeterminate={bulk.hasSelection && !bulk.allVisibleSelected}
+                  onChange={bulk.toggleVisible}
+                  ariaLabel="Selecionar produtos visíveis"
+                />
+                <div>
+                  <p className="text-sm font-semibold text-[var(--color-brand-deep)]">
+                    {bulk.selectedCount} produto{bulk.selectedCount === 1 ? '' : 's'} selecionado{bulk.selectedCount === 1 ? '' : 's'}
+                  </p>
+                  <p className="text-xs text-[var(--color-brand-deep)]/80">
+                    A seleção acompanha a busca atual desta tela.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => void bulk.toggleVisible()}
+                  disabled={visibleProducts.length === 0 || bulk.busyAction !== null}
+                  className="rounded-lg border border-[var(--color-brand-soft)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulk.allVisibleSelected ? 'Limpar visíveis' : 'Selecionar visíveis'}
+                </button>
+                {canPublishToMenu && (
+                  <button
+                    onClick={() => void handleBulkPublish()}
+                    disabled={!bulk.hasSelection || bulk.busyAction !== null}
+                    className="rounded-lg bg-[#25D366] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1EBE5D] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {bulk.busyAction === 'set-publication' ? 'Publicando...' : 'Publicar no link'}
+                  </button>
+                )}
+                <button
+                  onClick={() => setBulkDeleteConfirm(true)}
+                  disabled={!bulk.hasSelection || bulk.busyAction !== null}
+                  className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulk.busyAction === 'delete' ? 'Excluindo...' : 'Excluir selecionados'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {bulkFeedback && (
+            <div className={`mb-4 rounded-xl border p-3 ${
+              bulkFeedback.tone === 'success'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-amber-200 bg-amber-50 text-amber-800'
+            }`}>
+              <p className="text-xs font-medium">{bulkFeedback.message}</p>
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3">
@@ -284,6 +422,20 @@ export const CatalogView = ({
                   }
                   onEditSubcategoria={(sub) => setModal({ kind: 'subcategoria', initial: sub, defaultCategoriaId: sub.id_categoria })}
                   onDeleteSubcategoria={(sub) => setDel({ kind: 'subcategoria', item: sub })}
+                  selectionMode={bulk.selectionMode}
+                  selectedIds={bulk.selectedIds}
+                  onToggleCategorySelection={(ids) => {
+                    setBulkFeedback(null);
+                    bulk.toggleMany(ids);
+                  }}
+                  onToggleSubcategorySelection={(ids) => {
+                    setBulkFeedback(null);
+                    bulk.toggleMany(ids);
+                  }}
+                  onToggleProdutoSelection={(id) => {
+                    setBulkFeedback(null);
+                    bulk.toggle(id);
+                  }}
                   onEditProduto={(p) =>
                     setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
                   }
@@ -295,12 +447,31 @@ export const CatalogView = ({
 
               {orphanProducts.length > 0 && (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4">
-                  <p className="mb-3 text-xs font-semibold text-gray-500">Sem categoria ({orphanProducts.length})</p>
+                  <div className="mb-3 flex items-center gap-2">
+                    {bulk.selectionMode && (
+                      <SelectionCheckbox
+                        checked={getSelectionState(orphanProducts.map((product) => product.id), bulk.selectedIds) === 'all'}
+                        indeterminate={getSelectionState(orphanProducts.map((product) => product.id), bulk.selectedIds) === 'some'}
+                        onChange={() => {
+                          setBulkFeedback(null);
+                          bulk.toggleMany(orphanProducts.map((product) => product.id));
+                        }}
+                        ariaLabel="Selecionar produtos sem categoria"
+                      />
+                    )}
+                    <p className="text-xs font-semibold text-gray-500">Sem categoria ({orphanProducts.length})</p>
+                  </div>
                   <div className="space-y-2">
                     {orphanProducts.map((p) => (
                       <ProdutoRowItem
                         key={p.id}
                         produto={p}
+                        selectionMode={bulk.selectionMode}
+                        selected={bulk.isSelected(p.id)}
+                        onToggleSelected={() => {
+                          setBulkFeedback(null);
+                          bulk.toggle(p.id);
+                        }}
                         onEdit={() =>
                           setModal({ kind: 'produto', initial: p, defaultCategoriaId: null, defaultSubcategoriaId: null })
                         }
@@ -431,6 +602,14 @@ export const CatalogView = ({
           else if (del.kind === 'produto') await deleteProduto(del.item.id);
         }}
       />
+
+      <ConfirmDelete
+        open={bulkDeleteConfirm}
+        title="Excluir produtos selecionados?"
+        message={`Excluir ${bulk.selectedCount} produto${bulk.selectedCount === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`}
+        onClose={() => setBulkDeleteConfirm(false)}
+        onConfirm={handleBulkDelete}
+      />
     </div>
   );
 };
@@ -477,6 +656,11 @@ type CategoriaCardProps = {
   onNewProduto: (subId: number | null) => void;
   onEditSubcategoria: (sub: Subcategoria) => void;
   onDeleteSubcategoria: (sub: Subcategoria) => void;
+  selectionMode: boolean;
+  selectedIds: ReadonlySet<number>;
+  onToggleCategorySelection: (ids: number[]) => void;
+  onToggleSubcategorySelection: (ids: number[]) => void;
+  onToggleProdutoSelection: (id: number) => void;
   onEditProduto: (p: ProdutoRow) => void;
   onDeleteProduto: (p: ProdutoRow) => void;
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
@@ -494,6 +678,11 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
   onNewProduto,
   onEditSubcategoria,
   onDeleteSubcategoria,
+  selectionMode,
+  selectedIds,
+  onToggleCategorySelection,
+  onToggleSubcategorySelection,
+  onToggleProdutoSelection,
   onEditProduto,
   onDeleteProduto,
   productPublications,
@@ -501,10 +690,20 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
 }) => {
   const isOpen = expanded || forceExpanded;
   const totalProdutos = node.produtosDireto.length + node.subcategorias.reduce((acc, s) => acc + s.produtos.length, 0);
+  const categoryIds = getCategoryProductIds(node);
+  const categorySelectionState = getSelectionState(categoryIds, selectedIds);
 
   return (
     <div className="overflow-hidden rounded-xl border border-gray-100 bg-white">
       <div className="flex items-center gap-2 bg-gray-50 px-3 py-3">
+        {selectionMode && totalProdutos > 0 && (
+          <SelectionCheckbox
+            checked={categorySelectionState === 'all'}
+            indeterminate={categorySelectionState === 'some'}
+            onChange={() => onToggleCategorySelection(categoryIds)}
+            ariaLabel={`Selecionar categoria ${node.categoria.nome}`}
+          />
+        )}
         <button
           onClick={toggle}
           className="rounded-lg p-1 text-gray-500 hover:bg-white"
@@ -543,6 +742,9 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
             <div key={p.id} className="px-4 py-2">
               <ProdutoRowItem
                 produto={p}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(p.id)}
+                onToggleSelected={() => onToggleProdutoSelection(p.id)}
                 publication={productPublications[p.id] ?? null}
                 onEdit={() => onEditProduto(p)}
                 onDelete={() => onDeleteProduto(p)}
@@ -554,6 +756,14 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
           {node.subcategorias.map(({ subcategoria, produtos }) => (
             <div key={subcategoria.id} className="px-4 py-3">
               <div className="mb-2 flex items-center gap-2">
+                {selectionMode && produtos.length > 0 && (
+                  <SelectionCheckbox
+                    checked={getSelectionState(produtos.map((p) => p.id), selectedIds) === 'all'}
+                    indeterminate={getSelectionState(produtos.map((p) => p.id), selectedIds) === 'some'}
+                    onChange={() => onToggleSubcategorySelection(produtos.map((p) => p.id))}
+                    ariaLabel={`Selecionar subcategoria ${subcategoria.nome}`}
+                  />
+                )}
                 <span className="text-[12px] font-semibold uppercase tracking-wide text-gray-500">
                   {subcategoria.nome}
                 </span>
@@ -577,6 +787,9 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                   <ProdutoRowItem
                     key={p.id}
                     produto={p}
+                    selectionMode={selectionMode}
+                    selected={selectedIds.has(p.id)}
+                    onToggleSelected={() => onToggleProdutoSelection(p.id)}
                     publication={productPublications[p.id] ?? null}
                     onEdit={() => onEditProduto(p)}
                     onDelete={() => onDeleteProduto(p)}
@@ -611,6 +824,9 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
 
 type ProdutoRowItemProps = {
   produto: ProdutoRow;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelected?: () => void;
   publication?: ZeloMenuProductPublicationRow | null;
   onEdit: () => void;
   onDelete: () => void;
@@ -619,6 +835,9 @@ type ProdutoRowItemProps = {
 
 const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
   produto,
+  selectionMode = false,
+  selected = false,
+  onToggleSelected,
   publication,
   onEdit,
   onDelete,
@@ -628,6 +847,13 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
 
   return (
     <div className="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-50">
+      {selectionMode && (
+        <SelectionCheckbox
+          checked={selected}
+          onChange={() => onToggleSelected?.()}
+          ariaLabel={`Selecionar produto ${produto.nome}`}
+        />
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-gray-800">{produto.nome}</span>
@@ -662,17 +888,19 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
         </span>
       )}
 
-      <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        <IconBtn title="Publicação no ZeloMenu" onClick={onConfigurePublication}>
-          <Globe2 className="h-3.5 w-3.5" />
-        </IconBtn>
-        <IconBtn title="Editar produto" onClick={onEdit}>
-          <Pencil className="h-3.5 w-3.5" />
-        </IconBtn>
-        <IconBtn title="Excluir produto" onClick={onDelete} destructive>
-          <Trash2 className="h-3.5 w-3.5" />
-        </IconBtn>
-      </div>
+      {!selectionMode && (
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <IconBtn title="Publicação no ZeloMenu" onClick={onConfigurePublication}>
+            <Globe2 className="h-3.5 w-3.5" />
+          </IconBtn>
+          <IconBtn title="Editar produto" onClick={onEdit}>
+            <Pencil className="h-3.5 w-3.5" />
+          </IconBtn>
+          <IconBtn title="Excluir produto" onClick={onDelete} destructive>
+            <Trash2 className="h-3.5 w-3.5" />
+          </IconBtn>
+        </div>
+      )}
     </div>
   );
 };
@@ -854,6 +1082,38 @@ function IconBtn({
   );
 }
 
+type SelectionState = 'none' | 'some' | 'all';
+
+function SelectionCheckbox({
+  checked,
+  indeterminate = false,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      aria-label={ariaLabel}
+      className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]"
+    />
+  );
+}
+
 function EmptyState({
   onCreateCategoria,
   onCreateProduto,
@@ -888,4 +1148,22 @@ function EmptyState({
       </div>
     </div>
   );
+}
+
+function getCategoryProductIds(node: TreeNode): number[] {
+  return [
+    ...node.produtosDireto.map((produto) => produto.id),
+    ...node.subcategorias.flatMap((subNode) => subNode.produtos.map((produto) => produto.id)),
+  ];
+}
+
+function getSelectionState(productIds: number[], selectedIds: ReadonlySet<number>): SelectionState {
+  if (productIds.length === 0) return 'none';
+  let selectedCount = 0;
+  for (const id of productIds) {
+    if (selectedIds.has(id)) selectedCount += 1;
+  }
+  if (selectedCount === 0) return 'none';
+  if (selectedCount === productIds.length) return 'all';
+  return 'some';
 }

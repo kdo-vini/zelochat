@@ -1931,12 +1931,35 @@ Type: Research
 Depends on: ZLM-001, ZLM-005  
 Owner: Produto/Engenharia  
 
+Status consolidado (2026-06-23):
+- **Entregue — modelo comercial novo**
+  - ZeloPDV continua R$59.
+  - ZeloMenu nasce como módulo comprável separado do ZeloPDV por **+R$40**.
+  - O pacote **ZeloPDV + ZeloMenu = R$99**.
+  - O bundle **ZeloPDV + ZeloChat + ZeloMenu = R$197**.
+  - O entitlement canônico novo é `has_zelo_menu`; `has_pedidos_addon` não é mais o nome canônico do produto.
+- **Entregue — infraestrutura/entitlement**
+  - `subscriptions.has_zelo_menu` aplicado.
+  - checkout/preços novos criados no Stripe.
+  - webhook do ZeloPDV grava `has_zelo_menu`.
+  - guards do ZeloPDV separados por capability (`hasZeloMenuAccess`, `hasOrderingReviewAccess`, `hasKitchenQueueAccess`).
+- **Entregue — comportamento de produto**
+  - `menu_publication`/`ordering_review`/`kitchen_queue` passam a ser capabilities distintas.
+  - cliente **PDV + ZeloMenu** ganha publicação + pedidos online + cozinha no ZeloPDV.
+  - cliente **PDV puro R$59** continua sem menu e sem pedidos online.
+  - cliente **legacy de Pedidos/Cozinha** continua grandfathered só na surface operacional antiga; não ganha publicação do ZeloMenu automaticamente.
+- **Pendente — limpeza comercial/documental no repo ZeloPDV**
+  - refletir o módulo ZeloMenu como addon separado comprável nas páginas **`/assinatura`**, **`/extensoes`** e demais pontos de aquisição/upgrade do ZeloPDV
+  - revisar copy/naming para o cliente entender que o menu substitui comercialmente o addon isolado de Pedidos/Cozinha
+  - retirar Pedidos/Cozinha da grade comercial como addon novo vendável, preservando apenas o grandfather legado
+  - garantir que todos os preços e nomes públicos batam com a matriz nova (PDV 59 / Menu +40 / PDV+Menu 99 / Bundle 197)
+
 Resultado final (2026-06-23):
 - Schema PDV-owned aplicado: `subscriptions.has_zelo_menu` + view `user_entitlements` (migration `zelomenu_entitlement_and_slug_2026_06_23.sql`). Backfill exato: chat/bundle ativos → `has_zelo_menu=true` (CS+Agreste), pdv → false. Verificado no Supabase.
 - Stripe LIVE: criados `zelo_chat_monthly_v2` (R$147 `price_1TlbH2LUJWyE4PkYSqFSXXVY`), `zelo_bundle_monthly_v2` (R$197 `price_1TlbH2LUJWyE4PkYlS4IxMhs`), `zelo_addon_menu_monthly_v1` (R$40 `price_1TlbH4LUJWyE4PkYX0kdJhAw`) — só catálogo, nenhuma assinatura existente alterada.
 - ZeloPDV `pricing.js`: chat 147 / bundle 197 / addon `menu` 40, billing-safe (price IDs v1 legados mantidos no reverse-lookup → assinantes atuais não quebram). Guards `hasZeloMenuAccess`/`hasOrderingReviewAccess`/`hasKitchenQueueAccess`. Webhook grava `has_zelo_menu`. Admin dashboard com toggle ZeloMenu. Testes `pricing.acessos.test.js` (10) cobrindo legacy-mapping + pdv+menu=99.
 - ZeloChat: resolver de capability (`zelomenuEntitlements.ts`, seam `has_zelo_menu`), copy `PRICING` 97→147 / 147→197.
-- **Falta (operação, não código):** setar no Dokploy do backend ZeloChat `STRIPE_PRICE_CHAT`/`STRIPE_PRICE_BUNDLE` → IDs v2 (liga o aumento p/ novos checkouts ZeloChat); migrar a assinatura do Agreste pro v2 com aviso prévio (D-104); CS grandfathered (D-017).
+- **Fechado no rollout:** envs do Dokploy aplicadas; grandfathering/saída operacional da Agreste resolvidas. O que permanece aberto não é infraestrutura deste repo, e sim a limpeza comercial/documental do lado ZeloPDV listada acima.
 
 Resultado parcial (2026-06-23) — parte LOCAL entregue (D-103):
 - `src/domain/zelomenuEntitlements.ts`: resolver read-only de capability, domínio puro, fonte única no repo ZeloChat. Computa `chat_app`/`pdv_core`/`menu_publication`/`public_menu_runtime`/`ordering_review`/`kitchen_queue`/`mesas`/`acessos` a partir de `plan_tier` + ativo, fiel à matriz de ZLM-005.
@@ -1944,11 +1967,17 @@ Resultado parcial (2026-06-23) — parte LOCAL entregue (D-103):
 - Seam ÚNICO para o futuro `has_zelo_menu`: o parâmetro `hasZeloMenuFlag`. Hoje passado como `undefined` em `src/hooks/useSubscription.ts` (capabilities expostas ao app); quando o ZeloPDV publicar a coluna, basta adicioná-la ao SELECT do hook e passar o valor — sem reescrever a regra.
 - Cobertura: `tests/zelomenuEntitlements.test.ts` cobre a matriz de ZLM-005 + o seam. `npm run lint`/`npm run build` passaram.
 
-BLOQUEADO no repo ZeloPDV (não executável aqui) — ordem obrigatória de D-104:
-1. (PDV/Stripe) nascer `has_zelo_menu` PDV-owned + novos price IDs: `STRIPE_PRICE_CHAT`=R$147, novo `STRIPE_PRICE_BUNDLE`=R$197, novo `STRIPE_PRICE_MENU`=R$40 (addon do PDV). Como `server/billing.ts` já injeta price IDs por env, é troca de price ID + env, não constante de código.
-2. (ZeloChat) ler o entitlement e só então virar a copy de pricing (`PRICING` no front + paywall). Passo 2 não pode vir antes do 1 — viraria copy sem o direito ser lido, trancando cliente válido.
-3. (Produto/Ops) grandfather: Casa dos Salgados pinada na condição atual (D-017); **Agreste migrada** para R$147 com aviso prévio (operação na subscription PDV-owned + comms).
-- Pendência de produto/PDV: remover Pedidos/Cozinha como addon vendido e mapear `plan_tier`/addons sem quebrar `subscriptions`.
+TO-DO consolidado pós-rollout:
+1. **Repo ZeloPDV — billing/comercial**
+   - atualizar páginas `/assinatura`, `/extensoes` e fluxos equivalentes para vender o ZeloMenu como módulo separado adquirível
+   - exibir corretamente a matriz pública: PDV R$59, Menu +R$40, PDV+Menu R$99, Bundle R$197
+   - parar de oferecer Pedidos/Cozinha como addon novo isolado
+2. **Repo ZeloPDV — guards/UI**
+   - garantir que toda UI de compra/upgrade e toda navegação protegida use `hasZeloMenuAccess`/`hasOrderingReviewAccess`/`hasKitchenQueueAccess`
+   - manter `has_pedidos_addon` apenas como helper legado/grandfathered
+3. **Cross-repo — documentação viva**
+   - espelhar qualquer mudança pública do ZeloPDV em `docs/CURRENT.md` do repo PDV
+   - manter este plano sincronizado sempre que pricing, naming ou entitlements mudarem
 
 Decisões aplicáveis (2026-06-23):
 - D-103: `has_zelo_menu` é PDV-owned (nasce no repo PDV). Executável **agora neste repo, sem DDL**: resolver read-only de capability lendo assinatura `chat`/`bundle` (ZeloMenu incluído por D-014) OU `has_pedidos_addon` legado, fail-safe para ON, com seam único para a flag nova.

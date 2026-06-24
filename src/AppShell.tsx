@@ -236,7 +236,12 @@ export default function AppShell() {
   }, []);
 
   const { session, token, loading: authLoading } = useSupabaseSession();
-  const { isActive: subscriptionActive, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
+  const {
+    isActive: subscriptionActive,
+    capabilities: subscriptionCapabilities,
+    loading: subscriptionLoading,
+    refresh: refreshSubscription,
+  } = useSubscription(session);
   const { empresa, save: saveEmpresa, refresh: refreshEmpresa } = useEmpresaPerfil(session);
   const [reactivatingAccount, setReactivatingAccount] = useState(false);
   const zelochatMode = normalizeZeloChatMode(empresa?.zelochat_mode);
@@ -1328,6 +1333,7 @@ export default function AppShell() {
                 <CatalogView
                   isAuthenticated={!!session}
                   authLoading={authLoading}
+                  canPublishToMenu={subscriptionCapabilities.menu_publication}
                   loading={catalog.loading}
                   error={catalog.error}
                   categorias={catalog.categorias}

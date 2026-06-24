@@ -12,6 +12,8 @@ import {
   resolveModifierSelections,
   type ZeloMenuModifierSelectionInput,
 } from '../domain/zelomenuModifiers';
+import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
+import { useToast } from '../contexts/ToastContext';
 
 type SelectedItem = {
   key: string;
@@ -45,6 +47,7 @@ function allProducts(catalog: ZeloMenuCatalogGroup[]): ZeloMenuCatalogProduct[] 
 export default function ZeloMenuStorePage() {
   const { slug = '' } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const [store, setStore] = useState<ZeloMenuPublicStoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -151,14 +154,13 @@ export default function ZeloMenuStorePage() {
 
   async function continueToCart() {
     if (lines.length === 0) return;
-    const phoneDigits = customerPhone.replace(/\D/g, '');
+    const phoneDigits = normalizePhoneNumber(customerPhone).slice(0, 11);
     if (phoneDigits.length < 10) {
-      setError('Informe um WhatsApp válido com DDD para a loja te encontrar.');
+      toast.error('Informe um WhatsApp válido com DDD para a loja te encontrar.');
       return;
     }
     try {
       setSubmitting(true);
-      setError(null);
       const result = await startPublicOrder(slug, {
         customerName: customerName.trim() || null,
         customerPhone: phoneDigits,
@@ -171,7 +173,7 @@ export default function ZeloMenuStorePage() {
       });
       navigate(result.path);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não consegui iniciar o pedido. Tente de novo.');
+      toast.error(err instanceof Error ? err.message : 'Não consegui iniciar o pedido. Tente de novo.');
     } finally {
       setSubmitting(false);
     }
@@ -270,14 +272,16 @@ export default function ZeloMenuStorePage() {
               </label>
               <label className="space-y-1.5">
                 <span className="text-[12px] font-medium text-[var(--color-ink-muted)]">WhatsApp (com DDD)</span>
-                <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} inputMode="tel" className="h-11 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[14px]" placeholder="(XX) XXXXX-XXXX" />
+                <input
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(maskBrazilianPhone(e.target.value))}
+                  inputMode="tel"
+                  className="h-11 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[14px]"
+                  placeholder="(XX) XXXXX-XXXX"
+                />
               </label>
             </div>
           </section>
-        ) : null}
-
-        {error ? (
-          <div className="mt-4 rounded-lg border border-[var(--color-alert)] bg-[var(--color-alert-soft)] px-3 py-3 text-[13px] text-[var(--color-alert)]">{error}</div>
         ) : null}
       </main>
 
