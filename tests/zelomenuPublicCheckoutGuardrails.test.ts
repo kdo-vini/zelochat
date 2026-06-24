@@ -40,4 +40,21 @@ await runSuite('ZeloMenu public checkout guardrails', [
       assertIncludes(cartPage, /event\.currentTarget\.select\(\)/, 'toque seleciona a quantidade atual');
     },
   },
+  {
+    name: 'edições são persistidas automaticamente antes da confirmação',
+    run() {
+      const autosaveStart = cartPage.indexOf('const enqueueAutosave');
+      const confirmStart = cartPage.indexOf('const confirmCart');
+      assert(autosaveStart >= 0 && autosaveStart < confirmStart, 'autosave existe fora do fluxo de confirmação');
+      assertIncludes(cartPage, /setTimeout\(\(\) => \{[\s\S]*enqueueAutosave\(autosavePayload\)[\s\S]*\}, 650\)/, 'autosave usa debounce');
+      assertIncludes(cartPage, /saveQueueRef\.current[\s\S]*updatePublicCart\(token, nextPayload\)/, 'PATCHs são serializados');
+      assertIncludes(cartPage, /version !== saveVersionRef\.current/, 'resposta antiga não sobrescreve status recente');
+      assertIncludes(cartPage, /visibilitychange/, 'alteração pendente é enviada ao ocultar a página');
+      assertIncludes(cartPage, /flushPendingAutosave\(\)\.then\(\(\) => load\('refresh'\)\)/, 'recarregar espera o salvamento pendente');
+      assertIncludes(cartPage, /autosaveReadyRef\.current = false/, 'troca de token reinicia o autosave');
+      assertIncludes(cartPage, /Salvando alterações…/, 'cliente recebe feedback de salvamento');
+      assertIncludes(cartPage, /Alterações salvas/, 'cliente recebe confirmação de persistência');
+      assertIncludes(cartPage, /Não foi possível salvar\. Tentar novamente/, 'falha oferece nova tentativa acionável');
+    },
+  },
 ]);

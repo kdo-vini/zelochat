@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -29,6 +29,7 @@ import {
   type ZeloMenuCatalogProduct,
   type ZeloMenuCartRevalidationIssue,
   type ZeloMenuPublicCartResponse,
+  type ZeloMenuUpdateCartPayload,
 } from '../services/zelomenuApi';
 import {
   formatModifierAwareCartItem,
@@ -243,6 +244,35 @@ function buildRevalidationToastMessage(issues: ZeloMenuCartRevalidationIssue[]):
   return `Seu carrinho precisa de revisão.${detail}${suffix}`;
 }
 
+function buildCartUpdatePayload(
+  draft: DraftState,
+  scheduleMode: 'asap' | 'scheduled',
+): ZeloMenuUpdateCartPayload {
+  const pickupDate = scheduleMode === 'asap' ? todayISOdate() : draft.pickupDate;
+  const pickupTime = scheduleMode === 'asap' ? nowTimeBR() : draft.pickupTime;
+  return {
+    customerName: draft.customerName || null,
+    customerPhone: normalizePhoneNumber(draft.customerPhone).slice(0, 11) || null,
+    items: draft.items.map((item) => ({
+      productId: item.productId,
+      productName: item.productName,
+      quantity: item.quantity,
+      notes: item.notes || null,
+      selectedOptions: item.selectedOptions,
+    })),
+    fulfillment: {
+      type: draft.fulfillmentType,
+      asap: scheduleMode === 'asap',
+      pickupDate: pickupDate || null,
+      pickupTime: pickupTime || null,
+      deliveryAddress: draft.fulfillmentType === 'delivery' ? (draft.deliveryAddress || null) : null,
+      deliveryNeighborhood: draft.fulfillmentType === 'delivery' ? (draft.deliveryNeighborhood || null) : null,
+    },
+    paymentMethod: draft.paymentMethod || null,
+    observations: draft.observations || null,
+  };
+}
+
 export default function ZeloMenuCartPage() {
   const { token = '' } = useParams();
   const toast = useToast();
@@ -256,19 +286,29 @@ export default function ZeloMenuCartPage() {
   const [scheduleMode, setScheduleMode] = useState<'asap' | 'scheduled'>('asap');
   const [showErrors, setShowErrors] = useState(false);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const revalidationToastShownRef = useRef('');
+  const autosaveReadyRef = useRef(false);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const saveVersionRef = useRef(0);
+  const latestAutosaveRef = useRef<ZeloMenuUpdateCartPayload | null>(null);
+  const loadRequestRef = useRef(0);
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
+    const requestId = ++loadRequestRef.current;
     try {
       setError(null);
       if (mode === 'initial') setLoading(true);
       else setRefreshing(true);
       const next = await getPublicCart(token);
+      if (requestId !== loadRequestRef.current) return;
       if (mode === 'refresh') revalidationToastShownRef.current = '';
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
       document.title = next.business.name ? `${next.business.name} | Revisar pedido` : 'Revisar pedido';
     } catch (err) {
+      if (requestId !== loadRequestRef.current) return;
       const message = err instanceof Error ? err.message : 'Não consegui carregar o carrinho.';
       if (mode === 'initial' || !payload) {
         setError(message);
@@ -276,14 +316,29 @@ export default function ZeloMenuCartPage() {
         toast.error(message);
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
+    autosaveReadyRef.current = false;
+    latestAutosaveRef.current = null;
+    saveVersionRef.current += 1;
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    setPayload(null);
+    setDraft(null);
+    setSaveStatus('idle');
     void load();
     return () => {
+      loadRequestRef.current += 1;
+      saveVersionRef.current += 1;
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
       document.title = 'ZeloChat';
     };
   }, [token]);
@@ -331,6 +386,74 @@ export default function ZeloMenuCartPage() {
     : {};
 
   const validateDetails = (): string | null => firstZeloMenuCheckoutError(detailErrors);
+  const autosavePayload = useMemo(
+    () => draft ? buildCartUpdatePayload(draft, scheduleMode) : null,
+    [draft, scheduleMode],
+  );
+  const autosaveSignature = useMemo(
+    () => autosavePayload ? JSON.stringify(autosavePayload) : '',
+    [autosavePayload],
+  );
+
+  const enqueueAutosave = useCallback((nextPayload: ZeloMenuUpdateCartPayload): Promise<void> => {
+    const version = ++saveVersionRef.current;
+    setSaveStatus('saving');
+    const queued = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const updated = await updatePublicCart(token, nextPayload);
+        if (version !== saveVersionRef.current) return;
+        setPayload(updated);
+        setSaveStatus('saved');
+      })
+      .catch(() => {
+        if (version === saveVersionRef.current) setSaveStatus('error');
+      });
+    saveQueueRef.current = queued;
+    return queued;
+  }, [token]);
+
+  const flushPendingAutosave = useCallback((): Promise<void> => {
+    const latest = latestAutosaveRef.current;
+    if (latest && autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+      return enqueueAutosave(latest);
+    }
+    return saveQueueRef.current.catch(() => undefined);
+  }, [enqueueAutosave]);
+
+  useEffect(() => {
+    latestAutosaveRef.current = autosavePayload;
+    if (!autosavePayload || !isOpen || isStale) return;
+    if (!autosaveReadyRef.current) {
+      autosaveReadyRef.current = true;
+      return;
+    }
+
+    setSaveStatus('saving');
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void enqueueAutosave(autosavePayload);
+    }, 650);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [autosavePayload, autosaveSignature, enqueueAutosave, isOpen, isStale]);
+
+  useEffect(() => {
+    const flushAutosave = () => {
+      if (document.visibilityState !== 'hidden') return;
+      void flushPendingAutosave();
+    };
+    document.addEventListener('visibilitychange', flushAutosave);
+    return () => document.removeEventListener('visibilitychange', flushAutosave);
+  }, [flushPendingAutosave]);
 
   useEffect(() => {
     if (!revalidationIssueSignature) {
@@ -351,31 +474,11 @@ export default function ZeloMenuCartPage() {
       toast.error(validationError);
       return;
     }
-    const customerPhoneDigits = normalizePhoneNumber(draft.customerPhone).slice(0, 11);
     try {
       setConfirming(true);
       setError(null);
-      const updated = await updatePublicCart(token, {
-        customerName: draft.customerName || null,
-        customerPhone: customerPhoneDigits || null,
-        items: draft.items.map((item) => ({
-          productId: item.productId,
-          productName: item.productName,
-          quantity: item.quantity,
-          notes: item.notes || null,
-          selectedOptions: item.selectedOptions,
-        })),
-        fulfillment: {
-          type: draft.fulfillmentType,
-          asap: scheduleMode === 'asap',
-          pickupDate: effectivePickupDate,
-          pickupTime: effectivePickupTime,
-          deliveryAddress: draft.fulfillmentType === 'delivery' ? (draft.deliveryAddress || null) : null,
-          deliveryNeighborhood: draft.fulfillmentType === 'delivery' ? (draft.deliveryNeighborhood || null) : null,
-        },
-        paymentMethod: draft.paymentMethod || null,
-        observations: draft.observations || null,
-      });
+      await flushPendingAutosave();
+      const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode));
 
       const updateIssues = updated.revalidation.issues ?? [];
       if (updateIssues.length > 0) {
@@ -638,7 +741,12 @@ export default function ZeloMenuCartPage() {
                     <p className="truncate text-[11.5px] text-[var(--color-ink-muted)]">{payload.business.name}</p>
                   ) : null}
                 </div>
-                <button type="button" onClick={() => void load('refresh')} aria-label="Revalidar" className={iconBtnCls}>
+                <button
+                  type="button"
+                  onClick={() => void flushPendingAutosave().then(() => load('refresh'))}
+                  aria-label="Revalidar"
+                  className={iconBtnCls}
+                >
                   {refreshing
                     ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
                     : <RefreshCw className="h-4 w-4" strokeWidth={1.8} />}
@@ -1014,6 +1122,24 @@ export default function ZeloMenuCartPage() {
 
             {/* footer — total ao vivo + CTA sempre visível */}
             <div className="flex-none border-t border-[var(--color-line)] bg-[var(--color-surface)] px-4 pb-5 pt-3">
+              <div className="mb-2 flex min-h-4 justify-end" aria-live="polite">
+                {saveStatus === 'saving' ? (
+                  <span className="text-[10.5px] text-[var(--color-ink-muted)]">Salvando alterações…</span>
+                ) : saveStatus === 'saved' ? (
+                  <span className="text-[10.5px] text-[var(--color-brand-deep)]">Alterações salvas</span>
+                ) : saveStatus === 'error' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const latest = latestAutosaveRef.current;
+                      if (latest) void enqueueAutosave(latest);
+                    }}
+                    className="text-[10.5px] font-semibold text-[var(--color-alert)] underline underline-offset-2"
+                  >
+                    Não foi possível salvar. Tentar novamente
+                  </button>
+                ) : null}
+              </div>
               <div className="flex items-center gap-3">
                 <div className="flex flex-col leading-tight">
                   <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">{step === 0 ? 'Subtotal' : 'Total'}</span>
