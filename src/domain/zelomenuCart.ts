@@ -262,6 +262,14 @@ export function buildWhatsAppCartLinkMessage(input: {
 export const ABANDONED_CART_RECOVERY_MIN_AGE_MS = 2 * 60 * 60 * 1000; // 2h
 export const ABANDONED_CART_RECOVERY_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
 
+// Expiração/limpeza de carrinho abandonado (housekeeping). Só `cart_open` parado
+// por mais de 24h é arquivado (todos os contextos). Pedido confirmado/aceito NUNCA
+// entra aqui — fica preservado para o futuro "Peça novamente". O marcador em
+// metadata desacopla o purge do estado, então só apagamos o que ESTA rotina arquivou.
+export const ABANDONED_CART_EXPIRY_AGE_MS = 24 * 60 * 60 * 1000; // 24h → arquiva
+export const ABANDONED_CART_PURGE_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90d arquivado → apaga
+export const ABANDONED_CART_ARCHIVED_REASON = 'abandoned_expiry'; // metadata.archivedReason
+
 export function isCartEligibleForAbandonedRecovery(params: {
   state: ZeloMenuCartState;
   archivedAt: string | null;

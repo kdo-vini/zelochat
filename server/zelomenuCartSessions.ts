@@ -15,6 +15,9 @@ import {
   type ZeloMenuModifierSelectionInput,
 } from '../src/domain/zelomenuModifiers.js';
 import {
+  ABANDONED_CART_ARCHIVED_REASON,
+  ABANDONED_CART_EXPIRY_AGE_MS,
+  ABANDONED_CART_PURGE_AGE_MS,
   ABANDONED_CART_RECOVERY_MAX_AGE_MS,
   ABANDONED_CART_RECOVERY_MIN_AGE_MS,
   buildAbandonedCartRecoveryMessage,
@@ -2107,4 +2110,88 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
   );
 
   return sendOk ? 'sent' : 'failed';
+}
+
+// ─── Expiração / limpeza de carrinho abandonado (housekeeping) ──────────────────
+//
+// Carrinho `cart_open` parado por mais de 24h é lixo: o cliente nunca confirmou.
+// Fase 1 arquiva (soft) e marca `metadata.archivedReason='abandoned_expiry'`.
+// Fase 2 apaga em definitivo só os arquivados-por-abandono após 90 dias.
+//
+// NUNCA toca em pedido confirmado/aceito/cancelado/rejeitado nem em
+// `needs_customer_adjustment` — pedidos confirmados ficam preservados para o
+// futuro "Peça novamente". O purge filtra pelo marcador (não pelo estado), então
+// um `accepted` (que também tem `archived_at`) jamais entra na fase 2.
+
+/**
+ * Fase 1 — arquiva carrinhos `cart_open` parados há mais de 24h (todos os
+ * contextos). Idempotente e race-safe: a cláusula da UPDATE exige `cart_open` +
+ * `archived_at IS NULL`, então um confirm concorrente nunca é sobrescrito.
+ * Faz merge por linha do `metadata` para preservar campos (`source`, etc.).
+ * Retorna o número de carrinhos arquivados.
+ */
+export async function expireStaleCartOpenSessions(params: { limit?: number } = {}): Promise<number> {
+  const limit = params.limit ?? 100;
+  const cutoff = new Date(Date.now() - ABANDONED_CART_EXPIRY_AGE_MS).toISOString();
+
+  const { data, error } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .select('id, metadata')
+    .eq('state', 'cart_open')
+    .is('archived_at', null)
+    .lt('updated_at', cutoff)
+    .order('updated_at', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+
+  const rows = (data ?? []) as Array<{ id: string; metadata: unknown }>;
+  let archived = 0;
+  for (const row of rows) {
+    const now = new Date().toISOString();
+    const mergedMetadata = {
+      ...parseMetadata(row.metadata),
+      archivedReason: ABANDONED_CART_ARCHIVED_REASON,
+      archivedAt: now,
+    };
+    const { data: updated, error: updateError } = await getServiceSupabase()
+      .from('zelomenu_cart_sessions')
+      .update({ state: 'archived', archived_at: now, updated_at: now, metadata: mergedMetadata })
+      .eq('id', row.id)
+      .eq('state', 'cart_open')
+      .is('archived_at', null)
+      .select('id')
+      .maybeSingle();
+    if (updateError) throw updateError;
+    if (updated) archived++;
+  }
+  return archived;
+}
+
+/**
+ * Fase 2 — apaga em definitivo os carrinhos que ESTA rotina arquivou
+ * (`metadata.archivedReason='abandoned_expiry'`) e que estão arquivados há mais
+ * de 90 dias. O filtro por marcador garante que nenhum pedido confirmado/aceito
+ * é apagado. Retorna o número de linhas removidas.
+ */
+export async function purgeExpiredArchivedCarts(params: { limit?: number } = {}): Promise<number> {
+  const limit = params.limit ?? 100;
+  const cutoff = new Date(Date.now() - ABANDONED_CART_PURGE_AGE_MS).toISOString();
+
+  const { data, error } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .select('id')
+    .eq('metadata->>archivedReason', ABANDONED_CART_ARCHIVED_REASON)
+    .lt('archived_at', cutoff)
+    .limit(limit);
+  if (error) throw error;
+
+  const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  if (ids.length === 0) return 0;
+
+  const { error: deleteError } = await getServiceSupabase()
+    .from('zelomenu_cart_sessions')
+    .delete()
+    .in('id', ids);
+  if (deleteError) throw deleteError;
+  return ids.length;
 }

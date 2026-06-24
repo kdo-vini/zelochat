@@ -1,14 +1,25 @@
-import { listAbandonedCartCandidates, recoverAbandonedCart } from './zelomenuCartSessions.js';
+import {
+  expireStaleCartOpenSessions,
+  listAbandonedCartCandidates,
+  purgeExpiredArchivedCarts,
+  recoverAbandonedCart,
+} from './zelomenuCartSessions.js';
 
 /**
- * ZLM-105 — Abandoned ZeloMenu cart recovery sweeper.
+ * ZLM-105 — Abandoned ZeloMenu cart sweeper. Three passes per tick:
  *
- * A `whatsapp_order` cart left in `cart_open` for more than 2h (and up to 24h)
- * gets ONE friendly recovery nudge with a fresh link. The one-shot guarantee and
- * the "never for confirmed/cancelled/accepted" rule live in
- * `recoverAbandonedCart` (race-safe metadata claim) and the pure
- * `isCartEligibleForAbandonedRecovery` predicate — this file only owns the
- * timing/iteration loop.
+ * 1. Recovery — a `whatsapp_order` cart left in `cart_open` for 2h–24h gets ONE
+ *    friendly recovery nudge with a fresh link. One-shot + "never for
+ *    confirmed/cancelled/accepted" live in `recoverAbandonedCart` (race-safe
+ *    metadata claim) and the pure `isCartEligibleForAbandonedRecovery` predicate.
+ * 2. Archive — any `cart_open` idle for more than 24h (all contexts, incl.
+ *    public_order) is soft-archived (`state='archived'`, `archived_at`, marker
+ *    `metadata.archivedReason='abandoned_expiry'`). Disjoint from the recovery
+ *    window (>24h vs <24h), so a cart never gets nudged and archived in the same
+ *    tick. Confirmed/accepted orders are never touched.
+ * 3. Purge — abandoned carts archived more than 90 days ago are hard-deleted.
+ *    Filtered by the marker, so confirmed/accepted orders (which also carry
+ *    `archived_at`) are never deleted — they back the future "Peça novamente".
  *
  * Schedule: run once 3 minutes after startup (lets the paywall/config caches
  * warm), then every 15 minutes so a nudge fires reasonably close to the 2h mark.
@@ -46,6 +57,13 @@ export async function sweepAbandonedCarts(): Promise<void> {
   }
   if (sent > 0 || failed > 0) {
     console.log(`[abandonedCartSweeper] recovery sweep: sent=${sent} skipped=${skipped} failed=${failed}`);
+  }
+
+  // Limpeza: arquiva cart_open parado >24h e apaga arquivados-por-abandono >90d.
+  const archived = await expireStaleCartOpenSessions({ limit: SWEEP_BATCH_LIMIT });
+  const purged = await purgeExpiredArchivedCarts({ limit: SWEEP_BATCH_LIMIT });
+  if (archived > 0 || purged > 0) {
+    console.log(`[abandonedCartSweeper] cleanup: archived=${archived} purged=${purged}`);
   }
 }
 
