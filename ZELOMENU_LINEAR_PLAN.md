@@ -1971,7 +1971,7 @@ Aceite:
 
 #### ZLM-301 — Sincronização real com pedidos do ZeloPDV
 
-Status: Doing — materialização one-way entregue; sync bidirecional/fonte-única é a próxima fase  
+Status: Doing — bidirecional (opção a, duas tabelas sincronizadas) implementado e gated por empresa; pendente apply do trigger + validação E2E no Donutopia antes de ligar pra CS  
 Type: Prototype  
 Depends on: ZLM-202  
 Owner: Engenharia  
