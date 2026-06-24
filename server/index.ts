@@ -126,7 +126,11 @@ const PAYWALL_EXEMPT_EXACT = new Set<string>([
   // Cron interno autenticado por CRON_SECRET, não usa JWT de empresa.
   '/api/cron/onboarding-followup',
 ]);
-const PAYWALL_EXEMPT_PREFIXES = ['/api/billing/', '/api/webhooks/'];
+// /api/public/* are the public ZeloMenu endpoints (cart link + store by slug),
+// rewritten to /public-api/* above. They are token/slug-gated, not subscription-
+// gated, so they must skip the paywall. Belt-and-suspenders with the rewrite:
+// even if req.path still reads /api/public/* here, this keeps them open.
+const PAYWALL_EXEMPT_PREFIXES = ['/api/billing/', '/api/webhooks/', '/api/public/'];
 
 app.use(async (req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
