@@ -173,7 +173,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function getPublicCart(token: string): Promise<ZeloMenuPublicCartResponse> {
-  const response = await apiFetch(apiUrl(`/public-api/zelomenu/cart/${encodeURIComponent(token)}`), {
+  const response = await apiFetch(apiUrl(`/api/public/zelomenu/cart/${encodeURIComponent(token)}`), {
     cache: 'no-store',
   });
   return parseResponse<ZeloMenuPublicCartResponse>(response);
@@ -183,7 +183,7 @@ export async function updatePublicCart(
   token: string,
   payload: ZeloMenuUpdateCartPayload,
 ): Promise<ZeloMenuPublicCartResponse> {
-  const response = await apiFetch(apiUrl(`/public-api/zelomenu/cart/${encodeURIComponent(token)}`), {
+  const response = await apiFetch(apiUrl(`/api/public/zelomenu/cart/${encodeURIComponent(token)}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -192,7 +192,7 @@ export async function updatePublicCart(
 }
 
 export async function confirmPublicCart(token: string): Promise<ZeloMenuConfirmCartResponse> {
-  const response = await apiFetch(apiUrl(`/public-api/zelomenu/cart/${encodeURIComponent(token)}/confirm`), {
+  const response = await apiFetch(apiUrl(`/api/public/zelomenu/cart/${encodeURIComponent(token)}/confirm`), {
     method: 'POST',
   });
   return parseResponse<ZeloMenuConfirmCartResponse>(response);
@@ -211,7 +211,7 @@ export type ZeloMenuPublicStoreResponse = {
 };
 
 export async function getPublicStore(slug: string): Promise<ZeloMenuPublicStoreResponse> {
-  const response = await apiFetch(apiUrl(`/public-api/zelomenu/store/${encodeURIComponent(slug)}`), {
+  const response = await apiFetch(apiUrl(`/api/public/zelomenu/store/${encodeURIComponent(slug)}`), {
     cache: 'no-store',
   });
   return parseResponse<ZeloMenuPublicStoreResponse>(response);
@@ -225,7 +225,7 @@ export async function startPublicOrder(
     items: ZeloMenuUpdateCartPayload['items'];
   },
 ): Promise<{ token: string; path: string; orderingId: string }> {
-  const response = await apiFetch(apiUrl(`/public-api/zelomenu/store/${encodeURIComponent(slug)}/cart`), {
+  const response = await apiFetch(apiUrl(`/api/public/zelomenu/store/${encodeURIComponent(slug)}/cart`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

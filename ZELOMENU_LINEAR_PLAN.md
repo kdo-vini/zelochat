@@ -1926,7 +1926,7 @@ Resultado (2026-06-23):
 
 #### ZLM-205 — Billing e planos novos
 
-Status: Done (rollout 2026-06-23; faltam só envs Dokploy + migração comercial do Agreste com aviso)  
+Status: Done (rollout 2026-06-23 completo; envs Dokploy aplicadas; Agreste deixou de ser cliente)  
 Type: Research  
 Depends on: ZLM-001, ZLM-005  
 Owner: Produto/Engenharia  

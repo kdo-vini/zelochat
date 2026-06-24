@@ -43,6 +43,22 @@ const ALLOWED_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:3000')
   .filter(Boolean);
 
 const app = express();
+
+// Public ZeloMenu endpoints (cart link + store by slug) must work in production,
+// where the reverse proxy only forwards /api/* to this backend (the nginx
+// frontend serves everything else as the SPA, so /public-api/* never reaches
+// here). We expose them under /api/public/* — which IS routed — by rewriting to
+// the canonical /public-api/* handlers. After the rewrite req.path no longer
+// starts with /api/, so the paywall below naturally skips them (they are public,
+// token/slug-gated). Must run before the body parser + paywall so req.path is
+// consistent everywhere downstream.
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api/public/')) {
+    req.url = `/public-api/${req.url.slice('/api/public/'.length)}`;
+  }
+  next();
+});
+
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
