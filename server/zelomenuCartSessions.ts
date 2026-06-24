@@ -944,7 +944,12 @@ async function buildPublicResponse(
   session.lastRevalidatedAt = revalidation.checkedAt;
   session.lastRevalidation = revalidation;
   session.updatedAt = revalidation.checkedAt;
-  session.metadata = session.metadata.source ? { source: session.metadata.source } : {};
+  const publicMetadata: Record<string, unknown> = {};
+  if (session.metadata.source) publicMetadata.source = session.metadata.source;
+  if (session.context === 'public_order' && typeof session.metadata.slug === 'string') {
+    publicMetadata.slug = session.metadata.slug;
+  }
+  session.metadata = publicMetadata;
 
   return {
     session,

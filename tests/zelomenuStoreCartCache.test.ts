@@ -5,6 +5,7 @@ import {
   syncZeloMenuStoreCartCache,
   zeloMenuStoreCartStorageKey,
 } from '../src/domain/zelomenuStoreCartCache.js';
+import { readFileSync } from 'node:fs';
 
 const values = new Map<string, string>();
 Object.defineProperty(globalThis, 'localStorage', {
@@ -16,6 +17,10 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 
 const slug = 'casa-dos-salgados';
+const cartSessionsSource = readFileSync(
+  new URL('../server/zelomenuCartSessions.ts', import.meta.url),
+  'utf8',
+);
 
 persistZeloMenuStoreCartCache(slug, {
   items: {
@@ -78,3 +83,10 @@ syncZeloMenuStoreCartCache({
 });
 assert.equal(localStorage.getItem(zeloMenuStoreCartStorageKey(slug)), null);
 console.log('ok - confirmação limpa o cache para o próximo pedido');
+
+assert.match(
+  cartSessionsSource,
+  /session\.context === 'public_order' && typeof session\.metadata\.slug === 'string'/,
+);
+assert.match(cartSessionsSource, /publicMetadata\.slug = session\.metadata\.slug/);
+console.log('ok - resposta pública preserva somente o slug necessário para sincronizar a sacola');
