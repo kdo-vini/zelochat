@@ -55,6 +55,8 @@ await runSuite('ZeloMenu public checkout guardrails', [
       assertIncludes(cartPage, /Salvando alterações…/, 'cliente recebe feedback de salvamento');
       assertIncludes(cartPage, /Alterações salvas/, 'cliente recebe confirmação de persistência');
       assertIncludes(cartPage, /Não foi possível salvar\. Tentar novamente/, 'falha oferece nova tentativa acionável');
+      assertIncludes(cartPage, /syncStoreCacheFromResponse\(updated\)/, 'PATCH sincroniza o cache do cardápio');
+      assertIncludes(cartPage, /await flushPendingAutosave\(\);[\s\S]*window\.history\.back\(\)/, 'voltar aguarda cache e servidor');
     },
   },
 ]);

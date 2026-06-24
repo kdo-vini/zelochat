@@ -131,6 +131,7 @@ These are out of scope or unsafe to change from this branch:
 - ✅ ZLM-211 — pedido público podia avançar sem dados essenciais → nome, WhatsApp, data e horário agora são obrigatórios; entrega também exige endereço; "Pra já" preenche hoje + hora atual automaticamente; validação aparece nos campos e o backend bloqueia confirmação incompleta — `src/domain/zelomenuCheckout.ts:1` · `src/pages/ZeloMenuCartPage.tsx:317` · `server/zelomenuCartSessions.ts:1878`
 - ✅ ZLM-212 — ajustar quantidades maiores no carrinho exigia muitos toques em `+`/`−` → número central agora é editável, seleciona o valor ao tocar e abre somente o teclado numérico no celular — `src/pages/ZeloMenuCartPage.tsx:443` · `src/pages/ZeloMenuCartPage.tsx:737`
 - ✅ ZLM-213 — edições do carrinho existiam apenas no estado do navegador e voltavam ao snapshot antigo após atualizar a página → checkout agora salva alterações automaticamente com debounce, serializa os PATCHes, ignora respostas antigas e mostra “Salvando alterações…” / “Alterações salvas” — `src/pages/ZeloMenuCartPage.tsx:359`
+- ✅ ZLM-214 — ao esvaziar o checkout e voltar ao cardápio, a sacola antiga reaparecia porque o cardápio restaurava um `localStorage` independente → cache local foi extraído para um módulo compartilhado e agora cada save do checkout atualiza ou remove a mesma chave antes de voltar; confirmação também limpa a sacola — `src/domain/zelomenuStoreCartCache.ts:1` · `src/pages/ZeloMenuCartPage.tsx:272`
 
 ### Sprint 69r (2026-06-23) — Bulk selection no Cardápio do ZeloChat
 

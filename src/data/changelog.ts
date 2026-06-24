@@ -19,7 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-06-24',
     category: 'minor',
     title: 'Quantidade mais rápida de ajustar no carrinho',
-    description: 'Além dos botões de mais e menos, o cliente pode tocar no número e digitar a quantidade pelo teclado numérico. As alterações do carrinho também ficam salvas automaticamente se ele atualizar ou voltar à página.',
+    description: 'Além dos botões de mais e menos, o cliente pode tocar no número e digitar a quantidade pelo teclado numérico. Alterações e remoções ficam salvas ao atualizar ou voltar ao cardápio, sem trazer itens antigos de volta.',
   },
   {
     date: '2026-06-24',

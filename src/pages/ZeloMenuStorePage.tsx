@@ -12,16 +12,14 @@ import {
   resolveModifierSelections,
   type ZeloMenuModifierSelectionInput,
 } from '../domain/zelomenuModifiers';
+import {
+  loadZeloMenuStoreCartCache,
+  persistZeloMenuStoreCartCache,
+  type ZeloMenuStoreCartItem,
+} from '../domain/zelomenuStoreCartCache';
 import { useToast } from '../contexts/ToastContext';
 
-type SelectedItem = {
-  key: string;
-  productId: number;
-  productName: string;
-  quantity: number;
-  selectedOptions: ZeloMenuModifierSelectionInput[];
-  unitPrice: number;
-};
+type SelectedItem = ZeloMenuStoreCartItem;
 
 function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -66,53 +64,6 @@ function getProductQty(productId: number, items: Record<string, SelectedItem>): 
     .reduce((s, it) => s + it.quantity, 0);
 }
 
-// ─── Cart persistence ──────────────────────────────────────────────────────────
-// Guarda o carrinho no localStorage do cliente por slug, com validade de 12h,
-// pra que voltar da tela de carrinho (ou recarregar a página) não perca os itens.
-
-const CART_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
-
-type PersistedCart = {
-  items: Record<string, SelectedItem>;
-};
-
-function cartStorageKey(slug: string): string {
-  return `zelomenu_cart_${slug}`;
-}
-
-function loadPersistedCart(slug: string): PersistedCart {
-  const empty: PersistedCart = { items: {} };
-  if (!slug) return empty;
-  try {
-    const raw = localStorage.getItem(cartStorageKey(slug));
-    if (!raw) return empty;
-    const parsed = JSON.parse(raw) as { savedAt?: number } & Partial<PersistedCart>;
-    if (!parsed.savedAt || Date.now() - parsed.savedAt > CART_TTL_MS) {
-      localStorage.removeItem(cartStorageKey(slug));
-      return empty;
-    }
-    return {
-      items: parsed.items ?? {},
-    };
-  } catch {
-    return empty;
-  }
-}
-
-function persistCart(slug: string, cart: PersistedCart): void {
-  if (!slug) return;
-  try {
-    const hasContent = Object.keys(cart.items).length > 0;
-    if (!hasContent) {
-      localStorage.removeItem(cartStorageKey(slug));
-      return;
-    }
-    localStorage.setItem(cartStorageKey(slug), JSON.stringify({ ...cart, savedAt: Date.now() }));
-  } catch {
-    // localStorage indisponível (modo privado/cota) — ignora, carrinho só não persiste
-  }
-}
-
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function ZeloMenuStorePage() {
@@ -125,7 +76,7 @@ export default function ZeloMenuStorePage() {
   const [error, setError] = useState<string | null>(null);
 
   // Carrinho restaurado do localStorage (validade 12h) — sobrevive a voltar/recarregar.
-  const restored = useMemo(() => loadPersistedCart(slug), [slug]);
+  const restored = useMemo(() => loadZeloMenuStoreCartCache(slug), [slug]);
   const [items, setItems] = useState<Record<string, SelectedItem>>(restored.items);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
@@ -166,7 +117,7 @@ export default function ZeloMenuStorePage() {
 
   // ── Persiste o carrinho no localStorage a cada mudança ──────────────────────
   useEffect(() => {
-    persistCart(slug, { items });
+    persistZeloMenuStoreCartCache(slug, { items });
   }, [slug, items]);
 
   // ── Category tracking via IntersectionObserver ──────────────────────────────

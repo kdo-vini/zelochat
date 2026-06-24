@@ -27,6 +27,7 @@ const tests = [
   'tests/zelomenuCart.test.ts',
   'tests/zelomenuCheckout.test.ts',
   'tests/zelomenuPublicCheckoutGuardrails.test.ts',
+  'tests/zelomenuStoreCartCache.test.ts',
   'tests/zelomenuReviewGuardrails.test.ts',
   'tests/zelomenuAbandonedCart.test.ts',
   'tests/zelomenuModifiers.test.ts',

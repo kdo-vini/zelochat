@@ -42,6 +42,7 @@ import {
   firstZeloMenuCheckoutError,
   validateZeloMenuCheckoutDetails,
 } from '../domain/zelomenuCheckout';
+import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { useToast } from '../contexts/ToastContext';
 
@@ -273,6 +274,17 @@ function buildCartUpdatePayload(
   };
 }
 
+function syncStoreCacheFromResponse(response: ZeloMenuPublicCartResponse): void {
+  const slug = typeof response.session.metadata.slug === 'string'
+    ? response.session.metadata.slug
+    : null;
+  syncZeloMenuStoreCartCache({
+    slug,
+    state: response.session.state,
+    items: response.session.cart.items,
+  });
+}
+
 export default function ZeloMenuCartPage() {
   const { token = '' } = useParams();
   const toast = useToast();
@@ -402,6 +414,7 @@ export default function ZeloMenuCartPage() {
       .catch(() => undefined)
       .then(async () => {
         const updated = await updatePublicCart(token, nextPayload);
+        syncStoreCacheFromResponse(updated);
         if (version !== saveVersionRef.current) return;
         setPayload(updated);
         setSaveStatus('saved');
@@ -479,6 +492,7 @@ export default function ZeloMenuCartPage() {
       setError(null);
       await flushPendingAutosave();
       const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode));
+      syncStoreCacheFromResponse(updated);
 
       const updateIssues = updated.revalidation.issues ?? [];
       if (updateIssues.length > 0) {
@@ -491,6 +505,7 @@ export default function ZeloMenuCartPage() {
       }
 
       const next = await confirmPublicCart(token);
+      syncStoreCacheFromResponse(next);
       const finalIssues = next.revalidation.issues ?? [];
       if (!next.confirmation.confirmed && finalIssues.length > 0) {
         const signature = revalidationSignature(finalIssues);
@@ -588,9 +603,12 @@ export default function ZeloMenuCartPage() {
     }
   };
 
-  const goBack = () => {
+  const goBack = async () => {
     if (step > 0) setStep((s) => Math.max(0, s - 1));
-    else window.history.back();
+    else {
+      await flushPendingAutosave();
+      window.history.back();
+    }
   };
 
   const enableAsap = () => {
