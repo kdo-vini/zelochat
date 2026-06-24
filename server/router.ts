@@ -1015,6 +1015,11 @@ function sendZeloMenuCartError(res: Response, error: unknown): void {
     return;
   }
 
+  if (message === 'CUSTOMER_DETAILS_REQUIRED') {
+    res.status(400).json({ error: 'Preencha os dados obrigatórios antes de confirmar o pedido.' });
+    return;
+  }
+
   if (message === 'INVALID_SLUG') {
     res.status(400).json({ error: 'Use de 3 a 40 letras, números ou hífens (ex.: casa-dos-salgados).' });
     return;

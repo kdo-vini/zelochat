@@ -62,6 +62,8 @@ export type ZeloMenuCustomerSnapshot = {
 
 export type ZeloMenuFulfillmentSnapshot = {
   type: 'pickup' | 'delivery';
+  /** Pedido imediato: data/hora são registradas, mas não representam um agendamento. */
+  asap?: boolean;
   pickupDate: string | null;
   pickupTime: string | null;
   deliveryAddress: string | null;

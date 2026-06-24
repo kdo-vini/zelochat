@@ -24,9 +24,11 @@ await runSuite('ZeloMenu public checkout guardrails', [
   {
     name: 'coleta nome e WhatsApp dentro do checkout',
     run() {
-      assertIncludes(cartPage, />Seu nome</, 'checkout contém campo de nome');
-      assertIncludes(cartPage, />WhatsApp</, 'checkout contém campo de WhatsApp');
+      assertIncludes(cartPage, /Seu nome \{requiredMark\}/, 'checkout contém campo obrigatório de nome');
+      assertIncludes(cartPage, /WhatsApp \{requiredMark\}/, 'checkout contém campo obrigatório de WhatsApp');
       assertIncludes(cartPage, /customerPhoneDigits\.length < 10|validateDetails\(\)/, 'checkout valida o WhatsApp');
+      assertIncludes(cartPage, /updateField\('pickupDate', ''\)/, 'agendamento exige data explícita');
+      assertIncludes(cartPage, /updateField\('pickupTime', ''\)/, 'agendamento exige horário explícito');
     },
   },
 ]);

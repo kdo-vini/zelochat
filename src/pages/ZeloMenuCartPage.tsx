@@ -37,6 +37,10 @@ import {
   type ZeloMenuSelectedModifierGroup,
 } from '../domain/zelomenuModifiers';
 import { resolveDeliveryFeeForNeighborhood } from '../domain/zelomenuDelivery';
+import {
+  firstZeloMenuCheckoutError,
+  validateZeloMenuCheckoutDetails,
+} from '../domain/zelomenuCheckout';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { useToast } from '../contexts/ToastContext';
 
@@ -78,6 +82,17 @@ function todayISOdate(): string {
   }).format(new Date());
 }
 
+// Hora atual no fuso BR como 'HH:mm' (formato de value do <input type=time>).
+// Usada no atalho "Pra já" para preencher um horário concreto automaticamente.
+function nowTimeBR(): string {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date());
+}
+
 function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState {
   return {
     customerName: payload.session.customer.name ?? '',
@@ -97,7 +112,7 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
     })),
     fulfillmentType: payload.session.fulfillment.type,
     pickupDate: payload.session.fulfillment.pickupDate ?? todayISOdate(),
-    pickupTime: payload.session.fulfillment.pickupTime ?? '',
+    pickupTime: payload.session.fulfillment.pickupTime ?? nowTimeBR(),
     deliveryAddress: payload.session.fulfillment.deliveryAddress ?? '',
     deliveryNeighborhood: payload.session.fulfillment.deliveryNeighborhood ?? '',
     paymentMethod: payload.session.payment.declaredMethod ?? '',
@@ -239,6 +254,7 @@ export default function ZeloMenuCartPage() {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
   const [scheduleMode, setScheduleMode] = useState<'asap' | 'scheduled'>('asap');
+  const [showErrors, setShowErrors] = useState(false);
   const revalidationToastShownRef = useRef('');
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
@@ -276,7 +292,9 @@ export default function ZeloMenuCartPage() {
   useEffect(() => {
     if (!payload) return;
     const f = payload.session.fulfillment;
-    const scheduled = Boolean(f.pickupTime) || (Boolean(f.pickupDate) && f.pickupDate !== todayISOdate());
+    const scheduled = f.asap === true
+      ? false
+      : Boolean(f.pickupTime) || (Boolean(f.pickupDate) && f.pickupDate !== todayISOdate());
     setScheduleMode(scheduled ? 'scheduled' : 'asap');
   }, [payload]);
 
@@ -298,6 +316,20 @@ export default function ZeloMenuCartPage() {
   const revalidationIssues = payload?.revalidation.issues ?? [];
   const revalidationIssueSignature = revalidationSignature(revalidationIssues);
   const canConfirm = isOpen && !isStale && (draft?.items.length ?? 0) > 0;
+  const effectivePickupDate = scheduleMode === 'asap' ? todayISOdate() : (draft?.pickupDate ?? '');
+  const effectivePickupTime = scheduleMode === 'asap' ? nowTimeBR() : (draft?.pickupTime ?? '');
+  const detailErrors = draft && isPublicOrder
+    ? validateZeloMenuCheckoutDetails({
+      customerName: draft.customerName,
+      customerPhone: draft.customerPhone,
+      fulfillmentType: draft.fulfillmentType,
+      deliveryAddress: draft.deliveryAddress,
+      pickupDate: effectivePickupDate,
+      pickupTime: effectivePickupTime,
+    })
+    : {};
+
+  const validateDetails = (): string | null => firstZeloMenuCheckoutError(detailErrors);
 
   useEffect(() => {
     if (!revalidationIssueSignature) {
@@ -311,12 +343,14 @@ export default function ZeloMenuCartPage() {
 
   const confirmCart = async () => {
     if (!draft || !payload || !isOpen || isStale) return;
-    const customerPhoneDigits = normalizePhoneNumber(draft.customerPhone).slice(0, 11);
-    if (isPublicOrder && customerPhoneDigits.length < 10) {
-      toast.error('Informe um WhatsApp válido com DDD para a loja te encontrar.');
+    const validationError = validateDetails();
+    if (validationError) {
+      setShowErrors(true);
       setStep(1);
+      toast.error(validationError);
       return;
     }
+    const customerPhoneDigits = normalizePhoneNumber(draft.customerPhone).slice(0, 11);
     try {
       setConfirming(true);
       setError(null);
@@ -332,8 +366,9 @@ export default function ZeloMenuCartPage() {
         })),
         fulfillment: {
           type: draft.fulfillmentType,
-          pickupDate: draft.pickupDate || null,
-          pickupTime: draft.pickupTime || null,
+          asap: scheduleMode === 'asap',
+          pickupDate: effectivePickupDate,
+          pickupTime: effectivePickupTime,
           deliveryAddress: draft.fulfillmentType === 'delivery' ? (draft.deliveryAddress || null) : null,
           deliveryNeighborhood: draft.fulfillmentType === 'delivery' ? (draft.deliveryNeighborhood || null) : null,
         },
@@ -405,8 +440,20 @@ export default function ZeloMenuCartPage() {
   };
 
   const goNext = () => {
-    if (step < 2) setStep((s) => Math.min(2, s + 1));
-    else void confirmCart();
+    if (step === 1) {
+      const validationError = validateDetails();
+      if (validationError) {
+        setShowErrors(true);
+        toast.error(validationError);
+        return;
+      }
+    }
+    if (step < 2) {
+      setShowErrors(false);
+      setStep((s) => Math.min(2, s + 1));
+    } else {
+      void confirmCart();
+    }
   };
 
   const goBack = () => {
@@ -416,11 +463,17 @@ export default function ZeloMenuCartPage() {
 
   const enableAsap = () => {
     setScheduleMode('asap');
-    updateField('pickupTime', '');
+    updateField('pickupTime', nowTimeBR());
     updateField('pickupDate', todayISOdate());
   };
 
-  const enableScheduled = () => setScheduleMode('scheduled');
+  const enableScheduled = () => {
+    if (scheduleMode === 'asap') {
+      updateField('pickupDate', '');
+      updateField('pickupTime', '');
+    }
+    setScheduleMode('scheduled');
+  };
 
   const paymentIcon = (opt: string) => {
     if (opt === 'Pix') return <QrCode className="h-4 w-4" strokeWidth={1.8} />;
@@ -493,14 +546,19 @@ export default function ZeloMenuCartPage() {
       ? (!canConfirm || confirming)
       : false;
 
-  const prettyDate = draft.pickupDate ? draft.pickupDate.split('-').reverse().join('/') : '';
+  const prettyDate = effectivePickupDate ? effectivePickupDate.split('-').reverse().join('/') : '';
   const whenLabel = scheduleMode === 'asap'
     ? 'o quanto antes'
-    : [prettyDate || null, draft.pickupTime || null].filter(Boolean).join(' às ') || 'a combinar';
+    : [prettyDate || null, effectivePickupTime || null].filter(Boolean).join(' às ') || 'a combinar';
   const summaryMeta = `${isDelivery ? 'Entrega' : 'Retirada'} · ${whenLabel}${isDelivery && draft.deliveryNeighborhood ? ` · ${draft.deliveryNeighborhood}` : ''}`;
 
   const inputCls = 'h-11 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[14px] text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)]';
+  const invalidInputCls = 'border-[var(--color-alert)] focus:border-[var(--color-alert)]';
   const labelCls = 'text-[11.5px] font-semibold text-[var(--color-ink-muted)]';
+  const requiredMark = <span className="text-[var(--color-alert)]" aria-hidden="true">*</span>;
+  const fieldError = (message: string | undefined) => showErrors && message
+    ? <span role="alert" className="text-[11px] text-[var(--color-alert)]">{message}</span>
+    : null;
   const segCls = (active: boolean) =>
     `flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${active ? 'bg-[var(--color-surface)] text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)]'}`;
   const iconBtnCls = 'flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[var(--color-surface-muted)] text-[var(--color-ink)] transition active:scale-90';
@@ -700,26 +758,32 @@ export default function ZeloMenuCartPage() {
                     </div>
 
                     <label className="mt-4 flex flex-col gap-1.5">
-                      <span className={labelCls}>Seu nome</span>
+                      <span className={labelCls}>Seu nome {requiredMark}</span>
                       <input
                         value={draft.customerName}
                         onChange={(event) => updateField('customerName', event.target.value)}
                         readOnly={!isOpen}
-                        className={inputCls}
+                        required
+                        aria-invalid={showErrors && Boolean(detailErrors.customerName)}
+                        className={`${inputCls} ${showErrors && detailErrors.customerName ? invalidInputCls : ''}`}
                         placeholder="Como te chamamos"
                       />
+                      {fieldError(detailErrors.customerName)}
                     </label>
 
                     <label className="mt-4 flex flex-col gap-1.5">
-                      <span className={labelCls}>WhatsApp</span>
+                      <span className={labelCls}>WhatsApp {requiredMark}</span>
                       <input
                         value={draft.customerPhone}
                         onChange={(event) => updateField('customerPhone', event.target.value)}
                         inputMode="tel"
                         readOnly={!isOpen || !isPublicOrder}
-                        className={`${inputCls} ${isPublicOrder ? '' : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'}`}
+                        required
+                        aria-invalid={showErrors && Boolean(detailErrors.customerPhone)}
+                        className={`${inputCls} ${isPublicOrder ? '' : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'} ${showErrors && detailErrors.customerPhone ? invalidInputCls : ''}`}
                         placeholder="(XX) XXXXX-XXXX"
                       />
+                      {fieldError(detailErrors.customerPhone)}
                     </label>
 
                     {/* endereço só aparece na entrega — colapsa suave na retirada */}
@@ -749,14 +813,17 @@ export default function ZeloMenuCartPage() {
                           </label>
 
                           <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>Endereço</span>
+                            <span className={labelCls}>Endereço {requiredMark}</span>
                             <input
                               value={draft.deliveryAddress}
                               onChange={(event) => updateField('deliveryAddress', event.target.value)}
                               readOnly={!isOpen}
-                              className={inputCls}
+                              required
+                              aria-invalid={showErrors && Boolean(detailErrors.deliveryAddress)}
+                              className={`${inputCls} ${showErrors && detailErrors.deliveryAddress ? invalidInputCls : ''}`}
                               placeholder="Rua, número e complemento"
                             />
+                            {fieldError(detailErrors.deliveryAddress)}
                           </label>
                         </div>
                       </div>
@@ -777,17 +844,37 @@ export default function ZeloMenuCartPage() {
                       </div>
                       {scheduleMode === 'asap' ? (
                         <p className="text-[11.5px] leading-snug text-[var(--color-ink-muted)]">
-                          {isDelivery ? 'Entrega o quanto antes.' : 'Retirada o quanto antes.'} É uma encomenda para outro dia ou horário? Toque em <span className="font-semibold text-[var(--color-ink-soft)]">Agendar</span>.
+                          {isDelivery ? 'Entrega o quanto antes.' : 'Retirada o quanto antes.'} Data e horário serão preenchidos automaticamente. É uma encomenda para outro momento? Toque em <span className="font-semibold text-[var(--color-ink-soft)]">Agendar</span>.
                         </p>
                       ) : (
                         <div className="grid grid-cols-2 gap-3">
                           <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>{isDelivery ? 'Data da entrega' : 'Data da retirada'}</span>
-                            <input type="date" lang="pt-BR" value={draft.pickupDate} onChange={(event) => updateField('pickupDate', event.target.value)} readOnly={!isOpen} className={inputCls} />
+                            <span className={labelCls}>{isDelivery ? 'Data da entrega' : 'Data da retirada'} {requiredMark}</span>
+                            <input
+                              type="date"
+                              lang="pt-BR"
+                              value={draft.pickupDate}
+                              onChange={(event) => updateField('pickupDate', event.target.value)}
+                              readOnly={!isOpen}
+                              required
+                              aria-invalid={showErrors && Boolean(detailErrors.pickupDate)}
+                              className={`${inputCls} ${showErrors && detailErrors.pickupDate ? invalidInputCls : ''}`}
+                            />
+                            {fieldError(detailErrors.pickupDate)}
                           </label>
                           <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>Horário</span>
-                            <input type="time" lang="pt-BR" value={draft.pickupTime} onChange={(event) => updateField('pickupTime', event.target.value)} readOnly={!isOpen} className={inputCls} />
+                            <span className={labelCls}>Horário {requiredMark}</span>
+                            <input
+                              type="time"
+                              lang="pt-BR"
+                              value={draft.pickupTime}
+                              onChange={(event) => updateField('pickupTime', event.target.value)}
+                              readOnly={!isOpen}
+                              required
+                              aria-invalid={showErrors && Boolean(detailErrors.pickupTime)}
+                              className={`${inputCls} ${showErrors && detailErrors.pickupTime ? invalidInputCls : ''}`}
+                            />
+                            {fieldError(detailErrors.pickupTime)}
                           </label>
                         </div>
                       )}

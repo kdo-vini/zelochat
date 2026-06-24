@@ -8,6 +8,7 @@ import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTrigge
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { sendTextMessage } from './whatsapp.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
+import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
 import {
   buildModifierSelectionKey,
   formatModifierAwareCartItem,
@@ -372,6 +373,7 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
   if (!value || typeof value !== 'object') {
     return {
       type: 'pickup',
+      asap: false,
       pickupDate: null,
       pickupTime: null,
       deliveryAddress: null,
@@ -382,6 +384,7 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
   }
   const row = value as {
     type?: unknown;
+    asap?: unknown;
     pickupDate?: unknown;
     pickupTime?: unknown;
     deliveryAddress?: unknown;
@@ -391,6 +394,7 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
   };
   return {
     type: row.type === 'delivery' ? 'delivery' : 'pickup',
+    asap: row.asap === true,
     pickupDate: normalizeDate(row.pickupDate),
     pickupTime: normalizeTime(row.pickupTime),
     deliveryAddress: sanitizeText(row.deliveryAddress, 250),
@@ -694,6 +698,7 @@ async function resolveSnapshots(
   const delivery = resolveDeliveryFee(fulfillmentType, deliveryNeighborhood, config.deliveryConfig);
   const fulfillment: ZeloMenuFulfillmentSnapshot = {
     type: fulfillmentType,
+    asap: params.fulfillment?.asap === true,
     pickupDate: normalizeDate(params.fulfillment?.pickupDate),
     pickupTime: normalizeTime(params.fulfillment?.pickupTime),
     deliveryAddress: sanitizeText(params.fulfillment?.deliveryAddress, 250),
@@ -883,7 +888,7 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
     }
   }
 
-  const scheduleGuard = session.fulfillment.pickupDate && session.fulfillment.pickupTime
+  const scheduleGuard = !session.fulfillment.asap && session.fulfillment.pickupDate && session.fulfillment.pickupTime
     ? evaluateCreateOrderScheduleGuard(
       session.metadata.empresaId as string,
       session.fulfillment.pickupDate,
@@ -1863,6 +1868,17 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
   }
 
   const current = mapSessionRow(sessionRow);
+  if (current.context === 'public_order') {
+    const detailError = firstZeloMenuCheckoutError(validateZeloMenuCheckoutDetails({
+      customerName: current.customer.name,
+      customerPhone: current.customer.phone,
+      fulfillmentType: current.fulfillment.type,
+      deliveryAddress: current.fulfillment.deliveryAddress,
+      pickupDate: current.fulfillment.pickupDate,
+      pickupTime: current.fulfillment.pickupTime,
+    }));
+    if (detailError) throw new Error('CUSTOMER_DETAILS_REQUIRED');
+  }
   const revalidation = await runRevalidation({
     ...current,
     metadata: { ...current.metadata, empresaId: sessionRow.empresa_id },

@@ -61,6 +61,7 @@ export type ZeloMenuCartSessionPayload = {
   };
   fulfillment: {
     type: 'pickup' | 'delivery';
+    asap?: boolean;
     pickupDate: string | null;
     pickupTime: string | null;
     deliveryAddress: string | null;
@@ -162,6 +163,7 @@ export type ZeloMenuUpdateCartPayload = {
   }>;
   fulfillment?: {
     type?: 'pickup' | 'delivery';
+    asap?: boolean;
     pickupDate?: string | null;
     pickupTime?: string | null;
     deliveryAddress?: string | null;
