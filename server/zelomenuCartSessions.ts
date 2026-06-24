@@ -964,6 +964,16 @@ async function materializeOrderToPedidosBestEffort(input: {
   customer: ZeloMenuCustomerSnapshot;
   cart: ZeloMenuCartSnapshot;
 }): Promise<void> {
+  // DESLIGADO por padrão até o sync BIDIRECIONAL estar pronto (ZLM-301).
+  // Esta materialização é ONE-WAY: ligá-la para um cliente bundle ATIVO (ex.:
+  // Casa dos Salgados) faria o pedido aparecer no kanban do ZeloChat E na
+  // cozinha do PDV com status independente — exatamente as "duas fontes de
+  // verdade" que D-094 manda evitar. Ligar via ZELOMENU_PEDIDOS_SYNC=1 só depois
+  // de o bidirecional existir e ser validado no Donutopia.
+  const syncEnabled = ['1', 'true', 'yes'].includes(
+    (process.env.ZELOMENU_PEDIDOS_SYNC || '').trim().toLowerCase(),
+  );
+  if (!syncEnabled) return;
   if (!(await empresaHasPdvCore(input.empresaId))) return; // chat-only: não materializa
   const userId = await getEmpresaUserId(input.empresaId);
   if (!userId) return;
