@@ -191,6 +191,18 @@ export default function ZeloMenuStorePage() {
     });
   }
 
+  function setQty(key: string, qty: number) {
+    setItems((prev) => {
+      const existing = prev[key];
+      if (!existing) return prev;
+      if (qty <= 0) {
+        const { [key]: _drop, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [key]: { ...existing, quantity: qty } };
+    });
+  }
+
   function onAddProduct(product: ZeloMenuCatalogProduct) {
     if (product.modifierGroups.length > 0) {
       setPicker({ product, selections: {} });
@@ -426,7 +438,7 @@ export default function ZeloMenuStorePage() {
               <div className="grid grid-cols-2 gap-3">
                 {featured.map((p) => (
                   <div key={`featured-${p.id}`}>
-                    <PhotoCard product={p} items={items} onAdd={() => onAddProduct(p)} onChangeQty={changeQty} />
+                    <PhotoCard product={p} items={items} onAdd={() => onAddProduct(p)} onChangeQty={changeQty} onSetQty={setQty} />
                   </div>
                 ))}
               </div>
@@ -460,6 +472,7 @@ export default function ZeloMenuStorePage() {
                       items={items}
                       onAdd={onAddProduct}
                       onChangeQty={changeQty}
+                      onSetQty={setQty}
                     />
                   ) : null}
 
@@ -475,6 +488,7 @@ export default function ZeloMenuStorePage() {
                           items={items}
                           onAdd={onAddProduct}
                           onChangeQty={changeQty}
+                          onSetQty={setQty}
                         />
                       </div>
                     ) : null,
@@ -665,19 +679,21 @@ function ProductGrid({
   items,
   onAdd,
   onChangeQty,
+  onSetQty,
 }: {
   products: ZeloMenuCatalogProduct[];
   hasPhotos: boolean;
   items: Record<string, SelectedItem>;
   onAdd: (p: ZeloMenuCatalogProduct) => void;
   onChangeQty: (key: string, delta: number) => void;
+  onSetQty: (key: string, qty: number) => void;
 }) {
   if (hasPhotos) {
     return (
       <div className="grid grid-cols-2 gap-3">
         {products.map((p) => (
           <div key={p.id}>
-            <PhotoCard product={p} items={items} onAdd={() => onAdd(p)} onChangeQty={onChangeQty} />
+            <PhotoCard product={p} items={items} onAdd={() => onAdd(p)} onChangeQty={onChangeQty} onSetQty={onSetQty} />
           </div>
         ))}
       </div>
@@ -692,6 +708,7 @@ function ProductGrid({
             items={items}
             onAdd={() => onAdd(p)}
             onChangeQty={onChangeQty}
+            onSetQty={onSetQty}
             divider={i < products.length - 1}
           />
         </div>
@@ -707,15 +724,18 @@ function PhotoCard({
   items,
   onAdd,
   onChangeQty,
+  onSetQty,
 }: {
   product: ZeloMenuCatalogProduct;
   items: Record<string, SelectedItem>;
   onAdd: () => void;
   onChangeQty: (key: string, delta: number) => void;
+  onSetQty: (key: string, qty: number) => void;
 }) {
   const qty = getProductQty(product.id, items);
   const plainKey = `${product.id}::plain`;
   const hasModifiers = product.modifierGroups.length > 0;
+  const isUnit = product.unitBased === true;
 
   return (
     <div className="flex flex-col overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
@@ -761,26 +781,30 @@ function PhotoCard({
             {toBRL(product.basePrice)}
           </p>
           {qty > 0 && !hasModifiers ? (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => onChangeQty(plainKey, -1)}
-                className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)]"
-                aria-label="Diminuir"
-              >
-                <Minus className="h-3 w-3" strokeWidth={2.5} />
-              </button>
-              <span className="w-4 text-center text-[13px] font-bold">{qty}</span>
-              <button
-                type="button"
-                onClick={() => onChangeQty(plainKey, 1)}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-white"
-                style={{ background: 'var(--color-brand)' }}
-                aria-label="Aumentar"
-              >
-                <Plus className="h-3 w-3" strokeWidth={2.5} />
-              </button>
-            </div>
+            isUnit ? (
+              <UnitQtyInput qty={qty} onChange={(v) => onSetQty(plainKey, v)} />
+            ) : (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onChangeQty(plainKey, -1)}
+                  className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)]"
+                  aria-label="Diminuir"
+                >
+                  <Minus className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+                <span className="w-4 text-center text-[13px] font-bold">{qty}</span>
+                <button
+                  type="button"
+                  onClick={() => onChangeQty(plainKey, 1)}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-white"
+                  style={{ background: 'var(--color-brand)' }}
+                  aria-label="Aumentar"
+                >
+                  <Plus className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+              </div>
+            )
           ) : (
             <button
               type="button"
@@ -808,17 +832,20 @@ function ListRow({
   items,
   onAdd,
   onChangeQty,
+  onSetQty,
   divider,
 }: {
   product: ZeloMenuCatalogProduct;
   items: Record<string, SelectedItem>;
   onAdd: () => void;
   onChangeQty: (key: string, delta: number) => void;
+  onSetQty: (key: string, qty: number) => void;
   divider: boolean;
 }) {
   const qty = getProductQty(product.id, items);
   const plainKey = `${product.id}::plain`;
   const hasModifiers = product.modifierGroups.length > 0;
+  const isUnit = product.unitBased === true;
 
   return (
     <div
@@ -845,26 +872,30 @@ function ListRow({
       </div>
       <div className="shrink-0">
         {qty > 0 && !hasModifiers ? (
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => onChangeQty(plainKey, -1)}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-line)]"
-              aria-label="Diminuir"
-            >
-              <Minus className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-            <span className="w-5 text-center text-[14px] font-bold tabular-nums">{qty}</span>
-            <button
-              type="button"
-              onClick={() => onChangeQty(plainKey, 1)}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-white"
-              style={{ background: 'var(--color-brand)' }}
-              aria-label="Aumentar"
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          </div>
+          isUnit ? (
+            <UnitQtyInput qty={qty} onChange={(v) => onSetQty(plainKey, v)} />
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onChangeQty(plainKey, -1)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-line)]"
+                aria-label="Diminuir"
+              >
+                <Minus className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+              <span className="w-5 text-center text-[14px] font-bold tabular-nums">{qty}</span>
+              <button
+                type="button"
+                onClick={() => onChangeQty(plainKey, 1)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-white"
+                style={{ background: 'var(--color-brand)' }}
+                aria-label="Aumentar"
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            </div>
+          )
         ) : (
           <button
             type="button"
@@ -880,6 +911,54 @@ function ListRow({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── UnitQtyInput ─────────────────────────────────────────────────────────────
+// Numeric input for products sold by unit (eh_item_por_unidade). Replaces the
+// +/- stepper so the customer can type 50 or 100 directly instead of clicking.
+
+function UnitQtyInput({ qty, onChange }: { qty: number; onChange: (v: number) => void }) {
+  const [draft, setDraft] = useState(String(qty));
+
+  // Keep draft in sync when qty changes externally
+  useEffect(() => { setDraft(String(qty)); }, [qty]);
+
+  function commit(raw: string) {
+    const n = parseInt(raw, 10);
+    if (!isNaN(n) && n > 0) {
+      onChange(n);
+      setDraft(String(n));
+    } else {
+      // revert to current qty if invalid/zero (0 would remove — user can use × for that)
+      setDraft(String(qty));
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => onChange(0)}
+        className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)] text-[var(--color-ink-muted)]"
+        aria-label="Remover"
+      >
+        <X className="h-3 w-3" strokeWidth={2.5} />
+      </button>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={1}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={(e) => commit(e.currentTarget.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
+        className="h-8 w-14 rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] text-center text-[13px] font-bold tabular-nums outline-none focus:border-[var(--color-brand)]"
+        style={{ transition: 'border-color 0.15s' }}
+        aria-label="Quantidade"
+      />
     </div>
   );
 }
