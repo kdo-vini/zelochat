@@ -85,6 +85,7 @@ export default function ZeloMenuStorePage() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [unitPicker, setUnitPicker] = useState<ZeloMenuCatalogProduct | null>(null);
   const [picker, setPicker] = useState<{
     product: ZeloMenuCatalogProduct;
     selections: Record<string, string[]>;
@@ -163,7 +164,7 @@ export default function ZeloMenuStorePage() {
   }, [activeCategory]);
 
   // ── Cart helpers ────────────────────────────────────────────────────────────
-  function addPlainProduct(product: ZeloMenuCatalogProduct) {
+  function addPlainProduct(product: ZeloMenuCatalogProduct, qty = 1) {
     const key = `${product.id}::plain`;
     setItems((prev) => ({
       ...prev,
@@ -171,7 +172,7 @@ export default function ZeloMenuStorePage() {
         key,
         productId: product.id,
         productName: product.name,
-        quantity: (prev[key]?.quantity ?? 0) + 1,
+        quantity: qty,
         selectedOptions: [],
         unitPrice: product.basePrice,
       },
@@ -206,6 +207,8 @@ export default function ZeloMenuStorePage() {
   function onAddProduct(product: ZeloMenuCatalogProduct) {
     if (product.modifierGroups.length > 0) {
       setPicker({ product, selections: {} });
+    } else if (product.unitBased) {
+      setUnitPicker(product);
     } else {
       addPlainProduct(product);
     }
@@ -644,6 +647,19 @@ export default function ZeloMenuStorePage() {
         </div>
       ) : null}
 
+      {/* ── Unit quantity modal ──────────────────────────────────────────── */}
+      {unitPicker ? (
+        <UnitPickerModal
+          product={unitPicker}
+          currentQty={getProductQty(unitPicker.id, items)}
+          onClose={() => setUnitPicker(null)}
+          onConfirm={(qty) => {
+            addPlainProduct(unitPicker, qty);
+            setUnitPicker(null);
+          }}
+        />
+      ) : null}
+
       {/* ── Modifier picker modal ─────────────────────────────────────────── */}
       {picker ? (
         <ModifierModal
@@ -782,7 +798,25 @@ function PhotoCard({
           </p>
           {qty > 0 && !hasModifiers ? (
             isUnit ? (
-              <UnitQtyInput qty={qty} onChange={(v) => onSetQty(plainKey, v)} />
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onSetQty(plainKey, 0)}
+                  className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)]"
+                  aria-label="Remover"
+                >
+                  <X className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+                <button
+                  type="button"
+                  onClick={onAdd}
+                  className="flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[12px] font-bold text-white"
+                  style={{ background: 'var(--color-brand)' }}
+                  aria-label={`Editar quantidade de ${product.name}`}
+                >
+                  {qty}
+                </button>
+              </div>
             ) : (
               <div className="flex items-center gap-1">
                 <button
@@ -873,7 +907,25 @@ function ListRow({
       <div className="shrink-0">
         {qty > 0 && !hasModifiers ? (
           isUnit ? (
-            <UnitQtyInput qty={qty} onChange={(v) => onSetQty(plainKey, v)} />
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onSetQty(plainKey, 0)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-line)]"
+                aria-label="Remover"
+              >
+                <X className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+              <button
+                type="button"
+                onClick={onAdd}
+                className="flex h-8 min-w-8 items-center justify-center rounded-full px-2.5 text-[13px] font-bold text-white"
+                style={{ background: 'var(--color-brand)' }}
+                aria-label={`Editar quantidade de ${product.name}`}
+              >
+                {qty}
+              </button>
+            </div>
           ) : (
             <div className="flex items-center gap-1.5">
               <button
@@ -915,50 +967,101 @@ function ListRow({
   );
 }
 
-// ─── UnitQtyInput ─────────────────────────────────────────────────────────────
-// Numeric input for products sold by unit (eh_item_por_unidade). Replaces the
-// +/- stepper so the customer can type 50 or 100 directly instead of clicking.
+// ─── UnitPickerModal ──────────────────────────────────────────────────────────
+// Abre antes de adicionar produto por unidade ao carrinho — igual ao ZeloPDV:
+// o cliente digita a quantidade e confirma, sem passar pelo carrinho com qty=1.
 
-function UnitQtyInput({ qty, onChange }: { qty: number; onChange: (v: number) => void }) {
-  const [draft, setDraft] = useState(String(qty));
+function UnitPickerModal({
+  product,
+  currentQty,
+  onClose,
+  onConfirm,
+}: {
+  product: ZeloMenuCatalogProduct;
+  currentQty: number;
+  onClose: () => void;
+  onConfirm: (qty: number) => void;
+}) {
+  const [draft, setDraft] = useState(currentQty > 0 ? String(currentQty) : '');
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Keep draft in sync when qty changes externally
-  useEffect(() => { setDraft(String(qty)); }, [qty]);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
 
-  function commit(raw: string) {
-    const n = parseInt(raw, 10);
-    if (!isNaN(n) && n > 0) {
-      onChange(n);
-      setDraft(String(n));
-    } else {
-      // revert to current qty if invalid/zero (0 would remove — user can use × for that)
-      setDraft(String(qty));
-    }
+  function confirm() {
+    const n = parseInt(draft, 10);
+    if (!isNaN(n) && n > 0) onConfirm(n);
   }
 
   return (
-    <div className="flex items-center gap-1.5">
-      <button
-        type="button"
-        onClick={() => onChange(0)}
-        className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)] text-[var(--color-ink-muted)]"
-        aria-label="Remover"
-      >
-        <X className="h-3 w-3" strokeWidth={2.5} />
-      </button>
-      <input
-        type="number"
-        inputMode="numeric"
-        min={1}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onFocus={(e) => e.currentTarget.select()}
-        onBlur={(e) => commit(e.currentTarget.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
-        className="h-8 w-14 rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] text-center text-[13px] font-bold tabular-nums outline-none focus:border-[var(--color-brand)]"
-        style={{ transition: 'border-color 0.15s' }}
-        aria-label="Quantidade"
-      />
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50">
+      <div className="w-full max-w-2xl rounded-t-3xl bg-[var(--color-surface)] shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--color-line)] px-5 py-4">
+          <div>
+            <h3 className="text-[17px] font-bold text-[var(--color-ink)]">{product.name}</h3>
+            <p className="mt-0.5 text-[13px] text-[var(--color-ink-muted)]">Quantas unidades?</p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-canvas)]">
+            <X className="h-4 w-4 text-[var(--color-ink-soft)]" strokeWidth={2} />
+          </button>
+        </div>
+        <div className="px-5 py-6" style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
+          <div className="mb-5 flex items-center justify-center gap-4">
+            <button
+              type="button"
+              onClick={() => setDraft((v) => String(Math.max(1, (parseInt(v, 10) || 0) - 1)))}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-line)]"
+              aria-label="Diminuir"
+            >
+              <Minus className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+            <input
+              ref={inputRef}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => { if (e.key === 'Enter') confirm(); }}
+              className="h-14 w-24 rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] text-center text-[22px] font-bold tabular-nums outline-none focus:border-[var(--color-brand)]"
+              style={{ transition: 'border-color 0.15s' }}
+              aria-label="Quantidade"
+            />
+            <button
+              type="button"
+              onClick={() => setDraft((v) => String((parseInt(v, 10) || 0) + 1))}
+              className="flex h-11 w-11 items-center justify-center rounded-full text-white"
+              style={{ background: 'var(--color-brand)' }}
+              aria-label="Aumentar"
+            >
+              <Plus className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[14px] font-bold text-[var(--color-ink)]">
+              {!isNaN(parseInt(draft, 10)) && parseInt(draft, 10) > 0
+                ? toBRL(product.basePrice * parseInt(draft, 10))
+                : '—'}
+            </p>
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={isNaN(parseInt(draft, 10)) || parseInt(draft, 10) < 1}
+              className="inline-flex h-11 items-center gap-2 rounded-xl px-6 text-[14px] font-bold text-white disabled:opacity-40"
+              style={{ background: 'var(--color-brand)' }}
+            >
+              <Plus className="h-4 w-4" strokeWidth={2.5} />
+              {currentQty > 0 ? 'Atualizar' : 'Adicionar'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
