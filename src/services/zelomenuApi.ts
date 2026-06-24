@@ -206,6 +206,10 @@ export type ZeloMenuPublicStoreResponse = {
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    logoUrl?: string | null;
+    welcomeText?: string | null;
+    featuredEnabled?: boolean;
+    featuredProductIds?: number[];
   };
   catalog: ZeloMenuCatalogGroup[];
 };

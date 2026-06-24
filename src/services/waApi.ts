@@ -174,6 +174,33 @@ export async function bindEmpresa(token: string): Promise<void> {
 // ZLM-203 — slug público da loja (menu.zelopdv.com.br/{slug}).
 export type ZeloMenuSlugResponse = { slug: string | null; publicUrl: string | null };
 
+export type ZeloMenuStoreSettings = {
+  logoUrl: string | null;
+  welcomeText: string | null;
+  featuredEnabled: boolean;
+  featuredProductIds: number[];
+  categoryOrder: string[];
+  availableProducts: Array<{ id: number; name: string; categoryName: string }>;
+  availableCategories: string[];
+};
+
+export async function getZeloMenuSettings(token: string): Promise<ZeloMenuStoreSettings> {
+  const response = await apiFetch(apiUrl('/api/zelomenu/settings'), { headers: authHeaders(token) });
+  return parseResponse<ZeloMenuStoreSettings>(response);
+}
+
+export async function updateZeloMenuSettings(
+  token: string,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'categoryOrder'>>,
+): Promise<void> {
+  const response = await apiFetch(apiUrl('/api/zelomenu/settings'), {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(patch),
+  });
+  await parseResponse<{ ok: boolean }>(response);
+}
+
 export async function getZeloMenuSlug(token: string): Promise<ZeloMenuSlugResponse> {
   const response = await apiFetch(apiUrl('/api/zelomenu/slug'), { headers: authHeaders(token) });
   return parseResponse<ZeloMenuSlugResponse>(response);

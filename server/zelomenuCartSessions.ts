@@ -133,6 +133,10 @@ type PublicCartResponse = {
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    logoUrl?: string | null;
+    welcomeText?: string | null;
+    featuredEnabled?: boolean;
+    featuredProductIds?: number[];
   };
   catalog: CatalogCategoriaGroup[];
   link: {
@@ -1215,6 +1219,20 @@ async function resolveEmpresaIdBySlug(slug: string): Promise<string | null> {
   return (data as { id?: string } | null)?.id ?? null;
 }
 
+type EmpresaPerfilZeloMenuRow = {
+  logo_url?: string | null;
+  zelomenu_welcome_text?: string | null;
+  zelomenu_featured_enabled?: boolean;
+  zelomenu_featured_product_ids?: unknown;
+  zelomenu_category_order?: unknown;
+};
+
+function applyCategoryOrder(catalog: CatalogCategoriaGroup[], order: string[]): CatalogCategoriaGroup[] {
+  if (order.length === 0) return catalog;
+  const idx = new Map(order.map((n, i) => [n, i]));
+  return [...catalog].sort((a, b) => (idx.get(a.nome) ?? 9999) - (idx.get(b.nome) ?? 9999));
+}
+
 export async function getPublicStoreBySlug(slug: string): Promise<{
   empresaId: string;
   business: PublicCartResponse['business'];
@@ -1222,8 +1240,18 @@ export async function getPublicStoreBySlug(slug: string): Promise<{
 } | null> {
   const empresaId = await resolveEmpresaIdBySlug(slug);
   if (!empresaId) return null;
-  await loadAiSettingsFromDb(empresaId);
+  const [, perfilResult] = await Promise.all([
+    loadAiSettingsFromDb(empresaId),
+    getServiceSupabase()
+      .from('empresa_perfil')
+      .select('logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_category_order')
+      .eq('id', empresaId)
+      .maybeSingle(),
+  ]);
+  const perfil = perfilResult.data as EmpresaPerfilZeloMenuRow | null;
   const config = getConfig(empresaId);
+  const rawCatalog = filterVisibleCatalog(config.catalogHierarchy);
+  const categoryOrder = Array.isArray(perfil?.zelomenu_category_order) ? (perfil.zelomenu_category_order as string[]) : [];
   return {
     empresaId,
     business: {
@@ -1232,9 +1260,79 @@ export async function getPublicStoreBySlug(slug: string): Promise<{
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
       deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
+      logoUrl: perfil?.logo_url ?? null,
+      welcomeText: perfil?.zelomenu_welcome_text ?? null,
+      featuredEnabled: perfil?.zelomenu_featured_enabled ?? false,
+      featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids)
+        ? (perfil.zelomenu_featured_product_ids as number[])
+        : [],
     },
-    catalog: filterVisibleCatalog(config.catalogHierarchy),
+    catalog: applyCategoryOrder(rawCatalog, categoryOrder),
   };
+}
+
+export type ZeloMenuStoreSettings = {
+  logoUrl: string | null;
+  welcomeText: string | null;
+  featuredEnabled: boolean;
+  featuredProductIds: number[];
+  categoryOrder: string[];
+  availableProducts: Array<{ id: number; name: string; categoryName: string }>;
+  availableCategories: string[];
+};
+
+export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
+  const [, perfilResult] = await Promise.all([
+    loadAiSettingsFromDb(empresaId),
+    getServiceSupabase()
+      .from('empresa_perfil')
+      .select('logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_category_order')
+      .eq('id', empresaId)
+      .maybeSingle(),
+  ]);
+  const perfil = perfilResult.data as EmpresaPerfilZeloMenuRow | null;
+  const config = getConfig(empresaId);
+  const catalog = filterVisibleCatalog(config.catalogHierarchy);
+
+  const availableProducts: Array<{ id: number; name: string; categoryName: string }> = [];
+  for (const cat of catalog) {
+    for (const p of cat.produtosDireto) {
+      if (p.id != null) availableProducts.push({ id: p.id, name: p.name, categoryName: cat.nome });
+    }
+    for (const sub of cat.subcategorias) {
+      for (const p of sub.produtos) {
+        if (p.id != null) availableProducts.push({ id: p.id, name: p.name, categoryName: cat.nome });
+      }
+    }
+  }
+
+  return {
+    logoUrl: perfil?.logo_url ?? null,
+    welcomeText: perfil?.zelomenu_welcome_text ?? null,
+    featuredEnabled: perfil?.zelomenu_featured_enabled ?? false,
+    featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids)
+      ? (perfil.zelomenu_featured_product_ids as number[])
+      : [],
+    categoryOrder: Array.isArray(perfil?.zelomenu_category_order)
+      ? (perfil.zelomenu_category_order as string[])
+      : [],
+    availableProducts,
+    availableCategories: catalog.map((c) => c.nome),
+  };
+}
+
+export async function updateZeloMenuStoreSettings(
+  empresaId: string,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'categoryOrder'>>,
+): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if ('welcomeText' in patch) update.zelomenu_welcome_text = patch.welcomeText ?? null;
+  if ('featuredEnabled' in patch) update.zelomenu_featured_enabled = patch.featuredEnabled;
+  if ('featuredProductIds' in patch) update.zelomenu_featured_product_ids = patch.featuredProductIds;
+  if ('categoryOrder' in patch) update.zelomenu_category_order = patch.categoryOrder;
+  if (Object.keys(update).length === 0) return;
+  const { error } = await getServiceSupabase().from('empresa_perfil').update(update).eq('id', empresaId);
+  if (error) throw error;
 }
 
 export async function openPublicOrderCartSession(input: {

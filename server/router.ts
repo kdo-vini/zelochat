@@ -124,11 +124,13 @@ import {
   getPublicCartSession,
   getPublicStoreBySlug,
   getWhatsAppCartReviewSession,
+  getZeloMenuStoreSettings,
   openPublicOrderCartSession,
   openWhatsAppCartSession,
   setEmpresaZeloMenuSlug,
   syncPedidoStatusFromZelochatOrder,
   updatePublicCartSession,
+  updateZeloMenuStoreSettings,
 } from './zelomenuCartSessions.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
@@ -2930,6 +2932,32 @@ router.put('/api/zelomenu/slug', async (req: Request, res: Response) => {
     const empresaId = await requireEmpresaId(req);
     const slug = await setEmpresaZeloMenuSlug(empresaId, String(req.body?.slug ?? ''));
     res.json({ slug, publicUrl: buildPublicStoreUrl(zelomenuPublicBaseUrl(), slug) });
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.get('/api/zelomenu/settings', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const settings = await getZeloMenuStoreSettings(empresaId);
+    res.json(settings);
+  } catch (error) {
+    sendZeloMenuCartError(res, error);
+  }
+});
+
+router.patch('/api/zelomenu/settings', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const { welcomeText, featuredEnabled, featuredProductIds, categoryOrder } = req.body ?? {};
+    await updateZeloMenuStoreSettings(empresaId, {
+      ...(welcomeText !== undefined && { welcomeText: typeof welcomeText === 'string' ? welcomeText.slice(0, 500) : null }),
+      ...(featuredEnabled !== undefined && { featuredEnabled: Boolean(featuredEnabled) }),
+      ...(Array.isArray(featuredProductIds) && { featuredProductIds: featuredProductIds.map(Number).filter(Boolean) }),
+      ...(Array.isArray(categoryOrder) && { categoryOrder: categoryOrder.map(String) }),
+    });
+    res.json({ ok: true });
   } catch (error) {
     sendZeloMenuCartError(res, error);
   }

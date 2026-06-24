@@ -35,6 +35,7 @@ import { PlanChangeModal } from './PlanChangeModal';
 import { SectionCard } from '../shared/SectionCard';
 import { SubscriptionPaywall } from '../billing/BillingCards';
 import { PublicLinkCard } from '../zelomenu/PublicLinkCard';
+import { ZeloMenuSettingsCard } from '../zelomenu/ZeloMenuSettingsCard';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -1621,6 +1622,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
             />
 
             {token && subscriptionActive ? <PublicLinkCard token={token} /> : null}
+            {token && subscriptionActive ? <ZeloMenuSettingsCard token={token} /> : null}
 
             <AiGlobalScheduleCard
               token={token}
