@@ -121,6 +121,11 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 69s (2026-06-24) — Avisos mobile no ZeloMenu público
+
+- ✅ ZLM-208 — carrinho público deixou de ter dois CTAs concorrentes ("Atualizar carrinho" e "Confirmar pedido"): confirmar agora salva o rascunho, revalida automaticamente e só fecha o pedido se não houver ajuste; mudança de preço aparece como toast pedindo para conferir o novo total — `src/pages/ZeloMenuCartPage.tsx:225` · `src/pages/ZeloMenuCartPage.tsx:306`
+- ✅ ZLM-209 — link público da loja agora recebe status de expediente calculado pelo backend a partir de horário/dias fechados e mostra na página inicial o aviso "Fora do horário de atendimento" com orientação para agendar em horário disponível — `server/zelomenuCartSessions.ts:211` · `src/pages/ZeloMenuStorePage.tsx:493`
+
 ### Sprint 69r (2026-06-23) — Bulk selection no Cardápio do ZeloChat
 
 - ✅ CAT-301 — Cardápio era 100% item-a-item → tela agora tem modo de seleção em lote com checkboxes por produto, categoria, subcategoria e itens sem categoria, reaproveitando o padrão operacional de bulk action do app sem inflar o CRUD base — `src/components/views/CatalogView.tsx:101`

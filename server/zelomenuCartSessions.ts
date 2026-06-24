@@ -137,6 +137,7 @@ type PublicCartResponse = {
     welcomeText?: string | null;
     featuredEnabled?: boolean;
     featuredProductIds?: number[];
+    businessHours?: PublicBusinessHoursStatus;
   };
   catalog: CatalogCategoriaGroup[];
   link: {
@@ -145,6 +146,83 @@ type PublicCartResponse = {
   };
   revalidation: ZeloMenuCartRevalidation;
 };
+
+type PublicBusinessHoursStatus = {
+  configured: boolean;
+  openNow: boolean;
+  label: string | null;
+};
+
+const PUBLIC_DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+function parsePublicTime(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function publicMinutesLabel(minutes: number): string {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function publicNowParts(timezone: string): { day: string; minutes: number } {
+  const now = new Date();
+  const weekday = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: timezone,
+    weekday: 'short',
+  }).format(now).toLowerCase().replace(/\./g, '');
+  const dayMap: Record<string, string> = {
+    dom: 'Dom',
+    seg: 'Seg',
+    ter: 'Ter',
+    qua: 'Qua',
+    qui: 'Qui',
+    sex: 'Sex',
+    sab: 'Sáb',
+    'sáb': 'Sáb',
+  };
+  const timeParts = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const rawHour = Number(timeParts.find((part) => part.type === 'hour')?.value ?? '0');
+  const minute = Number(timeParts.find((part) => part.type === 'minute')?.value ?? '0');
+  const hour = rawHour === 24 ? 0 : rawHour;
+  return {
+    day: dayMap[weekday] ?? PUBLIC_DAY_LABELS[now.getDay()] ?? 'Dom',
+    minutes: hour * 60 + minute,
+  };
+}
+
+function isPublicWindowOpen(nowMinutes: number, openMinutes: number, closeMinutes: number): boolean {
+  if (openMinutes <= closeMinutes) return nowMinutes >= openMinutes && nowMinutes <= closeMinutes;
+  return nowMinutes >= openMinutes || nowMinutes <= closeMinutes;
+}
+
+function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): PublicBusinessHoursStatus {
+  const openMinutes = parsePublicTime(config.openTime);
+  const closeMinutes = parsePublicTime(config.closeTime);
+  if (openMinutes === null || closeMinutes === null) {
+    return { configured: false, openNow: true, label: null };
+  }
+  const timezone = config.timezone || 'America/Sao_Paulo';
+  const { day, minutes } = publicNowParts(timezone);
+  const closedToday = config.closedDays.includes(day);
+  return {
+    configured: true,
+    openNow: !closedToday && isPublicWindowOpen(minutes, openMinutes, closeMinutes),
+    label: `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`,
+  };
+}
 
 type PublicCartConfirmResponse = PublicCartResponse & {
   confirmation: {
@@ -868,6 +946,7 @@ async function buildPublicResponse(
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
       deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
+      businessHours: buildPublicBusinessHoursStatus(config),
     },
     catalog: filterVisibleCatalog(config.catalogHierarchy),
     link: {
@@ -1266,6 +1345,7 @@ export async function getPublicStoreBySlug(slug: string): Promise<{
       featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids)
         ? (perfil.zelomenu_featured_product_ids as number[])
         : [],
+      businessHours: buildPublicBusinessHoursStatus(config),
     },
     catalog: applyCategoryOrder(rawCatalog, categoryOrder),
   };

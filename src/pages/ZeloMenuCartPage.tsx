@@ -20,6 +20,7 @@ import {
   updatePublicCart,
   type ZeloMenuCatalogGroup,
   type ZeloMenuCatalogProduct,
+  type ZeloMenuCartRevalidationIssue,
   type ZeloMenuPublicCartResponse,
 } from '../services/zelomenuApi';
 import {
@@ -215,6 +216,23 @@ function estimatedItemKey(
   });
 }
 
+function revalidationSignature(issues: ZeloMenuCartRevalidationIssue[]): string {
+  return issues
+    .map((issue) => `${issue.code}:${issue.message}`)
+    .join('|');
+}
+
+function buildRevalidationToastMessage(issues: ZeloMenuCartRevalidationIssue[]): string {
+  const priceIssue = issues.find((issue) => issue.code === 'price_changed');
+  if (priceIssue) {
+    return `${priceIssue.message} Confira o novo total e toque em Confirmar pedido novamente.`;
+  }
+  const [firstIssue] = issues;
+  const detail = firstIssue?.message ? ` ${firstIssue.message}` : '';
+  const suffix = issues.length > 1 ? ` Há mais ${issues.length - 1} ajuste(s) no carrinho.` : '';
+  return `Seu carrinho precisa de revisão.${detail}${suffix}`;
+}
+
 export default function ZeloMenuCartPage() {
   const { token = '' } = useParams();
   const toast = useToast();
@@ -222,7 +240,6 @@ export default function ZeloMenuCartPage() {
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revalidationToastShownRef = useRef('');
@@ -262,11 +279,6 @@ export default function ZeloMenuCartPage() {
     return estimateDraftTotals(draft, payload.catalog, payload.business.deliveryNeighborhoods);
   }, [payload, draft]);
 
-  const hasUnsavedChanges = useMemo(() => {
-    if (!payload || !draft) return false;
-    return JSON.stringify(draft) !== JSON.stringify(buildDraftFromPayload(payload));
-  }, [payload, draft]);
-
   const isStale = payload?.link.tokenStatus === 'stale';
   const isOpen = payload?.session.state === 'cart_open';
   const isPublicOrder = payload?.session.context === 'public_order';
@@ -278,10 +290,8 @@ export default function ZeloMenuCartPage() {
       ? 'Outro'
       : '';
   const revalidationIssues = payload?.revalidation.issues ?? [];
-  const revalidationIssueSignature = revalidationIssues
-    .map((issue) => `${issue.code}:${issue.message}`)
-    .join('|');
-  const canConfirm = isOpen && !isStale && !hasUnsavedChanges && revalidationIssues.length === 0 && (draft?.items.length ?? 0) > 0;
+  const revalidationIssueSignature = revalidationSignature(revalidationIssues);
+  const canConfirm = isOpen && !isStale && (draft?.items.length ?? 0) > 0;
 
   useEffect(() => {
     if (!revalidationIssueSignature) {
@@ -290,23 +300,20 @@ export default function ZeloMenuCartPage() {
     }
     if (revalidationToastShownRef.current === revalidationIssueSignature) return;
     revalidationToastShownRef.current = revalidationIssueSignature;
-    const [firstIssue] = revalidationIssues;
-    const detail = firstIssue?.message ? ` ${firstIssue.message}` : '';
-    const suffix = revalidationIssues.length > 1 ? ` Há mais ${revalidationIssues.length - 1} ajuste(s) no carrinho.` : '';
-    toast.error(`Seu carrinho precisa de revisão.${detail}${suffix}`);
+    toast.error(buildRevalidationToastMessage(revalidationIssues));
   }, [revalidationIssueSignature, revalidationIssues, toast]);
 
-  const saveDraft = async () => {
-    if (!draft || !isOpen) return;
+  const confirmCart = async () => {
+    if (!draft || !payload || !isOpen || isStale) return;
     const customerPhoneDigits = normalizePhoneNumber(draft.customerPhone).slice(0, 11);
     if (isPublicOrder && customerPhoneDigits.length < 10) {
       toast.error('Informe um WhatsApp válido com DDD para a loja te encontrar.');
       return;
     }
     try {
-      setSaving(true);
+      setConfirming(true);
       setError(null);
-      const next = await updatePublicCart(token, {
+      const updated = await updatePublicCart(token, {
         customerName: draft.customerName || null,
         customerPhone: customerPhoneDigits || null,
         items: draft.items.map((item) => ({
@@ -326,29 +333,24 @@ export default function ZeloMenuCartPage() {
         paymentMethod: draft.paymentMethod || null,
         observations: draft.observations || null,
       });
-      setPayload(next);
-      setDraft(buildDraftFromPayload(next));
-      toast.success('Carrinho atualizado.');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Não consegui atualizar o carrinho.');
-    } finally {
-      setSaving(false);
-    }
-  };
 
-  const confirmCart = async () => {
-    if (!draft || !payload) return;
-    if (isPublicOrder) {
-      const customerPhoneDigits = normalizePhoneNumber(draft.customerPhone).slice(0, 11);
-      if (customerPhoneDigits.length < 10) {
-        toast.error('Informe um WhatsApp válido com DDD para a loja te encontrar.');
+      const updateIssues = updated.revalidation.issues ?? [];
+      if (updateIssues.length > 0) {
+        const signature = revalidationSignature(updateIssues);
+        revalidationToastShownRef.current = signature;
+        setPayload(updated);
+        setDraft(buildDraftFromPayload(updated));
+        toast.error(buildRevalidationToastMessage(updateIssues));
         return;
       }
-    }
-    try {
-      setConfirming(true);
-      setError(null);
+
       const next = await confirmPublicCart(token);
+      const finalIssues = next.revalidation.issues ?? [];
+      if (!next.confirmation.confirmed && finalIssues.length > 0) {
+        const signature = revalidationSignature(finalIssues);
+        revalidationToastShownRef.current = signature;
+        toast.error(buildRevalidationToastMessage(finalIssues));
+      }
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
       if (next.confirmation.confirmed) {
@@ -357,6 +359,8 @@ export default function ZeloMenuCartPage() {
             ? 'Este pedido já estava confirmado.'
             : 'Pedido confirmado. A loja recebeu o resumo no WhatsApp.',
         );
+      } else if (finalIssues.length > 0) {
+        // Toast específico já foi exibido acima.
       } else {
         toast.info('Revise os avisos do carrinho antes de confirmar.');
       }
@@ -782,30 +786,16 @@ export default function ZeloMenuCartPage() {
 
               <button
                 type="button"
-                onClick={() => void saveDraft()}
-                disabled={saving || isStale || !isOpen || !hasUnsavedChanges}
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-brand)] px-4 text-[14px] font-medium text-white disabled:cursor-not-allowed disabled:bg-[var(--color-line-strong)]"
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : <RefreshCw className="h-4 w-4" strokeWidth={1.8} />}
-                {saving ? 'Salvando…' : !isOpen ? 'Pedido fechado' : hasUnsavedChanges ? 'Atualizar carrinho' : 'Carrinho atualizado'}
-              </button>
-
-              <button
-                type="button"
                 onClick={() => void confirmCart()}
                 disabled={confirming || !canConfirm}
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-ink)] px-4 text-[14px] font-medium text-white disabled:cursor-not-allowed disabled:bg-[var(--color-line-strong)]"
               >
                 {confirming ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : <CheckCircle2 className="h-4 w-4" strokeWidth={1.8} />}
                 {confirming
-                  ? 'Confirmando…'
+                  ? 'Verificando…'
                   : isConfirmed
                     ? 'Pedido confirmado'
-                    : hasUnsavedChanges
-                      ? 'Atualize antes de confirmar'
-                      : revalidationIssues.length > 0
-                        ? 'Revise o carrinho'
-                        : 'Confirmar pedido'}
+                    : 'Confirmar pedido'}
               </button>
             </div>
           </section>

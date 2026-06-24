@@ -27,6 +27,12 @@ export type ZeloMenuCatalogGroup = {
   produtosDireto: ZeloMenuCatalogProduct[];
 };
 
+export type ZeloMenuPublicBusinessHoursStatus = {
+  configured: boolean;
+  openNow: boolean;
+  label: string | null;
+};
+
 export type ZeloMenuCartItem = {
   productId: number | null;
   productName: string;
@@ -125,6 +131,7 @@ export type ZeloMenuPublicCartResponse = {
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
   catalog: ZeloMenuCatalogGroup[];
   link: {
@@ -210,6 +217,7 @@ export type ZeloMenuPublicStoreResponse = {
     welcomeText?: string | null;
     featuredEnabled?: boolean;
     featuredProductIds?: number[];
+    businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
   catalog: ZeloMenuCatalogGroup[];
 };

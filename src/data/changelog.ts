@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-06-24',
+    category: 'minor',
+    title: 'Link do cardápio ficou mais claro para o cliente',
+    description: 'O cliente vê quando a loja está fora do horário e o carrinho confirma em um passo só, avisando por notificação se algum preço mudou antes de fechar.',
+  },
+  {
     date: '2026-06-23',
     category: 'big',
     title: 'Seu cardápio agora tem um link próprio pro cliente pedir sozinho',
