@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowUpDown,
   CheckCircle2,
   Clock3,
   Loader2,
   MapPin,
   Minus,
-  Package2,
   Phone,
   Plus,
   RefreshCw,
@@ -74,6 +72,16 @@ function formatDateTime(value: string | null): string | null {
   });
 }
 
+// Data de hoje no fuso BR como 'yyyy-mm-dd' (formato de value do <input type=date>).
+function todayISOdate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
 function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState {
   return {
     customerName: payload.session.customer.name ?? '',
@@ -92,7 +100,7 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
       modifierDeltaTotal: item.modifierDeltaTotal,
     })),
     fulfillmentType: payload.session.fulfillment.type,
-    pickupDate: payload.session.fulfillment.pickupDate ?? '',
+    pickupDate: payload.session.fulfillment.pickupDate ?? todayISOdate(),
     pickupTime: payload.session.fulfillment.pickupTime ?? '',
     deliveryAddress: payload.session.fulfillment.deliveryAddress ?? '',
     deliveryNeighborhood: payload.session.fulfillment.deliveryNeighborhood ?? '',
@@ -217,10 +225,7 @@ export default function ZeloMenuCartPage() {
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modifierPicker, setModifierPicker] = useState<{
-    product: ZeloMenuCatalogProduct;
-    selections: Record<string, string[]>;
-  } | null>(null);
+  const revalidationToastShownRef = useRef('');
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
     try {
@@ -228,6 +233,7 @@ export default function ZeloMenuCartPage() {
       if (mode === 'initial') setLoading(true);
       else setRefreshing(true);
       const next = await getPublicCart(token);
+      if (mode === 'refresh') revalidationToastShownRef.current = '';
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
       document.title = next.business.name ? `${next.business.name} | Revisar pedido` : 'Revisar pedido';
@@ -272,7 +278,23 @@ export default function ZeloMenuCartPage() {
       ? 'Outro'
       : '';
   const revalidationIssues = payload?.revalidation.issues ?? [];
+  const revalidationIssueSignature = revalidationIssues
+    .map((issue) => `${issue.code}:${issue.message}`)
+    .join('|');
   const canConfirm = isOpen && !isStale && !hasUnsavedChanges && revalidationIssues.length === 0 && (draft?.items.length ?? 0) > 0;
+
+  useEffect(() => {
+    if (!revalidationIssueSignature) {
+      revalidationToastShownRef.current = '';
+      return;
+    }
+    if (revalidationToastShownRef.current === revalidationIssueSignature) return;
+    revalidationToastShownRef.current = revalidationIssueSignature;
+    const [firstIssue] = revalidationIssues;
+    const detail = firstIssue?.message ? ` ${firstIssue.message}` : '';
+    const suffix = revalidationIssues.length > 1 ? ` Há mais ${revalidationIssues.length - 1} ajuste(s) no carrinho.` : '';
+    toast.error(`Seu carrinho precisa de revisão.${detail}${suffix}`);
+  }, [revalidationIssueSignature, revalidationIssues, toast]);
 
   const saveDraft = async () => {
     if (!draft || !isOpen) return;
@@ -359,71 +381,6 @@ export default function ZeloMenuCartPage() {
         : current.items;
       return { ...current, items };
     });
-  };
-
-  const addDraftItem = (
-    product: ZeloMenuCatalogProduct,
-    selectedOptions: ZeloMenuModifierSelectionInput[],
-    selectedModifiers: ZeloMenuSelectedModifierGroup[],
-  ) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const nextItem: DraftState['items'][number] = {
-        productId: product.id,
-        productName: product.name,
-        quantity: 1,
-        notes: '',
-        selectedOptions,
-        selectedModifiers,
-        baseUnitPrice: product.basePrice,
-        modifierDeltaTotal: Number(
-          selectedModifiers.reduce(
-            (sum, group) => sum + group.selectedOptions.reduce((groupSum, option) => groupSum + option.priceDelta, 0),
-            0,
-          ).toFixed(2),
-        ),
-      };
-      const nextKey = draftItemKey(nextItem);
-      const existing = current.items.find((item) => draftItemKey(item) === nextKey);
-      if (!existing) {
-        return { ...current, items: [...current.items, nextItem] };
-      }
-      return {
-        ...current,
-        items: current.items.map((item) => (
-          draftItemKey(item) === nextKey
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        )),
-      };
-    });
-  };
-
-  const beginAddProduct = (product: ZeloMenuCatalogProduct) => {
-    if (!isOpen) return;
-    if (product.modifierGroups.length === 0) {
-      addDraftItem(product, [], []);
-      return;
-    }
-    setModifierPicker({
-      product,
-      selections: Object.fromEntries(product.modifierGroups.map((group) => [group.id, []])),
-    });
-  };
-
-  const confirmModifierSelection = () => {
-    if (!modifierPicker) return;
-    const selectedOptions = (Object.entries(modifierPicker.selections) as Array<[string, string[]]>)
-      .map(([groupId, optionIds]) => ({ groupId, optionIds }))
-      .filter((selection) => selection.optionIds.length > 0);
-    const resolved = resolveModifierSelections(modifierPicker.product.modifierGroups, selectedOptions);
-    if (resolved.ok === false) {
-      toast.error(resolved.message);
-      return;
-    }
-    addDraftItem(modifierPicker.product, selectedOptions, resolved.selectedGroups);
-    setModifierPicker(null);
-    setError(null);
   };
 
   const updateField = <K extends keyof DraftState>(key: K, value: DraftState[K]) => {
@@ -563,22 +520,6 @@ export default function ZeloMenuCartPage() {
             </section>
           ) : null}
 
-          {revalidationIssues.length > 0 ? (
-            <section className="rounded-lg border border-[var(--color-warn)] bg-[var(--color-warn-soft)] px-4 py-3">
-              <div className="flex gap-3">
-                <ArrowUpDown className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-warn)]" strokeWidth={1.8} />
-                <div>
-                  <p className="text-[14px] font-medium text-[var(--color-ink)]">Seu carrinho precisa de revisão.</p>
-                  <ul className="mt-2 space-y-1 text-[13px] text-[var(--color-ink-soft)]">
-                    {revalidationIssues.map((issue, index) => (
-                      <li key={`${issue.code}-${index}`}>{issue.message}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
           <section className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
             <div className="border-b border-[var(--color-line)] px-4 py-4">
               <div className="flex items-center gap-2">
@@ -636,59 +577,6 @@ export default function ZeloMenuCartPage() {
           <section className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
             <div className="border-b border-[var(--color-line)] px-4 py-4">
               <div className="flex items-center gap-2">
-                <Package2 className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
-                <h2 className="text-[15px] font-semibold">Cardápio</h2>
-              </div>
-            </div>
-            <div className="space-y-5 p-4">
-              {payload.catalog.length === 0 ? (
-                <p className="text-[13px] text-[var(--color-ink-muted)]">Nenhum item disponível no momento.</p>
-              ) : payload.catalog.map((group) => (
-                <section key={group.nome} className="space-y-3">
-                  <div>
-                    <h3 className="text-[14px] font-semibold">{group.nome}</h3>
-                  </div>
-
-                  {group.produtosDireto.length > 0 ? (
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {group.produtosDireto.map((product) => (
-                        <div key={`${group.nome}-${product.name}`}>
-                          <ProductRow
-                            product={product}
-                            quantity={draft.items.filter((item) => item.productId === product.id).reduce((sum, item) => sum + item.quantity, 0)}
-                            onAdd={() => beginAddProduct(product)}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {group.subcategorias.map((subcategory) => (
-                    <div key={`${group.nome}-${subcategory.nome}`} className="space-y-3">
-                      <div className="text-[12px] font-medium uppercase tracking-[0.04em] text-[var(--color-ink-muted)]">
-                        {subcategory.nome}
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {subcategory.produtos.map((product) => (
-                          <div key={`${group.nome}-${subcategory.nome}-${product.name}`}>
-                            <ProductRow
-                              product={product}
-                              quantity={draft.items.filter((item) => item.productId === product.id).reduce((sum, item) => sum + item.quantity, 0)}
-                              onAdd={() => beginAddProduct(product)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </section>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
-            <div className="border-b border-[var(--color-line)] px-4 py-4">
-              <div className="flex items-center gap-2">
                 <MapPin className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
                 <h2 className="text-[15px] font-semibold">Entrega ou retirada</h2>
               </div>
@@ -722,6 +610,7 @@ export default function ZeloMenuCartPage() {
                 <span className="text-[12px] font-medium text-[var(--color-ink-muted)]">Data</span>
                 <input
                   type="date"
+                  lang="pt-BR"
                   value={draft.pickupDate}
                   onChange={(event) => updateField('pickupDate', event.target.value)}
                   readOnly={!isOpen}
@@ -733,6 +622,7 @@ export default function ZeloMenuCartPage() {
                 <span className="text-[12px] font-medium text-[var(--color-ink-muted)]">Horário</span>
                 <input
                   type="time"
+                  lang="pt-BR"
                   value={draft.pickupTime}
                   onChange={(event) => updateField('pickupTime', event.target.value)}
                   readOnly={!isOpen}
@@ -907,211 +797,20 @@ export default function ZeloMenuCartPage() {
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-ink)] px-4 text-[14px] font-medium text-white disabled:cursor-not-allowed disabled:bg-[var(--color-line-strong)]"
               >
                 {confirming ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : <CheckCircle2 className="h-4 w-4" strokeWidth={1.8} />}
-                {confirming ? 'Confirmando…' : isConfirmed ? 'Pedido confirmado' : hasUnsavedChanges ? 'Atualize antes de confirmar' : 'Confirmar pedido'}
+                {confirming
+                  ? 'Confirmando…'
+                  : isConfirmed
+                    ? 'Pedido confirmado'
+                    : hasUnsavedChanges
+                      ? 'Atualize antes de confirmar'
+                      : revalidationIssues.length > 0
+                        ? 'Revise o carrinho'
+                        : 'Confirmar pedido'}
               </button>
             </div>
           </section>
         </aside>
       </main>
-
-      {modifierPicker ? (
-        <ModifierPickerModal
-          product={modifierPicker.product}
-          selections={modifierPicker.selections}
-          onClose={() => setModifierPicker(null)}
-          onToggleOption={(groupId, optionId) => {
-            setModifierPicker((current) => {
-              if (!current) return current;
-              const group = current.product.modifierGroups.find((entry) => entry.id === groupId);
-              if (!group) return current;
-              const currentIds = current.selections[groupId] ?? [];
-              const alreadySelected = currentIds.includes(optionId);
-              let nextIds: string[];
-              if (alreadySelected) {
-                nextIds = currentIds.filter((entry) => entry !== optionId);
-              } else if (group.maxSelections === 1) {
-                nextIds = [optionId];
-              } else {
-                nextIds = [...currentIds, optionId];
-              }
-              return {
-                ...current,
-                selections: { ...current.selections, [groupId]: nextIds },
-              };
-            });
-          }}
-          onConfirm={confirmModifierSelection}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function ProductRow({
-  product,
-  quantity,
-  onAdd,
-}: {
-  product: ZeloMenuCatalogProduct;
-  quantity: number;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="grid gap-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-      <div className="flex min-w-0 gap-3">
-        {product.photoUrl ? (
-          <img
-            src={product.photoUrl}
-            alt={product.name}
-            loading="lazy"
-            className="h-14 w-14 shrink-0 rounded-md object-cover"
-          />
-        ) : null}
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-medium">{product.name}</p>
-          {product.description ? (
-            <p className="mt-0.5 line-clamp-2 text-[12px] leading-4 text-[var(--color-ink-muted)]">
-              {product.description}
-            </p>
-          ) : null}
-          <p className="mt-0.5 text-[12px] text-[var(--color-ink-muted)]">
-            A partir de {toBRL(product.basePrice)}
-            {product.stockControlled && typeof product.stockQuantity === 'number'
-              ? ` • estoque ${product.stockQuantity}`
-              : ''}
-          </p>
-          {product.modifierGroups.length > 0 ? (
-            <p className="mt-1 text-[12px] text-[var(--color-brand-deep)]">
-              {product.modifierGroups.length} grupo{product.modifierGroups.length === 1 ? '' : 's'} de escolha
-            </p>
-          ) : null}
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onAdd}
-        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 text-[13px] font-medium text-[var(--color-ink-soft)]"
-      >
-        <Plus className="h-4 w-4" strokeWidth={1.8} />
-        {product.modifierGroups.length > 0
-          ? quantity > 0 ? `Escolher opções (${quantity})` : 'Escolher opções'
-          : quantity > 0 ? `Adicionar mais (${quantity})` : 'Adicionar'}
-      </button>
-    </div>
-  );
-}
-
-function ModifierPickerModal({
-  product,
-  selections,
-  onClose,
-  onToggleOption,
-  onConfirm,
-}: {
-  product: ZeloMenuCatalogProduct;
-  selections: Record<string, string[]>;
-  onClose: () => void;
-  onToggleOption: (groupId: string, optionId: string) => void;
-  onConfirm: () => void;
-}) {
-  const resolution = resolveModifierSelections(
-    product.modifierGroups,
-    Object.entries(selections)
-      .map(([groupId, optionIds]) => ({ groupId, optionIds }))
-      .filter((selection) => selection.optionIds.length > 0),
-  );
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-4 py-6 sm:items-center">
-      <div className="w-full max-w-2xl rounded-2xl bg-[var(--color-surface)] shadow-2xl">
-        <div className="border-b border-[var(--color-line)] px-4 py-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-[18px] font-semibold text-[var(--color-ink)]">{product.name}</h3>
-              <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">
-                Escolha as opções antes de adicionar ao carrinho.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg px-3 py-2 text-[13px] font-medium text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
-            >
-              Fechar
-            </button>
-          </div>
-        </div>
-
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto px-4 py-4">
-          {product.modifierGroups.map((group) => {
-            const selectedIds = selections[group.id] ?? [];
-            return (
-              <section key={group.id} className="rounded-xl border border-[var(--color-line)] p-3">
-                <div className="mb-3">
-                  <p className="text-[14px] font-semibold text-[var(--color-ink)]">{group.name}</p>
-                  <p className="text-[12px] text-[var(--color-ink-muted)]">
-                    {group.minSelections > 0
-                      ? `Escolha pelo menos ${group.minSelections}.`
-                      : 'Opcional.'}
-                    {group.maxSelections != null ? ` Máximo ${group.maxSelections}.` : ''}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  {group.options.filter((option) => option.active).map((option) => {
-                    const checked = selectedIds.includes(option.id);
-                    return (
-                      <label key={option.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-[var(--color-line)] px-3 py-2.5">
-                        <div className="flex items-center gap-3">
-                          <input
-                            type={group.maxSelections === 1 ? 'radio' : 'checkbox'}
-                            name={group.id}
-                            checked={checked}
-                            onChange={() => onToggleOption(group.id, option.id)}
-                            className="h-4 w-4"
-                          />
-                          <span className="text-[13px] text-[var(--color-ink)]">{option.name}</span>
-                        </div>
-                        <span className="text-[12px] font-medium text-[var(--color-ink-soft)]">
-                          {option.priceDelta > 0 ? `+ ${toBRL(option.priceDelta)}` : 'sem custo extra'}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </section>
-            );
-          })}
-
-          {resolution.ok === false ? (
-            <div className="rounded-lg border border-[var(--color-alert)] bg-[var(--color-alert-soft)] px-3 py-3 text-[13px] text-[var(--color-alert)]">
-              {resolution.message}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="flex items-center justify-between gap-3 border-t border-[var(--color-line)] px-4 py-4">
-          <div className="text-[13px] text-[var(--color-ink-soft)]">
-            {resolution.ok ? `Preço desta unidade: ${toBRL(product.basePrice + resolution.deltaTotal)}` : 'Revise as escolhas'}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-10 items-center rounded-lg px-4 text-[13px] font-medium text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={onConfirm}
-              disabled={!resolution.ok}
-              className="inline-flex h-10 items-center rounded-lg bg-[var(--color-ink)] px-4 text-[13px] font-medium text-white disabled:cursor-not-allowed disabled:bg-[var(--color-line-strong)]"
-            >
-              Adicionar ao carrinho
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

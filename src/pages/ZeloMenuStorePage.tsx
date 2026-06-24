@@ -67,6 +67,57 @@ function getProductQty(productId: number, items: Record<string, SelectedItem>): 
     .reduce((s, it) => s + it.quantity, 0);
 }
 
+// ─── Cart persistence ──────────────────────────────────────────────────────────
+// Guarda o carrinho no localStorage do cliente por slug, com validade de 12h,
+// pra que voltar da tela de carrinho (ou recarregar a página) não perca os itens.
+
+const CART_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
+
+type PersistedCart = {
+  items: Record<string, SelectedItem>;
+  customerName: string;
+  customerPhone: string;
+};
+
+function cartStorageKey(slug: string): string {
+  return `zelomenu_cart_${slug}`;
+}
+
+function loadPersistedCart(slug: string): PersistedCart {
+  const empty: PersistedCart = { items: {}, customerName: '', customerPhone: '' };
+  if (!slug) return empty;
+  try {
+    const raw = localStorage.getItem(cartStorageKey(slug));
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw) as { savedAt?: number } & Partial<PersistedCart>;
+    if (!parsed.savedAt || Date.now() - parsed.savedAt > CART_TTL_MS) {
+      localStorage.removeItem(cartStorageKey(slug));
+      return empty;
+    }
+    return {
+      items: parsed.items ?? {},
+      customerName: parsed.customerName ?? '',
+      customerPhone: parsed.customerPhone ?? '',
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function persistCart(slug: string, cart: PersistedCart): void {
+  if (!slug) return;
+  try {
+    const hasContent = Object.keys(cart.items).length > 0 || cart.customerName || cart.customerPhone;
+    if (!hasContent) {
+      localStorage.removeItem(cartStorageKey(slug));
+      return;
+    }
+    localStorage.setItem(cartStorageKey(slug), JSON.stringify({ ...cart, savedAt: Date.now() }));
+  } catch {
+    // localStorage indisponível (modo privado/cota) — ignora, carrinho só não persiste
+  }
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function ZeloMenuStorePage() {
@@ -78,12 +129,14 @@ export default function ZeloMenuStorePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [items, setItems] = useState<Record<string, SelectedItem>>({});
+  // Carrinho restaurado do localStorage (validade 12h) — sobrevive a voltar/recarregar.
+  const restored = useMemo(() => loadPersistedCart(slug), [slug]);
+  const [items, setItems] = useState<Record<string, SelectedItem>>(restored.items);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
   const [cartOpen, setCartOpen] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerName, setCustomerName] = useState(restored.customerName);
+  const [customerPhone, setCustomerPhone] = useState(restored.customerPhone);
   const [submitting, setSubmitting] = useState(false);
   const [unitPicker, setUnitPicker] = useState<ZeloMenuCatalogProduct | null>(null);
   const [picker, setPicker] = useState<{
@@ -118,6 +171,11 @@ export default function ZeloMenuStorePage() {
       document.title = 'ZeloChat';
     };
   }, [slug]);
+
+  // ── Persiste o carrinho no localStorage a cada mudança ──────────────────────
+  useEffect(() => {
+    persistCart(slug, { items, customerName, customerPhone });
+  }, [slug, items, customerName, customerPhone]);
 
   // ── Category tracking via IntersectionObserver ──────────────────────────────
   useEffect(() => {
@@ -327,6 +385,8 @@ export default function ZeloMenuStorePage() {
   if (!store) return null;
 
   const visibleCategories = store.catalog.filter((g) => allGroupProducts(g).length > 0);
+  const businessHours = store.business.businessHours;
+  const outsideBusinessHours = businessHours?.configured === true && businessHours.openNow === false;
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas)]" style={{ paddingBottom: 'max(7rem, calc(7rem + env(safe-area-inset-bottom)))' }}>
@@ -423,6 +483,23 @@ export default function ZeloMenuStorePage() {
 
       {/* ── Catalog body ──────────────────────────────────────────────────── */}
       <main className="mx-auto max-w-2xl px-4 py-5">
+
+        {outsideBusinessHours ? (
+          <section className="mb-5 rounded-2xl border border-[var(--color-warn)] bg-[var(--color-warn-soft)] px-4 py-3">
+            <div className="flex gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warn)]" strokeWidth={2} />
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-[var(--color-ink)]">
+                  Fora do horário de atendimento
+                </p>
+                <p className="mt-0.5 text-[12px] leading-5 text-[var(--color-ink-soft)]">
+                  Você pode montar o pedido agora e agendar para um horário disponível
+                  {businessHours?.label ? ` (${businessHours.label}).` : '.'}
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         {/* Welcome text */}
         {!searchQuery && store.business.welcomeText ? (
@@ -629,7 +706,7 @@ export default function ZeloMenuStorePage() {
                 </label>
               </div>
 
-              {/* Confirm button */}
+              {/* Continue to cart button */}
               <button
                 type="button"
                 onClick={() => void continueToCart()}
@@ -640,7 +717,7 @@ export default function ZeloMenuStorePage() {
                 {submitting ? (
                   <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.8} />
                 ) : null}
-                {submitting ? 'Iniciando pedido…' : 'Fazer pedido'}
+                {submitting ? 'Abrindo carrinho…' : 'Ir para o carrinho'}
               </button>
             </div>
           </div>
