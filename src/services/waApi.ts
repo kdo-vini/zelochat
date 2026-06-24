@@ -210,8 +210,8 @@ export async function generateZeloMenuWelcome(
       temperature: 0.8,
     }),
   });
-  const body = await parseResponse<{ choices?: Array<{ message?: { content?: string } }> }>(response);
-  const text = body.choices?.[0]?.message?.content?.trim() ?? '';
+  const body = await parseResponse<{ content?: string }>(response);
+  const text = body.content?.trim() ?? '';
   if (!text) throw new Error('A IA não retornou um texto. Tente de novo.');
   return text;
 }
