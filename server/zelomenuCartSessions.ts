@@ -970,10 +970,7 @@ async function materializeOrderToPedidosBestEffort(input: {
   // cozinha do PDV com status independente — exatamente as "duas fontes de
   // verdade" que D-094 manda evitar. Ligar via ZELOMENU_PEDIDOS_SYNC=1 só depois
   // de o bidirecional existir e ser validado no Donutopia.
-  const syncEnabled = ['1', 'true', 'yes'].includes(
-    (process.env.ZELOMENU_PEDIDOS_SYNC || '').trim().toLowerCase(),
-  );
-  if (!syncEnabled) return;
+  if (!isPedidosSyncEnabledFor(input.empresaId)) return;
   if (!(await empresaHasPdvCore(input.empresaId))) return; // chat-only: não materializa
   const userId = await getEmpresaUserId(input.empresaId);
   if (!userId) return;
@@ -1022,9 +1019,21 @@ async function materializeOrderToPedidosBestEffort(input: {
   if (itensError) throw itensError;
 }
 
-/** Está ligado o sync de pedidos com o PDV? (mesmo flag da materialização) */
-function isPedidosSyncEnabled(): boolean {
-  return ['1', 'true', 'yes'].includes((process.env.ZELOMENU_PEDIDOS_SYNC || '').trim().toLowerCase());
+/**
+ * Sync de pedidos com o PDV ligado PARA ESTA EMPRESA?
+ * `ZELOMENU_PEDIDOS_SYNC` aceita:
+ *  - vazio  -> desligado pra todos (default seguro);
+ *  - '1'/'true'/'all'/'*' -> ligado pra todos os bundle;
+ *  - lista de empresa_ids separada por vírgula -> ligado só pra essas (rollout
+ *    gradual: valida no Donutopia, depois adiciona a Casa dos Salgados).
+ * Como a materialização só cria pedido com `zelochat_order_id` quando isto é
+ * true, o trigger PDV->Chat também fica restrito às empresas habilitadas.
+ */
+function isPedidosSyncEnabledFor(empresaId: string): boolean {
+  const raw = (process.env.ZELOMENU_PEDIDOS_SYNC || '').trim().toLowerCase();
+  if (!raw) return false;
+  if (['1', 'true', 'yes', 'all', '*'].includes(raw)) return true;
+  return raw.split(',').map((s) => s.trim()).includes(empresaId.toLowerCase());
 }
 
 /**
@@ -1040,10 +1049,11 @@ function isPedidosSyncEnabled(): boolean {
  * Não regride pedido já 'fechado' (guard `status <> 'fechado'`). Best-effort.
  */
 export async function syncPedidoStatusFromZelochatOrder(
+  empresaId: string,
   zelochatOrderId: string,
   zelochatStatus: string,
 ): Promise<void> {
-  if (!isPedidosSyncEnabled()) return;
+  if (!isPedidosSyncEnabledFor(empresaId)) return;
   const ready = zelochatStatus === 'ready' || zelochatStatus === 'out_for_delivery' || zelochatStatus === 'delivered';
   const pedidoStatus = ready ? 'pronto' : 'aberto';
   const cozinha = ready ? 'pronto' : 'aguardando';

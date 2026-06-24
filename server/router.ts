@@ -1974,7 +1974,7 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
     // ZLM-301 — reflete a mudança de status no ticket de cozinha do PDV (bundle).
     // Best-effort + flag-gated: nunca derruba o update do pedido no ZeloChat.
     if (oldStatus !== status) {
-      void syncPedidoStatusFromZelochatOrder(orderId, status)
+      void syncPedidoStatusFromZelochatOrder(empresaId, orderId, status)
         .catch((err) => console.error('[ZeloMenu] sync status Chat->PDV falhou:', err));
     }
 
