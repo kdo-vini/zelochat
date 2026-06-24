@@ -37,9 +37,13 @@ export function buildPublicStorePath(slug: string): string {
   return `/menu/${encodeURIComponent(slug)}`;
 }
 
-/** URL pública completa da loja (ex.: https://menu.zelopdv.com.br/{slug}). */
+/**
+ * URL pública branded da loja: raiz limpa `https://menu.zelopdv.com.br/{slug}`
+ * (D-006). O subdomínio `menu` serve o slug na raiz; `buildPublicStorePath`
+ * (`/menu/{slug}`) continua sendo a rota interna usada em dev e no domínio do app.
+ */
 export function buildPublicStoreUrl(appBaseUrl: string, slug: string): string {
-  return `${appBaseUrl.replace(/\/$/, '')}${buildPublicStorePath(slug)}`;
+  return `${appBaseUrl.replace(/\/$/, '')}/${encodeURIComponent(slug)}`;
 }
 
 /**
