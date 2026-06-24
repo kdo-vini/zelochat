@@ -54,6 +54,8 @@ function sanitizePayloadForLog(body: unknown): unknown {
     stripField(data, 'base64');
     const m = data.message;
     if (m && typeof m === 'object') {
+      // outbound (fromMe) messages carry media as data.message.base64 — strip it
+      stripField(m, 'base64');
       stripField(m.imageMessage, 'base64');
       stripField(m.videoMessage, 'base64');
       stripField(m.audioMessage, 'base64');
@@ -86,6 +88,10 @@ export async function recordRawWebhookEvent(
   body: unknown,
   authStatus: WebhookAuthStatus,
 ): Promise<string | null> {
+  // Delivery/read receipts — pure WebSocket broadcasts with no DB persistence
+  // and no replay value. Skipping them avoids ~78% of rows in the table.
+  if (extractEventType(body) === 'messages.update') return null;
+
   const row: RawEventRow = {
     instance,
     empresa_id: empresaId,
