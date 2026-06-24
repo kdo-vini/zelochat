@@ -176,6 +176,8 @@ export type ZeloMenuSlugResponse = { slug: string | null; publicUrl: string | nu
 
 export type ZeloMenuStoreSettings = {
   logoUrl: string | null;
+  companyName: string;
+  companySpecialty: string;
   welcomeText: string | null;
   featuredEnabled: boolean;
   featuredProductIds: number[];
@@ -187,6 +189,31 @@ export type ZeloMenuStoreSettings = {
 export async function getZeloMenuSettings(token: string): Promise<ZeloMenuStoreSettings> {
   const response = await apiFetch(apiUrl('/api/zelomenu/settings'), { headers: authHeaders(token) });
   return parseResponse<ZeloMenuStoreSettings>(response);
+}
+
+export async function generateZeloMenuWelcome(
+  token: string,
+  opts: { companyName: string; companySpecialty: string; categories: string[] },
+): Promise<string> {
+  const { companyName, companySpecialty, categories } = opts;
+  const catList = categories.slice(0, 8).join(', ');
+  const response = await apiFetch(apiUrl('/api/ai/complete'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({
+      messages: [
+        {
+          role: 'user',
+          content: `Escreva um texto de boas-vindas para o cardápio digital da loja "${companyName}"${companySpecialty ? ` (${companySpecialty})` : ''}. Categorias do cardápio: ${catList || 'variadas'}.\n\nRegras: máximo 2 a 3 linhas, tom acolhedor e animado, sem usar emojis, em português brasileiro. Retorne apenas o texto, sem aspas ou explicações.`,
+        },
+      ],
+      temperature: 0.8,
+    }),
+  });
+  const body = await parseResponse<{ choices?: Array<{ message?: { content?: string } }> }>(response);
+  const text = body.choices?.[0]?.message?.content?.trim() ?? '';
+  if (!text) throw new Error('A IA não retornou um texto. Tente de novo.');
+  return text;
 }
 
 export async function updateZeloMenuSettings(

@@ -1273,6 +1273,8 @@ export async function getPublicStoreBySlug(slug: string): Promise<{
 
 export type ZeloMenuStoreSettings = {
   logoUrl: string | null;
+  companyName: string;
+  companySpecialty: string;
   welcomeText: string | null;
   featuredEnabled: boolean;
   featuredProductIds: number[];
@@ -1308,6 +1310,8 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
 
   return {
     logoUrl: perfil?.logo_url ?? null,
+    companyName: config.name,
+    companySpecialty: config.specialty,
     welcomeText: perfil?.zelomenu_welcome_text ?? null,
     featuredEnabled: perfil?.zelomenu_featured_enabled ?? false,
     featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, GripVertical, Loader2, Search, Star, Store, X } from 'lucide-react';
+import { Check, ChevronDown, GripVertical, Loader2, Search, Sparkles, Star, Store, X } from 'lucide-react';
 import { Reorder } from 'motion/react';
-import { getZeloMenuSettings, updateZeloMenuSettings, type ZeloMenuStoreSettings } from '../../services/waApi';
+import { generateZeloMenuWelcome, getZeloMenuSettings, updateZeloMenuSettings, type ZeloMenuStoreSettings } from '../../services/waApi';
 import { SectionCard } from '../shared/SectionCard';
 
 const MAX_WELCOME = 400;
@@ -9,6 +9,7 @@ const MAX_WELCOME = 400;
 export function ZeloMenuSettingsCard({ token }: { token: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -58,6 +59,24 @@ export function ZeloMenuSettingsCard({ token }: { token: string }) {
     setFeaturedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+  }
+
+  async function generateWelcome() {
+    if (!settings) return;
+    try {
+      setGenerating(true);
+      setError(null);
+      const text = await generateZeloMenuWelcome(token, {
+        companyName: settings.companyName,
+        companySpecialty: settings.companySpecialty,
+        categories: settings.availableCategories,
+      });
+      setWelcomeText(text.slice(0, MAX_WELCOME));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não consegui gerar o texto. Tente de novo.');
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function save() {
@@ -131,17 +150,29 @@ export function ZeloMenuSettingsCard({ token }: { token: string }) {
 
         {/* ── Welcome text ── */}
         <div>
-          <label className="block">
-            <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">Texto de boas-vindas</p>
-            <textarea
-              value={welcomeText}
-              onChange={(e) => setWelcomeText(e.target.value.slice(0, MAX_WELCOME))}
-              placeholder="Ex: Bem-vindo à Donna Batata! Nossa missão é oferecer a vocês uma experiência deliciosa…"
-              rows={3}
-              className="w-full resize-none rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-4 py-3 text-[13px] leading-relaxed text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[var(--color-brand)]"
-              style={{ transition: 'border-color 0.15s' }}
-            />
-          </label>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">Texto de boas-vindas</p>
+            <button
+              type="button"
+              onClick={() => void generateWelcome()}
+              disabled={generating}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-semibold text-[var(--color-brand-deep)] hover:bg-[var(--color-brand-soft)] disabled:opacity-50"
+              style={{ transition: 'background 0.15s' }}
+            >
+              {generating
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                : <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />}
+              {generating ? 'Gerando…' : 'Gerar com IA'}
+            </button>
+          </div>
+          <textarea
+            value={welcomeText}
+            onChange={(e) => setWelcomeText(e.target.value.slice(0, MAX_WELCOME))}
+            placeholder="Uma frase de boas-vindas para seus clientes…"
+            rows={3}
+            className="w-full resize-none rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-4 py-3 text-[13px] leading-relaxed text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[var(--color-brand)]"
+            style={{ transition: 'border-color 0.15s' }}
+          />
           <p className="mt-1 text-right text-[11px] text-[var(--color-ink-muted)]">
             {welcomeText.length}/{MAX_WELCOME}
           </p>
