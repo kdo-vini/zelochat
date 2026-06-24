@@ -127,6 +127,7 @@ import {
   openPublicOrderCartSession,
   openWhatsAppCartSession,
   setEmpresaZeloMenuSlug,
+  syncPedidoStatusFromZelochatOrder,
   updatePublicCartSession,
 } from './zelomenuCartSessions.js';
 
@@ -1969,6 +1970,13 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
       .eq('empresa_id', empresaId);
 
     if (updErr) throw new Error(updErr.message);
+
+    // ZLM-301 — reflete a mudança de status no ticket de cozinha do PDV (bundle).
+    // Best-effort + flag-gated: nunca derruba o update do pedido no ZeloChat.
+    if (oldStatus !== status) {
+      void syncPedidoStatusFromZelochatOrder(orderId, status)
+        .catch((err) => console.error('[ZeloMenu] sync status Chat->PDV falhou:', err));
+    }
 
     const shouldNotify =
       oldStatus !== status &&

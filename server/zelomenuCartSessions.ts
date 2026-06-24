@@ -1022,6 +1022,48 @@ async function materializeOrderToPedidosBestEffort(input: {
   if (itensError) throw itensError;
 }
 
+/** Está ligado o sync de pedidos com o PDV? (mesmo flag da materialização) */
+function isPedidosSyncEnabled(): boolean {
+  return ['1', 'true', 'yes'].includes((process.env.ZELOMENU_PEDIDOS_SYNC || '').trim().toLowerCase());
+}
+
+/**
+ * ZLM-301 — sync Chat → PDV (metade A do bidirecional, opção "duas tabelas
+ * sincronizadas pelo zelochat_order_id"). Quando o operador muda o status do
+ * pedido no ZeloChat, reflete no ticket de cozinha do PDV.
+ *
+ * Mapeamento seguro (os modelos não batem 1:1):
+ *  - pending/preparing  -> pedido 'aberto'  + itens 'aguardando'
+ *  - ready/out_for_delivery/delivered -> pedido 'pronto' + itens 'pronto'
+ *  - NUNCA seta 'fechado': fechar = pagamento/venda, ação exclusiva do PDV
+ *    (setar aqui criaria pedido fechado sem venda = corrupção financeira).
+ * Não regride pedido já 'fechado' (guard `status <> 'fechado'`). Best-effort.
+ */
+export async function syncPedidoStatusFromZelochatOrder(
+  zelochatOrderId: string,
+  zelochatStatus: string,
+): Promise<void> {
+  if (!isPedidosSyncEnabled()) return;
+  const ready = zelochatStatus === 'ready' || zelochatStatus === 'out_for_delivery' || zelochatStatus === 'delivered';
+  const pedidoStatus = ready ? 'pronto' : 'aberto';
+  const cozinha = ready ? 'pronto' : 'aguardando';
+
+  const { data, error } = await getServiceSupabase()
+    .from('pedidos')
+    .update({ status: pedidoStatus })
+    .eq('zelochat_order_id', zelochatOrderId)
+    .neq('status', 'fechado')
+    .select('id');
+  if (error) throw error;
+  const pedidoIds = ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  if (pedidoIds.length === 0) return;
+  const { error: itemErr } = await getServiceSupabase()
+    .from('pedido_itens')
+    .update({ status_cozinha: cozinha })
+    .in('id_pedido', pedidoIds);
+  if (itemErr) throw itemErr;
+}
+
 async function notifyManagerForAcceptedOrder(input: {
   empresaId: string;
   customer: ZeloMenuCustomerSnapshot;
