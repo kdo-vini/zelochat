@@ -119,38 +119,6 @@ export function ZeloMenuSettingsCard({ token }: { token: string }) {
     <SectionCard icon={Store} title="Cardápio digital">
       <div className="space-y-6">
 
-        {/* ── Logo (read-only) ── */}
-        <div>
-          <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">Logo</p>
-          <div className="flex items-center gap-3">
-            {settings.logoUrl ? (
-              <img
-                src={settings.logoUrl}
-                alt="Logo da empresa"
-                className="h-14 w-14 rounded-xl object-cover border border-[var(--color-line)]"
-              />
-            ) : (
-              <div
-                className="flex h-14 w-14 items-center justify-center rounded-xl text-[18px] font-bold text-white"
-                style={{ background: 'linear-gradient(135deg, #0b9778, #07745c)' }}
-              >
-                <Store className="h-6 w-6" strokeWidth={1.8} />
-              </div>
-            )}
-            <p className="text-[13px] text-[var(--color-ink-muted)]">
-              O logo vem do ZeloPDV.{' '}
-              <a
-                href="https://zelopdv.com.br"
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-[var(--color-brand-deep)] underline underline-offset-2"
-              >
-                Trocar lá
-              </a>
-            </p>
-          </div>
-        </div>
-
         {/* ── Welcome text ── */}
         <div>
           <div className="mb-2 flex items-center justify-between gap-2">
