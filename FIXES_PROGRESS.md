@@ -127,6 +127,7 @@ These are out of scope or unsafe to change from this branch:
 
 - ✅ ZLM-208 — carrinho público deixou de ter dois CTAs concorrentes ("Atualizar carrinho" e "Confirmar pedido"): confirmar agora salva o rascunho, revalida automaticamente e só fecha o pedido se não houver ajuste; mudança de preço aparece como toast pedindo para conferir o novo total — `src/pages/ZeloMenuCartPage.tsx:225` · `src/pages/ZeloMenuCartPage.tsx:306`
 - ✅ ZLM-209 — link público da loja agora recebe status de expediente calculado pelo backend a partir de horário/dias fechados e mostra na página inicial o aviso "Fora do horário de atendimento" com orientação para agendar em horário disponível — `server/zelomenuCartSessions.ts:211` · `src/pages/ZeloMenuStorePage.tsx:493`
+- ✅ ZLM-210 — link público exigia nome/WhatsApp num resumo intermediário e ainda pedia outro toque para abrir o checkout → CTA do cardápio agora cria a sessão sem dados pessoais e abre direto a finalização, onde nome e WhatsApp já são coletados junto com entrega/retirada — `src/pages/ZeloMenuStorePage.tsx:286` · `src/pages/ZeloMenuCartPage.tsx:702`
 
 ### Sprint 69r (2026-06-23) — Bulk selection no Cardápio do ZeloChat
 

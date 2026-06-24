@@ -12,7 +12,6 @@ import {
   resolveModifierSelections,
   type ZeloMenuModifierSelectionInput,
 } from '../domain/zelomenuModifiers';
-import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { useToast } from '../contexts/ToastContext';
 
 type SelectedItem = {
@@ -75,8 +74,6 @@ const CART_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
 
 type PersistedCart = {
   items: Record<string, SelectedItem>;
-  customerName: string;
-  customerPhone: string;
 };
 
 function cartStorageKey(slug: string): string {
@@ -84,7 +81,7 @@ function cartStorageKey(slug: string): string {
 }
 
 function loadPersistedCart(slug: string): PersistedCart {
-  const empty: PersistedCart = { items: {}, customerName: '', customerPhone: '' };
+  const empty: PersistedCart = { items: {} };
   if (!slug) return empty;
   try {
     const raw = localStorage.getItem(cartStorageKey(slug));
@@ -96,8 +93,6 @@ function loadPersistedCart(slug: string): PersistedCart {
     }
     return {
       items: parsed.items ?? {},
-      customerName: parsed.customerName ?? '',
-      customerPhone: parsed.customerPhone ?? '',
     };
   } catch {
     return empty;
@@ -107,7 +102,7 @@ function loadPersistedCart(slug: string): PersistedCart {
 function persistCart(slug: string, cart: PersistedCart): void {
   if (!slug) return;
   try {
-    const hasContent = Object.keys(cart.items).length > 0 || cart.customerName || cart.customerPhone;
+    const hasContent = Object.keys(cart.items).length > 0;
     if (!hasContent) {
       localStorage.removeItem(cartStorageKey(slug));
       return;
@@ -134,9 +129,6 @@ export default function ZeloMenuStorePage() {
   const [items, setItems] = useState<Record<string, SelectedItem>>(restored.items);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
-  const [cartOpen, setCartOpen] = useState(false);
-  const [customerName, setCustomerName] = useState(restored.customerName);
-  const [customerPhone, setCustomerPhone] = useState(restored.customerPhone);
   const [submitting, setSubmitting] = useState(false);
   const [unitPicker, setUnitPicker] = useState<ZeloMenuCatalogProduct | null>(null);
   const [picker, setPicker] = useState<{
@@ -174,8 +166,8 @@ export default function ZeloMenuStorePage() {
 
   // ── Persiste o carrinho no localStorage a cada mudança ──────────────────────
   useEffect(() => {
-    persistCart(slug, { items, customerName, customerPhone });
-  }, [slug, items, customerName, customerPhone]);
+    persistCart(slug, { items });
+  }, [slug, items]);
 
   // ── Category tracking via IntersectionObserver ──────────────────────────────
   useEffect(() => {
@@ -198,16 +190,6 @@ export default function ZeloMenuStorePage() {
     }
     return () => observer.disconnect();
   }, [store]);
-
-  // ── Close cart/picker on Escape ─────────────────────────────────────────────
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (cartOpen) setCartOpen(false);
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [cartOpen]);
 
   // ── Scroll active tab into view ─────────────────────────────────────────────
   useEffect(() => {
@@ -304,16 +286,9 @@ export default function ZeloMenuStorePage() {
   }
 
   async function continueToCart() {
-    const phoneDigits = normalizePhoneNumber(customerPhone).slice(0, 11);
-    if (phoneDigits.length < 10) {
-      toast.error('Informe um WhatsApp válido com DDD para a loja te encontrar.');
-      return;
-    }
     try {
       setSubmitting(true);
       const result = await startPublicOrder(slug, {
-        customerName: customerName.trim() || null,
-        customerPhone: phoneDigits,
         items: lines.map((line) => ({
           productId: line.productId,
           productName: line.productName,
@@ -589,8 +564,9 @@ export default function ZeloMenuStorePage() {
           <div className="mx-auto max-w-2xl">
             <button
               type="button"
-              onClick={() => setCartOpen(true)}
-              className="flex w-full items-center justify-between rounded-2xl px-5 py-4 text-white shadow-2xl"
+              onClick={() => void continueToCart()}
+              disabled={submitting}
+              className="flex w-full items-center justify-between rounded-2xl px-5 py-4 text-white shadow-2xl disabled:cursor-wait disabled:opacity-70"
               style={{ background: 'var(--color-brand)' }}
             >
               <div className="flex items-center gap-3">
@@ -600,126 +576,13 @@ export default function ZeloMenuStorePage() {
                 >
                   {totalQty}
                 </span>
-                <span className="text-[14px] font-semibold">Ver carrinho</span>
+                <span className="flex items-center gap-2 text-[14px] font-semibold">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
+                  {submitting ? 'Abrindo pedido…' : 'Continuar pedido'}
+                </span>
               </div>
               <span className="text-[15px] font-bold">{toBRL(subtotal)}</span>
             </button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* ── Cart bottom sheet ─────────────────────────────────────────────── */}
-      {cartOpen ? (
-        <div className="fixed inset-0 z-40 flex items-end justify-center">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setCartOpen(false)}
-          />
-          <div
-            className="relative w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-[var(--color-surface)] shadow-2xl"
-            style={{ maxHeight: '92vh' }}
-          >
-            {/* Sheet header */}
-            <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-3xl border-b border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4">
-              <h2 className="text-[18px] font-bold text-[var(--color-ink)]">Seu pedido</h2>
-              <button
-                type="button"
-                onClick={() => setCartOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-canvas)]"
-              >
-                <X className="h-4 w-4 text-[var(--color-ink-soft)]" strokeWidth={2} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4" style={{ paddingBottom: 'max(24px, calc(24px + env(safe-area-inset-bottom)))' }}>
-              {/* Cart line items */}
-              <div className="space-y-3">
-                {lines.map((line) => (
-                  <div key={line.key} className="flex items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[14px] font-medium text-[var(--color-ink)]">
-                        {line.productName}
-                      </p>
-                      <p className="text-[12px] text-[var(--color-ink-muted)]">
-                        {toBRL(line.unitPrice)} cada
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => changeQty(line.key, -1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)]"
-                        aria-label="Diminuir"
-                      >
-                        <Minus className="h-3 w-3" strokeWidth={2.5} />
-                      </button>
-                      <span className="w-5 text-center text-[14px] font-semibold tabular-nums">
-                        {line.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => changeQty(line.key, 1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)]"
-                        aria-label="Aumentar"
-                      >
-                        <Plus className="h-3 w-3" strokeWidth={2.5} />
-                      </button>
-                      <span className="w-16 text-right text-[13px] font-semibold tabular-nums text-[var(--color-ink)]">
-                        {toBRL(line.unitPrice * line.quantity)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Subtotal */}
-              <div className="my-4 flex items-center justify-between border-t border-[var(--color-line)] pt-4">
-                <span className="text-[15px] font-bold text-[var(--color-ink)]">Total</span>
-                <span className="text-[17px] font-bold text-[var(--color-ink)]">{toBRL(subtotal)}</span>
-              </div>
-
-              {/* Customer fields */}
-              <div className="space-y-3">
-                <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
-                  Seus dados
-                </p>
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[12px] font-medium text-[var(--color-ink-muted)]">Nome</span>
-                  <input
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="h-12 rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-4 text-[14px] text-[var(--color-ink)] outline-none focus:border-[var(--color-brand)]"
-                    placeholder="Como a loja vai te chamar"
-                  />
-                </label>
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[12px] font-medium text-[var(--color-ink-muted)]">
-                    WhatsApp <span className="text-[var(--color-alert)]">*</span>
-                  </span>
-                  <input
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(maskBrazilianPhone(e.target.value))}
-                    inputMode="tel"
-                    className="h-12 rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-4 text-[14px] text-[var(--color-ink)] outline-none focus:border-[var(--color-brand)]"
-                    placeholder="(XX) XXXXX-XXXX"
-                  />
-                </label>
-              </div>
-
-              {/* Continue to cart button */}
-              <button
-                type="button"
-                onClick={() => void continueToCart()}
-                disabled={submitting}
-                className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-[15px] font-bold text-white disabled:opacity-50"
-                style={{ background: 'var(--color-brand)' }}
-              >
-                {submitting ? (
-                  <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.8} />
-                ) : null}
-                {submitting ? 'Abrindo carrinho…' : 'Ir para o carrinho'}
-              </button>
-            </div>
           </div>
         </div>
       ) : null}

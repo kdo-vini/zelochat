@@ -19,7 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-06-24',
     category: 'medium',
     title: 'Fechar o pedido pelo link ficou mais simples no celular',
-    description: 'Quando o cliente vai finalizar pelo seu link do cardápio, agora ele segue por etapas curtas — sacola, entrega ou retirada e pagamento — com o total sempre à vista e o resumo no fim. Quem só vai retirar nem vê os campos de endereço, e dá pra escolher se é pra já ou uma encomenda agendada. Mais rápido de concluir e menos pedido abandonado.',
+    description: 'Ao tocar em Continuar pedido, o cliente vai direto para as etapas de finalização e informa nome e WhatsApp junto com entrega ou retirada. O total fica sempre à vista, quem só vai retirar nem vê os campos de endereço e também dá pra escolher se é pra já ou uma encomenda agendada.',
   },
   {
     date: '2026-06-24',
