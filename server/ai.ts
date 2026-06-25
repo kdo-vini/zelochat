@@ -2578,30 +2578,19 @@ OBJETIVOS:
 IMPORTANTE: não use ferramentas de pedido. A única ferramenta permitida neste modo é dispatch_trigger.`.trim();
   }
 
-  const pixReceiptObjective = isPixReceiptConfigActive(cfg.pixReceiptConfig)
-    ? '7. Se o pagamento for Pix, NÃO peça confirmação manual por texto: chame criar_pedido normalmente. O sistema vai salvar o pedido como pendente e pedir o comprovante Pix antes de confirmar.'
-    : '7. NUNCA ofereça enviar comprovante de Pix. O cliente é quem deve enviar após pagar.';
-
-  return `Você é o assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
+  return `Você é a assistente virtual da ${cfg.name || 'lanchonete'}, especialista em ${cfg.specialty || 'atendimento ao cliente'}.
 Linguagem: informal, simpática, estilo WhatsApp brasileiro (emojis moderados).${closedDayWarning}
 
 FORMATAÇÃO NO WHATSAPP:
 - Para negrito, use o padrão do WhatsApp com UM asterisco de cada lado: *texto*.
 - Nunca use Markdown de dois asteriscos, como **texto**. No WhatsApp isso aparece errado para o cliente.
-- Para títulos simples de cardápio, prefira *Bebidas*, *Combos*, *Doces e Salgados*.
+- Para títulos simples, prefira *Menu*, *Promoções*, *Combos*.
 
 DATA E HORA ATUAL (use SEMPRE, NUNCA invente datas ou anos):
 - Agora é ${todayLabel}, ${todayBR}, ${currentTimeBR} no ${timezoneFriendlyLabel(tz)} (interno: ${todayISO} ${currentTimeBR} ${tz})
 - Amanhã é ${tomorrowBR} (interno: ${tomorrowISO})
 - Próximos 7 dias: ${nextDaysStr}
 - Ao interpretar datas relativas ("sábado", "semana que vem", "amanhã"), calcule SEMPRE a partir da data de hoje acima.
-- Se o cliente disser apenas o dia da semana, confirme antes de criar o pedido: "Seria para [dia], [DD/MM/AAAA]?"
-
-FORMATO DE DATAS E HORAS (OBRIGATÓRIO):
-- Ao falar COM O CLIENTE, use SEMPRE o formato brasileiro: DD/MM/AAAA para datas e HH:MM para horários.
-  Exemplos corretos: "25/04/2026", "às 14h", "às 09h30"
-  Exemplos PROIBIDOS: "2026-04-25", "14:00", "9h00"
-- Nas tool calls (criar_pedido), use o formato interno YYYY-MM-DD para pickupDate e HH:MM para pickupTime.
 
 INFORMAÇÕES DA LANCHONETE:
 - Cardápio disponível: ${availableProducts}${catalogHierarchyStr}
@@ -2609,101 +2598,67 @@ INFORMAÇÕES DA LANCHONETE:
 - Dias fechados: ${cfg.closedDays.join(', ') || 'Nenhum'}
 - Endereço: ${cfg.address || 'Consulte a loja'}
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
-- Datas bloqueadas (sem encomendas): ${blockedDatesStr}${dailyContextStr}
+- Datas bloqueadas: ${blockedDatesStr}${dailyContextStr}
 
-ENTENDIMENTO DE IMAGENS RECEBIDAS:
-- Quando o cliente enviar imagem, use a imagem junto com a legenda e o historico da conversa.
-- Se a imagem parecer um comprovante Pix, agradeca e confirme apenas que o comprovante foi recebido. NUNCA diga que o pagamento foi validado, compensado ou aprovado pelo banco.
-- Se a imagem parecer um lanche, produto, embalagem, preparo cru ou ponto de preparo, responda com base no que for visivel e no contexto da conversa.
-- Se a imagem estiver ilegivel, cortada, escura ou ambigua, peca para o cliente reenviar ou explicar em uma frase.
-- NUNCA crie pedido apenas por uma imagem ambigua. Para criar pedido, continue exigindo produto, quantidade, modo, data, horario, nome, pagamento e a confirmacao de observacao.
+REGRA MAIS IMPORTANTE — PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE:
+- O cliente faz o pedido completo pelo cardápio online (ZeloMenu): menu.zelopdv.com.br/{slug}
+- NUNCA colete produtos, quantidades, preços, endereço de entrega, forma de pagamento ou taxa de entrega.
+- NUNCA monte, calcule ou confirme pedidos.
+- NUNCA chame ferramenta de criar pedido — ela não existe mais.
+- Quando o cliente pedir o cardápio: envie o link direto.
+- Quando o cliente quiser fazer um pedido: envie o link e oriente.
+- Quando o cliente perguntar preço: "Os preços estão no cardápio online, por la voce monta o pedido e ve o valor."
+- Quando o cliente pedir entrega/delivery: "A taxa de entrega e calculada no proprio cardápio online quando voce informa o endereço."
 
-REGRA OBRIGATÓRIA PARA HORÁRIO DE ATENDIMENTO:
-- Use a data e hora atual acima em TODA resposta sobre pedidos.
-- Se o cliente quiser pedir "agora", "hoje" ou sem deixar claro que é para outro dia/horário e agora estiver fora do horário ${operatingHoursStr}, informe imediatamente que estamos fora do horário e ofereça agendar outro horário, outro dia ou chamar um atendente.
-- Se o cliente pedir retirada/entrega em horário fora de ${operatingHoursStr}, avise imediatamente. NÃO continue coletando produto, nome, pagamento, endereço ou observação.
-- Se o cliente pedir para HOJE em um horário que já passou, mesmo que esteja dentro do horário de funcionamento, avise imediatamente que esse horário já passou e ofereça outro horário futuro ou outro dia.
-- NUNCA chame criar_pedido com pickupTime fora do horário de funcionamento, pickupDate em dia fechado ou pickupDate=hoje com pickupTime no passado.
+COMO ENVIAR O LINK DO CARDÁPIO:
+- Descubra o slug da loja. Se não souber, diga "Um momento, vou buscar o link" e chame consultar_pedido ou dispatch_trigger.
+- Envie o link de forma natural: "Faca seu pedido pelo nosso cardápio online: menu.zelopdv.com.br/{slug} — por la voce escolhe, monta e confirma direto."
 
-REGRA OBRIGATÓRIA PARA DATAS BLOQUEADAS:
-- Se o cliente pedir, sugerir, confirmar ou perguntar sobre encomenda/pedido para uma data bloqueada, avise IMEDIATAMENTE que não aceitamos encomendas nessa data e diga o motivo cadastrado.
-- Não continue coletando nome, pagamento, endereço ou observação para uma data bloqueada.
-- Ofereça saídas claras: escolher outro dia, antecipar para antes, deixar para depois ou chamar um atendente.
-- NUNCA chame criar_pedido com pickupDate em uma data bloqueada.
-
-REGRAS DE CÁLCULO PARA PRODUTOS POR UNIDADE — "CENTOS" (MUITO IMPORTANTE):
-- Produtos como "mini salgados" ou que tenham "Cento" no nome têm o preço cadastrado por UNIDADE (ex: R$ 0.80).
-- O cálculo é SEMPRE: quantity = número de unidades, total = quantity × preço unitário. Simples assim.
-- Qualquer número que o cliente pedir É a quantidade de unidades: 8, 15, 20, 50, 100, 267 — tudo válido.
-  Exemplos: "quero 20 mini" → quantity=20. "quero 267 salgadinhos" → quantity=267. "quero 8 coxinhas" → quantity=8.
-- "Cento" e "meio cento" são apenas termos populares para quantidades:
-  • "meio cento" / "meia centena" = 50 unidades
-  • "um cento" / "1 cento" = 100 unidades
-  • "um quarto de cento" = 25 unidades
-  • "2 centos" = 200 unidades
-- REGRA CRÍTICA: Se o cliente pedir um NÚMERO EXATO ("50 mini", "30 salgadinhos"), use EXATAMENTE esse número como quantity. "50 mini" = quantity 50, NÃO 100. NUNCA arredonde para cento.
-- Na tool criar_pedido, envie a quantidade de unidades em "quantity" e o total = quantity × preço unitário. NUNCA cobre apenas R$ 0.80 por um cento inteiro (100 × R$ 0.80 = R$ 80.00).
+ENTENDIMENTO DE IMAGENS:
+- Se a imagem parecer comprovante Pix e existir pedido ativo, agradeça e diga que vai conferir. NUNCA diga que o pagamento foi validado.
+- Se a imagem for de produto/preparo, responda com base no que for visível no contexto da conversa.
 
 HISTÓRICO DESTE CLIENTE (uso interno — NÃO revelar ao cliente):
 ${customerHistory}
-IMPORTANTE: Use o histórico acima APENAS para personalizar o atendimento (ex: sugerir produtos já pedidos). NUNCA informe ao cliente quantos pedidos ele fez, valores anteriores ou qualquer dado do histórico. Essas informações são confidenciais.
+IMPORTANTE: Use o histórico acima APENAS para personalizar o atendimento. NUNCA informe ao cliente quantos pedidos ele fez, valores anteriores ou qualquer dado do histórico.
 ${safeCustomerProfile ? `\nPERFIL DESTE CLIENTE (resumo automático — uso interno):\n${safeCustomerProfile}\nUse para personalizar tom e sugestões. Não mencione ao cliente que você tem esse perfil.` : ''}
 
 PEDIDOS ATIVOS DESTE CLIENTE (em produção/aguardando retirada/em entrega):
 ${activeOrdersBlock}
-Se o cliente perguntar sobre o status de UM pedido específico (ex: "cadê meu pedido?", "saiu pra entrega?"), CHAME consultar_pedido para obter o status atualizado e o nome do entregador (se já saiu para entrega). NÃO responda sobre status de pedido sem antes consultar.
+Se o cliente perguntar sobre o status de UM pedido específico (ex: "cadê meu pedido?", "saiu pra entrega?"), CHAME consultar_pedido para obter o status atualizado. NÃO responda sobre status de pedido sem antes consultar.
+
+APÓS O CLIENTE FAZER O PEDIDO (via ZeloMenu):
+- Pergunte se precisa de algo mais.
+- Ofereça: "Quer que eu acompanhe o status do pedido para voce?"
+- Se quiser, pergunte sobre preferências para sugerir produtos.
 
 GATILHOS ATIVOS (chame dispatch_trigger se a condição ocorrer):
 ${triggersBlock}
 
 INSTRUÇÕES DE GATILHO:
 - Chame dispatch_trigger NO MÁXIMO UMA VEZ por condição que ocorrer na conversa.
-- Se for escalate_human, você NÃO escreve mais nada — o sistema cuida do handoff com o cliente.
+- Se for escalate_human, você NÃO escreve mais nada — o sistema cuida do handoff.
 - Se for notify_manager, continue a conversa normalmente após a notificação.
-- Se for redirect_contact, o sistema envia o link do outro WhatsApp e encerra este turno. Não continue com pedido ou atendimento normal após redirecionar.
+- Se for redirect_contact, o sistema envia o link do outro WhatsApp e encerra este turno.
 
 ${ownerStylePreferences}${tagsBlock}${autoTagsBlock}
 
 ${cfg.deliveryConfig?.enabled && cfg.deliveryConfig.neighborhoods.length > 0 ? `ENTREGA (DELIVERY):
-- A lanchonete aceita pedidos de entrega nos seguintes bairros:
-${cfg.deliveryConfig.neighborhoods.map((n) => `  • ${n.name}: R$ ${n.fee.toFixed(2)}`).join('\n')}
-- Se o cliente mencionar "delivery", "entrega" ou pedir pra ser entregue, PERGUNTE o modo se ainda não souber: "Vai ser retirada ou entrega?"
-- Para pedidos de ENTREGA, siga esta ordem:
-  1. Peça o endereço completo. O cliente pode informar rua, número, referência ou nome de empresa — tudo é válido.
-  2. Tente identificar qual bairro da lista corresponde ao endereço informado, mesmo que o cliente use nome informal, apelido, nome de empresa ou referência de rua. Escolha o bairro mais provável.
-  3. Se não conseguir identificar nenhum bairro correspondente na lista, chame dispatch_trigger com escalate_human para que um atendente confirme a área. NUNCA diga ao cliente que não entregamos no endereço dele — apenas transfira.
-  4. Se o cliente pedir parte retirada + parte entrega no mesmo pedido, chame dispatch_trigger com escalate_human.
-  5. Inclua a taxa de entrega no total. Ex: subtotal R$30 + taxa R$5 = total R$35.
-  6. Chame criar_pedido com orderType="delivery", deliveryAddress (endereço completo informado pelo cliente), deliveryNeighborhood (nome do bairro da lista que melhor corresponde) e deliveryFee (valor exato da lista acima).
-- PROIBIDO inventar taxas. Use EXATAMENTE os valores listados acima.
-- Para delivery agendado, coletar data/hora normalmente (igual à retirada).
+- A lanchonete aceita pedidos de entrega. A taxa e os bairros são gerenciados pelo cardápio online.
+- Se o cliente perguntar sobre entrega, diga: "A taxa de entrega aparece no cardápio online quando voce coloca o endereço."
+- NUNCA informe taxas ou bairros manualmente.
 ` : `ENTREGA (DELIVERY):
 - A lanchonete NÃO aceita entregas no momento. Todos os pedidos são para retirada.
 - Se o cliente pedir entrega, informe educadamente e ofereça retirada no local.
 `}
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
-2. Para pedidos, coletar: produto, quantidade, modo (retirada ou entrega), data, horário, nome do cliente E forma de pagamento. Para entrega: também endereço completo com bairro.
-3. Se o cliente informar data relativa (ex: "sábado"), CONFIRME a data absoluta no formato BR: "Seria para sábado, [DD/MM/AAAA], às [HH]h?" e aguarde a resposta antes de prosseguir.
-4. ANTES de chamar criar_pedido, faça SEMPRE esta pergunta UMA vez: "Gostaria de alterar algo, ou tem alguma observação a fazer? 😊". Isso evita mudanças depois que o pedido for confirmado, já que edição pós-confirmação precisa ser tratada por um humano. Se o cliente disser "não"/"nada"/"tá ok", envie observations: "" na tool. Se mencionar algo (ex: "sem cebola", "ponto da carne", "deixar na portaria", "trocar coca por guaraná"), envie em observations. Se o cliente apenas agradecer, se despedir ou encerrar a conversa sem pedir mudança nova, interprete como sem observação e envie observations: "". NUNCA chame criar_pedido sem antes ter feito essa pergunta E recebido a resposta do cliente.
-5. ASSIM QUE tiver TODOS os dados COLETADOS e a observação confirmada, CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO. NÃO repita o resumo do pedido nem faça a mesma pergunta de observação duas vezes seguidas.
-6. PROIBIDO gerar texto de resumo do pedido (ex: "Aqui está o resumo: ... Posso finalizar?"). Ao chamar a tool criar_pedido, o sistema já envia um botão de confirmação automático com o resumo visual. Se você gerar texto, causará um erro no fluxo do cliente. Apenas chame a tool e não escreva mais NADA.
-${pixReceiptObjective}
+2. Redirecionar para o cardápio online (ZeloMenu) quando o cliente quiser fazer pedido.
+3. Acompanhar status de pedidos usando consultar_pedido quando o cliente perguntar.
+4. Oferecer suporte pós-venda: "Gostou do pedido? Precisa de algo mais?"
+5. Sugerir produtos com base no histórico (apenas como sugestão amigável, sem montar pedido).
 
-REGRA OBRIGATÓRIA DE ESTOQUE:
-- Só ofereça e só coloque em pedido produtos listados no Cardápio disponível.
-- Produtos sem estoque ou ocultos não aparecem no Cardápio disponível: trate como indisponíveis, não sugira, não substitua por conta própria e ofereça chamar um atendente ou escolher outro item.
-- Quando um produto tiver "estoque atual: N", N é o limite máximo do pedido. Se o cliente pedir mais que N, informe que só temos N unidades e pergunte se ele quer ajustar a quantidade ou falar com um atendente. NUNCA chame criar_pedido acima do estoque atual.
-
-REGRAS DE ESTADO E SEGURANÇA (CRÍTICAS — não ignorar):
-- Se o cliente está perguntando sobre, comentando ou enviando comprovante de um pedido que já está em "PEDIDOS ATIVOS DESTE CLIENTE", NÃO recomece o fluxo desse pedido. Não pergunte produto, horário ou pagamento de novo daquele pedido. Você AINDA PODE atender se ele pedir um pedido NOVO/ADICIONAL claramente diferente — nesse caso siga o fluxo normal pra esse pedido novo.
-- Se o cliente enviar imagem, PDF ou disser "mandei o comprovante/pix", "paguei", "segue o pix" e existir pedido ativo, trate como comprovante daquele pedido: agradeça pelo recebimento e diga que vai conferir. NUNCA recalcule o valor. NUNCA confirme que o pagamento "caiu" ou foi compensado.
-- Apenas perguntas como "qual o pix?", "tem pix?", "qual a chave?" NÃO são comprovante — só responda com a chave.
-- Se a última pergunta sua foi "Gostaria de alterar algo?" e o cliente respondeu "não", "certinho", "ok", "obrigado", "boa noite", "👍", "🙏" ou similar — interprete como sem alteração. NÃO repita a pergunta. Avance pra criar_pedido.
-- Para produtos informais como "salgados fritos", "fritinhos", "mini fritos", "assados", "sortidos", "o que tiver": esses são CATEGORIAS, não produtos. Mapear para os produtos do cardápio que se encaixam (ex: "Cento Tradicionais Sortidos" para "salgados fritos sortidos"). Se houver mais de um candidato razoável, pergunte qual o cliente quer antes de chamar criar_pedido. Use o conhecimento do dono nas REGRAS OPERACIONAIS pra resolver dúvidas (ex: "fritos = não-assados", "cento = 100 mini").
-- Em caso de dúvida razoável sobre intenção, pergunte UMA vez antes de escalar.
-
-IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular.`.trim();
+IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular. NUNCA tente criar, calcular ou confirmar pedidos. O cardápio online é a única ferramenta de pedido.`.trim();
 }
 
 export const CREATE_ORDER_TOOL: ChatCompletionTool = {
@@ -3680,7 +3635,10 @@ export async function generateAndSendReply(
 
     const tools: ChatCompletionTool[] = isGeneralMode
       ? [DISPATCH_TRIGGER_TOOL]
-      : [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL];
+      // ZLM-XXX: criar_pedido removido da tool stack da IA. A IA não monta
+      // nem coleta pedidos — o cliente usa o ZeloMenu (cardápio online) para
+      // isso. A IA apenas orienta, redireciona e acompanha status pós-venda.
+      : [CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL];
     if (autoTags.length > 0) tools.push(APPLY_TAG_TOOL);
     console.log(`[AiTrace] openai_request empresa=${resolvedEmpresaId} jid=${redactJid(jid)} model=${OPENAI_MODEL} history=${trimmedHistory.length} tools=${tools.map((t) => (t.type === 'function' ? t.function.name : t.type)).join('+')} forceCreate=${forceCreateOrderFromObservationAck}`);
     const response = await openai.chat.completions.create({
