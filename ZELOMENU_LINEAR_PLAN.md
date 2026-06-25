@@ -858,6 +858,12 @@ Pergunta: o bridge atual (bucket compartilhado `logos` + prefixo `zelomenu-produ
 Resposta: manter o bridge por ora.  
 Decisão: manter o bucket `logos` com prefixo owned `zelomenu-products/{userId}/` como solução do v1 — funciona, o cleanup já está fiado (troca/remoção de foto, exclusão de produto, purge de conta) e o path é escopado por usuário. Revisitar um bucket dedicado (ex.: `zelomenu-media`) só quando `ZLM-203` abrir as imagens para a superfície pública por slug / volume maior justificar isolamento de políticas.
 
+#### D-106 — A IA do ZeloChat não cria pedidos; pedido tem fonte única no ZeloMenu
+
+Pergunta: agora que cada loja tem cardápio próprio no ZeloMenu (`menu.zelopdv.com.br/{slug}`), a IA do WhatsApp deve continuar montando/coletando/confirmando pedido em paralelo?  
+Resposta: não; pedido passa a ter **fonte única** no ZeloMenu.  
+Decisão (ZLM-310, 2026-06-25): a IA do ZeloChat **deixa de criar pedidos**. A tool `criar_pedido` (`CREATE_ORDER_TOOL`) sai da stack do modelo; sobram `consultar_pedido` (status pós-venda) e `dispatch_trigger` (gatilhos). A IA passa a **redirecionar** o cliente para o cardápio online da própria loja, montado a partir de `empresa_perfil.zelomenu_slug` via `buildPublicStoreUrl(getZeloMenuPublicBaseUrl(), slug)` (base padrão `https://menu.zelopdv.com.br`, override `ZELOMENU_PUBLIC_BASE_URL`). O slug é carregado no `BusinessConfig` por query isolada e fail-soft em `loadAiSettingsFromDb` — se a loja **ainda não tem slug**, o prompt instrui a IA a **escalar para humano** (`dispatch_trigger`/`escalate_human`) em vez de enviar um link quebrado. Consequências: (1) some o fluxo "abrir carrinho no WhatsApp" (`openWhatsAppCartSession` na IA) e o `zelochat_pending_orders` legado de coleta; o ciclo confirm/cancel + atalhos de botão no `router.ts` ficam como **rede de segurança dormente** (drenam pendências existentes via TTL e depois viram no-op), por estarem no hot-path P0 do webhook. (2) Corrige um **bug latente** herdado do commit `29e2198`: `forceCreateOrderFromObservationAck` forçava `tool_choice: criar_pedido` numa tool ausente da stack → erro 400 na OpenAI. (3) Mantém-se coerente com D-096: todo pedido nasce em `public_order` → `zelochat_orders.source='zelomenu'` / `pedidos.origem='zelomenu'`. Refina o ZLM-101 (que tinha posto a IA para abrir o link novo no fim de `criar_pedido`): aquele acoplamento IA↔pedido é abandonado em favor da fonte única.
+
 ## Contradições Resolvidas
 
 - ZeloMenu começou sendo discutido como feature obrigatória do ZeloChat, mas foi refinado para módulo próprio: addon do ZeloPDV e obrigatório dentro do ZeloChat.
@@ -865,6 +871,7 @@ Decisão: manter o bucket `logos` com prefixo owned `zelomenu-products/{userId}/
 - "Pedidos/Cozinha" começou como possível addon necessário para ZeloMenu, mas foi decidido que deixa de ser addon comercial e vira motor interno.
 - ZeloMenu poderia parecer app próprio, mas foi decidido que não é app operacional diário; operação acontece em Pedidos dentro do app contratado.
 - Agenda/entrega pareciam configuração nova do Menu, mas foi decidido usar fonte compartilhada já existente no banco, com UI própria de revisão.
+- A IA do ZeloChat começou (ZLM-101) montando o pedido e abrindo o carrinho no fim de `criar_pedido`, mas foi refinado (D-106/ZLM-310): a IA não cria mais pedido nenhum; pedido tem fonte única no ZeloMenu e a IA só redireciona/consulta/dá suporte.
 
 ## Backlog por Fases
 

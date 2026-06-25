@@ -2,7 +2,10 @@ import { buildSystemInstruction, findStockIssue, getAvailableProducts, safeForPr
 import { setConfig } from '../server/configStore.js';
 import { assert, assertEqual, assertIncludes, runSuite } from './testHarness.js';
 
-function setupRestaurantConfig(empresaId: string): void {
+function setupRestaurantConfig(
+  empresaId: string,
+  overrides: { zelomenuSlug?: string | null } = {},
+): void {
   setConfig(empresaId, {
     name: 'Casa dos Testes',
     specialty: 'salgados',
@@ -10,6 +13,7 @@ function setupRestaurantConfig(empresaId: string): void {
     closeTime: '18:00',
     address: 'Rua Teste, 123',
     pixKey: 'pix@teste.com.br',
+    zelomenuSlug: overrides.zelomenuSlug ?? null,
     aiEnabled: true,
     aiMode: 'always_on',
     products: [
@@ -49,10 +53,13 @@ await runSuite('AI prompt guardrails', [
     },
   },
   {
-    name: 'restaurant prompt keeps critical order and receipt rules',
+    // ZLM-310: a IA não cria mais pedidos — ela redireciona para o cardápio
+    // online (ZeloMenu). Este caso garante que o prompt de restaurante manda
+    // o link real da loja e proíbe a IA de montar/calcular/confirmar pedidos.
+    name: 'restaurant prompt redirects ordering to ZeloMenu instead of creating orders',
     run: () => {
       const empresaId = `prompt-rest-${Date.now()}`;
-      setupRestaurantConfig(empresaId);
+      setupRestaurantConfig(empresaId, { zelomenuSlug: 'casa-dos-testes' });
       const prompt = buildSystemInstruction(
         empresaId,
         '5511999999999',
@@ -61,16 +68,34 @@ await runSuite('AI prompt guardrails', [
         'Pedido #ABC em preparo',
       );
       assertIncludes(prompt, 'NUNCA invente datas ou anos', 'date hallucination rule is present');
-      assertIncludes(prompt, 'NÃO recomece o fluxo desse pedido', 'active-order restart guard is present');
-      assertIncludes(prompt, 'NUNCA confirme que o pagamento "caiu"', 'Pix receipt overclaim guard is present');
-      assertIncludes(prompt, 'CHAME a tool criar_pedido IMEDIATAMENTE E FIQUE EM SILÊNCIO', 'create-order terminal rule is present');
-      assertIncludes(prompt, 'PROIBIDO gerar texto de resumo do pedido', 'duplicate summary rule is present');
-      assertIncludes(prompt, 'REGRA OBRIGATÓRIA DE ESTOQUE', 'stock guardrail is present');
-      assertIncludes(prompt, 'Mini Kibe (R$ 1.50 por unidade; estoque atual: 3)', 'stock-limited products expose the max quantity');
+      assertIncludes(prompt, 'NÃO responda sobre status de pedido sem antes consultar', 'active-order status guard is present');
+      assertIncludes(prompt, 'NUNCA diga que o pagamento foi validado', 'Pix receipt overclaim guard is present');
+      // The ordering link must carry the empresa's real public slug URL.
+      assertIncludes(prompt, 'PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE', 'redirect-to-menu rule is present');
+      assertIncludes(prompt, 'https://menu.zelopdv.com.br/casa-dos-testes', 'real per-store menu URL is injected into the prompt');
+      assertIncludes(prompt, 'NUNCA chame ferramenta de criar pedido — ela não existe mais', 'order-creation tool is declared gone');
+      assertIncludes(prompt, 'NUNCA monte, calcule ou confirme pedidos', 'AI is forbidden from assembling/confirming orders');
+      assertIncludes(prompt, 'Mini Kibe (R$ 1.50 por unidade; estoque atual: 3)', 'stock-limited products still expose the max quantity');
       assertIncludes(prompt, 'Se for redirect_contact', 'redirect trigger rule is present');
       assertIncludes(prompt, 'encerra este turno', 'redirect trigger is terminal for the turn');
+      assert(!prompt.includes('criar_pedido IMEDIATAMENTE'), 'legacy create-order terminal rule is gone');
+      assert(!prompt.includes('{slug}'), 'no unresolved slug placeholder leaks into the prompt');
       assert(!prompt.includes('Coxinha Zerada'), 'stock-controlled zero products are not exposed in the prompt');
       assert(!prompt.includes('Produto Oculto'), 'unavailable products are not exposed in the prompt');
+    },
+  },
+  {
+    // When the dono hasn't claimed a slug, there is no link to send: the AI must
+    // escalate to a human rather than paste a broken URL.
+    name: 'restaurant prompt escalates when the store has no public slug',
+    run: () => {
+      const empresaId = `prompt-noslug-${Date.now()}`;
+      setupRestaurantConfig(empresaId, { zelomenuSlug: null });
+      const prompt = buildSystemInstruction(empresaId, '5511999999999', '', [], '');
+      assertIncludes(prompt, 'AINDA NÃO configurou o link público', 'missing-slug state is acknowledged');
+      assertIncludes(prompt, 'dispatch_trigger (escalate_human)', 'AI escalates to a human when there is no link');
+      assert(!prompt.includes('menu.zelopdv.com.br/'), 'no store link is emitted when slug is missing');
+      assert(!prompt.includes('{slug}'), 'no unresolved slug placeholder leaks into the prompt');
     },
   },
   {

@@ -57,6 +57,7 @@ function makeConfig(overrides: Partial<BusinessConfig> = {}): BusinessConfig {
     timezone: 'America/Sao_Paulo',
     address: 'Rua A, 123',
     pixKey: 'pix@example.com',
+    zelomenuSlug: 'loja-teste',
     products: [
       {
         available: true,

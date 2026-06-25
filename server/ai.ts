@@ -47,14 +47,13 @@ import {
   isLikelyPaymentProofMessage,
   textMentionsPaymentProof,
   pickActiveOrder,
-  resolveProductBySemantic,
-  shouldFinalizeAfterObservationAck,
   type ActiveOrderRow,
-  type SemanticResolution,
 } from '../src/domain/conversationState.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
-import { buildWhatsAppCartLinkMessage, buildPublicCartUrl } from '../src/domain/zelomenuCart.js';
-import { openWhatsAppCartSession } from './zelomenuCartSessions.js';
+// ZLM-310: imports de criação de pedido pela IA removidos
+// (buildWhatsAppCartLinkMessage, buildPublicCartUrl, openWhatsAppCartSession) —
+// a IA não monta carrinhos no WhatsApp. O cliente usa o cardápio online.
+import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -73,6 +72,21 @@ export function getPublicAppBaseUrl(): string {
   if (frontendOrigin) return frontendOrigin.replace(/\/$/, '');
 
   return 'https://chat.zelopdv.com.br';
+}
+
+/**
+ * Base URL of the public ZeloMenu storefront (the cardápio online), used to
+ * build the ordering link the AI hands to customers: `{base}/{slug}`.
+ *
+ * Mirrors `zelomenuPublicBaseUrl()` in router.ts but defaults to the branded
+ * menu domain (`menu.zelopdv.com.br`) rather than the chat domain — the link in
+ * the AI prompt must point at the storefront, not at chat. Override with
+ * `ZELOMENU_PUBLIC_BASE_URL` if the deployment serves the menu elsewhere.
+ */
+export function getZeloMenuPublicBaseUrl(): string {
+  const explicit = process.env.ZELOMENU_PUBLIC_BASE_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+  return 'https://menu.zelopdv.com.br';
 }
 
 type AssistantPersistOptions = NonNullable<Parameters<typeof addAssistantMessage>[5]>;
@@ -297,101 +311,13 @@ function detectEscalationIntentFromText(value: string): EscalationIntentFromText
   return null;
 }
 
-const ORDER_OBSERVATION_ACK_INTENTS = new Set<string>([
-  'ok',
-  'okay',
-  'okk',
-  'oki',
-  'obrigado',
-  'obrigada',
-  'obg',
-  'obgd',
-  'valeu',
-  'gratidao',
-  'grato',
-  'grata',
-  'boa noite',
-  'bom dia',
-  'boa tarde',
-  'ate amanha',
-  'ate mais',
-  'ate logo',
-  'falou',
-  'fechado',
-  'tudo certo',
-  'ta certo',
-  'perfeito',
-  'show',
-  'beleza',
-]);
-
-function normalizeLooseIntentText(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Mn}/gu, '')
-    .replace(/[\p{S}\p{P}\s]+/gu, ' ')
-    .trim();
-}
-
-function looksLikeObservationPrompt(value: string): boolean {
-  const normalized = normalizeLooseIntentText(value);
-  return normalized.includes('gostaria de alterar algo')
-    || normalized.includes('alguma observacao a fazer')
-    || normalized.includes('tem alguma observacao a fazer');
-}
-
-function looksLikeOrderSummaryBeforeObservation(value: string): boolean {
-  const normalized = normalizeLooseIntentText(value);
-  const hasObservationPrompt = looksLikeObservationPrompt(value);
-  const hasSummaryHints = (
-    normalized.includes('produto')
-    || normalized.includes('pagamento')
-    || normalized.includes('retirada')
-    || normalized.includes('entrega')
-    || normalized.includes('data')
-    || normalized.includes('horario')
-    || normalized.includes('hora')
-    || normalized.includes('total')
-  );
-  return hasObservationPrompt && hasSummaryHints;
-}
-
-function isImplicitNoObservationReply(value: string): boolean {
-  const normalized = normalizeLooseIntentText(value);
-  if (!normalized) return false;
-  return AFFIRMATIVE_INTENTS.has(normalized) || ORDER_OBSERVATION_ACK_INTENTS.has(normalized);
-}
-
-function shouldForceCreateOrderAfterObservationPrompt(
-  messages: Array<{ role: string; content: string | null; preview?: string | null }>,
-): boolean {
-  const recent = messages
-    .filter((message) => message.role === 'user' || message.role === 'assistant')
-    .slice(-8);
-  if (recent.length < 2) return false;
-
-  let promptIndex = -1;
-  for (let i = recent.length - 1; i >= 0; i -= 1) {
-    const message = recent[i];
-    if (message.role !== 'assistant') continue;
-    const content = (message.content ?? message.preview ?? '').trim();
-    if (looksLikeOrderSummaryBeforeObservation(content)) {
-      promptIndex = i;
-      break;
-    }
-  }
-  if (promptIndex === -1) return false;
-
-  const afterPrompt = recent.slice(promptIndex + 1);
-  if (afterPrompt.length === 0) return false;
-  if (afterPrompt.some((message) => message.role !== 'user')) return false;
-
-  return afterPrompt.every((message) => {
-    const content = (message.content ?? message.preview ?? '').trim();
-    return isImplicitNoObservationReply(content);
-  });
-}
+// ZLM-310: o cluster de detecção "force criar_pedido após a pergunta de
+// observação" (ORDER_OBSERVATION_ACK_INTENTS, normalizeLooseIntentText,
+// looksLikeObservationPrompt, looksLikeOrderSummaryBeforeObservation,
+// isImplicitNoObservationReply, shouldForceCreateOrderAfterObservationPrompt)
+// foi removido junto com a tool criar_pedido. A IA não coleta nem finaliza
+// pedidos — o cliente faz tudo pelo cardápio online (ZeloMenu). Pedidos têm
+// fonte única agora: nascem no ZeloMenu.
 
 interface PendingOrder {
   empresaId: string;
@@ -485,37 +411,13 @@ export async function getPendingOrder(jid: string, empresaId: string): Promise<P
   }
 }
 
-async function setPendingOrder(order: PendingOrder): Promise<void> {
-  const expiresAt = new Date(Date.now() + PENDING_ORDER_TTL_MIN * 60 * 1000).toISOString();
-  const { error } = await getServiceSupabase()
-    .from('zelochat_pending_orders')
-    .upsert(
-      {
-        empresa_id: order.empresaId,
-        remote_jid: order.jid,
-        customer_name: order.customerName,
-        customer_phone: order.customerPhone || null,
-        items: order.items,
-        pickup_date: order.pickupDate,
-        pickup_time: order.pickupTime,
-        payment_method: order.paymentMethod || null,
-        total: order.total,
-        tool_call_id: order.toolCallId || null,
-        order_type: order.orderType || 'pickup',
-        delivery_address: order.deliveryAddress || null,
-        delivery_neighborhood: order.deliveryNeighborhood || null,
-        delivery_fee: order.deliveryFee ?? null,
-        observations: order.observations || null,
-        pix_receipt_status: order.pixReceiptStatus || 'not_required',
-        pix_receipt_message_id: order.pixReceiptMessageId || null,
-        pix_receipt_analysis: order.pixReceiptAnalysis || null,
-        pix_receipt_rejection_reason: order.pixReceiptRejectionReason || null,
-        expires_at: expiresAt,
-      },
-      { onConflict: 'empresa_id,remote_jid' },
-    );
-  if (error) throw new Error(`Falha ao salvar pedido pendente: ${error.message}`);
-}
+// ZLM-310: setPendingOrder REMOVIDO. Era chamado apenas pelo handler de
+// criar_pedido (também removido). Nada mais cria pedidos pendentes — a IA não
+// monta pedidos. As funções de confirmação/cancelamento abaixo
+// (confirmPendingOrder/cancelPendingOrder e os atalhos de botão no router)
+// permanecem como rede de segurança dormente: drenam qualquer pending row que
+// já exista no DB no momento do deploy via o TTL de PENDING_ORDER_TTL_MIN, e
+// então deixam de ter efeito (getPendingOrder sempre retorna null).
 
 export async function clearPendingOrder(jid: string, empresaId: string): Promise<void> {
   await getServiceSupabase()
@@ -2441,6 +2343,36 @@ export function buildSystemInstruction(
   );
   const safeCustomerProfile = customerProfile ? safeForPrompt(customerProfile, 2000).trim() : '';
 
+  // Public ordering link the AI hands to the customer. The whole
+  // redirect-to-ZeloMenu flow hinges on this: if the dono never claimed a slug,
+  // there is no link to send, so we tell the AI to escalate instead of pasting a
+  // broken URL. Built here (not hardcoded in the template) so each empresa gets
+  // its own storefront URL.
+  const storeMenuUrl = cfg.zelomenuSlug
+    ? buildPublicStoreUrl(getZeloMenuPublicBaseUrl(), cfg.zelomenuSlug)
+    : null;
+
+  const orderingBlock = storeMenuUrl
+    ? `REGRA MAIS IMPORTANTE — PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE:
+- O cliente faz o pedido completo pelo cardápio online (ZeloMenu): ${storeMenuUrl}
+- NUNCA colete produtos, quantidades, preços, endereço de entrega, forma de pagamento ou taxa de entrega.
+- NUNCA monte, calcule ou confirme pedidos.
+- NUNCA chame ferramenta de criar pedido — ela não existe mais.
+- Quando o cliente pedir o cardápio: envie o link direto.
+- Quando o cliente quiser fazer um pedido: envie o link e oriente.
+- Quando o cliente perguntar preço: "Os preços estão no cardápio online, por lá você monta o pedido e vê o valor."
+- Quando o cliente pedir entrega/delivery: "A taxa de entrega é calculada no próprio cardápio online quando você informa o endereço."
+
+COMO ENVIAR O LINK DO CARDÁPIO:
+- O link da loja é: ${storeMenuUrl}
+- Envie de forma natural: "Faça seu pedido pelo nosso cardápio online: ${storeMenuUrl} — por lá você escolhe, monta e confirma direto."
+- NUNCA invente, encurte ou altere esse link. Use exatamente como está acima.`
+    : `REGRA MAIS IMPORTANTE — PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE:
+- Os pedidos são feitos por um cardápio online, mas a loja AINDA NÃO configurou o link público.
+- NUNCA colete produtos, quantidades, preços, endereço, pagamento ou taxa de entrega.
+- NUNCA monte, calcule ou confirme pedidos. NUNCA invente um link de cardápio.
+- Quando o cliente quiser fazer pedido, ver preço ou cardápio: diga que vai chamar um atendente para ajudar e chame dispatch_trigger (escalate_human). NÃO prometa um link que você não tem.`;
+
   const blockedDates = getBlockedDates(empresaId);
   const blockedDatesStr = blockedDates.length > 0
     ? blockedDates.map((bd) => `${safeForPrompt(bd.date, 10)} (${safeForPrompt(bd.reason || 'sem motivo informado', 100)})`).join(', ')
@@ -2600,19 +2532,7 @@ INFORMAÇÕES DA LANCHONETE:
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
 - Datas bloqueadas: ${blockedDatesStr}${dailyContextStr}
 
-REGRA MAIS IMPORTANTE — PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE:
-- O cliente faz o pedido completo pelo cardápio online (ZeloMenu): menu.zelopdv.com.br/{slug}
-- NUNCA colete produtos, quantidades, preços, endereço de entrega, forma de pagamento ou taxa de entrega.
-- NUNCA monte, calcule ou confirme pedidos.
-- NUNCA chame ferramenta de criar pedido — ela não existe mais.
-- Quando o cliente pedir o cardápio: envie o link direto.
-- Quando o cliente quiser fazer um pedido: envie o link e oriente.
-- Quando o cliente perguntar preço: "Os preços estão no cardápio online, por la voce monta o pedido e ve o valor."
-- Quando o cliente pedir entrega/delivery: "A taxa de entrega e calculada no proprio cardápio online quando voce informa o endereço."
-
-COMO ENVIAR O LINK DO CARDÁPIO:
-- Descubra o slug da loja. Se não souber, diga "Um momento, vou buscar o link" e chame consultar_pedido ou dispatch_trigger.
-- Envie o link de forma natural: "Faca seu pedido pelo nosso cardápio online: menu.zelopdv.com.br/{slug} — por la voce escolhe, monta e confirma direto."
+${orderingBlock}
 
 ENTENDIMENTO DE IMAGENS:
 - Se a imagem parecer comprovante Pix e existir pedido ativo, agradeça e diga que vai conferir. NUNCA diga que o pagamento foi validado.
@@ -2661,45 +2581,10 @@ OBJETIVOS:
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular. NUNCA tente criar, calcular ou confirmar pedidos. O cardápio online é a única ferramenta de pedido.`.trim();
 }
 
-export const CREATE_ORDER_TOOL: ChatCompletionTool = {
-  type: 'function',
-  function: {
-    name: 'criar_pedido',
-    description: 'Gera o resumo interativo do pedido para o cliente aprovar. Chame esta função IMEDIATAMENTE assim que coletar todos os dados necessários (produto, quantidade, data, horário, nome e pagamento), SEM pedir confirmação por texto antes.',
-    parameters: {
-      type: 'object',
-      properties: {
-        customerName: { type: 'string', description: 'Nome completo do cliente' },
-        customerPhone: { type: 'string', description: 'Telefone do cliente com DDD (opcional — já capturado do WhatsApp)' },
-        items: {
-          type: 'array',
-          description: 'Lista de itens do pedido',
-          items: {
-            type: 'object',
-            properties: {
-              product: { type: 'string', description: 'Nome do produto' },
-              quantity: { type: 'number', description: 'Quantidade' },
-            },
-            required: ['product', 'quantity'],
-          },
-        },
-        pickupDate: { type: 'string', description: 'Data de retirada/entrega no formato YYYY-MM-DD' },
-        pickupTime: { type: 'string', description: 'Horário de retirada/entrega no formato HH:MM' },
-        paymentMethod: { type: 'string', description: 'Forma de pagamento escolhida pelo cliente (ex: Pix, Dinheiro, Cartão)' },
-        total: { type: 'number', description: 'Valor total do pedido em reais (inclui taxa de entrega se delivery)' },
-        orderType: { type: 'string', enum: ['pickup', 'delivery'], description: 'Modo do pedido: pickup = retirada, delivery = entrega' },
-        deliveryAddress: { type: 'string', description: 'Endereço completo de entrega (rua, número, bairro). Obrigatório se orderType=delivery.' },
-        deliveryNeighborhood: { type: 'string', description: 'Bairro de entrega (só o bairro, ex: "Centro"). Obrigatório se orderType=delivery.' },
-        deliveryFee: { type: 'number', description: 'Taxa de entrega em reais conforme tabela de bairros. Obrigatório se orderType=delivery.' },
-        observations: {
-          type: 'string',
-          description: 'Observação livre do cliente sobre o pedido (ex: "sem cebola", "ponto da carne", "deixar na portaria"). String VAZIA "" significa que você JÁ perguntou e o cliente não tem observação. NUNCA chame esta tool sem antes ter perguntado: "Gostaria de alterar algo, ou tem alguma observação a fazer?"',
-        },
-      },
-      required: ['customerName', 'items', 'pickupDate', 'pickupTime', 'paymentMethod', 'total', 'orderType', 'observations'],
-    },
-  },
-};
+// ZLM-310: CREATE_ORDER_TOOL (criar_pedido) foi REMOVIDO. A IA não monta,
+// calcula nem confirma pedidos — o cliente faz tudo pelo cardápio online
+// (ZeloMenu), que é a fonte única de pedidos. A IA apenas orienta, redireciona
+// para o link da loja e acompanha o status pós-venda via consultar_pedido.
 
 export const CONSULT_ORDER_TOOL: ChatCompletionTool = {
   type: 'function',
@@ -3559,21 +3444,11 @@ export async function generateAndSendReply(
     sessionTags,
     autoTags,
   );
-  // Two-layer detection: the legacy `shouldForceCreateOrderAfterObservationPrompt`
-  // requires the AI summary message to contain product/payment tokens, which
-  // is fragile for short observation prompts. `shouldFinalizeAfterObservationAck`
-  // (pure module) only needs the observation question itself + every following
-  // customer message classified as affirmative/farewell/emoji-positive. Either
-  // detector firing is enough — they should agree on the strict path and
-  // disagree only when the new path catches an informal-confirmation case the
-  // old path missed.
-  const forceCreateOrderFromObservationAck = !isGeneralMode
-    && (
-      shouldForceCreateOrderAfterObservationPrompt(session.messages)
-      || shouldFinalizeAfterObservationAck(
-        session.messages.map((m) => ({ role: m.role, content: m.content })),
-      )
-    );
+  // ZLM-310: o "force criar_pedido após observação" foi removido junto com a
+  // tool criar_pedido. A IA não monta mais pedidos — ela redireciona pro
+  // cardápio online (ver buildSystemInstruction). Forçar tool_choice numa tool
+  // ausente da stack quebrava a chamada OpenAI (erro 400). Pedidos nascem só no
+  // ZeloMenu agora (fonte única).
 
   // Signal "typing" while we wait for the AI — non-blocking, ignore failures
   void sendPresence(jid, 'composing', 0, resolvedEmpresaId);
@@ -3618,12 +3493,6 @@ export async function generateAndSendReply(
 
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemInstruction },
-      ...(forceCreateOrderFromObservationAck
-        ? [{
-            role: 'system' as const,
-            content: 'ATENÇÃO DE FLUXO: você já perguntou sobre alterações/observações e o cliente respondeu apenas com agradecimento ou despedida, sem pedir nenhuma mudança nova. Interprete isso como observations: "". NÃO repita o resumo. CHAME criar_pedido AGORA e fique em silêncio.',
-          }]
-        : []),
       ...(pendingEditInstruction
         ? [{
             role: 'system' as const,
@@ -3640,15 +3509,13 @@ export async function generateAndSendReply(
       // isso. A IA apenas orienta, redireciona e acompanha status pós-venda.
       : [CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL];
     if (autoTags.length > 0) tools.push(APPLY_TAG_TOOL);
-    console.log(`[AiTrace] openai_request empresa=${resolvedEmpresaId} jid=${redactJid(jid)} model=${OPENAI_MODEL} history=${trimmedHistory.length} tools=${tools.map((t) => (t.type === 'function' ? t.function.name : t.type)).join('+')} forceCreate=${forceCreateOrderFromObservationAck}`);
+    console.log(`[AiTrace] openai_request empresa=${resolvedEmpresaId} jid=${redactJid(jid)} model=${OPENAI_MODEL} history=${trimmedHistory.length} tools=${tools.map((t) => (t.type === 'function' ? t.function.name : t.type)).join('+')}`);
     const response = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       temperature: OPENAI_CHAT_TEMPERATURE,
       messages,
       tools,
-      tool_choice: forceCreateOrderFromObservationAck
-        ? ({ type: 'function', function: { name: 'criar_pedido' } } as any)
-        : 'auto',
+      tool_choice: 'auto',
     });
     console.log(`[AiTrace] openai_response empresa=${resolvedEmpresaId} jid=${redactJid(jid)} finish=${response.choices[0]?.finish_reason ?? '<none>'} usage=${response.usage?.total_tokens ?? '<none>'} elapsedMs=${Date.now() - startedAt}`);
     recordAiUsage({
@@ -3938,402 +3805,11 @@ export async function generateAndSendReply(
         : toolPlan?.calls[0] ?? choice.message.tool_calls[0];
       const selectedToolCallMessage = buildAssistantToolCallMessage([toolCall as AiToolCall]);
 
-      if (toolCall.type === 'function' && toolCall.function.name === 'criar_pedido') {
-        // GUARDRAIL: block duplicate criar_pedido if this customer had an order confirmed
-        // recently. Fast path: in-memory map (same pod). Slow path: DB lookup against
-        // zelochat_orders.created_at — survives restart and cross-pod routing.
-        const confirmKey = `${resolvedEmpresaId}:${jid}`;
-        const confirmedAt = justConfirmedMap.get(confirmKey);
-        const inMemoryRecent = !!confirmedAt && Date.now() - confirmedAt < JUST_CONFIRMED_TTL_MS;
-        const dbRecent = inMemoryRecent
-          ? false
-          : await wasOrderRecentlyConfirmedInDb(resolvedEmpresaId, session.customerPhone);
-        if (inMemoryRecent || dbRecent) {
-          const ageLog = inMemoryRecent
-            ? `${Math.round((Date.now() - (confirmedAt as number)) / 1000)}s ago (memory)`
-            : '< 5min (db)';
-          console.log(`[AI] Blocking duplicate criar_pedido for ${jid} — order was confirmed ${ageLog}`);
-          const dupMsg = 'Seu pedido já foi confirmado! 😊 Qualquer dúvida é só chamar.';
-          await sendAndPersistText(jid, dupMsg, resolvedEmpresaId, { responseSource: 'ai_auto' });
-          return dupMsg;
-        }
-
-        let replyText: string;
-        try {
-
-          const args = JSON.parse(toolCall.function.arguments) as {
-            customerName: string;
-            customerPhone: string;
-            items: { product: string; quantity: number }[];
-            pickupDate: string;
-            pickupTime: string;
-            paymentMethod: string;
-            total: number;
-            orderType?: 'pickup' | 'delivery';
-            deliveryAddress?: string;
-            deliveryNeighborhood?: string;
-            deliveryFee?: number;
-            observations?: string;
-          };
-
-          if (!args.customerPhone) args.customerPhone = session.customerPhone;
-          const cfg = getConfig(resolvedEmpresaId);
-          const normalizedPickupDate = normalizeIsoDateInput(args.pickupDate);
-          if (normalizedPickupDate) args.pickupDate = normalizedPickupDate;
-          const normalizedPickupTimeMinutes = parseTimeToMinutes(args.pickupTime);
-          if (normalizedPickupTimeMinutes !== null) {
-            args.pickupTime = minutesToDisplay(normalizedPickupTimeMinutes);
-          }
-          const blockedPickupDate = normalizedPickupDate
-            ? getBlockedDateByIso(resolvedEmpresaId, normalizedPickupDate)
-            : null;
-          if (blockedPickupDate) {
-            console.log(`[AI] Blocking criar_pedido: pickupDate ${blockedPickupDate.date} is blocked for empresa=${resolvedEmpresaId} jid=${jid}`);
-            return sendBlockedDateReply(jid, resolvedEmpresaId, blockedPickupDate);
-          }
-          const businessHoursIssue = normalizedPickupDate
-            ? findBusinessHoursIssueForSchedule(resolvedEmpresaId, normalizedPickupDate, args.pickupTime)
-            : null;
-          if (businessHoursIssue) {
-            console.log(`[AI] Blocking criar_pedido: pickup schedule outside business hours for empresa=${resolvedEmpresaId} jid=${jid}`);
-            return sendBusinessHoursReply(jid, resolvedEmpresaId, businessHoursIssue);
-          }
-
-          const available = getAvailableProducts(resolvedEmpresaId);
-          // Two-pass resolution. The strict resolver handles exact / fuzzy /
-          // alias matches. When it fails, the semantic resolver maps Brazilian
-          // informal salgado terms ("salgados fritos", "fritinhos", "sortidos
-          // misturados") to a category and either picks a single catalog
-          // product (when only one fits) or surfaces the candidate list to
-          // the operator on escalation. We do NOT auto-pick from multiple
-          // candidates — that's a human decision.
-          const resolvedItems = args.items.map((item) => {
-            const strict = resolveCatalogProduct(item.product, available, cfg.aiInstructions);
-            if (strict) {
-              return { item, product: strict, semantic: null as SemanticResolution | null };
-            }
-            const semantic = resolveProductBySemantic(item.product, available);
-            if (semantic.kind === 'unique_match') {
-              console.log(`[AI] catalog semantic match: input="${safeForPrompt(item.product, 80)}" -> product="${safeForPrompt(semantic.product.name, 80)}" reason="${safeForPrompt(semantic.reason, 120)}"`);
-              return {
-                item,
-                // SAFETY: semantic.product was selected from the catalog list,
-                // so it must be the exact AvailableProduct row — re-find it
-                // by name to keep type integrity (price/availability fields).
-                product:
-                  available.find((p) => p.name === semantic.product.name) ?? null,
-                semantic,
-              };
-            }
-            return { item, product: null, semantic };
-          });
-
-          // Recalculate products subtotal server-side — never trust the model's arithmetic
-          {
-          const unmatchedItems = resolvedItems
-            .filter((resolved) => !resolved.product)
-            .map((resolved) => resolved.item);
-          if (unmatchedItems.length > 0) {
-            const names = unmatchedItems.map((i) => i.product).join(', ');
-            // Build an operator-facing breakdown of what the semantic matcher
-            // saw — this is what was missing in production: the operator only
-            // saw "Produto não encontrado com segurança: Salgados fritos" with
-            // no hint of the cliente's intent or candidate products to suggest.
-            const semanticDetails = resolvedItems
-              .filter((r) => !r.product)
-              .map((r) => {
-                if (!r.semantic) return `• "${safeForPrompt(r.item.product, 80)}" — sem mapeamento semântico`;
-                if (r.semantic.kind === 'multiple_candidates') {
-                  const list = r.semantic.candidates
-                    .slice(0, 6)
-                    .map((c) => safeForPrompt(c.name, 60))
-                    .join(', ');
-                  return `• "${safeForPrompt(r.item.product, 80)}" → ${safeForPrompt(r.semantic.reason, 120)}\n   Candidatos do cardápio: ${list}`;
-                }
-                return `• "${safeForPrompt(r.item.product, 80)}" → ${safeForPrompt(r.semantic.reason, 200)}`;
-              })
-              .join('\n');
-            const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
-            const lastUserText = lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview || '') : '';
-            console.log(`[AI] Product not safely resolved for order; escalating. empresa=${resolvedEmpresaId} jid=${jid} items=${names} semantic=${semanticDetails.replace(/\n/g, ' | ')}`);
-            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-            await addToolMessage(
-              jid,
-              `Produto não encontrado com segurança: ${names}\n${semanticDetails}`,
-              toolCall.id,
-              resolvedEmpresaId,
-            );
-            await escalateSession(resolvedEmpresaId, jid, {
-              triggerId: null,
-              triggerKind: 'escalate_human',
-              triggerName: 'Produto não identificado no pedido',
-              reasonCategory: 'custom',
-              reasonText:
-                `A IA não conseguiu mapear com segurança os produtos pedidos: ${safeForPrompt(names, 200)}.\n` +
-                `Frase do cliente: "${safeForPrompt(lastUserText, 240)}"\n` +
-                `Análise:\n${safeForPrompt(semanticDetails, 700)}\n` +
-                `Sugestão: confirme com o cliente qual produto cabe na intenção (ex: ofereça os candidatos listados) antes de fechar o pedido. Não modifique valor sem confirmar.`,
-              customerMessageExcerpt: lastUserText || null,
-            });
-            resetAiFailureCounter(resolvedEmpresaId, jid);
-            return handoffMessageFor('custom');
-          }
-
-          const quantityIssues: string[] = [];
-          for (const resolved of resolvedItems) {
-            if (!resolved.product) continue;
-            const normalizedQuantity = normalizeOrderItemQuantity(resolved.item, resolved.product);
-            if (normalizedQuantity.ok === false) {
-              quantityIssues.push(normalizedQuantity.reason);
-              continue;
-            }
-            if (normalizedQuantity.note) {
-              console.log(`[AI] ${normalizedQuantity.note} for empresa=${resolvedEmpresaId} jid=${jid}`);
-            }
-            resolved.item.quantity = normalizedQuantity.quantity;
-          }
-          if (quantityIssues.length > 0) {
-            const reason = quantityIssues.join('; ');
-            console.log(`[AI] Quantity ambiguity for order; escalating. empresa=${resolvedEmpresaId} jid=${jid} reason=${reason}`);
-            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-            await addToolMessage(jid, `Quantidade ambígua: ${reason}`, toolCall.id, resolvedEmpresaId);
-            const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
-            await escalateSession(resolvedEmpresaId, jid, {
-              triggerId: null,
-              triggerKind: 'escalate_human',
-              triggerName: 'Quantidade ambígua no pedido',
-              reasonCategory: 'custom',
-              reasonText: `A IA não conseguiu confirmar com segurança a unidade/quantidade do pedido: ${safeForPrompt(reason, 300)}.`,
-              customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
-            });
-            resetAiFailureCounter(resolvedEmpresaId, jid);
-            return handoffMessageFor('custom');
-          }
-
-          const stockIssue = findStockIssue(resolvedItems);
-          if (stockIssue) {
-            console.log(`[AI] Stock availability blocked order; empresa=${resolvedEmpresaId} jid=${jid} reason=${stockIssue}`);
-            await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-            await addToolMessage(jid, `Estoque insuficiente: ${stockIssue}`, toolCall.id, resolvedEmpresaId);
-            const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
-            await escalateSession(resolvedEmpresaId, jid, {
-              triggerId: null,
-              triggerKind: 'escalate_human',
-              triggerName: 'Estoque insuficiente no pedido',
-              reasonCategory: 'custom',
-              reasonText:
-                `A IA bloqueou o pedido porque a quantidade excede o estoque atual: ${safeForPrompt(stockIssue, 240)}.\n` +
-                `Confirme com o cliente se deseja reduzir a quantidade, trocar o item ou aguardar reposição.`,
-              customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
-            });
-            resetAiFailureCounter(resolvedEmpresaId, jid);
-            return handoffMessageFor('custom');
-          }
-
-          const recalcSubtotal = resolvedItems.reduce((sum, resolved) => {
-            return sum + (resolved.product ? resolved.product.price * resolved.item.quantity : 0);
-          }, 0);
-
-          // For delivery: resolve fee from config, ignore whatever the AI sent
-          let resolvedDeliveryFee: number | undefined;
-          if (args.orderType === 'delivery' && args.deliveryNeighborhood) {
-            const configFee = resolveDeliveryFee(resolvedEmpresaId, args.deliveryNeighborhood);
-            if (configFee === null) {
-              // Neighborhood not covered — escalate to human via the standard escalation flow
-              // (flips session to 'escalated', auto_reply=false, notifies manager, sends handoff text).
-              console.log(`[AI] Delivery neighborhood not covered: "${args.deliveryNeighborhood}" — escalating`);
-              await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-              await addToolMessage(jid, 'Endereço de entrega fora da área coberta — escalado para humano', toolCall.id, resolvedEmpresaId);
-
-              const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
-              await escalateSession(resolvedEmpresaId, jid, {
-                triggerId: null,
-                triggerKind: 'escalate_human',
-                triggerName: 'Endereço de entrega fora da área',
-                reasonCategory: 'custom',
-                reasonText: `IA não conseguiu identificar o bairro "${args.deliveryNeighborhood}" na lista de áreas cobertas. Atendente humano deve confirmar a disponibilidade de entrega.`,
-                customerMessageExcerpt: lastUserMsg ? (buildContentForModel(lastUserMsg) || lastUserMsg.preview) : null,
-              });
-
-              resetAiFailureCounter(resolvedEmpresaId, jid);
-              return handoffMessageFor('custom');
-            }
-            if (args.deliveryFee !== undefined && args.deliveryFee !== configFee) {
-              console.warn(`[AI] deliveryFee mismatch for ${args.deliveryNeighborhood}: AI sent ${args.deliveryFee}, config says ${configFee}. Using config.`);
-            }
-            resolvedDeliveryFee = configFee;
-            args.deliveryFee = configFee;
-          }
-
-          if (recalcSubtotal > 0) {
-            args.total = Math.round((recalcSubtotal + (resolvedDeliveryFee ?? 0)) * 100) / 100;
-          }
-          }
-          args.items = resolvedItems.map((resolved) => ({
-            ...resolved.item,
-            product: resolved.product!.name,
-          }));
-
-          // Sanitize the customer-supplied observation BEFORE interpolating it into the
-          // button summary (which is a model-visible string + sent to the customer).
-          // safeForPrompt strips \r\n and ` < > so a multi-line paste can't break the
-          // summary layout or smuggle prompt-injection markers.
-          //
-          // P1.18 — sanitize EVERY user-controlled string field, not just observations.
-          // Antes só observations passava por safeForPrompt; customerName,
-          // deliveryAddress etc. iam raw pro DB. Em turnos posteriores essas strings
-          // são lidas de volta pra construir context — uma quebra de linha ou
-          // backtick num customerName virava prompt-injection. Quantity, total,
-          // deliveryFee são numbers — não precisam.
-          const sanitizedName = safeForPrompt(args.customerName, 120);
-          const sanitizedAddress = args.deliveryAddress ? safeForPrompt(args.deliveryAddress, 250) : undefined;
-          const sanitizedNeighborhood = args.deliveryNeighborhood ? safeForPrompt(args.deliveryNeighborhood, 80) : undefined;
-          const sanitizedPickupTime = safeForPrompt(args.pickupTime, 20);
-          const sanitizedPayment = args.paymentMethod ? safeForPrompt(args.paymentMethod, 40) : undefined;
-          const sanitizedObs = args.observations ? safeForPrompt(args.observations, 300) : '';
-          const requiresPixReceipt = isPixReceiptConfigActive(cfg.pixReceiptConfig) && isPixPaymentMethod(sanitizedPayment);
-
-          const itemsList = args.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
-          const isDelivery = args.orderType === 'delivery';
-          const scheduleLabel = isDelivery ? '🛵 Entrega' : '📅 Retirada';
-          const deliveryLine = isDelivery && args.deliveryAddress
-            ? `\n📍 ${args.deliveryAddress}\n🏘️ Taxa (${args.deliveryNeighborhood}): R$ ${(args.deliveryFee ?? 0).toFixed(2)}`
-            : '';
-          const obsLine = sanitizedObs ? `\n📝 Obs: ${sanitizedObs}` : '';
-          const summary = `📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${args.pickupDate} às ${args.pickupTime}\n💳 Pagamento: ${args.paymentMethod}\n💰 Total: R$ ${args.total.toFixed(2)}`;
-
-          try {
-            const cartSession = await openWhatsAppCartSession({
-              empresaId: resolvedEmpresaId,
-              remoteJid: jid,
-              customerName: sanitizedName,
-              customerPhone: args.customerPhone,
-              items: args.items.map((item) => ({
-                productName: item.product,
-                quantity: item.quantity,
-              })),
-              fulfillment: {
-                type: args.orderType === 'delivery' ? 'delivery' : 'pickup',
-                pickupDate: args.pickupDate,
-                pickupTime: sanitizedPickupTime,
-                deliveryAddress: sanitizedAddress,
-                deliveryNeighborhood: sanitizedNeighborhood,
-              },
-              paymentMethod: sanitizedPayment,
-              observations: sanitizedObs || undefined,
-              source: 'ai_prebuilt',
-            });
-            const publicUrl = buildPublicCartUrl(getPublicAppBaseUrl(), cartSession.publicToken);
-            const linkMsg = buildWhatsAppCartLinkMessage({
-              publicUrl,
-              customerName: sanitizedName,
-              summary,
-              pixReceiptRequired: requiresPixReceipt,
-            });
-
-            await addToolMessage(jid, `Carrinho ZeloMenu aberto: ${summary}\n🔗 ${publicUrl}`, toolCall.id, resolvedEmpresaId);
-            const waMessageId = await sendTextMessage(jid, linkMsg, resolvedEmpresaId);
-            try {
-              await addAssistantMessage(jid, linkMsg, undefined, resolvedEmpresaId, undefined, { waMessageId });
-            } catch (persistErr) {
-              console.error('[AI] Failed to persist ZeloMenu cart link after sending:', persistErr);
-            }
-            console.log(`[AI] ZeloMenu cart opened for AI handoff: ${jid}`);
-            return linkMsg;
-          } catch (zelomenuErr) {
-            console.warn('[AI] Failed to open ZeloMenu cart; falling back to legacy pending order flow:', zelomenuErr);
-          }
-
-          // Legacy fallback kept during rollout so Casa dos Salgados does not lose order capture
-          // if the new cart-session path fails in production.
-          await setPendingOrder({
-            empresaId: resolvedEmpresaId,
-            jid,
-            customerName: sanitizedName,
-            customerPhone: args.customerPhone,
-            items: args.items,
-            pickupDate: args.pickupDate,
-            pickupTime: sanitizedPickupTime,
-            paymentMethod: sanitizedPayment,
-            total: args.total,
-            toolCallId: toolCall.id,
-            orderType: args.orderType || 'pickup',
-            deliveryAddress: sanitizedAddress,
-            deliveryNeighborhood: sanitizedNeighborhood,
-            deliveryFee: args.deliveryFee,
-            observations: sanitizedObs || undefined,
-            pixReceiptStatus: requiresPixReceipt ? 'required' : 'not_required',
-          });
-
-          if (requiresPixReceipt) {
-            const receiptMsg = `Perfeito, separei seu pedido:\n\n${summary}\n\nPara finalizar, preciso do comprovante Pix. Pode enviar a imagem ou PDF por aqui. Assim que eu conferir beneficiário, valor e data, eu confirmo o pedido.`;
-            await addToolMessage(jid, `Aguardando comprovante Pix: ${summary}`, toolCall.id, resolvedEmpresaId);
-            const waMessageId = await sendTextMessage(jid, receiptMsg, resolvedEmpresaId);
-            try {
-              await addAssistantMessage(jid, receiptMsg, undefined, resolvedEmpresaId, undefined, { waMessageId });
-            } catch (persistErr) {
-              console.error('[AI] Failed to persist Pix receipt request after sending; keeping pending row:', persistErr);
-            }
-            console.log(`[AI] Pending Pix order queued awaiting receipt: ${jid}`);
-            return receiptMsg;
-          }
-
-          try {
-            await sendButtonMessage(
-              jid,
-              `Confirmar pedido — ${args.customerName}`,
-              summary,
-              cfg.name || 'ZeloChat',
-              [
-                { id: 'CONFIRM_ORDER', displayText: '✅ Confirmar' },
-                { id: 'CANCEL_ORDER', displayText: '❌ Cancelar' },
-              ],
-              resolvedEmpresaId,
-            );
-
-            // Persist the tool sequence in history for audit (not replayed to OpenAI — see H3 invariant).
-            await addToolMessage(jid, `Aguardando confirmação do cliente: ${summary}`, toolCall.id, resolvedEmpresaId);
-            await addAssistantMessage(jid, summary, [toolCall], resolvedEmpresaId);
-
-            console.log(`[AI] Pending order queued for button confirmation: ${jid}`);
-            return summary;
-          } catch (btnErr) {
-            // Whatsmiau sometimes returns a non-2xx status for sendButtons even when
-            // the message IS queued and delivered to WhatsApp. The previous fallback
-            // (auto-confirm + clear pending) caused duplicate orders: the customer
-            // would still see the buttons, tap Confirmar, the router would no longer
-            // have a pending row to act on, and the click would leak to the AI which
-            // then created a SECOND order via criar_pedido.
-            //
-            // Safer behavior: keep the pending row, ask for text confirmation. If the
-            // buttons WERE delivered, tapping Confirmar finds the pending row and runs
-            // confirmPendingOrder cleanly — no duplicate. If they weren't, the customer
-            // replies "Sim" and the router's soft-confirm path picks it up.
-            console.warn('[AI] sendButtonMessage failed; keeping pending row and asking for text confirmation:', btnErr);
-            const promptMsg = `Para confirmar, é só responder *Sim* — ou *Não* para cancelar.\n\n${summary}`;
-            const promptMsgId = await sendTextMessage(jid, promptMsg, resolvedEmpresaId);
-            await addToolMessage(jid, `Aguardando confirmação por texto: ${summary}`, toolCall.id, resolvedEmpresaId);
-            await addAssistantMessage(jid, promptMsg, undefined, resolvedEmpresaId, undefined, { waMessageId: promptMsgId });
-            return promptMsg;
-          }
-        } catch (err) {
-          replyText = 'Desculpe, tive um problema ao registrar seu pedido. Pode tentar novamente em instantes? 🙏';
-          console.error('[AI] Failed to create order:', err);
-          // P1.22 — best-effort cleanup de pending row órfã. Se setPendingOrder
-          // SUCESSO mas alguma coisa downstream (sendButtonMessage / addToolMessage
-          // / addAssistantMessage) falhou, ficaria pending row em DB sem o
-          // customer ter visto os botões — o próximo "sim" dele cairia no soft-
-          // confirm sobre uma order pending fantasma. Apaga o pending pra forçar
-          // o customer a refazer o fluxo. Se setPendingOrder NUNCA rodou, o
-          // delete é no-op (idempotent).
-          await clearPendingOrder(jid, resolvedEmpresaId).catch((cleanupErr) =>
-            console.warn('[AI] orphan pending cleanup failed:', cleanupErr),
-          );
-        }
-
-        await sendAndPersistText(jid, replyText, resolvedEmpresaId);
-        return replyText;
-      }
+      // ZLM-310: handler de criar_pedido REMOVIDO. A IA não cria, calcula
+      // nem confirma pedidos — o cliente faz tudo pelo cardápio online
+      // (ZeloMenu), que é a fonte única de pedidos. A tool criar_pedido não
+      // é mais oferecida ao modelo (ver tool stack em generateAndSendReply),
+      // então este ramo nunca dispara. Mantido como marcador para histórico.
 
       if (toolCall.type === 'function' && toolCall.function.name === 'consultar_pedido') {
         let parsed: { orderShortId?: string } = {};

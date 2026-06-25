@@ -77,6 +77,15 @@ export interface BusinessConfig {
   timezone: string;
   address: string;
   pixKey: string;
+  /**
+   * Public ZeloMenu storefront slug (`empresa_perfil.zelomenu_slug`, PDV-owned).
+   * Used to build the public ordering link the AI hands to customers
+   * (`{base}/{slug}`). `null` when the dono hasn't claimed a slug yet — the AI
+   * must NOT emit a broken link in that case; it falls back to escalating.
+   * Loaded by an isolated, fail-soft query so a missing column never blocks
+   * hydration (see loadAiSettingsFromDb).
+   */
+  zelomenuSlug: string | null;
   products: CatalogProduct[];
   catalogHierarchy: CatalogCategoriaGroup[];
   blockedDates: { date: string; reason: string }[];
@@ -120,6 +129,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   timezone: DEFAULT_TIMEZONE,
   address: '',
   pixKey: '',
+  zelomenuSlug: null,
   products: [],
   catalogHierarchy: [],
   blockedDates: [],
@@ -609,6 +619,28 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   const userId = normalizeText(row.user_id);
   if (!userId) throw new Error(`empresa_perfil.user_id missing for ${empresaId}`);
 
+  // ZLM-310: public storefront slug, fetched in isolation. The AI prompt builds
+  // the ordering link from this (`{base}/{slug}`). Kept OUT of the main select
+  // above on purpose: that select has a fragile multi-variant fallback chain and
+  // silencing the whole hydration over a missing `zelomenu_slug` column would
+  // stop the AI from replying at all. Here a failure just leaves slug = null,
+  // and the prompt degrades to "escalate to human" instead of a broken link.
+  let zelomenuSlug: string | null = null;
+  try {
+    const slugRes = await supabase
+      .from('empresa_perfil')
+      .select('zelomenu_slug')
+      .eq('id', empresaId)
+      .maybeSingle();
+    if (slugRes.error) {
+      console.warn(`[configStore] zelomenu_slug lookup failed for ${empresaId} — AI will escalate instead of linking:`, slugRes.error.message);
+    } else {
+      zelomenuSlug = normalizeText((slugRes.data as { zelomenu_slug?: string | null } | null)?.zelomenu_slug) || null;
+    }
+  } catch (slugErr) {
+    console.warn(`[configStore] zelomenu_slug lookup threw for ${empresaId} — AI will escalate instead of linking:`, slugErr);
+  }
+
   const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes] = await Promise.all([
     supabase
       .from('categorias')
@@ -702,6 +734,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   patch.name = normalizeText(row.nome_exibicao);
   patch.address = normalizeText(row.endereco);
   patch.pixKey = normalizeText(row.chave_pix);
+  patch.zelomenuSlug = zelomenuSlug;
   patch.managerPhone = normalizeText(row.manager_phone);
   patch.aiInstructions = normalizeText(row.ai_instructions);
   patch.deliveryConfig = normalizeDeliveryConfig(row.delivery_config);

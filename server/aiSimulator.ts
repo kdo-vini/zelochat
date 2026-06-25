@@ -3,12 +3,10 @@ import {
   OPENAI_MODEL,
   OPENAI_CHAT_TEMPERATURE,
   buildSystemInstruction,
-  CREATE_ORDER_TOOL,
   CONSULT_ORDER_TOOL,
   DISPATCH_TRIGGER_TOOL,
   safeForPrompt,
   evaluateScheduleGuardForDryRun,
-  evaluateCreateOrderScheduleGuard,
 } from './ai.js';
 import { getConfig, ensureAiSettingsHydrated } from './configStore.js';
 import { fetchActiveTriggers } from './triggers.js';
@@ -115,7 +113,9 @@ export async function simulateAtendimento(
       model: OPENAI_MODEL,
       temperature: OPENAI_CHAT_TEMPERATURE,
       messages,
-      tools: [CREATE_ORDER_TOOL, CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
+      // ZLM-310: criar_pedido foi removido da stack. A IA não monta pedidos —
+      // o simulador reflete a produção: só consulta de pedido + gatilhos.
+      tools: [CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL],
       tool_choice: 'auto',
     });
   } catch (error) {
@@ -142,31 +142,6 @@ export async function simulateAtendimento(
   const toolCallsMade: string[] = (assistantMessage.tool_calls ?? [])
     .filter((tc) => tc.type === 'function')
     .map((tc) => tc.function.name);
-  const createOrderCall = (assistantMessage.tool_calls ?? [])
-    .find((tc) => tc.type === 'function' && tc.function.name === 'criar_pedido');
-  if (createOrderCall?.type === 'function') {
-    try {
-      const args = JSON.parse(createOrderCall.function.arguments || '{}') as {
-        pickupDate?: unknown;
-        pickupTime?: unknown;
-      };
-      const createOrderScheduleGuard = evaluateCreateOrderScheduleGuard(
-        empresaId,
-        args.pickupDate,
-        args.pickupTime,
-      );
-      if (createOrderScheduleGuard) {
-        return {
-          reply: createOrderScheduleGuard.reply,
-          toolCallsMade,
-          wouldCreateOrder: false,
-          simulationNote: `Simulação — criar_pedido seria bloqueado pela mesma validação de agenda da produção (${createOrderScheduleGuard.type})`,
-        };
-      }
-    } catch (err) {
-      console.warn('[aiSimulator] could not parse criar_pedido arguments for schedule dry-run:', err);
-    }
-  }
 
   // Derive reply text — if the model only emitted tool calls (no content), describe what
   // it would have done so the simulator returns something readable.
@@ -178,7 +153,10 @@ export async function simulateAtendimento(
     reply = '[IA não retornou resposta de texto]';
   }
 
-  const wouldCreateOrder = toolCallsMade.includes('criar_pedido');
+  // ZLM-310: a IA não cria mais pedidos (criar_pedido removido). Mantido no
+  // contrato de resposta por compatibilidade com o frontend (AIConfigsView),
+  // sempre false — pedidos têm fonte única no ZeloMenu.
+  const wouldCreateOrder = false;
 
   return {
     reply,
