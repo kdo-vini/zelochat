@@ -41,9 +41,6 @@ const ProfileView = lazy(() =>
 const DriversView = lazy(() =>
   import('./components/views/DriversView').then((m) => ({ default: m.DriversView })),
 );
-const CatalogView = lazy(() =>
-  import('./components/views/CatalogView').then((m) => ({ default: m.CatalogView })),
-);
 const NovidadesView = lazy(() =>
   import('./components/views/NovidadesView').then((m) => ({ default: m.NovidadesView })),
 );
@@ -81,7 +78,6 @@ type View =
   | 'settings'
   | 'profile'
   | 'drivers'
-  | 'catalog'
   | 'novidades';
 
 /* ─── Nav definitions ─────────────────────────────────────────── */
@@ -101,12 +97,11 @@ const NAV_PRIMARY: NavItem[] = [
 
 const NAV_SECONDARY: NavItem[] = [
   { id: 'calendar',   icon: CalendarIcon, label: 'Agenda',     description: 'Pedidos por data' },
-  { id: 'catalog',    icon: ShoppingBag,  label: 'Cardápio',   description: 'Produtos e preços' },
   { id: 'ai-configs', icon: Bot,          label: 'Cérebro IA', description: 'Configurar assistente' },
 ];
 
 const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile', 'novidades']);
-const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers', 'catalog']);
+const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers']);
 const ACTIVE_SESSION_STORAGE_KEY = 'zelochat_active_session_id';
 const BOOT_MARK_PREFIX = 'zelochat:boot';
 const AUTO_PRINT_DEDUPE_WINDOW_MS = 60_000;
@@ -248,7 +243,6 @@ export default function AppShell() {
   const isGeneralMode = zelochatMode === 'general';
   const shouldLoadCatalog = !!session && !isGeneralMode && (
     deferredDataReady ||
-    activeView === 'catalog' ||
     activeView === 'ai-configs'
   );
   const shouldLoadOrders = !!session && !isGeneralMode && (
@@ -1161,6 +1155,30 @@ export default function AppShell() {
                 onClick={() => setActiveView(item.id)}
               />
             ))}
+            {!isGeneralMode && (
+              <a
+                href="https://menu.zelopdv.com.br/admin"
+                target="_blank"
+                rel="noopener noreferrer"
+                title={!sidebarExpanded ? 'Cardápio' : undefined}
+                className={`group relative w-full flex items-center rounded-[10px] transition-all text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] ${
+                  sidebarExpanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
+                }`}
+              >
+                <ShoppingBag className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={1.8} />
+                {sidebarExpanded && (
+                  <div className="flex-1 text-left overflow-hidden">
+                    <p className="text-[13.5px] font-medium leading-tight">Cardápio</p>
+                    <p className="text-[11px] text-[var(--color-ink-faint)] truncate mt-[-1px]">Abrir ZeloMenu ↗</p>
+                  </div>
+                )}
+                {!sidebarExpanded && (
+                  <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-md bg-[var(--color-ink)] px-2.5 py-1.5 text-[12px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                    Cardápio
+                  </span>
+                )}
+              </a>
+            )}
           </nav>
         </div>
 
@@ -1329,34 +1347,6 @@ export default function AppShell() {
                   onNavigateToKanban={handleNavigateToKanban}
                 />
               )}
-              {activeView === 'catalog' && !isGeneralMode && (
-                <CatalogView
-                  isAuthenticated={!!session}
-                  authLoading={authLoading}
-                  canPublishToMenu={subscriptionCapabilities.menu_publication}
-                  loading={catalog.loading}
-                  error={catalog.error}
-                  categorias={catalog.categorias}
-                  subcategorias={catalog.subcategorias}
-                  produtos={catalog.produtos}
-                  productPublications={catalog.productPublications}
-                  productModifierGroups={catalog.productModifierGroups}
-                  refresh={catalog.refresh}
-                  createCategoria={catalog.createCategoria}
-                  updateCategoria={catalog.updateCategoria}
-                  deleteCategoria={catalog.deleteCategoria}
-                  createSubcategoria={catalog.createSubcategoria}
-                  updateSubcategoria={catalog.updateSubcategoria}
-                  deleteSubcategoria={catalog.deleteSubcategoria}
-                  createProduto={catalog.createProduto}
-                  updateProduto={catalog.updateProduto}
-                  deleteProduto={catalog.deleteProduto}
-                  upsertProductPublication={catalog.upsertProductPublication}
-                  replaceProductModifierGroups={catalog.replaceProductModifierGroups}
-                  uploadProductPublicationImage={catalog.uploadProductPublicationImage}
-                  deleteProductPublicationImage={catalog.deleteProductPublicationImage}
-                />
-              )}
               {activeView === 'ai-configs' && (
                 <AIConfigsView
                   state={aiConfigsState}
@@ -1485,6 +1475,21 @@ export default function AppShell() {
                   </button>
                 );
               })}
+              {!isGeneralMode && (
+                <a
+                  href="https://menu.zelopdv.com.br/admin"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMoreSheetOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-xl px-3 py-3 transition-colors text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]"
+                >
+                  <ShoppingBag className="h-5 w-5 flex-shrink-0" strokeWidth={1.8} />
+                  <div className="text-left">
+                    <p className="text-[14px] font-medium leading-tight">Cardápio</p>
+                    <p className="text-[11.5px] text-[var(--color-ink-faint)] leading-tight mt-0.5">Abrir ZeloMenu ↗</p>
+                  </div>
+                </a>
+              )}
             </div>
           </div>
         </div>

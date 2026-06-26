@@ -34,8 +34,7 @@ import { useSubscription, type ZeloChatSubscription } from '../../hooks/useSubsc
 import { PlanChangeModal } from './PlanChangeModal';
 import { SectionCard } from '../shared/SectionCard';
 import { SubscriptionPaywall } from '../billing/BillingCards';
-import { PublicLinkCard } from '../zelomenu/PublicLinkCard';
-import { ZeloMenuSettingsCard } from '../zelomenu/ZeloMenuSettingsCard';
+import { ExternalLink } from 'lucide-react';
 
 const FIELD = 'w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors';
 const LABEL = 'block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1';
@@ -1621,8 +1620,22 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               onPlanChange={handlePlanChange}
             />
 
-            {token && subscriptionActive ? <PublicLinkCard token={token} /> : null}
-            {token && subscriptionActive ? <ZeloMenuSettingsCard token={token} /> : null}
+            {token && subscriptionActive ? (
+              <SectionCard icon={ExternalLink} title="Cardápio online (ZeloMenu)">
+                <p className="text-[13px] text-[var(--color-ink-muted)] mb-4">
+                  Configure produtos, fotos, modificadores, destaques e o link público do seu cardápio em um só lugar.
+                </p>
+                <a
+                  href="https://menu.zelopdv.com.br/admin"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white px-4 py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Abrir ZeloMenu
+                </a>
+              </SectionCard>
+            ) : null}
 
             <AiGlobalScheduleCard
               token={token}
