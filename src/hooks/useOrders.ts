@@ -3,15 +3,16 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
 // WS_URL removido após P2.5 — websocket secundário deletado, realtime do
 // Supabase cuida das atualizações de zelochat_orders.
-import { updateOrderStatusApi } from '../services/waApi';
+import { cancelOrderApi, updateOrderStatusApi } from '../services/waApi';
 import type { Order } from '../types';
+import { CANONICAL_ORDER_SELECT, canonicalRowToOrder, type CanonicalOrderRow } from '../domain/canonicalOrders';
 
 type NewOrder = Omit<Order, 'id' | 'createdAt'>;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const ORDER_LOOKBACK_DAYS = 14;
 const ORDER_LIST_LIMIT = 1000;
-const ORDER_COLUMNS = 'id, customer_name, customer_phone, items, pickup_date, pickup_time, delivery_address, driver_id, payment_method, observations, status, total, created_at, pix_receipt_analysis';
+const ORDER_COLUMNS = CANONICAL_ORDER_SELECT;
 
 function saoPauloDateKey(offsetDays = 0): string {
   const date = new Date(Date.now() + offsetDays * MS_PER_DAY);
@@ -27,24 +28,7 @@ function saoPauloDateKey(offsetDays = 0): string {
   return `${year}-${month}-${day}`;
 }
 
-function rowToOrder(row: Record<string, unknown>): Order {
-  return {
-    id:              row.id as string,
-    customerName:    row.customer_name as string,
-    customerPhone:   (row.customer_phone as string | null) ?? '',
-    items:           (row.items as Order['items']) ?? [],
-    pickupDate:      row.pickup_date as string,
-    pickupTime:      row.pickup_time as string,
-    deliveryAddress: (row.delivery_address as string | null) ?? undefined,
-    driverId:        (row.driver_id as string | null) ?? undefined,
-    paymentMethod:   (row.payment_method as string | null) ?? undefined,
-    observations:    (row.observations as string | null) ?? undefined,
-    status:              row.status as Order['status'],
-    total:               Number(row.total),
-    createdAt:           row.created_at as string,
-    pixReceiptApproved:  row.pix_receipt_analysis != null,
-  };
-}
+const rowToOrder = (row: Record<string, unknown>): Order => canonicalRowToOrder(row as CanonicalOrderRow);
 
 export function useOrders(
   session: Session | null,
@@ -100,12 +84,10 @@ export function useOrders(
 
       const startDate = saoPauloDateKey(-ORDER_LOOKBACK_DAYS);
       const { data, error: dbError, count } = await supabase
-        .from('zelochat_orders')
+        .from('zelo_orders')
         .select(ORDER_COLUMNS, { count: 'exact' })
         .eq('empresa_id', empresaId)
-        .or(`status.neq.delivered,pickup_date.gte.${startDate}`)
-        .order('pickup_date', { ascending: true })
-        .order('pickup_time', { ascending: true })
+        .or(`status.not.in.(delivered,rejected,cancelled,closed),created_at.gte.${startDate}T00:00:00-03:00`)
         .order('created_at', { ascending: false })
         .limit(ORDER_LIST_LIMIT);
 
@@ -113,7 +95,7 @@ export function useOrders(
       if ((count ?? 0) > ORDER_LIST_LIMIT) {
         console.warn(`[orders] lista operacional limitada a ${ORDER_LIST_LIMIT}/${count} pedidos; histórico precisa de paginação.`);
       }
-      setOrders((data ?? []).map(rowToOrder));
+      setOrders(((data ?? []) as unknown as Record<string, unknown>[]).map(rowToOrder));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível carregar os pedidos.');
     } finally {
@@ -148,33 +130,33 @@ export function useOrders(
       empresaIdRef.current = empresaId;
 
       const channel = supabase
-        .channel(`zelochat_orders_rt_${empresaId}`)
+        .channel(`zelo_orders_rt_${empresaId}`)
         .on(
           'postgres_changes',
           {
             event: '*',
             schema: 'public',
-            table: 'zelochat_orders',
+            table: 'zelo_orders',
             filter: `empresa_id=eq.${empresaId}`,
           },
           (payload) => {
             if (payload.eventType === 'INSERT') {
-              const order = rowToOrder(payload.new as Record<string, unknown>);
-              let inserted = false;
-              setOrders((prev) => {
-                if (prev.some((existing) => existing.id === order.id)) return prev;
-                inserted = true;
-                return [order, ...prev];
-              });
-              if (inserted) onNewOrderRef.current?.(order);
+              const id = (payload.new as { id: string }).id;
+              void supabase.from('zelo_orders').select(ORDER_COLUMNS)
+                .eq('id', id).eq('empresa_id', empresaId).single()
+                .then(({ data }) => {
+                  if (!data) return;
+                  const order = rowToOrder(data as unknown as Record<string, unknown>);
+                  let inserted = false;
+                  setOrders((prev) => {
+                    if (prev.some((existing) => existing.id === order.id)) return prev;
+                    inserted = true;
+                    return [order, ...prev];
+                  });
+                  if (inserted) onNewOrderRef.current?.(order);
+                });
             } else if (payload.eventType === 'UPDATE') {
-              setOrders((prev) =>
-                prev.map((o) =>
-                  o.id === (payload.new as { id: string }).id
-                    ? rowToOrder(payload.new as Record<string, unknown>)
-                    : o,
-                ),
-              );
+              void refresh();
             } else if (payload.eventType === 'DELETE') {
               setOrders((prev) =>
                 prev.filter((o) => o.id !== (payload.old as { id: string }).id),
@@ -204,36 +186,17 @@ export function useOrders(
     const empresaId = empresaIdRef.current;
     if (!empresaId) throw new Error('Perfil da empresa não encontrado.');
 
-    const { data, error: dbError } = await supabase
-      .from('zelochat_orders')
-      .insert({
-        empresa_id:       empresaId,
-        customer_name:    payload.customerName,
-        customer_phone:   payload.customerPhone || null,
-        items:            payload.items,
-        pickup_date:      payload.pickupDate,
-        pickup_time:      payload.pickupTime,
-        delivery_address: payload.deliveryAddress ?? null,
-        driver_id:        payload.driverId ?? null,
-        payment_method:   payload.paymentMethod ?? null,
-        observations:     payload.observations ?? null,
-        status:           payload.status,
-        total:            payload.total,
-        source:           'manual',
-      })
-      .select(ORDER_COLUMNS)
-      .single();
-
-    if (dbError) throw dbError;
-    return rowToOrder(data as Record<string, unknown>);
+    throw new Error('Pedidos manuais devem ser iniciados pelo ZeloMenu para manter estoque, total e auditoria consistentes.');
   }, [session?.user?.id, fetchEmpresaId]);
 
   const updateOrderStatus = useCallback(async (id: string, status: Order['status']): Promise<void> => {
     const token = session?.access_token;
     if (!token) throw new Error('Faça login para atualizar pedidos.');
-    await updateOrderStatusApi(token, id, status);
+    const current = orders.find((order) => order.id === id);
+    if (!current) throw new Error('Pedido nÃ£o encontrado.');
+    await updateOrderStatusApi(token, id, status, current.revision ?? 0);
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
-  }, [session?.access_token]);
+  }, [session?.access_token, orders]);
 
   const deleteOrder = useCallback(async (id: string): Promise<void> => {
     // P0.21 — explicit empresa scope on DELETE. RLS would catch a wrong-tenant
@@ -247,17 +210,16 @@ export function useOrders(
       if (!empresaId) throw new Error('Perfil da empresa não encontrado.');
       empresaIdRef.current = empresaId;
     }
-    const { error: dbError } = await supabase
-      .from('zelochat_orders')
-      .delete()
-      .eq('id', id)
-      .eq('empresa_id', empresaId);
-
-    if (dbError) throw dbError;
+    const token = session.access_token;
+    await cancelOrderApi(token, id, orders.find((order) => order.id === id)?.revision ?? -1);
     setOrders((prev) => prev.filter((o) => o.id !== id));
-  }, [session?.user?.id, fetchEmpresaId]);
+  }, [session?.user?.id, fetchEmpresaId, orders]);
 
   const updateOrder = useCallback(async (id: string, patch: Partial<Omit<Order, 'id' | 'createdAt'>>): Promise<void> => {
+    void id;
+    void patch;
+    throw new Error('Edite o pedido no ZeloMenu antes do aceite; depois dele, use apenas as transições operacionais.');
+    /* adapter legado deliberadamente inalcançável durante a remoção da UI de edição
     const update: Record<string, unknown> = {};
     if (patch.customerName    !== undefined) update.customer_name     = patch.customerName;
     if (patch.customerPhone   !== undefined) update.customer_phone    = patch.customerPhone || null;
@@ -281,13 +243,14 @@ export function useOrders(
       empresaIdRef.current = empresaId;
     }
     const { error: dbError } = await supabase
-      .from('zelochat_orders')
+      .from('zelo_orders')
       .update(update)
       .eq('id', id)
       .eq('empresa_id', empresaId);
 
     if (dbError) throw dbError;
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+    */
   }, [session?.user?.id, fetchEmpresaId]);
 
   // P2.5 — segundo WebSocket REMOVIDO. Era redundante com a Supabase

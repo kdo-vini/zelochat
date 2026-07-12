@@ -620,11 +620,19 @@ export async function updateOrderStatusApi(
   token: string,
   orderId: string,
   status: string,
+  expectedRevision: number,
 ): Promise<void> {
   const response = await apiFetch(apiUrl(`/api/orders/${encodeURIComponent(orderId)}/status`), {
     method: 'PATCH',
     headers: authHeaders(token),
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, expectedRevision }),
+  });
+  await parseResponse(response);
+}
+
+export async function cancelOrderApi(token: string, orderId: string, expectedRevision: number): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/orders/${encodeURIComponent(orderId)}`), {
+    method: 'DELETE', headers: authHeaders(token), body: JSON.stringify({ expectedRevision }),
   });
   await parseResponse(response);
 }

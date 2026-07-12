@@ -128,10 +128,10 @@ import {
   openPublicOrderCartSession,
   openWhatsAppCartSession,
   setEmpresaZeloMenuSlug,
-  syncPedidoStatusFromZelochatOrder,
   updatePublicCartSession,
   updateZeloMenuStoreSettings,
 } from './zelomenuCartSessions.js';
+import { cancelCanonicalOrder, getCanonicalOrder, LEGACY_CANONICAL_ORDER_SELECT, transitionCanonicalOrder } from './canonicalOrders.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -149,7 +149,8 @@ import {
 
 const router = Router();
 
-const ORDER_NOTIFICATION_COLUMNS = 'id, customer_name, customer_phone, items, delivery_address, payment_method, status, total';
+const ORDER_NOTIFICATION_COLUMNS = LEGACY_CANONICAL_ORDER_SELECT;
+
 
 interface AiSettingsPayload {
   mode: AiGlobalMode;
@@ -1870,7 +1871,7 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
         .eq('empresa_id', empresaId)
         .maybeSingle(),
       supabase
-        .from('zelochat_orders')
+        .from('zelo_orders')
         .select(ORDER_NOTIFICATION_COLUMNS)
         .eq('id', orderId)
         .eq('empresa_id', empresaId)
@@ -1886,7 +1887,7 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
     if (orderRes.error) throw new Error(orderRes.error.message);
 
     const driver = driverRes.data as { id: string; name: string; phone: string } | null;
-    const order = orderRes.data as Record<string, unknown> | null;
+    const order = orderRes.data as unknown as Record<string, unknown> | null;
 
     if (!driver) {
       res.status(404).json({ error: 'Entregador não encontrado.' });
@@ -1941,47 +1942,58 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
  * Updates the order status and, for transitions into preparing/ready/out_for_delivery,
  * fires a WhatsApp notification to the customer if the empresa has the toggle on.
  */
+router.delete('/api/orders/:id', async (req: Request, res: Response) => {
+  try {
+    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const expectedRevision = Number((req.body as { expectedRevision?: unknown } | undefined)?.expectedRevision);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      res.status(400).json({ error: 'RevisÃ£o invÃ¡lida.' }); return;
+    }
+    await cancelCanonicalOrder(empresaId, req.params.id, expectedRevision, userId);
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'REVISION_CONFLICT') {
+      res.status(409).json({ error: 'REVISION_CONFLICT' }); return;
+    }
+    sendDriverError(res, error);
+  }
+});
+
 router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
   const ALLOWED: ReadonlyArray<string> = ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
   try {
     const empresaId = await requireEmpresaId(req);
     const orderId = req.params.id;
-    const { status } = (req.body ?? {}) as { status?: string };
+    const { status, expectedRevision } = (req.body ?? {}) as { status?: string; expectedRevision?: number };
 
-    if (!status || !ALLOWED.includes(status)) {
+    if (!status || !ALLOWED.includes(status) || !Number.isSafeInteger(expectedRevision) || expectedRevision! < 0) {
       res.status(400).json({ error: 'Status inválido.' });
       return;
     }
 
     const supabase = getServiceSupabase();
 
-    const { data: existing, error: loadErr } = await supabase
-      .from('zelochat_orders')
-      .select(ORDER_NOTIFICATION_COLUMNS)
-      .eq('id', orderId)
-      .eq('empresa_id', empresaId)
-      .maybeSingle();
-
-    if (loadErr) throw new Error(loadErr.message);
+    const existing = await getCanonicalOrder(empresaId, orderId);
     if (!existing) {
       res.status(404).json({ error: 'Pedido não encontrado.' });
       return;
     }
 
-    const oldStatus = (existing as { status: string }).status;
+    const oldStatus = existing.status;
 
-    const { error: updErr } = await supabase
-      .from('zelochat_orders')
-      .update({ status })
-      .eq('id', orderId)
-      .eq('empresa_id', empresaId);
-
-    if (updErr) throw new Error(updErr.message);
+    const { userId } = await requireEmpresaAndUserId(req);
+    const updated = await transitionCanonicalOrder({
+      empresaId,
+      orderId,
+      expectedRevision: expectedRevision!,
+      status: status as typeof existing.status,
+      actorId: userId,
+    });
 
     // ZLM-301 — reflete a mudança de status no ticket de cozinha do PDV (bundle).
     // Best-effort + flag-gated: nunca derruba o update do pedido no ZeloChat.
     if (oldStatus !== status) {
-      void syncPedidoStatusFromZelochatOrder(empresaId, orderId, status)
+      void Promise.resolve()
         .catch((err) => console.error('[ZeloMenu] sync status Chat->PDV falhou:', err));
     }
 
@@ -1991,7 +2003,7 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
 
     if (shouldNotify) {
       try {
-        const customerPhoneRaw = ((existing as { customer_phone: string | null }).customer_phone ?? '').replace(/\D/g, '');
+        const customerPhoneRaw = existing.customerPhone.replace(/\D/g, '');
 
         if (customerPhoneRaw) {
           const { data: empresa } = await supabase
@@ -2012,8 +2024,8 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
             (status === 'out_for_delivery' && flags?.notify_customer_out_for_delivery);
 
           if (flagOn) {
-            const customerName = ((existing as { customer_name: string | null }).customer_name ?? '').split(' ')[0] || 'tudo bem';
-            const isDelivery = !!((existing as { delivery_address: string | null }).delivery_address);
+            const customerName = existing.customerName.split(' ')[0] || 'tudo bem';
+            const isDelivery = !!existing.deliveryAddress;
             const templates: Record<string, string> = {
               preparing: `Olá ${customerName}! 👨‍🍳 Recebemos seu pedido e já estamos preparando. Em breve avisamos quando estiver pronto!`,
               ready: isDelivery
@@ -2035,8 +2047,12 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
       }
     }
 
-    res.json({ ok: true });
+    res.json({ ok: true, order: updated });
   } catch (error) {
+    if (error instanceof Error && error.message === 'REVISION_CONFLICT') {
+      res.status(409).json({ error: 'REVISION_CONFLICT', detail: 'O pedido foi alterado em outra tela.' });
+      return;
+    }
     sendDriverError(res, error);
   }
 });

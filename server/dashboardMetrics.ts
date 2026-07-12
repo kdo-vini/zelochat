@@ -2,6 +2,7 @@ import type { DashboardAttentionItem, DashboardOverview, DashboardRange, Order }
 import { buildAiHealthReport } from './aiHealth.js';
 import { getConfig } from './configStore.js';
 import { getServiceSupabase } from './supabase.js';
+import { LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
 
 type SessionMetricRow = {
   id: string;
@@ -278,13 +279,11 @@ export async function buildDashboardOverview(
       .order('triggered_at', { ascending: false })
       .limit(1000),
     supabase
-      .from('zelochat_orders')
-      .select('id, customer_name, pickup_date, pickup_time, status, total')
+      .from('zelo_orders')
+      .select(LEGACY_CANONICAL_ORDER_SELECT)
       .eq('empresa_id', empresaId)
-      .gte('pickup_date', startDateKey)
-      .lte('pickup_date', endDateKey)
-      .order('pickup_date', { ascending: true })
-      .order('pickup_time', { ascending: true })
+      .gte('fulfillment->>pickupDate', startDateKey)
+      .lte('fulfillment->>pickupDate', endDateKey)
       .limit(1000),
   ]);
 
@@ -308,7 +307,7 @@ export async function buildDashboardOverview(
       const time = new Date(event.triggered_at).getTime();
       return time >= start.getTime() && time < end.getTime();
     });
-  const orders = (ordersResult.data ?? []) as OrderMetricRow[];
+  const orders = (ordersResult.data ?? []) as unknown as OrderMetricRow[];
 
   const waitingSessions = sessions
     .filter((session) => (session.unread_count ?? 0) > 0)

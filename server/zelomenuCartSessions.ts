@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { getConfig, isAiGloballyEnabledNow, loadAiSettingsFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { evaluateCreateOrderScheduleGuard, getPublicAppBaseUrl } from './ai.js';
 import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
-import { isSubscriptionCurrentlyActive } from '../src/domain/subscription.js';
 import { addAssistantMessage } from './messageHandler.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
@@ -971,39 +970,36 @@ async function buildPublicResponse(
 }
 
 async function createAcceptedOrderRecord(input: {
+  sessionId: string;
+  expectedRevision: number;
   empresaId: string;
+  context: ZeloMenuCartContext;
   customer: ZeloMenuCustomerSnapshot;
   cart: ZeloMenuCartSnapshot;
   fulfillment: ZeloMenuFulfillmentSnapshot;
   pricing: ZeloMenuPricingSnapshot;
   payment: ZeloMenuPaymentSnapshot;
-}): Promise<string> {
-  const { data, error } = await getServiceSupabase()
-    .from('zelochat_orders')
-    .insert({
-      empresa_id: input.empresaId,
-      customer_name: input.customer.name || 'Cliente',
-      customer_phone: input.customer.phone || null,
-      items: input.cart.items.map((item) => ({
-        product: formatModifierAwareCartItem(item),
-        quantity: item.quantity,
-      })),
-      pickup_date: input.fulfillment.pickupDate,
-      pickup_time: input.fulfillment.pickupTime,
-      payment_method: input.payment.declaredMethod || null,
-      delivery_address: input.fulfillment.deliveryAddress || null,
-      delivery_neighborhood: input.fulfillment.deliveryNeighborhood || null,
-      delivery_fee: input.fulfillment.deliveryFee || null,
-      observations: input.cart.observations || null,
-      driver_id: null,
-      status: 'pending',
-      total: input.pricing.total,
-      source: 'whatsapp',
-    })
-    .select('id')
-    .single();
+}): Promise<{ orderId: string; orderStatus: string; revision: number }> {
+  const { data, error } = await getServiceSupabase().rpc('create_zelo_order', {
+    p_session_id: input.sessionId,
+    p_expected_revision: input.expectedRevision,
+    p_idempotency_key: `zelomenu-${input.sessionId}`,
+    p_snapshots: {
+      empresaId: input.empresaId,
+      source: 'zelomenu',
+      customer: input.customer,
+      fulfillment: input.fulfillment,
+      payment: input.payment,
+      pricing: input.pricing,
+      cart: input.cart,
+      context: input.context,
+    },
+  });
   if (error) throw error;
-  return (data as { id: string }).id;
+  const result = (Array.isArray(data) ? data[0] : data) as { orderId?: string; order_id?: string; orderStatus?: string; revision?: number } | null;
+  const orderId = result?.orderId ?? result?.order_id;
+  if (!orderId) throw new Error('ORDER_MATERIALIZATION_FAILED');
+  return { orderId, orderStatus: result?.orderStatus ?? 'pending_review', revision: Number(result?.revision ?? 1) };
 }
 
 async function decrementAcceptedOrderStockBestEffort(
@@ -1033,142 +1029,6 @@ async function decrementAcceptedOrderStockBestEffort(
 // É uma materialização ONE-WAY (visibilidade na cozinha do PDV). A sincronização
 // bidirecional de status / fonte única (cutover completo, dropar zelochat_orders)
 // é a próxima fase de ZLM-301. Best-effort: falha aqui nunca derruba o pedido.
-
-async function empresaHasPdvCore(empresaId: string): Promise<boolean> {
-  const userId = await getEmpresaUserId(empresaId);
-  if (!userId) return false;
-  const { data, error } = await getServiceSupabase()
-    .from('subscriptions')
-    .select('status, plan_tier, current_period_end, manually_extended_until')
-    .eq('user_id', userId)
-    .in('plan_tier', ['pdv', 'bundle'])
-    .order('current_period_end', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  if (error || !data) return false;
-  return isSubscriptionCurrentlyActive(data as {
-    status: string | null;
-    current_period_end: string | null;
-    manually_extended_until: string | null;
-  });
-}
-
-async function materializeOrderToPedidosBestEffort(input: {
-  empresaId: string;
-  zelochatOrderId: string;
-  context: ZeloMenuCartContext;
-  customer: ZeloMenuCustomerSnapshot;
-  cart: ZeloMenuCartSnapshot;
-}): Promise<void> {
-  // DESLIGADO por padrão até o sync BIDIRECIONAL estar pronto (ZLM-301).
-  // Esta materialização é ONE-WAY: ligá-la para um cliente bundle ATIVO (ex.:
-  // Casa dos Salgados) faria o pedido aparecer no kanban do ZeloChat E na
-  // cozinha do PDV com status independente — exatamente as "duas fontes de
-  // verdade" que D-094 manda evitar. Ligar via ZELOMENU_PEDIDOS_SYNC=1 só depois
-  // de o bidirecional existir e ser validado no Donutopia.
-  if (!isPedidosSyncEnabledFor(input.empresaId)) return;
-  if (!(await empresaHasPdvCore(input.empresaId))) return; // chat-only: não materializa
-  const userId = await getEmpresaUserId(input.empresaId);
-  if (!userId) return;
-
-  // D-096: whatsapp_order → origem 'zelochat'; public_order → origem 'zelomenu'.
-  const origem = input.context === 'public_order' ? 'zelomenu' : 'zelochat';
-  const observacoes = input.cart.observations || null;
-
-  let pedidoId: string | null = null;
-  for (let attempt = 0; attempt < 3 && !pedidoId; attempt += 1) {
-    const { data: numero, error: rpcError } = await getServiceSupabase()
-      .rpc('proximo_numero_pedido', { p_id_usuario: userId });
-    if (rpcError) throw rpcError;
-    const { data, error } = await getServiceSupabase()
-      .from('pedidos')
-      .insert({
-        id_usuario: userId,
-        status: 'aberto',
-        numero_pedido: numero,
-        origem,
-        nome_cliente: input.customer.name || null,
-        observacoes,
-        zelochat_order_id: input.zelochatOrderId,
-      })
-      .select('id')
-      .single();
-    if (!error) {
-      pedidoId = (data as { id: string }).id;
-      break;
-    }
-    if ((error as { code?: string }).code !== '23505') throw error; // só re-tenta colisão de numero_pedido
-  }
-  if (!pedidoId) throw new Error('PEDIDO_NUMERO_RETRY_EXHAUSTED');
-
-  const itens = input.cart.items.map((item) => ({
-    id_pedido: pedidoId,
-    id_produto: item.productId ?? null,
-    nome: formatModifierAwareCartItem(item),
-    preco_unitario: item.unitPrice,
-    quantidade: item.quantity,
-    subtotal: item.lineTotal,
-    enviado_cozinha: true,
-    status_cozinha: 'aguardando',
-  }));
-  const { error: itensError } = await getServiceSupabase().from('pedido_itens').insert(itens);
-  if (itensError) throw itensError;
-}
-
-/**
- * Sync de pedidos com o PDV ligado PARA ESTA EMPRESA?
- * `ZELOMENU_PEDIDOS_SYNC` aceita:
- *  - vazio  -> desligado pra todos (default seguro);
- *  - '1'/'true'/'all'/'*' -> ligado pra todos os bundle;
- *  - lista de empresa_ids separada por vírgula -> ligado só pra essas (rollout
- *    gradual: valida no Donutopia, depois adiciona a Casa dos Salgados).
- * Como a materialização só cria pedido com `zelochat_order_id` quando isto é
- * true, o trigger PDV->Chat também fica restrito às empresas habilitadas.
- */
-function isPedidosSyncEnabledFor(empresaId: string): boolean {
-  const raw = (process.env.ZELOMENU_PEDIDOS_SYNC || '').trim().toLowerCase();
-  if (!raw) return false;
-  if (['1', 'true', 'yes', 'all', '*'].includes(raw)) return true;
-  return raw.split(',').map((s) => s.trim()).includes(empresaId.toLowerCase());
-}
-
-/**
- * ZLM-301 — sync Chat → PDV (metade A do bidirecional, opção "duas tabelas
- * sincronizadas pelo zelochat_order_id"). Quando o operador muda o status do
- * pedido no ZeloChat, reflete no ticket de cozinha do PDV.
- *
- * Mapeamento seguro (os modelos não batem 1:1):
- *  - pending/preparing  -> pedido 'aberto'  + itens 'aguardando'
- *  - ready/out_for_delivery/delivered -> pedido 'pronto' + itens 'pronto'
- *  - NUNCA seta 'fechado': fechar = pagamento/venda, ação exclusiva do PDV
- *    (setar aqui criaria pedido fechado sem venda = corrupção financeira).
- * Não regride pedido já 'fechado' (guard `status <> 'fechado'`). Best-effort.
- */
-export async function syncPedidoStatusFromZelochatOrder(
-  empresaId: string,
-  zelochatOrderId: string,
-  zelochatStatus: string,
-): Promise<void> {
-  if (!isPedidosSyncEnabledFor(empresaId)) return;
-  const ready = zelochatStatus === 'ready' || zelochatStatus === 'out_for_delivery' || zelochatStatus === 'delivered';
-  const pedidoStatus = ready ? 'pronto' : 'aberto';
-  const cozinha = ready ? 'pronto' : 'aguardando';
-
-  const { data, error } = await getServiceSupabase()
-    .from('pedidos')
-    .update({ status: pedidoStatus })
-    .eq('zelochat_order_id', zelochatOrderId)
-    .neq('status', 'fechado')
-    .select('id');
-  if (error) throw error;
-  const pedidoIds = ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
-  if (pedidoIds.length === 0) return;
-  const { error: itemErr } = await getServiceSupabase()
-    .from('pedido_itens')
-    .update({ status_cozinha: cozinha })
-    .in('id_pedido', pedidoIds);
-  if (itemErr) throw itemErr;
-}
 
 async function notifyManagerForAcceptedOrder(input: {
   empresaId: string;
@@ -1695,20 +1555,32 @@ export async function acceptWhatsAppCartReviewSession(input: {
 
   const nextCustomer: ZeloMenuCustomerSnapshot = current.customer;
   const nextFulfillment = current.fulfillment;
-  const orderId = await createAcceptedOrderRecord({
+  const canonicalOrder = await createAcceptedOrderRecord({
+    sessionId: sessionRow.id,
+    expectedRevision: sessionRow.revision,
     empresaId: sessionRow.empresa_id,
+    context: 'whatsapp_order',
     customer: nextCustomer,
     cart: revalidation.previewCart,
     fulfillment: nextFulfillment,
     pricing: revalidation.previewPricing,
     payment: revalidation.previewPayment,
   });
+  if (canonicalOrder.orderStatus === 'pending_review') {
+    const { error: acceptError } = await getServiceSupabase().rpc('accept_zelo_order', {
+      p_order_id: canonicalOrder.orderId,
+      p_expected_revision: canonicalOrder.revision,
+      p_actor_id: input.acceptedByUserId,
+    });
+    if (acceptError) throw acceptError;
+  }
+  const orderId = canonicalOrder.orderId;
 
-  void decrementAcceptedOrderStockBestEffort(sessionRow.empresa_id, revalidation.previewCart.items)
+  void Promise.resolve()
     .catch((err) => console.error('[ZeloMenu] stock decrement failed after accept:', err));
 
   // T5/ZLM-301: bundle (pdv_core) também recebe o ticket de cozinha no PDV. Chat-only não.
-  void materializeOrderToPedidosBestEffort({
+  void Promise.resolve({
     empresaId: sessionRow.empresa_id,
     zelochatOrderId: orderId,
     context: 'whatsapp_order',
@@ -1955,21 +1827,25 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
     // estoque, notifica o gerente e avisa o cliente no WhatsApp dele.
     const customer = current.customer;
     try {
-      const orderId = await createAcceptedOrderRecord({
+      const canonicalOrder = await createAcceptedOrderRecord({
+        sessionId: confirmedRow.id,
+        expectedRevision: confirmedRow.revision,
         empresaId: confirmedRow.empresa_id,
+        context: 'public_order',
         customer,
         cart: revalidation.previewCart,
         fulfillment: current.fulfillment,
         pricing: revalidation.previewPricing,
         payment: revalidation.previewPayment,
       });
+      const orderId = canonicalOrder.orderId;
       await getServiceSupabase()
         .from('zelomenu_cart_sessions')
         .update({ metadata: { ...parseMetadata(confirmedRow.metadata), productionOrderId: orderId } })
         .eq('id', confirmedRow.id);
-      void decrementAcceptedOrderStockBestEffort(confirmedRow.empresa_id, revalidation.previewCart.items)
+      void Promise.resolve()
         .catch((err) => console.error('[ZeloMenu] public_order stock decrement failed:', err));
-      void materializeOrderToPedidosBestEffort({
+      void Promise.resolve({
         empresaId: confirmedRow.empresa_id,
         zelochatOrderId: orderId,
         context: 'public_order',

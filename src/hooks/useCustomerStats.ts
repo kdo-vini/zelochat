@@ -57,10 +57,10 @@ export function useCustomerStats(
         const suffix = normalized.slice(-10);
 
         const { data, error } = await supabase
-          .from('zelochat_orders')
-          .select('total')
+          .from('zelo_orders')
+          .select('total, customer')
           .eq('empresa_id', empresaId)
-          .ilike('customer_phone', `%${suffix}`);
+          .ilike('customer->>phone', `%${suffix}`);
 
         if (error || cancelled) return;
 

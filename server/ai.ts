@@ -54,6 +54,7 @@ import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTrigge
 // (buildWhatsAppCartLinkMessage, buildPublicCartUrl, openWhatsAppCartSession) —
 // a IA não monta carrinhos no WhatsApp. O cliente usa o cardápio online.
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
+import { LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -214,7 +215,7 @@ async function wasOrderRecentlyConfirmedInDb(
   const cutoff = new Date(Date.now() - JUST_CONFIRMED_TTL_MS).toISOString();
   try {
     const { data, error } = await getServiceSupabase()
-      .from('zelochat_orders')
+      .from('zelo_orders')
       .select('id')
       .eq('empresa_id', empresaId)
       .eq('customer_phone', customerPhone)
@@ -1993,19 +1994,19 @@ async function fetchUpcomingOrders(empresaId: string): Promise<string> {
     const in7Days = toIsoBrazil(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000), tz);
 
     const { data, error } = await supabase
-      .from('zelochat_orders')
-      .select('customer_name, customer_phone, items, pickup_date, pickup_time, status, total')
+      .from('zelo_orders')
+      .select(LEGACY_CANONICAL_ORDER_SELECT)
       .eq('empresa_id', empresaId)
-      .gte('pickup_date', today)
-      .lte('pickup_date', in7Days)
+      .gte('fulfillment->>pickupDate', today)
+      .lte('fulfillment->>pickupDate', in7Days)
       .in('status', ['pending', 'preparing', 'ready'])
-      .order('pickup_date', { ascending: true })
+      .order('created_at', { ascending: true })
       .limit(20);
 
     if (error || !data || data.length === 0) return 'Nenhum pedido agendado nos próximos 7 dias.';
 
     // FIX H2: sanitize every user-supplied field before interpolating into the prompt.
-    return data.map((o) => {
+    return (data as unknown as any[]).map((o) => {
       const items = (o.items as { product: string; quantity: number }[])
         .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
         .join(', ');
@@ -2023,15 +2024,15 @@ async function fetchCustomerHistory(empresaId: string, customerPhone: string): P
   try {
     const supabase = getServiceSupabase();
     const { data, error } = await supabase
-      .from('zelochat_orders')
-      .select('items, pickup_date, pickup_time, status, total, customer_phone')
+      .from('zelo_orders')
+      .select(LEGACY_CANONICAL_ORDER_SELECT)
       .eq('empresa_id', empresaId)
-      .order('pickup_date', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(30);
 
     if (error || !data || data.length === 0) return 'Cliente novo.';
 
-    const matches = data.filter((o) => {
+    const matches = (data as unknown as any[]).filter((o) => {
       const rowDigits = normalizePhoneNumber(String(o.customer_phone ?? ''));
       return rowDigits && (rowDigits.endsWith(digits) || digits.endsWith(rowDigits));
     }).slice(0, 5);
@@ -2061,14 +2062,14 @@ async function fetchActiveOrdersForCustomer(empresaId: string, customerPhone: st
   try {
     const supabase = getServiceSupabase();
     const { data, error } = await supabase
-      .from('zelochat_orders')
-      .select('id, customer_phone, items, pickup_date, pickup_time, status, total, driver_id')
+      .from('zelo_orders')
+      .select(LEGACY_CANONICAL_ORDER_SELECT)
       .eq('empresa_id', empresaId)
-      .in('status', ['pending', 'preparing', 'ready', 'dispatched'])
-      .order('pickup_date', { ascending: true })
+      .in('status', ['pending_review', 'accepted', 'preparing', 'ready', 'out_for_delivery'])
+      .order('created_at', { ascending: true })
       .limit(20);
     if (error || !data || data.length === 0) return '(nenhum)';
-    const matches = data.filter((o) => {
+    const matches = (data as unknown as any[]).filter((o) => {
       const rowDigits = normalizePhoneNumber(String(o.customer_phone ?? ''));
       return rowDigits && (rowDigits.endsWith(digits) || digits.endsWith(rowDigits));
     }).slice(0, 5);
@@ -2098,8 +2099,8 @@ export async function fetchOrderForCustomer(
   try {
     const supabase = getServiceSupabase();
     let query = supabase
-      .from('zelochat_orders')
-      .select('id, customer_phone, items, pickup_date, pickup_time, status, total, payment_method, driver_id, created_at')
+      .from('zelo_orders')
+      .select(LEGACY_CANONICAL_ORDER_SELECT)
       .eq('empresa_id', empresaId)
       .order('created_at', { ascending: false })
       .limit(10);
@@ -2110,7 +2111,7 @@ export async function fetchOrderForCustomer(
     }
 
     const digits = normalizePhoneNumber(customerPhone || '');
-    const ofThisCustomer = data.filter((o) => {
+    const ofThisCustomer = (data as unknown as any[]).filter((o) => {
       const rowDigits = normalizePhoneNumber(String(o.customer_phone ?? ''));
       return rowDigits && digits && (rowDigits.endsWith(digits) || digits.endsWith(rowDigits));
     });
@@ -2118,7 +2119,7 @@ export async function fetchOrderForCustomer(
     let target = ofThisCustomer[0];
     if (shortId) {
       const wanted = shortId.toLowerCase().replace(/[^a-f0-9]/g, '').slice(0, 8);
-      const matchByShortId = data.find((o) => String(o.id).toLowerCase().startsWith(wanted));
+      const matchByShortId = (data as unknown as any[]).find((o) => String(o.id).toLowerCase().startsWith(wanted));
       if (matchByShortId) target = matchByShortId;
     }
     if (!target) return 'Não encontrei nenhum pedido recente desse cliente.';
@@ -2172,36 +2173,41 @@ async function createOrderInDb(
 ): Promise<string> {
   console.log('[AI] Creating order in DB for empresa:', empresaId, 'args:', JSON.stringify(args));
   const supabase = getServiceSupabase();
-  const { data, error } = await supabase
-    .from('zelochat_orders')
-    .insert({
-      empresa_id: empresaId,
-      customer_name: args.customerName,
-      customer_phone: args.customerPhone || null,
-      items: args.items,
-      pickup_date: args.pickupDate,
-      pickup_time: args.pickupTime,
-      payment_method: args.paymentMethod || null,
-      delivery_address: args.deliveryAddress || null,
-      delivery_neighborhood: args.deliveryNeighborhood || null,
-      delivery_fee: args.deliveryFee ?? null,
-      observations: args.observations || null,
-      pix_receipt_message_id: args.pixReceiptMessageId || null,
-      pix_receipt_analysis: args.pixReceiptAnalysis || null,
-      driver_id: null,
-      status: 'pending',
-      total: args.total,
+  const { data, error } = await supabase.rpc('create_zelo_order', {
+    p_session_id: null,
+    p_expected_revision: 0,
+    p_idempotency_key: `legacy-whatsapp-${crypto.randomUUID()}`,
+    p_snapshots: {
+      empresaId,
       source: 'whatsapp',
-    })
-    .select('id')
-    .single();
+      customer: { name: args.customerName, phone: args.customerPhone || null },
+      fulfillment: {
+        type: args.orderType ?? 'pickup', pickupDate: args.pickupDate, pickupTime: args.pickupTime,
+        deliveryAddress: args.deliveryAddress ?? null, deliveryNeighborhood: args.deliveryNeighborhood ?? null,
+        deliveryFee: args.deliveryFee ?? 0,
+      },
+      payment: { declaredMethod: args.paymentMethod ?? null, pixReceiptMessageId: args.pixReceiptMessageId ?? null, pixReceiptAnalysis: args.pixReceiptAnalysis ?? null },
+      pricing: { subtotal: args.total - (args.deliveryFee ?? 0), deliveryFee: args.deliveryFee ?? 0, discount: 0, total: args.total },
+      cart: {
+        observations: args.observations ?? null,
+        items: args.items.map((item, position) => {
+          const totalQuantity = args.items.reduce((sum, candidate) => sum + candidate.quantity, 0) || 1;
+          const lineTotal = (args.total - (args.deliveryFee ?? 0)) * (item.quantity / totalQuantity);
+          return { productName: item.product, quantity: item.quantity, unitPrice: lineTotal / item.quantity, lineTotal, position };
+        }),
+      },
+    },
+  });
 
   if (error) {
     console.error('[AI] Supabase order insert error:', error);
     throw new Error(`Falha ao criar pedido: ${error.message}`);
   }
-  console.log('[AI] Order created successfully ID:', data?.id);
-  return (data as { id: string }).id;
+  const result = (Array.isArray(data) ? data[0] : data) as { orderId?: string; order_id?: string } | null;
+  const orderId = result?.orderId ?? result?.order_id;
+  if (!orderId) throw new Error('Falha ao criar pedido: resposta invÃ¡lida.');
+  console.log('[AI] Order created successfully ID:', orderId);
+  return orderId;
 }
 
 function normalizeNeighborhood(name: string): string {
@@ -2868,10 +2874,10 @@ async function findActiveOrderForCustomerPhone(
     // Pull a wider window than pickActiveOrder needs so our suffix-phone
     // filter has rows to work with after the empresa filter narrows.
     const { data, error } = await supabase
-      .from('zelochat_orders')
-      .select('id, customer_phone, status, total, payment_method, created_at')
+      .from('zelo_orders')
+      .select(LEGACY_CANONICAL_ORDER_SELECT)
       .eq('empresa_id', empresaId)
-      .neq('status', 'delivered')
+      .not('status', 'in', '(delivered,rejected,cancelled,closed)')
       .order('created_at', { ascending: false })
       .limit(20);
     if (error) {
@@ -2885,6 +2891,7 @@ async function findActiveOrderForCustomerPhone(
       })
       .map((row: any): ActiveOrderRow => ({
         id: String(row.id),
+        revision: Number(row.revision),
         status: row.status,
         total: Number(row.total) || 0,
         paymentMethod: row.payment_method ?? null,
@@ -2958,6 +2965,37 @@ async function handleReceiptForActiveOrder(
         return null;
       }
       if (result.approved) {
+        if (order.status === 'pending_payment') {
+          if (!Number.isSafeInteger(order.revision) || order.revision! < 0) {
+            throw new Error('PIX_ORDER_REVISION_MISSING');
+          }
+          const { error: transitionError } = await getServiceSupabase().rpc('transition_zelo_order', {
+            p_order_id: order.id,
+            p_expected_revision: order.revision,
+            p_action: 'payment_approved',
+            p_actor_id: null,
+            p_detail: {
+              source: 'zelochat_pix_validator',
+              messageId: lastMsg.waMessageId ?? lastMsg.id,
+              analysis: result.analysis,
+            },
+          });
+          if (transitionError) {
+            console.error('[AI] approved Pix receipt could not transition canonical order:', transitionError);
+            await escalateSession(empresaId, jid, {
+              triggerId: null,
+              triggerKind: 'escalate_human',
+              triggerName: 'Comprovante Pix aprovado aguardando baixa',
+              reasonCategory: 'custom',
+              reasonText: `O comprovante do pedido #${shortId} foi validado, mas o estado mudou antes da baixa. Confira manualmente.`,
+              customerMessageExcerpt: 'Comprovante Pix aprovado com conflito operacional',
+              skipCustomerMessage: true,
+            });
+            const pendingAck = `Recebi seu comprovante do pedido *#${shortId}*. Um atendente vai concluir a confirmaÃ§Ã£o pra vocÃª. ðŸ™`;
+            await sendAndPersistText(jid, pendingAck, empresaId, { responseSource: 'ai_auto' });
+            return pendingAck;
+          }
+        }
         const ack = `Recebi seu comprovante do pedido *#${shortId}* — beneficiário, valor e data conferem. Obrigado! 🙏\n\nQualquer dúvida, é só chamar.`;
         await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });
         return ack;

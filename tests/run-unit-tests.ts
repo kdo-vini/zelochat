@@ -35,6 +35,7 @@ const tests = [
   'tests/zelomenuPublication.test.ts',
   'tests/zelomenuEntitlements.test.ts',
   'tests/zelomenuSlug.test.ts',
+  'tests/canonicalOrders.test.ts',
   'tests/updateReloadGuardrails.test.ts',
   'tests/billingPix.test.ts',
   'tests/subscriptionExpiry.test.ts',

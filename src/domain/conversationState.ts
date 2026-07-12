@@ -804,10 +804,11 @@ function describeIntent(intent: SemanticIntent): string {
 // "Active order" state helpers (DB-agnostic; caller supplies rows)
 // ---------------------------------------------------------------------------
 
-export type ActiveOrderStatus = 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered';
+export type ActiveOrderStatus = 'pending' | 'pending_payment' | 'pending_review' | 'accepted' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered';
 
 export interface ActiveOrderRow {
   id: string;
+  revision?: number;
   status: ActiveOrderStatus;
   total: number;
   paymentMethod: string | null;

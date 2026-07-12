@@ -821,3 +821,5 @@ When you ship/draft a fix:
 If you're closing out a sprint:
 1. Run `npm run lint` AND `npx tsc --noEmit -p server/tsconfig.json`. Both must pass.
 2. Write a short post-deploy checklist at the bottom of the sprint section.
+
+- ✅ ZLM-301 — consumidores de pedidos migrados para `zelo_orders` e transições CAS via RPC — `server/canonicalOrders.ts`, `src/hooks/useOrders.ts`

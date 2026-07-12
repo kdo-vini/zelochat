@@ -160,6 +160,7 @@ export interface BuiltinTriggerInfo {
 
 export interface Order {
   id: string;
+  revision?: number;
   customerName: string;
   customerPhone: string;
   items: { product: string; quantity: number }[];
