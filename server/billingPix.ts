@@ -6,12 +6,17 @@ import {
   invalidateSubscriptionCache,
 } from './supabase.js';
 import { createPixCharge, getChargeStatus, verifyAbacatePaySignature } from './abacatepay.js';
+import { PRICING } from '../src/data/pricing.js';
 
+// Valor cobrado no PIX = FONTE ÚNICA src/data/pricing.ts (mesma da landing e dos
+// e-mails). Antes vinha do env ABACATEPAY_PRICE_* em centavos, desacoplado do
+// preço exibido — isso permitia cobrar um valor e mostrar outro. Agora o PIX
+// cobra exatamente o preço anunciado (chat 149 / bundle 198). Os envs
+// ABACATEPAY_PRICE_CHAT/BUNDLE ficam obsoletos e podem ser removidos do Dokploy.
+// (O Stripe continua com price próprio via STRIPE_PRICE_* — trocar quando a conta
+// permitir; até lá PIX e cartão podem cobrar valores diferentes.)
 function getPlanPrice(planTier: 'chat' | 'bundle'): number {
-  const envKey = planTier === 'bundle' ? 'ABACATEPAY_PRICE_BUNDLE' : 'ABACATEPAY_PRICE_CHAT';
-  const raw = process.env[envKey];
-  if (!raw) throw new Error(`${envKey} not configured`);
-  return parseInt(raw, 10) / 100;
+  return PRICING[planTier].priceBRL;
 }
 
 export function safeEqualStr(a: string, b: string): boolean {
