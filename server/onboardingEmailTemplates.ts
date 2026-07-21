@@ -12,8 +12,13 @@
  * — fundador do ZeloChat" and gives a direct WhatsApp reply path.
  */
 
+import { PRICING } from '../src/data/pricing.js';
+
 const APP_URL = (process.env.PUBLIC_APP_URL || 'https://chat.zelopdv.com.br').replace(/\/$/, '');
 const FOUNDER_WHATSAPP = '5514991537503';
+// Preço exibido nos e-mails vem da fonte única (src/data/pricing.ts) para não
+// driftar da landing e do checkout.
+const CHAT_PRICE_BRL = PRICING.chat.priceBRL;
 
 interface TemplateInput {
   firstName: string;
@@ -106,13 +111,13 @@ export function daySevenEmail({ firstName }: TemplateInput): RenderedEmail {
     <ul style="margin:0 0 14px;padding-left:22px;font-size:15px;line-height:1.7;color:#3f3f46">
       <li>Não precisa mais responder mensagem repetitiva — a IA cuida.</li>
       <li>Cliente que mandou no horário de pico não fica esperando 40 min.</li>
-      <li>Pedido cai direto no sistema, sem você anotar no caderno.</li>
+      <li>O cliente fecha o pedido pelo seu cardápio online e cai direto no sistema, sem você anotar no caderno.</li>
     </ul>
-    <p style="margin:0 0 14px;font-size:15px;line-height:1.55">A assinatura sai por <strong>R$97/mês</strong>, sem fidelidade. Se um mês não fizer sentido, cancela e pronto.</p>
+    <p style="margin:0 0 14px;font-size:15px;line-height:1.55">A assinatura sai por <strong>R$${CHAT_PRICE_BRL}/mês</strong>, com o cardápio online incluso e sem fidelidade. Se um mês não fizer sentido, cancela e pronto.</p>
     ${ctaButton('Assinar ZeloChat →', APP_URL + '/settings')}
     <p style="margin:18px 0 0;font-size:14px;color:#52525b;line-height:1.55">Se ainda tá em dúvida sobre algum recurso, me chama. Respondo em minutos.</p>
   `);
-  const text = `${firstName}, faz uma semana que você criou conta. ZeloChat sai por R$97/mês sem fidelidade. Assine: ${APP_URL}/settings`;
+  const text = `${firstName}, faz uma semana que você criou conta. ZeloChat sai por R$${CHAT_PRICE_BRL}/mês (cardápio online incluso), sem fidelidade. Assine: ${APP_URL}/settings`;
   return { subject, html, text };
 }
 
@@ -125,8 +130,8 @@ export function dayTwentyOneEmail({ firstName }: TemplateInput): RenderedEmail {
     <p style="margin:0 0 14px;font-size:15px;line-height:1.55">Resultado: <strong>todo dia ele perdia pedido</strong>. Cliente mandava, ele só via 30 min depois, daí já tinha desistido e ido em outra.</p>
     <p style="margin:0 0 14px;font-size:15px;line-height:1.55">Com o ZeloChat ligado:</p>
     <ul style="margin:0 0 14px;padding-left:22px;font-size:15px;line-height:1.7;color:#3f3f46">
-      <li>A IA pega o pedido, confirma sabor, endereço, forma de pagamento.</li>
-      <li>O Léo só vê o pedido quando já tá montado no sistema, com tudo certo.</li>
+      <li>A IA responde na hora e manda o cardápio online — o cliente escolhe sabor, endereço e forma de pagamento por lá.</li>
+      <li>O Léo só vê o pedido quando já caiu no sistema, com tudo certo.</li>
       <li>Mês passado fechou <strong>22% mais pedidos</strong> só recuperando esses que escapavam à noite.</li>
     </ul>
     <p style="margin:0 0 14px;font-size:15px;line-height:1.55">Se essa cena te lembra alguma coisa, dá um pulo no ZeloChat e ativa.</p>
@@ -146,13 +151,13 @@ export function dayTwentyEightEmail({ firstName }: TemplateInput): RenderedEmail
     <p style="margin:0 0 14px;font-size:15px;line-height:1.55">Mas se você tá em cima do muro, deixa eu te lembrar que:</p>
     <ul style="margin:0 0 14px;padding-left:22px;font-size:15px;line-height:1.7;color:#3f3f46">
       <li>Não tem fidelidade. Cancela quando quiser.</li>
-      <li>R$97/mês — menos que um pedido perdido por dia.</li>
+      <li>R$${CHAT_PRICE_BRL}/mês, com o cardápio online incluso — menos que um pedido perdido por dia.</li>
       <li>Se travar em algo, me chama no WhatsApp e eu te ajudo na hora.</li>
     </ul>
     ${ctaButton('Assinar agora →', APP_URL + '/settings')}
     <p style="margin:18px 0 0;font-size:14px;color:#52525b;line-height:1.55">Boa sorte com o negócio, ${firstName}. Espero te ver por aqui.</p>
   `);
-  const text = `${firstName}, último email sobre o ZeloChat. R$97/mês, sem fidelidade. Se fizer sentido: ${APP_URL}/settings`;
+  const text = `${firstName}, último email sobre o ZeloChat. R$${CHAT_PRICE_BRL}/mês (cardápio online incluso), sem fidelidade. Se fizer sentido: ${APP_URL}/settings`;
   return { subject, html, text };
 }
 
