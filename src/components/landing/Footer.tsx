@@ -48,9 +48,9 @@ export function Footer() {
         <div className="col-span-2 md:col-span-2">
           <ZeloChatLogo variant="dark" />
           <p className="mt-3 text-[13px] text-[#64748B] leading-relaxed max-w-[300px]">
-            Plataforma de IA para WhatsApp — atende clientes, fecha pedido,
-            confere PIX e organiza o kanban. Pra lanchonetes, hamburguerias e
-            deliveries pararem de perder pedido.
+            Plataforma de IA para WhatsApp — atende clientes, leva pro cardápio
+            online, confere PIX e organiza o kanban. Pra lanchonetes,
+            hamburguerias e deliveries pararem de perder pedido.
           </p>
           <div className="mt-5 flex gap-2">
             <SocialIcon

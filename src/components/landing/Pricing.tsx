@@ -9,7 +9,9 @@ import { NumberTicker } from './ui/NumberTicker';
 
 const INCLUDED: ReactNode[] = [
   'Atendimento ilimitado pelo WhatsApp',
-  'IA que fecha pedido — cardápio, adicionais, entrega e observações',
+  'Cardápio online próprio incluso — o cliente monta e fecha o pedido',
+  'IA que atende, responde dúvidas e acompanha o pedido',
+  'Sem comissão por pedido — a venda é 100% sua',
   'Leitura de comprovante PIX por foto ou PDF (OCR com IA)',
   'Kanban de pedidos com drag-and-drop',
   'Atualizações automáticas no WhatsApp a cada status do pedido',
@@ -84,8 +86,8 @@ export function Pricing() {
                 <span className="text-[15px] text-white/60">/mês</span>
               </div>
               <p className="mt-1 text-[12.5px] text-white/50">
-                Menos que <span className="text-white/70">R$ 3,30/dia</span> ·
-                Sem fidelidade · Sem letra miúda
+                Menos que <span className="text-white/70">R$ 5/dia</span> · Com o
+                cardápio online incluso · Sem fidelidade
               </p>
               <p className="mt-3 text-[12.5px] text-white/55 leading-relaxed">
                 Um atendente contratado custa R$1.500+/mês e dorme. A IA atende

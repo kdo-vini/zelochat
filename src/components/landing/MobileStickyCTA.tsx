@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
+import { PRICING } from '../../data/pricing';
 
 export function MobileStickyCTA() {
   const [visible, setVisible] = useState(false);
@@ -38,7 +39,7 @@ export function MobileStickyCTA() {
             Parar de perder pedido
           </p>
           <p className="text-[11px] text-white/55 leading-tight mt-0.5">
-            R$97/mês · cancele quando quiser
+            R${PRICING.chat.priceBRL}/mês · cardápio incluso
           </p>
         </div>
         <Link

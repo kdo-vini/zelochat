@@ -3,12 +3,14 @@ import {
   Sparkles,
   Link2,
   Printer,
-  HandHelping,
+  UtensilsCrossed,
   Receipt,
   LayoutGrid,
   CheckCircle2,
   Bell,
   ArrowRight,
+  ExternalLink,
+  BadgePercent,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -24,13 +26,14 @@ interface Feature {
 
 const HERO_FEATURES: Feature[] = [
   {
-    icon: HandHelping,
-    title: 'A IA fecha o pedido sozinha',
+    icon: UtensilsCrossed,
+    title: 'Seu cardápio online, sua venda',
     description: (
       <>
-        Cardápio, adicionais, entrega, retirada, observações. A IA conversa,
-        monta o pedido e fecha. Quando ela tem dúvida, passa pra você com o
-        contexto pronto.
+        A IA leva o cliente pro seu{' '}
+        <span className="text-[#0B1120] font-medium">cardápio online</span>{' '}
+        (incluso no plano): ele monta o pedido, escolhe entrega ou retirada e vê
+        o total. Venda 100% sua, sem comissão de aplicativo.
       </>
     ),
     visual: <ChatFlowVisual />,
@@ -62,6 +65,12 @@ const HERO_FEATURES: Feature[] = [
 ];
 
 const SUPPORTING_FEATURES: Feature[] = [
+  {
+    icon: BadgePercent,
+    title: 'Sem comissão de aplicativo',
+    description:
+      'O cardápio online é seu, com seu link. Diferente do iFood, você fica com o cliente e com o valor cheio de cada pedido — sem taxa por venda.',
+  },
   {
     icon: Sparkles,
     title: 'Modo sugerir',
@@ -108,7 +117,8 @@ export function FeaturesGrid() {
           </h2>
 
           <p className="mt-4 text-[15px] text-[#64748B] leading-relaxed">
-            A IA resolve o previsível — cardápio, preço, pedido, comprovante PIX.
+            A IA resolve o previsível — dúvidas, cardápio, link de pedido e
+            comprovante PIX.
             <br className="hidden md:block" />
             Sua equipe assume o que exige humano. Menos pedido perdido, menos
             bagunça no WhatsApp.
@@ -191,18 +201,25 @@ function ChatFlowVisual() {
     <div className="rounded-xl bg-[#0F172A] p-3 space-y-1.5 shadow-inner">
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-md rounded-tr-sm bg-[#D9FDD3] text-[#111B21] text-[11.5px] px-2.5 py-1.5 leading-snug">
-          2 x-salada e 1 Coca 2L
+          quero 2 x-salada e uma Coca
         </div>
       </div>
       <div className="flex">
-        <div className="max-w-[85%] rounded-md rounded-tl-sm bg-white text-[#111B21] text-[11.5px] px-2.5 py-1.5 leading-snug">
-          Fechou! Total <span className="font-semibold">R$ 67,90</span>. Endereço?
+        <div className="max-w-[88%] rounded-md rounded-tl-sm bg-white text-[#111B21] text-[11.5px] px-2.5 py-1.5 leading-snug">
+          Fecha rapidinho pelo nosso cardápio 👇
+          <div className="mt-1.5 rounded-md border border-black/10 bg-[#F0FDF4] px-2 py-1.5 flex items-center justify-between gap-2">
+            <span className="text-[10.5px] font-medium text-[#0B7A3B] truncate">
+              menu.zelopdv.com.br/bella-massa
+            </span>
+            <ExternalLink className="w-3 h-3 text-[#0B7A3B] flex-shrink-0" strokeWidth={2.4} />
+          </div>
         </div>
       </div>
-      <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-md rounded-tr-sm bg-[#D9FDD3] text-[#111B21] text-[11.5px] px-2.5 py-1.5 leading-snug">
-          Rua das Flores, 120
-        </div>
+      <div className="flex justify-center pt-0.5">
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#25D366]">
+          <CheckCircle2 className="w-3 h-3" />
+          Pedido recebido no painel
+        </span>
       </div>
     </div>
   );

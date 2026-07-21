@@ -9,6 +9,8 @@ import {
   ArrowRight,
   Sparkles,
   Check,
+  ExternalLink,
+  UtensilsCrossed,
 } from 'lucide-react';
 
 const WHATSAPP_BG = '#EFEAE2';
@@ -60,23 +62,20 @@ export function ChatPreview() {
               Boa noite, quero 2 x-salada e uma Coca 2L. Faz entrega?
             </UserBubble>
             <BotBubble time="20:12">
-              Boa noite! Fazemos sim 🛵
-              <div className="mt-1.5 rounded-md bg-black/[0.04] border border-black/5 px-2.5 py-2 text-[11.5px] leading-snug">
-                <Row label="2x X-Salada" value="R$ 49,80" />
-                <Row label="1x Coca-Cola 2L" value="R$ 18,10" />
-                <div className="mt-1 pt-1 border-t border-black/10 flex justify-between font-semibold">
-                  <span>Total</span>
-                  <span>R$ 67,90</span>
-                </div>
+              Boa noite! Fazemos entrega sim 🛵
+              <div className="mt-1.5">
+                Fecha rapidinho pelo nosso cardápio online — por lá você monta o
+                pedido, coloca o endereço e já vê a taxa 👇
               </div>
-              <div className="mt-1.5">Pode me enviar o endereço?</div>
+              <MenuLinkCard />
             </BotBubble>
+            <PedidoRecebidoChip />
             <UserBubble time="20:13">
-              Rua das Flores, 120. Vou pagar no PIX.
+              Pronto, pedi por lá! Já mandei o PIX.
             </UserBubble>
             <BotBubble time="20:13">
-              Perfeito. Pode mandar o comprovante por aqui que eu confiro nome e
-              valor pra você.
+              Perfeito 🙌 Pode mandar o comprovante por aqui que eu confiro nome
+              e valor pra você.
             </BotBubble>
             <ReceiptBubble />
             <BotBubble time="20:14" tone="success">
@@ -102,7 +101,7 @@ export function ChatPreview() {
 
             <div className="mt-3 border-t border-white/5 pt-3">
               <p className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5">
-                Pedido detectado
+                Pedido do cardápio
               </p>
               <div className="rounded-md bg-white/5 border border-white/10 p-2">
                 <p className="text-[11px] text-white leading-snug">
@@ -159,11 +158,43 @@ function DateChip({ children }: { children: ReactNode }) {
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function MenuLinkCard() {
   return (
-    <div className="flex justify-between gap-3">
-      <span style={{ color: WHATSAPP_TEXT }}>{label}</span>
-      <span style={{ color: WHATSAPP_META }}>{value}</span>
+    <div className="mt-1.5 rounded-md bg-white border border-black/10 overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.08)]">
+      <div className="flex items-center gap-2 px-2.5 py-2">
+        <div className="w-8 h-8 rounded-md bg-[#25D366]/15 flex items-center justify-center flex-shrink-0">
+          <UtensilsCrossed className="w-4 h-4 text-[#0B7A3B]" strokeWidth={2.2} />
+        </div>
+        <div className="min-w-0">
+          <p
+            className="text-[11.5px] font-semibold leading-tight truncate"
+            style={{ color: WHATSAPP_TEXT }}
+          >
+            Cardápio Bella Massa
+          </p>
+          <p className="text-[10px] mt-0.5 truncate" style={{ color: WHATSAPP_META }}>
+            menu.zelopdv.com.br/bella-massa
+          </p>
+        </div>
+      </div>
+      <div className="border-t border-black/5 px-2.5 py-1.5 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-[#0B7A3B]">
+        Abrir cardápio
+        <ExternalLink className="w-3 h-3" strokeWidth={2.4} />
+      </div>
+    </div>
+  );
+}
+
+function PedidoRecebidoChip() {
+  return (
+    <div className="flex justify-center py-1">
+      <span
+        className="inline-flex items-center gap-1.5 text-[10px] font-medium px-2.5 py-1 rounded-md shadow-sm"
+        style={{ backgroundColor: '#FFFFFFE6', color: '#0B7A3B' }}
+      >
+        <CheckCircle2 className="w-3 h-3" />
+        Pedido recebido pelo cardápio · R$ 67,90
+      </span>
     </div>
   );
 }

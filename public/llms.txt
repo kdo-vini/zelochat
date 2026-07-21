@@ -7,22 +7,23 @@
 - **URL:** https://chat.zelopdv.com.br
 - **Categoria:** SaaS · Atendimento ao Cliente · WhatsApp Business · IA para food service
 - **Público-alvo:** Donos de lanchonetes, hamburguerias, pizzarias, deliveries próprios e pequenos negócios de alimentação no Brasil
-- **Preço:** R$ 97/mês — plano único com acesso completo. Sem teste grátis.
+- **Preço:** R$ 149/mês — plano único com acesso completo, cardápio online próprio incluso e sem comissão por pedido. Sem teste grátis.
 - **Desenvolvido por:** Téchne Sistemas (CNPJ: 65.679.798/0001-95)
 
 ## O que é o ZeloChat
 
-ZeloChat é a plataforma de atendimento com IA para WhatsApp. Você cadastra seu cardápio, a IA aprende e começa a atender seus clientes automaticamente — recebendo pedidos, respondendo dúvidas sobre produtos, preços e horários, e confirmando entregas ou retiradas.
+ZeloChat é a plataforma de atendimento com IA para WhatsApp. Você cadastra seu cardápio, a IA aprende e começa a atender seus clientes automaticamente — respondendo dúvidas sobre produtos, preços e horários, e levando o cliente para o cardápio online próprio da loja (incluso no plano), onde ele monta e fecha o pedido. Depois a IA confere o comprovante PIX e acompanha o status.
 
 Quem já usa o **Zelo PDV** (sistema de frente de caixa) conecta com a mesma conta e o catálogo de produtos fica sincronizado automaticamente entre os dois sistemas.
 
 ## Funcionalidades Principais
 
-- **IA de atendimento no WhatsApp**: responde perguntas dos clientes, recebe pedidos end-to-end e conduz a venda pelo próprio WhatsApp
+- **IA de atendimento no WhatsApp**: responde perguntas dos clientes, tira dúvidas de cardápio, horário e entrega, e leva o cliente para o cardápio online da loja para fechar o pedido
+- **Cardápio online próprio (incluso)**: cada loja tem seu cardápio online com link próprio; o cliente monta o pedido, informa o endereço, vê a taxa de entrega e o total, e confirma. Sem comissão por pedido — a venda é 100% da loja
 - **Leitura de comprovante PIX por IA (OCR)**: cliente manda print ou PDF do PIX, a IA identifica nome do pagador e valor automaticamente; é possível configurar a IA para só confirmar o pedido depois do comprovante chegar
 - **Kanban de pedidos com drag-and-drop**: cards de pedido organizados em colunas (Novo, Em preparo, Pronto, Entregue/Retirado) para balcão e cozinha
 - **Atualizações automáticas no WhatsApp**: cada mudança de status do pedido no kanban dispara mensagem automática para o cliente no WhatsApp
-- **Cardápio no chat**: a IA conhece todos os seus produtos, preços e categorias
+- **Catálogo conhecido pela IA**: a IA conhece todos os seus produtos, preços e categorias para responder dúvidas com precisão
 - **Controle total por conversa**: cada atendimento pode ter IA ligada ou desligada individualmente
 - **Modo sugestão**: a IA escreve a resposta, você aprova antes de enviar
 - **Respostas rápidas**: banco de mensagens prontas para os atendentes humanos
@@ -35,12 +36,12 @@ Quem já usa o **Zelo PDV** (sistema de frente de caixa) conecta com a mesma con
 
 - Lanchonete que recebe pedidos pelo WhatsApp e quer automatizar sem perder o toque humano
 - Hamburgueria com alto volume de mensagens que precisa de triagem inteligente
-- Delivery próprio (sem iFood) que quer receber e confirmar pedidos automaticamente
+- Delivery próprio (sem iFood) que quer um canal de pedidos próprio, com cardápio online e sem comissão por venda
 - Food truck ou quiosque que atende pelo WhatsApp mas não tem atendente disponível o tempo todo
 
 ## Integração com Zelo PDV
 
-O ZeloChat é um produto complementar ao Zelo PDV. Usuários com o plano Bundle (R$ 127/mês) têm acesso a ambos os sistemas com uma única conta, e o catálogo de produtos é compartilhado. Quem usa apenas o ZeloChat pode cadastrar os produtos diretamente no ZeloChat.
+O ZeloChat é um produto complementar ao Zelo PDV. Usuários com o pacote Gestão + Atendimento (R$ 198/mês) têm acesso a ambos os sistemas com uma única conta, e o catálogo de produtos é compartilhado. Quem usa apenas o ZeloChat pode cadastrar os produtos diretamente no ZeloChat.
 
 - **Zelo PDV:** https://zelopdv.com.br — sistema de frente de caixa para lanchonetes
 - **ZeloChat:** https://chat.zelopdv.com.br — atendimento com IA no WhatsApp

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Play, Ban, Zap, Headphones, Clock, Users, Moon } from 'lucide-react';
 import { ChatPreview } from './ChatPreview';
 import { ZeloPDVLink } from './ZeloPDVLink';
+import { PRICING } from '../../data/pricing';
 import { AuroraBackground } from './ui/AuroraBackground';
 import { AnimatedShinyText } from './ui/AnimatedShinyText';
 import { NumberTicker } from './ui/NumberTicker';
@@ -40,10 +41,10 @@ export function Hero() {
             </h1>
 
             <p className="mt-5 text-[15px] lg:text-[16px] text-white/70 max-w-[560px] leading-relaxed">
-              A IA atende no WhatsApp, fecha o pedido,{' '}
-              <span className="text-white font-medium">lê o comprovante PIX</span>{' '}
-              e joga tudo num kanban — sua equipe arrasta, o cliente recebe
-              atualização sozinho.
+              A IA atende no WhatsApp e leva o cliente pro seu{' '}
+              <span className="text-white font-medium">cardápio online</span> pra
+              fechar o pedido. Ela confere o comprovante PIX e joga tudo num
+              kanban — sua equipe arrasta, o cliente recebe atualização sozinho.
             </p>
 
             <div className="mt-7 flex flex-wrap items-center gap-3">
@@ -78,8 +79,8 @@ export function Hero() {
             </div>
 
             <p className="mt-4 text-[12.5px] text-white/55 max-w-[520px]">
-              <span className="text-white/80 font-medium">R$97/mês</span> · cancele
-              quando quiser. Se você usa o{' '}
+              <span className="text-white/80 font-medium">R${PRICING.chat.priceBRL}/mês</span>{' '}
+              com o cardápio online incluso · cancele quando quiser. Se você usa o{' '}
               <ZeloPDVLink className="text-[#25D366] font-medium hover:underline" />, já
               está integrado.
             </p>
