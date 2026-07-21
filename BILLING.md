@@ -139,9 +139,11 @@ valor até ser migrada explicitamente. Ou seja:
 - Clientes existentes **continuam no preço antigo automaticamente** — nenhuma
   ação necessária, desde que a subscription deles NÃO seja migrada para o price
   novo.
-- **Casa dos Salgados (cliente antiga): manter no preço atual dela.** Antes de
-  qualquer migração de plano dessa conta, confirmar no Stripe Dashboard →
-  Customers qual price a subscription usa hoje e NÃO trocar para o price novo.
+- **Casa dos Salgados (cliente antiga): já paga ~R$147 e deve permanecer nesse
+  valor.** Ação = NENHUMA. A assinatura dela já está no price antigo e o Stripe
+  a mantém lá; basta NÃO migrar essa subscription para o price novo. Não usar
+  nenhum fluxo de "trocar plano" nessa conta. O portal default (cancel / cartão
+  / invoices, sem troca de plano) não a move — manter assim.
 - Trocar o ponteiro das envs (`STRIPE_PRICE_*`) só afeta **checkouts NOVOS** —
   não migra ninguém que já paga.
 
