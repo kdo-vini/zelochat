@@ -14,13 +14,38 @@ const FAQS: QAItem[] = [
     a: (
       <>
         <strong>Dá, e bem.</strong> A IA atende 24/7, faz triagem, tira dúvidas
-        de cardápio, horário, preço, formas de pagamento e prazo de entrega,{' '}
-        <strong>fecha pedido</strong> e ainda confere comprovante de PIX —
-        isso já cobre a maioria das mensagens que chegam no WhatsApp da sua
-        loja. Quando aparece uma exceção, uma reclamação ou uma negociação que
-        pede sensibilidade humana, ela passa pra sua equipe com o resumo da
-        conversa pronto. <strong>Você fecha mais pedido com a mesma equipe</strong> —
-        sem cliente esperando, sem domingo perdido.
+        de cardápio, horário, preço, formas de pagamento e prazo de entrega, e{' '}
+        <strong>leva o cliente pro seu cardápio online pra fechar o pedido</strong>.
+        Depois ela confere o comprovante de PIX e acompanha o status — isso já
+        cobre a maioria das mensagens que chegam no WhatsApp da sua loja. Quando
+        aparece uma exceção, uma reclamação ou uma negociação que pede
+        sensibilidade humana, ela passa pra sua equipe com o resumo da conversa
+        pronto. <strong>Você atende mais gente com a mesma equipe</strong> — sem
+        cliente esperando, sem domingo perdido.
+      </>
+    ),
+  },
+  {
+    q: 'O cardápio online é cobrado à parte?',
+    a: (
+      <>
+        Não. O <strong>cardápio online já vem incluso no ZeloChat</strong>, sem
+        custo extra. É onde o seu cliente monta o pedido — escolhe os itens,
+        informa o endereço, vê a taxa de entrega e o total, e confirma. Seu
+        cardápio, com o seu link, pronto pra você compartilhar no WhatsApp, no
+        status ou nas redes.
+      </>
+    ),
+  },
+  {
+    q: 'O ZeloChat integra com o iFood?',
+    a: (
+      <>
+        Hoje não sincronizamos com o iFood. Mas o ZeloChat resolve o mesmo
+        problema por outro caminho: o cliente pede pelo seu <strong>cardápio
+        online próprio</strong>, no seu WhatsApp, com o seu link. A diferença é
+        que a <strong>venda é 100% sua, sem comissão de aplicativo</strong> por
+        pedido — você fica com o cliente e com o valor cheio.
       </>
     ),
   },

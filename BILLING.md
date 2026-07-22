@@ -104,6 +104,53 @@ Não precisa criar configuração custom — o default funciona. Só defina a `S
 
 - **Stripe customer órfão**: se o usuário cancelar e voltar meses depois com email diferente, o checkout cria customer novo. O endpoint reusa pela coluna `provider_customer_id` no DB → email no Stripe → cria novo. Sem ação manual necessária.
 
+## Mudança de preço e grandfathering
+
+**Preço atual (2026-07-21): ZeloChat R$149/mês · pacote com ZeloPDV R$198/mês.**
+Fonte única do valor EXIBIDO = `src/data/pricing.ts` (landing, e-mails de
+onboarding e UI leem daí). O valor COBRADO vem do price do Stripe apontado por
+`STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE`. Os dois têm que bater.
+
+### Como trocar o preço (executado por humano no Stripe — não automatizar)
+
+O preço em Stripe é imutável por price: não se "edita" um price, cria-se um novo
+e migra-se o ponteiro. Passo a passo:
+
+1. **Stripe Dashboard → Products** → abrir o produto do ZeloChat (mesma conta do
+   ZeloPDV; NÃO criar conta nova). Em vez de mexer no produto atual, pode-se
+   criar um produto novo que substitui o antigo — o antigo fica arquivável.
+2. **Add price** → recorrente mensal, BRL:
+   - Chat: **R$ 149,00/mês**
+   - Bundle (Chat + PDV): **R$ 198,00/mês**
+3. Copiar os dois novos `price_…` IDs.
+4. **Dokploy → serviço backend → Environment**: apontar `STRIPE_PRICE_CHAT` e
+   `STRIPE_PRICE_BUNDLE` para os novos IDs. **Redeploy no MESMO momento** em que
+   `pricing.ts` (149/198) vai ao ar — senão o site mostra um valor e o checkout
+   cobra outro.
+5. (Opcional) Arquivar os prices antigos no Stripe para não serem reusados em
+   checkouts novos. **Não deletar** — subscriptions ativas ainda referenciam.
+
+### Grandfathering (clientes antigos mantêm o preço)
+
+Criar um price novo **não altera** o valor de quem já assina: no Stripe cada
+subscription trava o price no momento da assinatura e continua cobrando aquele
+valor até ser migrada explicitamente. Ou seja:
+
+- Clientes existentes **continuam no preço antigo automaticamente** — nenhuma
+  ação necessária, desde que a subscription deles NÃO seja migrada para o price
+  novo.
+- **Casa dos Salgados (cliente antiga): já paga ~R$147 e deve permanecer nesse
+  valor.** Ação = NENHUMA. A assinatura dela já está no price antigo e o Stripe
+  a mantém lá; basta NÃO migrar essa subscription para o price novo. Não usar
+  nenhum fluxo de "trocar plano" nessa conta. O portal default (cancel / cartão
+  / invoices, sem troca de plano) não a move — manter assim.
+- Trocar o ponteiro das envs (`STRIPE_PRICE_*`) só afeta **checkouts NOVOS** —
+  não migra ninguém que já paga.
+
+> ⚠️ Não há automação para migrar preço de subscription neste repo, e isso é
+> proposital: mudança de valor cobrado de cliente existente é ação manual,
+> auditável, feita por humano no Stripe.
+
 ## Smoke test em prod (5 min)
 
 Numa conta de teste:

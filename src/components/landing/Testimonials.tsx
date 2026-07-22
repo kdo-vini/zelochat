@@ -28,7 +28,7 @@ const TESTIMONIALS_ROW_1: Testimonial[] = [
   },
   {
     quote:
-      'Integração com o ZeloPDV salvou minha vida — pedido do WhatsApp já entra direto no caixa, sem retrabalho.',
+      'Integração com o ZeloPDV salvou minha vida — o pedido do cardápio já entra direto no caixa, sem retrabalho.',
     name: 'Juliana Pereira',
     business: 'Lanchonete Sabor Caseiro',
     initials: 'JP',

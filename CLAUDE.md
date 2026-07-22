@@ -300,7 +300,7 @@ When this happens, a Dokploy redeploy of the backend fixes it (prod re-registers
 
 In production (Dokploy), leave `WHATSMIAU_DISABLE_WEBHOOK_REGISTER` unset (or `0`) so the deploy registers its own webhook URL on startup. Also set `PUBLIC_APP_URL=https://chat.zelopdv.com.br` (or `WEBHOOK_PUBLIC_URL`) so `getPublicWebhookUrl()` resolves to the public domain — without it, the backend falls back to `http://localhost:3001` and Whatsmiau registrations fail.
 
-## Billing — Stripe paywall (R$97/mês plano `chat`)
+## Billing — Stripe paywall (R$149/mês plano `chat`, R$198 `bundle`)
 
 ZeloChat compartilha conta Stripe e tabela `subscriptions` com ZeloPDV. Webhook fica em `zelopdv.com.br/api/billing/webhook` (já trata `plan_tier='chat'`/`'bundle'`). ZeloChat só CRIA Checkout sessions e abre Customer Portal via:
 
@@ -316,6 +316,8 @@ Source: `server/billing.ts`. Front: `SubscriptionPaywall` + `BillingManagementCa
 - `STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE` (obrigatórios; sem fallback hardcoded para evitar usar price de produção em dev)
 
 `requireActiveZelochatSubscription()` em `server/supabase.ts` rejeita `'trialing'` propositalmente — política produto é "sem teste grátis".
+
+**Preço exibido = fonte única `src/data/pricing.ts`** (chat R$149 / bundle R$198). Landing, e-mails de onboarding e checkout leem daí. O número tem que bater com o price do Stripe apontado por `STRIPE_PRICE_CHAT`/`STRIPE_PRICE_BUNDLE` — ao mudar o preço, criar o novo price no Stripe e trocar a env no MESMO deploy. Clientes antigos são grandfathered pelo próprio Stripe (a subscription mantém o price antigo até ser migrada) — ver `BILLING.md` §"Mudança de preço e grandfathering".
 
 ## Ciclo de vida de instâncias Whatsmiau (JÁ IMPLEMENTADO)
 

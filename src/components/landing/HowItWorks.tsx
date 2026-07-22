@@ -1,6 +1,6 @@
 import {
   MessageCircle,
-  Bot,
+  UtensilsCrossed,
   Receipt,
   LayoutGrid,
   Bell,
@@ -19,14 +19,15 @@ const STEPS: Step[] = [
     number: 1,
     icon: MessageCircle,
     title: 'Cliente chama no WhatsApp',
-    description: 'A IA responde em segundos e entende o que ele quer.',
+    description:
+      'A IA responde em segundos, tira dúvidas e manda o link do cardápio online.',
   },
   {
     number: 2,
-    icon: Bot,
-    title: 'IA tira dúvidas e pega o pedido',
+    icon: UtensilsCrossed,
+    title: 'Cliente monta o pedido no cardápio',
     description:
-      'Cardápio, preços, adicionais, entrega, retirada e observações.',
+      'Itens, adicionais, endereço e taxa de entrega — tudo pelo seu cardápio online.',
   },
   {
     number: 3,

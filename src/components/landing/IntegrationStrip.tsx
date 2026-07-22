@@ -1,16 +1,16 @@
-import { MessageCircle, Shield, Sparkles, Headphones, Printer, Truck, ShoppingBag, BarChart3, Receipt, LayoutGrid, Bell } from 'lucide-react';
+import { MessageCircle, Shield, Sparkles, Headphones, Printer, Truck, UtensilsCrossed, BarChart3, Receipt, LayoutGrid, Bell } from 'lucide-react';
 import { ZeloPDVLink } from './ZeloPDVLink';
 import { Marquee } from './ui/Marquee';
 
 const ITEMS = [
   { icon: MessageCircle, label: 'Conecta direto no WhatsApp' },
   { icon: Sparkles, label: 'IA treinada com seu cardápio' },
+  { icon: UtensilsCrossed, label: 'Cardápio online próprio (incluso)' },
   { icon: Receipt, label: 'Confere comprovante PIX (foto ou PDF)' },
   { icon: LayoutGrid, label: 'Kanban com drag-and-drop' },
   { icon: Bell, label: 'Avisa o cliente a cada status' },
   { icon: Printer, label: 'Impressão automática na cozinha' },
   { icon: Truck, label: 'Gestão de entregadores' },
-  { icon: ShoppingBag, label: 'Pedidos direto pelo chat' },
   { icon: BarChart3, label: 'Histórico e resumo por cliente' },
   { icon: Shield, label: 'Dados isolados por loja' },
   { icon: Headphones, label: 'Suporte em português' },

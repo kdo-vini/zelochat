@@ -1,16 +1,21 @@
-// Preços novos (D-104, go-live 2026-06-23): ZeloChat R$147 inclui ZeloMenu (D-014),
-// bundle R$197. Os price IDs reais vêm das envs STRIPE_PRICE_CHAT / STRIPE_PRICE_BUNDLE
-// no Dokploy, que devem apontar para os prices v2 (zelo_chat_monthly_v2 / zelo_bundle_monthly_v2)
-// no mesmo momento desta virada de copy.
+// Preços (atualizado 2026-07-21): ZeloChat R$149 inclui ZeloMenu (D-014),
+// bundle com ZeloPDV R$198. FONTE ÚNICA de preço exibido na landing — Hero,
+// BottomCTA, MobileStickyCTA e a seção de Preços leem daqui.
+//
+// ⚠ Os price IDs reais vêm das envs STRIPE_PRICE_CHAT / STRIPE_PRICE_BUNDLE no
+// Dokploy. Ao mudar os valores abaixo, criar os prices correspondentes no Stripe
+// e apontar essas envs para eles NO MESMO DEPLOY — senão o site mostra um valor
+// e o checkout cobra outro. index.html (JSON-LD) e public/llms.txt têm o preço
+// hard-coded (arquivos estáticos, não leem daqui) — manter em sincronia à mão.
 export const PRICING = {
   chat: {
-    priceBRL: 147,
+    priceBRL: 149,
     label: 'ZeloChat',
     includesZeloMenu: true,
     stripePriceIdEnv: 'STRIPE_PRICE_CHAT',
   },
   bundle: {
-    priceBRL: 197,
+    priceBRL: 198,
     label: 'Pacote Gestão + Atendimento',
     includesZeloMenu: true,
     stripePriceIdEnv: 'STRIPE_PRICE_BUNDLE',

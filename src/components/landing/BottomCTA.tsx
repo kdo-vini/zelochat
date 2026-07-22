@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, MessageCircle } from 'lucide-react';
+import { PRICING } from '../../data/pricing';
 import { AuroraBackground } from './ui/AuroraBackground';
 
 export function BottomCTA() {
@@ -23,9 +24,10 @@ export function BottomCTA() {
                   é <span className="text-[#25D366]">pedido indo pro concorrente.</span>
                 </h3>
                 <p className="mt-3 text-[14.5px] text-white/70 max-w-[520px]">
-                  Configure em 10 minutos. A IA atende, fecha pedido, confere
-                  PIX e avisa o cliente a cada status. Sem fidelidade — cancele
-                  direto no painel, sem ligação de retenção.
+                  Configure em 10 minutos. A IA atende, leva o cliente pro seu
+                  cardápio online, confere PIX e avisa o cliente a cada status.
+                  Sem fidelidade — cancele direto no painel, sem ligação de
+                  retenção.
                 </p>
               </div>
 
@@ -50,7 +52,7 @@ export function BottomCTA() {
                   </span>
                 </Link>
                 <p className="text-[12px] text-white/50">
-                  R$97/mês · Cancele quando quiser
+                  R${PRICING.chat.priceBRL}/mês · Cardápio online incluso · Cancele quando quiser
                 </p>
               </div>
             </div>
