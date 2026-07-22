@@ -7,6 +7,7 @@ const tsxCli = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.
 const tests = [
   'tests/auditFixGuardrails.test.ts',
   'tests/aiSchedule.test.ts',
+  'tests/businessHours.test.ts',
   'tests/configStore.test.ts',
   'tests/conversationState.test.ts',
   'tests/conversationEdgeCases.test.ts',
