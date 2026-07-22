@@ -11,6 +11,7 @@ import {
   type AiScheduleDays,
 } from '../domain/aiSchedule';
 import { normalizeZeloChatMode, type ZeloChatMode } from '../domain/zelochatMode';
+import { normalizeWeeklyHours, type WeeklyHours } from '../domain/businessHours';
 
 /** Subset of empresa_perfil columns relevant to ZeloChat */
 export interface EmpresaPerfil {
@@ -30,6 +31,12 @@ export interface EmpresaPerfil {
   horario_abertura: string | null;
   horario_fechamento: string | null;
   dias_fechamento: string[] | null;
+  /**
+   * Per-day, multi-window business hours — added via migration 046
+   * (`046_empresa_horario_semanal.sql`). Nullable: when null, hours derive from
+   * the legacy `horario_abertura`/`horario_fechamento`/`dias_fechamento` columns.
+   */
+  horario_semanal: WeeklyHours | null;
   /** Added via migration 005_ai_config_and_quick_responses.sql — may be null if migration not yet run */
   ai_instructions: string | null;
   /** Added via migration 006_blocked_dates_manager_history.sql — may be null if migration not yet run */
@@ -88,6 +95,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       'horario_abertura',
       'horario_fechamento',
       'dias_fechamento',
+      'horario_semanal',
       'ai_instructions',
       'blocked_dates',
       'manager_history',
@@ -172,6 +180,7 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
       horario_abertura: row.horario_abertura ?? null,
       horario_fechamento: row.horario_fechamento ?? null,
       dias_fechamento: row.dias_fechamento ?? null,
+      horario_semanal: normalizeWeeklyHours(row.horario_semanal),
       ai_instructions: row.ai_instructions ?? null,
       blocked_dates: blockedDates as { date: string; reason: string }[] | null,
       manager_history: managerHistory as ChatMessage[] | null,
@@ -280,6 +289,17 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
         } else if (dbError.message.includes('zelochat_mode') && patch.zelochat_mode !== undefined) {
           console.warn('[useEmpresaPerfil] zelochat_mode column missing - saving without it. Run migration 023.');
           const { zelochat_mode: _mode, ...patchWithout } = patch as Partial<EmpresaPerfil>;
+          const { error: retryError } = await supabase
+            .from('empresa_perfil')
+            .update({ ...patchWithout, updated_at: new Date().toISOString() })
+            .eq('id', empresa.id);
+          if (retryError) {
+            setError(retryError.message);
+            return false;
+          }
+        } else if (dbError.message.includes('horario_semanal') && patch.horario_semanal !== undefined) {
+          console.warn('[useEmpresaPerfil] horario_semanal column missing - saving without it. Run migration 046.');
+          const { horario_semanal: _hs, ...patchWithout } = patch as Partial<EmpresaPerfil>;
           const { error: retryError } = await supabase
             .from('empresa_perfil')
             .update({ ...patchWithout, updated_at: new Date().toISOString() })

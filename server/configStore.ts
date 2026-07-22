@@ -44,6 +44,11 @@ import {
   type ZeloMenuModifierGroup,
   type ZeloMenuModifierOption,
 } from '../src/domain/zelomenuModifiers.js';
+import {
+  deriveWeeklyFromLegacy,
+  normalizeWeeklyHours,
+  type WeeklyHours,
+} from '../src/domain/businessHours.js';
 
 export type CatalogProduct = {
   id?: number;
@@ -67,6 +72,14 @@ export interface BusinessConfig {
   openTime: string;
   closeTime: string;
   closedDays: string[];
+  /**
+   * Per-day, multi-window business hours (migration 046 `horario_semanal`).
+   * When the column is null/absent, this is derived from the legacy
+   * openTime/closeTime/closedDays via deriveWeeklyFromLegacy so downstream
+   * always has a weekly view. Legacy fields above are kept intact — the AI
+   * legacy path and other callers still read them.
+   */
+  weeklyHours: WeeklyHours | null;
   /**
    * IANA timezone for this empresa (e.g. 'America/Sao_Paulo', 'America/Manaus',
    * 'America/Rio_Branco'). Used by AI date helpers so the prompt's "agora" and
@@ -126,6 +139,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   openTime: '',
   closeTime: '',
   closedDays: [],
+  weeklyHours: null,
   timezone: DEFAULT_TIMEZONE,
   address: '',
   pixKey: '',
@@ -549,7 +563,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   try {
     let result = await supabase
       .from('empresa_perfil')
-      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_schedule_days, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
+      .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_schedule_days, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, horario_semanal, timezone, zelochat_mode')
       .eq('id', empresaId)
       .abortSignal(controller.signal)
       .maybeSingle();
@@ -557,7 +571,16 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
       console.warn('[configStore] ai_schedule_days column is not available yet; hydrating without per-day schedule.');
       result = await supabase
         .from('empresa_perfil')
-        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, horario_semanal, timezone, zelochat_mode')
+        .eq('id', empresaId)
+        .abortSignal(controller.signal)
+        .maybeSingle();
+    }
+    if (result.error?.message?.includes('horario_semanal')) {
+      console.warn('[configStore] horario_semanal column is not available yet; hydrating with legacy hours (run migration 046).');
+      result = await supabase
+        .from('empresa_perfil')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, pix_receipt_config, ai_enabled, ai_mode, ai_schedule_start, ai_schedule_end, ai_schedule_days, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
         .eq('id', empresaId)
         .abortSignal(controller.signal)
         .maybeSingle();
@@ -568,7 +591,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
       console.warn('[configStore] zelochat_mode column is not available yet; hydrating with legacy fallback.');
       result = await supabase
         .from('empresa_perfil')
-        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, horario_semanal, timezone')
         .eq('id', empresaId)
         .abortSignal(controller.signal)
         .maybeSingle();
@@ -581,7 +604,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
       console.warn('[configStore] some optional AI settings columns are not available yet; hydrating with legacy fallback.');
       result = await supabase
         .from('empresa_perfil')
-        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, timezone, zelochat_mode')
+        .select('user_id, nome_exibicao, endereco, chave_pix, manager_phone, ai_instructions, delivery_config, ai_enabled, ai_can_reengage_pending, blocked_dates, horario_abertura, horario_fechamento, dias_fechamento, horario_semanal, timezone, zelochat_mode')
         .eq('id', empresaId)
         .abortSignal(controller.signal)
         .maybeSingle();
@@ -612,6 +635,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     horario_abertura?: string | null;
     horario_fechamento?: string | null;
     dias_fechamento?: unknown;
+    horario_semanal?: unknown;
     timezone?: string | null;
     zelochat_mode?: string | null;
   });
@@ -762,7 +786,13 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   if (openTime) patch.openTime = openTime;
   if (closeTime) patch.closeTime = closeTime;
   if (openTime && closeTime) patch.hours = `${openTime}–${closeTime}`;
-  if (row && 'dias_fechamento' in row) patch.closedDays = normalizeClosedDays(row.dias_fechamento);
+  const closedDays = (row && 'dias_fechamento' in row) ? normalizeClosedDays(row.dias_fechamento) : [];
+  if (row && 'dias_fechamento' in row) patch.closedDays = closedDays;
+  // Per-day weekly hours (migration 046). Prefer the explicit column; when null
+  // or the column is absent, derive a weekly view from the legacy single-window
+  // fields so downstream (server/ai.ts) always has a weekly model to read.
+  patch.weeklyHours = normalizeWeeklyHours(row?.horario_semanal)
+    ?? deriveWeeklyFromLegacy(openTime || null, closeTime || null, closedDays);
   patch.timezone = normalizeTimezone(row.timezone);
   setConfig(empresaId, patch);
   hydratedAiSettings.set(empresaId, Date.now());
