@@ -54,6 +54,7 @@ function makeConfig(overrides: Partial<BusinessConfig> = {}): BusinessConfig {
     openTime: '09:00',
     closeTime: '18:00',
     closedDays: [],
+    weeklyHours: null,
     timezone: 'America/Sao_Paulo',
     address: 'Rua A, 123',
     pixKey: 'pix@example.com',

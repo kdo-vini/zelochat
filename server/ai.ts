@@ -54,6 +54,14 @@ import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTrigge
 // (buildWhatsAppCartLinkMessage, buildPublicCartUrl, openWhatsAppCartSession) —
 // a IA não monta carrinhos no WhatsApp. O cliente usa o cardápio online.
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
+import {
+  CLOSED_DAY_LABELS,
+  hasAnyOpenWindow,
+  isOpenAt,
+  summarizeWeekly,
+  weekdayKeyInTz,
+  type WeeklyHours,
+} from '../src/domain/businessHours.js';
 import { LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
@@ -1054,6 +1062,22 @@ function getBrazilTimeParts(d: Date, tz: string = DEFAULT_TIMEZONE): { hour: num
   };
 }
 
+/**
+ * Representative single day-agnostic operating window (legacy shape). Kept for
+ * the per-time schedule guards (findBusinessHoursIssue*) which validate a
+ * specific requested time against one window. The store-open / next-opening
+ * decision that feeds the prompt now uses the weekly model directly via
+ * `resolveWeeklyStatus`/`isOpenAt` — this stays as the single-window resolver
+ * so those guards keep behaving exactly as before for legacy stores.
+ *
+ * Resolution order:
+ *  1. legacy openTime/closeTime (unchanged — the common path; configStore also
+ *     writes shadow-legacy for multi-window stores so this stays populated),
+ *  2. parse the `hours` string,
+ *  3. additive fallback: derive a representative window (earliest start /
+ *     latest end across all open days) from cfg.weeklyHours when legacy fields
+ *     are empty but a per-day schedule exists.
+ */
 function getOperatingWindow(empresaId: string): OperatingWindow | null {
   const cfg = getConfig(empresaId);
   let open = parseTimeToMinutes((cfg as typeof cfg & { openTime?: string }).openTime);
@@ -1065,12 +1089,66 @@ function getOperatingWindow(empresaId: string): OperatingWindow | null {
     close = close ?? parseTimeToMinutes(matches[1]?.[0]);
   }
 
+  if ((open === null || close === null) && cfg.weeklyHours && hasAnyOpenWindow(cfg.weeklyHours)) {
+    let minStart: number | null = null;
+    let maxEnd: number | null = null;
+    for (const key of Object.keys(cfg.weeklyHours) as (keyof WeeklyHours)[]) {
+      for (const w of cfg.weeklyHours[key]) {
+        const s = parseTimeToMinutes(w.start);
+        const e = w.end === '00:00' || w.end === '24:00' ? 24 * 60 : parseTimeToMinutes(w.end);
+        if (s !== null) minStart = minStart === null ? s : Math.min(minStart, s);
+        if (e !== null) maxEnd = maxEnd === null ? e : Math.max(maxEnd, e);
+      }
+    }
+    open = open ?? minStart;
+    // 24:00 (1440) is not representable in the legacy HH:MM window; clamp to 23:59.
+    close = close ?? (maxEnd === 1440 ? 1439 : maxEnd);
+  }
+
   if (open === null || close === null) return null;
   return {
     openMinutes: open,
     closeMinutes: close,
     openLabel: minutesToDisplay(open),
     closeLabel: minutesToDisplay(close),
+  };
+}
+
+/**
+ * Weekly-aware store status for the prompt. Prefers the per-day model
+ * (`cfg.weeklyHours` via `isOpenAt`) to decide open-now + next opening, and
+ * falls back to the legacy single-window logic when no weekly schedule exists.
+ * Informational only — never a hard block (orders go through ZeloMenu).
+ */
+function resolveWeeklyStatus(
+  empresaId: string,
+  now: Date,
+  tz: string,
+): { open: boolean | null; hoursLabel: string; nextOpenLabel: string | null } {
+  const cfg = getConfig(empresaId);
+  const weekly = cfg.weeklyHours && hasAnyOpenWindow(cfg.weeklyHours) ? cfg.weeklyHours : null;
+
+  if (weekly) {
+    const status = isOpenAt(weekly, now, tz);
+    const nextOpenLabel = status.nextOpen
+      ? `${dayFullLabelBrazil(CLOSED_DAY_LABELS[status.nextOpen.day])} às ${status.nextOpen.start}`
+      : null;
+    return { open: status.open, hoursLabel: summarizeWeekly(weekly), nextOpenLabel };
+  }
+
+  // Legacy single-window fallback — nothing regresses when weeklyHours is null/empty.
+  const window = getOperatingWindow(empresaId);
+  if (!window) {
+    return { open: null, hoursLabel: cfg.hours || 'Consulte a loja', nextOpenLabel: null };
+  }
+  const todayLabel = dayLabelBrazil(now, tz);
+  const closedToday = cfg.closedDays.includes(todayLabel);
+  const nowMinutes = getBrazilTimeParts(now, tz).minutes;
+  const openNow = !closedToday && isWithinOperatingWindow(nowMinutes, window);
+  return {
+    open: openNow,
+    hoursLabel: `${window.openLabel}–${window.closeLabel}`,
+    nextOpenLabel: null,
   };
 }
 
@@ -2393,10 +2471,23 @@ COMO ENVIAR O LINK DO CARDÁPIO:
   const currentTimeBR = getBrazilTimeParts(now, tz).label;
   const todayLabel = dayLabelBrazil(now, tz);
   const isClosedToday = cfg.closedDays.includes(todayLabel);
-  const operatingWindow = getOperatingWindow(empresaId);
-  const operatingHoursStr = operatingWindow
-    ? `${operatingWindow.openLabel}–${operatingWindow.closeLabel}`
-    : (cfg.hours || 'Consulte a loja');
+  // Weekly-aware store status (per-day model when configured, legacy fallback
+  // otherwise). Informational for the prompt — never a hard block.
+  const storeStatus = resolveWeeklyStatus(empresaId, now, tz);
+  const operatingHoursStr = storeStatus.hoursLabel;
+  const operatingStatusStr = storeStatus.open === true
+    ? 'A loja está ABERTA agora.'
+    : storeStatus.open === false
+      ? `A loja está FECHADA agora.${storeStatus.nextOpenLabel ? ` Próxima abertura: ${storeStatus.nextOpenLabel}.` : ''}`
+      : '';
+  const offHoursGuidance = storeStatus.open === false
+    ? `
+
+ATENDIMENTO FORA DO HORÁRIO (informativo, NÃO é bloqueio):
+- Agora a loja está fechada. Você PODE dizer isso com naturalidade${storeStatus.nextOpenLabel ? ` e informar que reabrimos ${storeStatus.nextOpenLabel}` : ''}.
+- Mesmo fechada agora, você AINDA PODE enviar o link do cardápio para o cliente montar e agendar o pedido — o pedido é feito pelo cardápio online.
+- NÃO recuse o atendimento só porque está fora do horário; oriente o cliente de forma gentil.`
+    : '';
   const todayISO = toIsoBrazil(now, tz);
   const tomorrowISO = toIsoBrazil(new Date(now.getTime() + 86400000), tz);
   const todayBR = isoToDisplayBR(todayISO);
@@ -2532,11 +2623,11 @@ DATA E HORA ATUAL (use SEMPRE, NUNCA invente datas ou anos):
 
 INFORMAÇÕES DA LANCHONETE:
 - Cardápio disponível: ${availableProducts}${catalogHierarchyStr}
-- Horário de funcionamento: ${operatingHoursStr}
+- Horário de funcionamento: ${operatingHoursStr}${operatingStatusStr ? `\n- Situação agora: ${operatingStatusStr}` : ''}
 - Dias fechados: ${cfg.closedDays.join(', ') || 'Nenhum'}
 - Endereço: ${cfg.address || 'Consulte a loja'}
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
-- Datas bloqueadas: ${blockedDatesStr}${dailyContextStr}
+- Datas bloqueadas: ${blockedDatesStr}${dailyContextStr}${offHoursGuidance}
 
 ${orderingBlock}
 

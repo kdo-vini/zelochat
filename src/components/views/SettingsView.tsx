@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import { useToast } from '../../contexts/ToastContext';
 import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Sparkles, Settings2, ChevronDown } from 'lucide-react';
@@ -21,6 +21,16 @@ import {
 import { reverseEngineerWizardState, summarizeScheduleResult, WIZARD_DAY_LABELS } from '../../domain/aiScheduleWizard';
 import { ScheduleWizard } from '../settings/ScheduleWizard';
 import { ScheduleVisualPreview } from '../settings/ScheduleVisualPreview';
+import { BusinessHoursEditor } from '../settings/BusinessHoursEditor';
+import {
+  DAY_KEYS,
+  CLOSED_DAY_LABELS,
+  deriveLegacyFromWeekly,
+  deriveWeeklyFromLegacy,
+  parseTimeToMinutes,
+  windowEndMinutes,
+  type WeeklyHours,
+} from '../../domain/businessHours';
 import {
   getAiEnabled,
   getAiSettings,
@@ -465,7 +475,24 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
   );
 };
 
-const DAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+/**
+ * Valida as janelas de todos os dias: cada faixa precisa ter início < fim.
+ * `end` "00:00" conta como meia-noite (1440) via windowEndMinutes. Retorna uma
+ * mensagem PT no primeiro dia inválido, ou null se tudo certo. Espelha a lógica
+ * de bloqueio de save do painel antigo (agora por dia/faixa).
+ */
+function validateWeeklyHours(weekly: WeeklyHours): string | null {
+  for (const key of DAY_KEYS) {
+    for (const win of weekly[key]) {
+      const start = parseTimeToMinutes(win.start);
+      const end = windowEndMinutes(win);
+      if (start === null || end === null || start >= end) {
+        return `Confira os horários de ${CLOSED_DAY_LABELS[key]}: o horário de início precisa ser antes do horário de fim.`;
+      }
+    }
+  }
+  return null;
+}
 
 interface AiGlobalScheduleCardProps {
   token: string | null;
@@ -1466,20 +1493,6 @@ const DeliveryConfigCard = ({
   );
 };
 
-function TimeInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex-1">
-      <label className="block text-[11.5px] font-medium text-[var(--color-ink-muted)] mb-1">{label}</label>
-      <input
-        type="time"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2.5 text-[13.5px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)] transition-colors"
-      />
-    </div>
-  );
-}
-
 export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenticated, token, zelochatMode }: SettingsViewProps) => {
   const { session } = useSupabaseSession();
   const { subscription, isActive: subscriptionActive, hasPdvOnly, loading: subscriptionLoading, refresh: refreshSubscription } = useSubscription(session);
@@ -1510,19 +1523,33 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
   } = useLocalDraft('business', serverBusinessInfo);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  const serverHours = {
-    openTime:   state.businessInfo.openTime,
-    closeTime:  state.businessInfo.closeTime,
-    closedDays: state.businessInfo.closedDays,
-  };
+  // Fonte de verdade do servidor: prioriza a coluna nova `horario_semanal`;
+  // quando ausente (contas antigas), deriva do legado — comportamento idêntico.
+  const serverWeekly = useMemo<WeeklyHours>(() => {
+    if (empresa?.horario_semanal) return empresa.horario_semanal;
+    return deriveWeeklyFromLegacy(
+      empresa?.horario_abertura ?? (state.businessInfo.openTime || null),
+      empresa?.horario_fechamento ?? (state.businessInfo.closeTime || null),
+      empresa?.dias_fechamento ?? (state.businessInfo.closedDays.length ? state.businessInfo.closedDays : null),
+    );
+  }, [
+    empresa?.horario_semanal,
+    empresa?.horario_abertura,
+    empresa?.horario_fechamento,
+    empresa?.dias_fechamento,
+    state.businessInfo.openTime,
+    state.businessInfo.closeTime,
+    state.businessInfo.closedDays,
+  ]);
   const {
     draft: hoursDraft,
     setDraft: setHoursDraft,
     clearDraft: clearHoursDraft,
     isDirtyVsServer: isHoursDirty,
     hasStoredDraft: hasHoursDraft,
-  } = useLocalDraft('hours', serverHours);
+  } = useLocalDraft<WeeklyHours>('hoursWeekly', serverWeekly);
   const [hoursSaveState, setHoursSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const hoursError = useMemo(() => validateWeeklyHours(hoursDraft), [hoursDraft]);
 
   // Notify the user once on mount if a stored draft was found.
   useEffect(() => {
@@ -1564,20 +1591,26 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
   };
 
   const handleSaveHours = async () => {
+    if (hoursError) return;
     setHoursSaveState('saving');
+    const weekly = hoursDraft;
+    // Invariante de compatibilidade: além da coluna nova, reescreve as colunas
+    // legadas (shadow) para o cardápio online continuar validando horário.
+    const legacy = deriveLegacyFromWeekly(weekly);
     const ok = await saveEmpresa({
-      horario_abertura:  hoursDraft.openTime  || null,
-      horario_fechamento: hoursDraft.closeTime || null,
-      dias_fechamento:   hoursDraft.closedDays,
+      horario_semanal:    weekly,
+      horario_abertura:   legacy.openTime,
+      horario_fechamento: legacy.closeTime,
+      dias_fechamento:    legacy.closedDays,
     });
     if (ok) {
       setState(prev => ({
         ...prev,
         businessInfo: {
           ...prev.businessInfo,
-          openTime:   hoursDraft.openTime,
-          closeTime:  hoursDraft.closeTime,
-          closedDays: hoursDraft.closedDays,
+          openTime:   legacy.openTime  ?? '',
+          closeTime:  legacy.closeTime ?? '',
+          closedDays: legacy.closedDays,
         },
       }));
       clearHoursDraft();
@@ -1587,15 +1620,6 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
       setHoursSaveState('error');
       setTimeout(() => setHoursSaveState('idle'), 3000);
     }
-  };
-
-  const toggleDay = (day: string) => {
-    setHoursDraft(prev => ({
-      ...prev,
-      closedDays: prev.closedDays.includes(day)
-        ? prev.closedDays.filter(d => d !== day)
-        : [...prev.closedDays, day],
-    }));
   };
 
   return (
@@ -1648,47 +1672,25 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
 
             <SectionCard icon={Clock} title="Horários e atendimento">
               <div className="space-y-3">
-                <div className="flex gap-3">
-                  <TimeInput
-                    label="Abre às"
-                    value={hoursDraft.openTime}
-                    onChange={v => setHoursDraft(p => ({ ...p, openTime: v }))}
-                  />
-                  <TimeInput
-                    label="Fecha às"
-                    value={hoursDraft.closeTime}
-                    onChange={v => setHoursDraft(p => ({ ...p, closeTime: v }))}
-                  />
-                </div>
-                <div>
-                  <label className={LABEL}>Dias de fechamento</label>
-                  <div className="flex gap-2 flex-wrap mt-2">
-                    {DAYS.map(day => {
-                      const closed = hoursDraft.closedDays.includes(day);
-                      return (
-                        <button
-                          key={day}
-                          onClick={() => toggleDay(day)}
-                          className={`px-3 py-1.5 rounded-lg text-[12.5px] font-semibold transition-all ${
-                            closed
-                              ? 'bg-[var(--color-alert)] text-white'
-                              : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)] hover:bg-[var(--color-line)]'
-                          }`}
-                        >
-                          {day}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="text-[12px] text-[var(--color-ink-faint)] mt-2">
-                    Dias em vermelho = fechados. A IA não aceitará pedidos nesses dias.
-                  </p>
-                </div>
+                <p className="text-[12.5px] text-[var(--color-ink-muted)]">
+                  Defina os horários de cada dia. Você pode ter mais de uma faixa por dia
+                  (ex.: almoço e jantar). Deixe o dia como <span className="font-semibold">Fechado</span> quando não abrir.
+                </p>
+
+                <BusinessHoursEditor
+                  value={hoursDraft}
+                  onChange={next => setHoursDraft(next)}
+                  disabled={hoursSaveState === 'saving'}
+                />
+
+                {hoursError && (
+                  <p className="text-[12.5px] text-[var(--color-alert)] font-medium">{hoursError}</p>
+                )}
 
                 {isHoursDirty && (
                   <button
                     onClick={handleSaveHours}
-                    disabled={hoursSaveState === 'saving' || !isAuthenticated}
+                    disabled={hoursSaveState === 'saving' || !isAuthenticated || !!hoursError}
                     className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
                   >
                     {hoursSaveState === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
