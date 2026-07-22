@@ -12,6 +12,12 @@
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
 - **Audit:** P0 100% ✅ · P1 94% ✅ · P2 63% · P3 21%
 
+## Entregue nesta sessão (2026-07-22)
+
+- **Landing ZeloChat + ZeloMenu** + preço **R$149 / R$198** (fonte única `src/data/pricing.ts`) + PIX no valor novo. Em prod.
+- **Horário de funcionamento por dia + múltiplas janelas** (`horario_semanal`, migração 046): editor no `SettingsView`, IA informativa fora de horário; ZeloMenu (repo separado) lê `horario_semanal` e bloqueia por janela do dia, com shadow legado preservado. Migração aplicada. Em prod.
+- **Stripe:** preços dos prices `chat`/`bundle` a atualizar para 149/198 (criar prices novos e apontar `STRIPE_PRICE_*` + `stripePriceId` do ZeloPDV). PIX já cobra o valor novo.
+
 ## Em aberto
 
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
