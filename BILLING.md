@@ -106,29 +106,37 @@ Não precisa criar configuração custom — o default funciona. Só defina a `S
 
 ## Mudança de preço e grandfathering
 
-**Preço atual (2026-07-21): ZeloChat R$149/mês · pacote com ZeloPDV R$198/mês.**
-Fonte única do valor EXIBIDO = `src/data/pricing.ts` (landing, e-mails de
-onboarding e UI leem daí). O valor COBRADO vem do price do Stripe apontado por
-`STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE`. Os dois têm que bater.
+**Preço atual (2026-07-22, confirmado no Stripe live): ZeloChat R$149/mês ·
+pacote com ZeloPDV R$198/mês.** Fonte única do valor EXIBIDO = `src/data/pricing.ts`
+(landing, e-mails de onboarding e UI leem daí). O valor COBRADO vem do price do
+Stripe apontado por `STRIPE_PRICE_CHAT` / `STRIPE_PRICE_BUNDLE`. Os dois batem.
 
-### Como trocar o preço (executado por humano no Stripe — não automatizar)
+### Como essa troca foi feita (2026-07-22)
 
-O preço em Stripe é imutável por price: não se "edita" um price, cria-se um novo
-e migra-se o ponteiro. Passo a passo:
+Regra geral: um price no Stripe é imutável **depois de ter assinatura ativa**
+— não se edita, cria-se um novo e migra-se o ponteiro. Mas um price **sem
+nenhuma assinatura ativa** pode ser editado in-place direto no Dashboard
+(Products → price → editar valor). Foi esse o caso aqui: os prices v2
+(`price_1TlbH2LUJWyE4PkYSqFSXXVY` chat, `price_1TlbH2LUJWyE4PkYlS4IxMhs`
+bundle) nunca tiveram assinante, então foram editados de R$147/R$197 para
+R$149/R$198 **no mesmo `price_id`** — sem criar price novo, sem tocar em
+`STRIPE_PRICE_CHAT`/`STRIPE_PRICE_BUNDLE` no Dokploy, sem redeploy. O price v1
+do bundle (`price_1TR0xGLUJWyE4PkYY0DMOWLI`, R$147, Casa dos Salgados) **não
+foi tocado** — continua ativo e grandfathered.
 
-1. **Stripe Dashboard → Products** → abrir o produto do ZeloChat (mesma conta do
-   ZeloPDV; NÃO criar conta nova). Em vez de mexer no produto atual, pode-se
-   criar um produto novo que substitui o antigo — o antigo fica arquivável.
-2. **Add price** → recorrente mensal, BRL:
-   - Chat: **R$ 149,00/mês**
-   - Bundle (Chat + PDV): **R$ 198,00/mês**
-3. Copiar os dois novos `price_…` IDs.
-4. **Dokploy → serviço backend → Environment**: apontar `STRIPE_PRICE_CHAT` e
-   `STRIPE_PRICE_BUNDLE` para os novos IDs. **Redeploy no MESMO momento** em que
-   `pricing.ts` (149/198) vai ao ar — senão o site mostra um valor e o checkout
-   cobra outro.
-5. (Opcional) Arquivar os prices antigos no Stripe para não serem reusados em
-   checkouts novos. **Não deletar** — subscriptions ativas ainda referenciam.
+### Se um price já tiver assinatura ativa (próxima vez que subir o preço)
+
+Nesse caso a edição in-place é bloqueada pelo próprio Stripe — passo a passo:
+
+1. **Stripe Dashboard → Products** → abrir o produto (mesma conta do ZeloPDV;
+   NÃO criar conta nova, NÃO criar produto novo — price novo no MESMO produto).
+2. **Add price** → recorrente mensal, BRL, com o valor novo.
+3. Copiar o novo `price_…` ID.
+4. **Dokploy → serviço backend → Environment**: apontar `STRIPE_PRICE_CHAT` e/ou
+   `STRIPE_PRICE_BUNDLE` para o novo ID. **Redeploy no MESMO momento** em que
+   `pricing.ts` vai ao ar — senão o site mostra um valor e o checkout cobra outro.
+5. (Opcional) Arquivar o price antigo pra não ser reusado em checkouts novos.
+   **Não deletar** — subscriptions ativas ainda referenciam.
 
 ### Grandfathering (clientes antigos mantêm o preço)
 

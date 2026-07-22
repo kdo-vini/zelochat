@@ -16,7 +16,7 @@
 
 - **Landing ZeloChat + ZeloMenu** + preço **R$149 / R$198** (fonte única `src/data/pricing.ts`) + PIX no valor novo. Em prod.
 - **Horário de funcionamento por dia + múltiplas janelas** (`horario_semanal`, migração 046): editor no `SettingsView`, IA informativa fora de horário; ZeloMenu (repo separado) lê `horario_semanal` e bloqueia por janela do dia, com shadow legado preservado. Migração aplicada. Em prod.
-- **Stripe:** preços dos prices `chat`/`bundle` a atualizar para 149/198 (criar prices novos e apontar `STRIPE_PRICE_*` + `stripePriceId` do ZeloPDV). PIX já cobra o valor novo.
+- **Stripe:** prices `chat`/`bundle` (v2, sem assinante) editados in-place no Dashboard pra R$149/R$198 — mesmo `price_id`, sem trocar `STRIPE_PRICE_*` no Dokploy nem redeploy. Price v1 do bundle (Casa dos Salgados, R$147) não foi tocado. PIX e cartão já batem com o preço exibido. Fechado.
 
 ## Em aberto
 
