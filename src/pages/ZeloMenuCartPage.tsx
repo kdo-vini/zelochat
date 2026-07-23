@@ -1034,47 +1034,63 @@ export default function ZeloMenuCartPage() {
                           const key = estimatedItemKey(item);
                           const label = formatModifierAwareCartItem(item);
                           return (
-                            <div key={key} className="flex items-center gap-3 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-2.5">
-                              <div className="flex min-w-0 flex-1 flex-col">
-                                <p className="truncate text-[13.5px] font-semibold leading-tight">{label}</p>
-                                <p className="mt-0.5 text-[11.5px] tabular-nums text-[var(--zm-ink-soft)]">{toBRL(item.unitPrice)} cada</p>
+                            <div key={key} className="flex flex-col gap-2 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-2.5">
+                              <div className="flex items-center gap-3">
+                                <div className="flex min-w-0 flex-1 flex-col">
+                                  <p className="truncate text-[13.5px] font-semibold leading-tight">{item.productName}</p>
+                                  <p className="mt-0.5 text-[11.5px] tabular-nums text-[var(--zm-ink-soft)]">{toBRL(item.unitPrice)} cada</p>
+                                </div>
+                                <div className="inline-flex h-9 flex-none items-center rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)]">
+                                  <button
+                                    type="button"
+                                    onClick={() => changeItemQuantity(key, item.quantity - 1)}
+                                    className={`flex h-9 w-9 items-center justify-center transition-transform active:scale-90 ${item.quantity <= 1 ? 'text-[var(--color-alert)]' : 'text-[var(--zm-ink-soft)]'}`}
+                                    aria-label={`Diminuir ${label}`}
+                                  >
+                                    {item.quantity <= 1
+                                      ? <Trash2 className="h-4 w-4" strokeWidth={1.8} />
+                                      : <Minus className="h-4 w-4" strokeWidth={1.8} />}
+                                  </button>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    aria-label={`Quantidade de ${label}`}
+                                    value={quantityDrafts[key] ?? String(item.quantity)}
+                                    onFocus={(event) => event.currentTarget.select()}
+                                    onChange={(event) => editItemQuantity(key, event.target.value)}
+                                    onBlur={() => finishEditingItemQuantity(key)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter') event.currentTarget.blur();
+                                    }}
+                                    readOnly={!isOpen}
+                                    className="h-9 w-9 border-x border-[var(--zm-line)] bg-transparent px-0 text-center text-[13px] font-semibold tabular-nums text-[var(--zm-ink)] outline-none focus:bg-[var(--zm-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--zm-brand)]"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => changeItemQuantity(key, item.quantity + 1)}
+                                    className="flex h-9 w-9 items-center justify-center text-[var(--zm-ink-soft)] transition-transform active:scale-90"
+                                    aria-label={`Aumentar ${label}`}
+                                  >
+                                    <Plus className="h-4 w-4" strokeWidth={1.8} />
+                                  </button>
+                                </div>
+                                <span className="w-[58px] flex-none text-right text-[13px] font-semibold tabular-nums">{toBRL(item.lineTotal)}</span>
                               </div>
-                              <div className="inline-flex h-9 flex-none items-center rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)]">
-                                <button
-                                  type="button"
-                                  onClick={() => changeItemQuantity(key, item.quantity - 1)}
-                                  className={`flex h-9 w-9 items-center justify-center transition-transform active:scale-90 ${item.quantity <= 1 ? 'text-[var(--color-alert)]' : 'text-[var(--zm-ink-soft)]'}`}
-                                  aria-label={`Diminuir ${label}`}
-                                >
-                                  {item.quantity <= 1
-                                    ? <Trash2 className="h-4 w-4" strokeWidth={1.8} />
-                                    : <Minus className="h-4 w-4" strokeWidth={1.8} />}
-                                </button>
-                                <input
-                                  type="text"
-                                  inputMode="numeric"
-                                  pattern="[0-9]*"
-                                  aria-label={`Quantidade de ${label}`}
-                                  value={quantityDrafts[key] ?? String(item.quantity)}
-                                  onFocus={(event) => event.currentTarget.select()}
-                                  onChange={(event) => editItemQuantity(key, event.target.value)}
-                                  onBlur={() => finishEditingItemQuantity(key)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter') event.currentTarget.blur();
-                                  }}
-                                  readOnly={!isOpen}
-                                  className="h-9 w-9 border-x border-[var(--zm-line)] bg-transparent px-0 text-center text-[13px] font-semibold tabular-nums text-[var(--zm-ink)] outline-none focus:bg-[var(--zm-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--zm-brand)]"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => changeItemQuantity(key, item.quantity + 1)}
-                                  className="flex h-9 w-9 items-center justify-center text-[var(--zm-ink-soft)] transition-transform active:scale-90"
-                                  aria-label={`Aumentar ${label}`}
-                                >
-                                  <Plus className="h-4 w-4" strokeWidth={1.8} />
-                                </button>
-                              </div>
-                              <span className="w-[58px] flex-none text-right text-[13px] font-semibold tabular-nums">{toBRL(item.lineTotal)}</span>
+                              {/* Detalhe fixo dos grupos de modificador escolhidos — não é um
+                                  dropdown/accordion, fica sempre visível (o cliente confirmou
+                                  cada grupo na "Detalhes do produto"; some daqui era a causa da
+                                  reclamação "sumiu o acompanhamento"). */}
+                              {item.selectedModifiers.length > 0 && (
+                                <div className="flex flex-col gap-1 rounded-lg bg-[var(--zm-surface-muted)] px-2.5 py-2">
+                                  {item.selectedModifiers.map((group) => (
+                                    <p key={group.groupId} className="text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">
+                                      <span className="font-semibold text-[var(--zm-ink)]">{group.groupName}:</span>{' '}
+                                      {group.selectedOptions.map((option) => option.optionName).join(', ')}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
