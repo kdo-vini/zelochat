@@ -128,6 +128,12 @@ type PublicCartSession = {
   archivedAt: string | null;
 };
 
+type ProductionOrderStatus = {
+  id: string;
+  status: string;
+  revision: number;
+};
+
 type PublicCartResponse = {
   session: PublicCartSession;
   business: {
@@ -148,6 +154,7 @@ type PublicCartResponse = {
     tokenStatus: 'current' | 'stale';
   };
   revalidation: ZeloMenuCartRevalidation;
+  productionOrder: ProductionOrderStatus | null;
 };
 
 type PublicBusinessHoursStatus = {
@@ -950,6 +957,26 @@ async function buildPublicResponse(
   }
   session.metadata = publicMetadata;
 
+  // Fetch live production order status if the order has been materialized.
+  const productionOrderId = parseProductionOrderId(parseMetadata(sessionRow.metadata));
+  let productionOrder: ProductionOrderStatus | null = null;
+  if (productionOrderId) {
+    try {
+      const { data: orderData } = await getServiceSupabase()
+        .from('zelo_orders')
+        .select('id, status, revision')
+        .eq('id', productionOrderId)
+        .maybeSingle();
+      if (orderData) {
+        const o = orderData as { id: string; status: string; revision: number };
+        productionOrder = { id: o.id, status: o.status, revision: Number(o.revision ?? 1) };
+      }
+    } catch (err) {
+      console.error('[ZeloMenu] failed to fetch production order for public response:', err);
+      // fail-soft: productionOrder stays null, response still works
+    }
+  }
+
   return {
     session,
     business: {
@@ -966,6 +993,7 @@ async function buildPublicResponse(
       tokenStatus: sessionRow.current_token_hash === tokenRow.token_hash && !tokenRow.revoked_at ? 'current' : 'stale',
     },
     revalidation,
+    productionOrder,
   };
 }
 

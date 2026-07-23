@@ -45,7 +45,7 @@ interface OrderFormData {
   deliveryAddress: string;
   paymentMethod: string;
   observations: string;
-  items: { product: string; quantity: number }[];
+  items: { product: string; quantity: number; unitPrice: string }[];
   total: string;
 }
 
@@ -77,7 +77,7 @@ const makeEmptyForm = (): OrderFormData => ({
   deliveryAddress: '',
   paymentMethod: '',
   observations: '',
-  items: [{ product: '', quantity: 1 }],
+  items: [{ product: '', quantity: 1, unitPrice: '' }],
   total: '',
 });
 
@@ -89,9 +89,13 @@ function OrderModal({
   editOrder,
 }: {
   onClose: () => void;
-  onSave: (data: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+  onSave: (data: Omit<Order, 'id' | 'createdAt'> & { idempotencyKey?: string }) => Promise<void>;
   editOrder?: Order;
 }) {
+  // Stable for the lifetime of this modal instance, so a retry after a failed
+  // save (network blip, etc.) reuses the same key instead of risking a
+  // duplicate order — create_zelo_order dedupes on (empresa_id, idempotency_key).
+  const idempotencyKeyRef = React.useRef<string>(crypto.randomUUID());
   const initialForm = editOrder
     ? {
         customerName: editOrder.customerName,
@@ -101,7 +105,11 @@ function OrderModal({
         deliveryAddress: editOrder.deliveryAddress ?? '',
         paymentMethod: editOrder.paymentMethod ?? '',
         observations: editOrder.observations ?? '',
-        items: editOrder.items.length > 0 ? editOrder.items : [{ product: '', quantity: 1 }],
+        items: editOrder.items.length > 0 ? editOrder.items.map((it) => ({
+          product: it.product,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice != null ? String(it.unitPrice).replace('.', ',') : '',
+        })) : [{ product: '', quantity: 1, unitPrice: '' }],
         total: editOrder.total > 0 ? String(editOrder.total).replace('.', ',') : '',
       }
     : makeEmptyForm();
@@ -114,14 +122,14 @@ function OrderModal({
   const setField = <K extends keyof OrderFormData>(k: K, v: OrderFormData[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }));
 
-  const setItem = (i: number, field: 'product' | 'quantity', val: string | number) =>
+  const setItem = (i: number, field: 'product' | 'quantity' | 'unitPrice', val: string | number) =>
     setForm((prev) => ({
       ...prev,
       items: prev.items.map((it, idx) => idx === i ? { ...it, [field]: val } : it),
     }));
 
   const addItem = () =>
-    setForm((prev) => ({ ...prev, items: [...prev.items, { product: '', quantity: 1 }] }));
+    setForm((prev) => ({ ...prev, items: [...prev.items, { product: '', quantity: 1, unitPrice: '' }] }));
 
   const removeItem = (i: number) =>
     setForm((prev) => ({ ...prev, items: prev.items.filter((_, idx) => idx !== i) }));
@@ -135,19 +143,34 @@ function OrderModal({
     const validItems = form.items.filter((it) => it.product.trim());
     if (validItems.length === 0) { setFormError('Adicione ao menos um item.'); return; }
 
+    // Validate that every item has a price > 0
+    const itemsWithPrice = validItems.map((it) => ({
+      product: it.product.trim(),
+      quantity: it.quantity,
+      unitPrice: parseFloat((it.unitPrice || '0').replace(',', '.')) || 0,
+    }));
+    if (itemsWithPrice.some((it) => it.unitPrice <= 0)) {
+      setFormError('Informe o preço unitário de cada item.');
+      return;
+    }
+
+    // Compute total from items (subtotal = sum of unitPrice * quantity)
+    const total = itemsWithPrice.reduce((acc, it) => acc + it.unitPrice * it.quantity, 0);
+
     setSaving(true);
     try {
       await onSave({
         customerName:    form.customerName.trim(),
         customerPhone:   form.customerPhone.trim(),
-        items:           validItems,
+        items:           itemsWithPrice,
         pickupDate:      form.pickupDate,
         pickupTime:      form.pickupTime,
         deliveryAddress: form.deliveryAddress.trim() || undefined,
         paymentMethod:   form.paymentMethod.trim() || undefined,
         observations:    form.observations.trim() || undefined,
         status:          'pending',
-        total:           parseFloat(form.total.replace(',', '.')) || 0,
+        total,
+        idempotencyKey:  idempotencyKeyRef.current,
       });
       onClose();
     } catch (err) {
@@ -301,6 +324,17 @@ function OrderModal({
                       onChange={(e) => setItem(i, 'quantity', parseInt(e.target.value) || 1)}
                       className="w-14 px-2 py-2 text-[13px] text-center bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
                     />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={item.unitPrice}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/[^\d,\.]/g, '');
+                        setItem(i, 'unitPrice', v);
+                      }}
+                      placeholder="R$"
+                      className="w-20 px-2 py-2 text-[13px] text-right bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
+                    />
                     {form.items.length > 1 && (
                       <button
                         type="button"
@@ -380,17 +414,23 @@ function OrderModal({
               </div>
             </div>
 
-            {/* Total */}
+            {/* Total (auto-derived from items) */}
             <div>
               <label className="block text-[12px] font-semibold text-[var(--color-ink-muted)] mb-1.5">
                 Total (R$)
               </label>
               <input
                 type="text"
-                value={form.total}
-                onChange={(e) => setField('total', e.target.value)}
+                value={(() => {
+                  const sum = form.items.reduce((acc, it) => {
+                    const price = parseFloat((it.unitPrice || '0').replace(',', '.')) || 0;
+                    return acc + price * (it.quantity || 0);
+                  }, 0);
+                  return sum > 0 ? sum.toFixed(2).replace('.', ',') : '';
+                })()}
+                readOnly
                 placeholder="0,00"
-                className="w-full px-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
+                className="w-full px-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg opacity-70 cursor-not-allowed"
               />
             </div>
 
@@ -764,7 +804,7 @@ export const ProductionView = ({
   state: ProductionState;
   onDragEnd: (r: DropResult) => void;
   setActiveView: (v: View) => void;
-  onAddOrder: (payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+  onAddOrder: (payload: Omit<Order, 'id' | 'createdAt'> & { idempotencyKey?: string }) => Promise<void>;
   onEditOrder: (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   onDeleteOrder: (id: string) => Promise<void>;
   onUpdateStatus: (id: string, status: Order['status']) => void;

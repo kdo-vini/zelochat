@@ -129,6 +129,12 @@ These are out of scope or unsafe to change from this branch:
 
 ## Sprint history
 
+### Sprint 70 (2026-07-23) — Pedido manual via RPC canônico
+
+- ✅ PED-MANUAL — operador agora pode criar pedido manual direto no Kanban (walk-in, ligação, WhatsApp esquecido) escrevendo itens com preço unitário; chamada via `POST /api/orders/manual` → RPC `create_zelo_order` (source='manual', p_session_id=null), com idempotência server-side; total derivado automaticamente dos itens, validação de preço obrigatório no form — `server/canonicalOrders.ts:75` · `server/router.ts:1940` · `src/services/waApi.ts:640` · `src/hooks/useOrders.ts:183` · `src/components/views/ProductionView.tsx:48`
+- ✅ PED-MANUAL-IDEMP — chave de idempotência da criação manual passou a ser gerada no frontend (estável durante a vida do modal) e propagada até a RPC, em vez de uma chave nova a cada tentativa; fecha o risco de pedido duplicado se o operador reenviar depois de uma resposta perdida — `src/components/views/ProductionView.tsx` · `src/hooks/useOrders.ts` · `src/services/waApi.ts` · `server/router.ts:1945` · `server/canonicalOrders.ts:96`
+- ✅ ZLM-TRACK — tela pública do ZeloMenu deixou de mostrar só um "Pedido confirmado!" estático: agora exibe uma linha do tempo ao vivo (Recebido → Confirmado → Em preparo → Pronto → Saiu para entrega/Retirada → Entregue), com polling a cada 8s (pausado com a aba em segundo plano, parado em estado terminal) sobre o endpoint público já existente — sem WebSocket/Realtime novo, já que `zelo_orders` bloqueia `anon` via RLS — `server/zelomenuCartSessions.ts:960` · `src/domain/zelomenuOrderStatus.ts` · `src/pages/ZeloMenuCartPage.tsx:493`
+
 ### Sprint 69s (2026-06-24) — Avisos mobile no ZeloMenu público
 
 - ✅ ZLM-208 — carrinho público deixou de ter dois CTAs concorrentes ("Atualizar carrinho" e "Confirmar pedido"): confirmar agora salva o rascunho, revalida automaticamente e só fecha o pedido se não houver ajuste; mudança de preço aparece como toast pedindo para conferir o novo total — `src/pages/ZeloMenuCartPage.tsx:225` · `src/pages/ZeloMenuCartPage.tsx:306`

@@ -5,6 +5,7 @@ import {
   Banknote,
   Bike,
   CalendarClock,
+  Check,
   CheckCircle2,
   ChevronLeft,
   CreditCard,
@@ -19,6 +20,7 @@ import {
   Trash2,
   Wallet,
   X,
+  XCircle,
   Zap,
 } from 'lucide-react';
 import {
@@ -44,6 +46,7 @@ import {
 } from '../domain/zelomenuCheckout';
 import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
+import { buildZeloMenuOrderTimeline } from '../domain/zelomenuOrderStatus';
 import { useToast } from '../contexts/ToastContext';
 
 type DraftState = {
@@ -407,6 +410,14 @@ export default function ZeloMenuCartPage() {
     [autosavePayload],
   );
 
+  const orderTimelineInfo = useMemo(() => {
+    if (!payload?.productionOrder) return null;
+    return buildZeloMenuOrderTimeline(
+      payload.productionOrder.status,
+      payload.session.fulfillment.type,
+    );
+  }, [payload?.productionOrder?.status, payload?.productionOrder?.id, payload?.session.fulfillment.type]);
+
   const enqueueAutosave = useCallback((nextPayload: ZeloMenuUpdateCartPayload): Promise<void> => {
     const version = ++saveVersionRef.current;
     setSaveStatus('saving');
@@ -477,6 +488,62 @@ export default function ZeloMenuCartPage() {
     revalidationToastShownRef.current = revalidationIssueSignature;
     toast.error(buildRevalidationToastMessage(revalidationIssues));
   }, [revalidationIssueSignature, revalidationIssues, toast]);
+
+  // ── Live order-tracking polling ──────────────────────────────────────────
+  // Polls GET /public-api/zelomenu/cart/:token while the order is live.
+  // Pauses when the tab is hidden, stops entirely on terminal states.
+  useEffect(() => {
+    if (!isConfirmed) return;
+
+    let mounted = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const stopPolling = () => {
+      if (timer) { clearInterval(timer); timer = null; }
+    };
+
+    const poll = async () => {
+      try {
+        const next = await getPublicCart(token);
+        if (!mounted) return;
+        setPayload(next);
+        setDraft(buildDraftFromPayload(next));
+        // Stop polling when the order reaches a terminal (delivered/cancelled)
+        if (next.productionOrder) {
+          const info = buildZeloMenuOrderTimeline(
+            next.productionOrder.status,
+            next.session.fulfillment.type,
+          );
+          if (info.isTerminal) stopPolling();
+        }
+      } catch {
+        // background polling errors are silent
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void poll();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    const startPolling = () => {
+      stopPolling();
+      timer = setInterval(poll, 8000);
+    };
+
+    startPolling();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      mounted = false;
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [isConfirmed, token]);
 
   const confirmCart = async () => {
     if (!draft || !payload || !isOpen || isStale) return;
@@ -718,17 +785,90 @@ export default function ZeloMenuCartPage() {
       <div className="flex h-[100dvh] w-full max-w-[460px] flex-col overflow-hidden bg-[var(--color-surface)] sm:h-[min(780px,92dvh)] sm:rounded-[28px] sm:border sm:border-[var(--color-line)] sm:shadow-[0_30px_70px_-30px_rgba(16,20,24,0.35)]">
         {isConfirmed ? (
           <div className="flex h-full flex-col">
-            <div className="flex flex-1 flex-col items-center justify-center px-7 text-center">
-              <div className="mb-3 flex h-[78px] w-[78px] items-center justify-center rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand)]">
-                <CheckCircle2 className="h-10 w-10" strokeWidth={1.8} />
-              </div>
-              <h2 className="text-[20px] font-semibold tracking-tight">Pedido confirmado!</h2>
-              <p className="mt-1.5 max-w-[280px] text-[13.5px] leading-relaxed text-[var(--color-ink-muted)]">
-                {isWaitingPayment
-                  ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
-                  : 'A loja recebeu seu pedido e vai te chamar no WhatsApp para acertar os detalhes.'}
-              </p>
-              <div className="mt-5 w-full max-w-[300px] rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 text-left">
+            <div className="flex flex-1 flex-col items-center overflow-y-auto px-7 py-6 text-center">
+              {!payload.productionOrder ? (
+                <>
+                  {/* Static "Pedido confirmado!" — order not yet materialized */}
+                  <div className="mb-3 flex h-[78px] w-[78px] items-center justify-center rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand)]">
+                    <CheckCircle2 className="h-10 w-10" strokeWidth={1.8} />
+                  </div>
+                  <h2 className="text-[20px] font-semibold tracking-tight">Pedido confirmado!</h2>
+                  <p className="mt-1.5 max-w-[280px] text-[13.5px] leading-relaxed text-[var(--color-ink-muted)]">
+                    {isWaitingPayment
+                      ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
+                      : 'A loja recebeu seu pedido e vai te chamar no WhatsApp para acertar os detalhes.'}
+                  </p>
+                </>
+              ) : orderTimelineInfo?.isCancelled ? (
+                <>
+                  {/* Terminal cancelled state */}
+                  <div className="mb-3 flex h-[78px] w-[78px] items-center justify-center rounded-full bg-[var(--color-alert-soft)] text-[var(--color-alert)]">
+                    <XCircle className="h-10 w-10" strokeWidth={1.8} />
+                  </div>
+                  <h2 className="text-[20px] font-semibold tracking-tight">Pedido cancelado</h2>
+                  <p className="mt-1.5 max-w-[300px] text-[13.5px] leading-relaxed text-[var(--color-ink-muted)]">
+                    A loja não pôde seguir com esse pedido. Fale com a loja pelo WhatsApp para mais detalhes.
+                  </p>
+                </>
+              ) : (
+                <>
+                  {/* Live order-tracking timeline */}
+                  <h2 className="text-[20px] font-semibold tracking-tight">Acompanhe seu pedido</h2>
+                  {orderTimelineInfo && (
+                    <div className="mt-6 w-full max-w-[240px] text-left">
+                      {orderTimelineInfo.steps.map((step, index) => {
+                        const isCompleted = index < orderTimelineInfo.currentStepIndex;
+                        const isActive = index === orderTimelineInfo.currentStepIndex;
+                        const isLast = index === orderTimelineInfo.steps.length - 1;
+                        return (
+                          <div key={step.key} className="flex items-start gap-3">
+                            <div className="flex flex-col items-center">
+                              <div
+                                className={`flex h-[22px] w-[22px] flex-none items-center justify-center rounded-full border-2 transition-colors ${
+                                  isCompleted
+                                    ? 'border-[var(--color-brand)] bg-[var(--color-brand)]'
+                                    : isActive
+                                      ? 'border-[var(--color-brand)] bg-[var(--color-brand)]'
+                                      : 'border-[var(--color-line-strong)] bg-transparent'
+                                }`}
+                              >
+                                {isCompleted ? (
+                                  <Check className="h-3 w-3 text-white" strokeWidth={3} />
+                                ) : isActive ? (
+                                  <div className="h-[6px] w-[6px] rounded-full bg-white" />
+                                ) : null}
+                              </div>
+                              {!isLast && (
+                                <div
+                                  className={`mt-[3px] h-5 w-px ${
+                                    isCompleted ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line)]'
+                                  }`}
+                                />
+                              )}
+                            </div>
+                            <div className={`flex-1 ${isLast ? 'pb-0' : 'pb-4'}`}>
+                              <span
+                                className={`text-[13px] leading-snug ${
+                                  isActive
+                                    ? 'font-semibold text-[var(--color-ink)]'
+                                    : isCompleted
+                                      ? 'text-[var(--color-ink)]'
+                                      : 'text-[var(--color-ink-muted)]'
+                                }`}
+                              >
+                                {step.label}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Order summary card — shown in all confirmed states */}
+              <div className="mt-6 w-full max-w-[300px] rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 text-left">
                 <div className="flex items-center justify-between">
                   <span className="text-[13px] text-[var(--color-ink-soft)]">{itemCount} {itemCount === 1 ? 'item' : 'itens'}</span>
                   <span className="text-[14px] font-semibold tabular-nums text-[var(--color-ink)]">
@@ -737,6 +877,7 @@ export default function ZeloMenuCartPage() {
                 </div>
                 <p className="mt-1.5 text-[12px] text-[var(--color-ink-muted)]">{summaryMeta}</p>
               </div>
+
               <span className="mt-5 inline-flex items-center gap-2 rounded-full bg-[var(--color-brand-soft)] px-3.5 py-2 text-[12px] font-semibold text-[var(--color-brand-deep)]">
                 <MessageCircle className="h-3.5 w-3.5" strokeWidth={2} />
                 Acompanhe pelo WhatsApp

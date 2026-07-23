@@ -27,6 +27,7 @@ const tests = [
   'tests/routerWebhookGuardrails.test.ts',
   'tests/zelomenuCart.test.ts',
   'tests/zelomenuCheckout.test.ts',
+  'tests/zelomenuOrderStatus.test.ts',
   'tests/zelomenuPublicCheckoutGuardrails.test.ts',
   'tests/zelomenuStoreCartCache.test.ts',
   'tests/zelomenuReviewGuardrails.test.ts',

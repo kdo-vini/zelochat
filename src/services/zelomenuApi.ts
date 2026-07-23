@@ -124,6 +124,12 @@ export type ZeloMenuCartRevalidation = {
   } | null;
 };
 
+export type ZeloMenuProductionOrderStatus = {
+  id: string;
+  status: string;
+  revision: number;
+};
+
 export type ZeloMenuPublicCartResponse = {
   session: ZeloMenuCartSessionPayload;
   business: {
@@ -140,6 +146,7 @@ export type ZeloMenuPublicCartResponse = {
     tokenStatus: 'current' | 'stale';
   };
   revalidation: ZeloMenuCartRevalidation;
+  productionOrder: ZeloMenuProductionOrderStatus | null;
 };
 
 export type ZeloMenuConfirmCartResponse = ZeloMenuPublicCartResponse & {

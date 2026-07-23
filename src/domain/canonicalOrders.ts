@@ -49,6 +49,7 @@ export function canonicalRowToOrder(row: CanonicalOrderRow): Order {
     .map((item) => ({
       product: String(item.name ?? 'Item'),
       quantity: Number(item.quantity ?? 0),
+      ...(item.unit_price != null ? { unitPrice: Number(item.unit_price) } : {}),
     }));
 
   return {

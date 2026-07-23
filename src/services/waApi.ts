@@ -637,6 +637,27 @@ export async function cancelOrderApi(token: string, orderId: string, expectedRev
   await parseResponse(response);
 }
 
+export interface ManualOrderPayload {
+  customerName: string;
+  customerPhone: string;
+  items: Array<{ product: string; quantity: number; unitPrice: number }>;
+  pickupDate: string;
+  pickupTime: string;
+  deliveryAddress?: string;
+  paymentMethod?: string;
+  observations?: string;
+  idempotencyKey?: string;
+}
+
+export async function createManualOrderApi(token: string, payload: ManualOrderPayload): Promise<{ order: import('../types').Order }> {
+  const response = await apiFetch(apiUrl('/api/orders/manual'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<{ order: import('../types').Order }>(response);
+}
+
 // --- Escalation ---
 
 export async function listEscalationEvents(

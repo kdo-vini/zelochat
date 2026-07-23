@@ -3,11 +3,11 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
 // WS_URL removido após P2.5 — websocket secundário deletado, realtime do
 // Supabase cuida das atualizações de zelochat_orders.
-import { cancelOrderApi, updateOrderStatusApi } from '../services/waApi';
+import { cancelOrderApi, createManualOrderApi, updateOrderStatusApi } from '../services/waApi';
 import type { Order } from '../types';
 import { CANONICAL_ORDER_SELECT, canonicalRowToOrder, type CanonicalOrderRow } from '../domain/canonicalOrders';
 
-type NewOrder = Omit<Order, 'id' | 'createdAt'>;
+type NewOrder = Omit<Order, 'id' | 'createdAt'> & { idempotencyKey?: string };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const ORDER_LOOKBACK_DAYS = 14;
@@ -182,16 +182,34 @@ export function useOrders(
 
   const addOrder = useCallback(async (payload: NewOrder): Promise<Order> => {
     if (!session?.user?.id) throw new Error('Faça login para adicionar pedidos.');
+    const token = session.access_token;
+    if (!token) throw new Error('Sessão expirada.');
 
-    // Re-resolve if ref was cleared (e.g. after account switch)
-    if (!empresaIdRef.current) {
-      empresaIdRef.current = await fetchEmpresaId(session.user.id);
-    }
-    const empresaId = empresaIdRef.current;
-    if (!empresaId) throw new Error('Perfil da empresa não encontrado.');
+    const items = payload.items.map((it) => ({
+      product: it.product,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice ?? 0,
+    }));
 
-    throw new Error('Pedidos manuais devem ser iniciados pelo ZeloMenu para manter estoque, total e auditoria consistentes.');
-  }, [session?.user?.id, fetchEmpresaId]);
+    const { order } = await createManualOrderApi(token, {
+      customerName: payload.customerName,
+      customerPhone: payload.customerPhone,
+      items,
+      pickupDate: payload.pickupDate,
+      pickupTime: payload.pickupTime,
+      deliveryAddress: payload.deliveryAddress,
+      paymentMethod: payload.paymentMethod,
+      observations: payload.observations,
+      idempotencyKey: payload.idempotencyKey,
+    });
+
+    // Optimistically add to state; the realtime INSERT handler will deduplicate by id.
+    setOrders((prev) => {
+      if (prev.some((existing) => existing.id === order.id)) return prev;
+      return [order, ...prev];
+    });
+    return order;
+  }, [session?.user?.id, session?.access_token]);
 
   const updateOrderStatus = useCallback(async (id: string, status: Order['status']): Promise<void> => {
     const token = session?.access_token;

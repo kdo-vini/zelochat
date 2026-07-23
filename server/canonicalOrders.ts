@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { CANONICAL_ORDER_SELECT, canonicalRowToOrder, uiStatusToCanonicalAction, type CanonicalOrderRow } from '../src/domain/canonicalOrders.js';
 import type { Order } from '../src/types.js';
 import { getServiceSupabase } from './supabase.js';
@@ -69,4 +70,99 @@ export async function cancelCanonicalOrder(empresaId: string, orderId: string, e
     if (error.message.includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
     throw error;
   }
+}
+
+export interface ManualOrderInput {
+  empresaId: string;
+  customerName: string;
+  customerPhone: string;
+  items: Array<{ product: string; quantity: number; unitPrice: number }>;
+  pickupDate: string;
+  pickupTime: string;
+  deliveryAddress?: string;
+  paymentMethod?: string;
+  observations?: string;
+  idempotencyKey?: string;
+}
+
+/**
+ * Creates a manual order by calling the canonical create_zelo_order RPC.
+ * p_session_id is null (no ZeloMenu cart session) and source is 'manual'.
+ * The RPC re-validates totals and raises PRODUCT_NOT_FOUND / TOTAL_MISMATCH
+ * on mismatch — callers should surface these as user-friendly errors.
+ */
+export async function createManualZeloOrder(input: ManualOrderInput): Promise<Order> {
+  const supabase = getServiceSupabase();
+  // Prefer the caller-supplied key (stable across retries of the same submit
+  // attempt) so a lost response + manual resubmit doesn't create a duplicate
+  // order — create_zelo_order dedupes on (empresa_id, idempotency_key).
+  const idempotencyKey = input.idempotencyKey?.trim() || randomUUID();
+
+  // Compute line totals and subtotal
+  const cartItems = input.items.map((it, idx) => {
+    const lineTotal = Math.round(it.unitPrice * it.quantity * 100) / 100;
+    return {
+      productName: it.product,
+      unitPrice: it.unitPrice,
+      quantity: it.quantity,
+      lineTotal,
+      position: idx,
+    };
+  });
+  const subtotal = Math.round(cartItems.reduce((sum, it) => sum + it.lineTotal, 0) * 100) / 100;
+
+  const fulfillmentType = input.deliveryAddress?.trim() ? 'delivery' : 'pickup';
+
+  const snapshots = {
+    empresaId: input.empresaId,
+    source: 'manual',
+    customer: {
+      name: input.customerName,
+      phone: input.customerPhone,
+    },
+    fulfillment: {
+      type: fulfillmentType,
+      pickupDate: input.pickupDate,
+      pickupTime: input.pickupTime,
+      ...(fulfillmentType === 'delivery' ? {
+        address: input.deliveryAddress!.trim(),
+        neighborhood: '',
+      } : {}),
+    },
+    payment: {
+      declaredMethod: input.paymentMethod || null,
+    },
+    cart: {
+      items: cartItems,
+      observations: input.observations || null,
+    },
+    pricing: {
+      subtotal,
+      deliveryFee: 0,
+      discount: 0,
+    },
+  };
+
+  const { data, error } = await supabase.rpc('create_zelo_order', {
+    p_session_id: null,
+    p_expected_revision: 0,
+    p_idempotency_key: idempotencyKey,
+    p_snapshots: snapshots,
+  });
+
+  if (error) {
+    const msg = error.message ?? '';
+    if (msg.includes('PRODUCT_NOT_FOUND')) throw new Error('Produto não encontrado no cardápio.');
+    if (msg.includes('TOTAL_MISMATCH')) throw new Error('O total não confere com a soma dos itens.');
+    throw error;
+  }
+
+  const result = data as { orderId?: string } | null;
+  const orderId = result?.orderId;
+  if (!orderId) throw new Error('Pedido criado, mas não foi possível identificá-lo.');
+
+  // Re-fetch to return the full Order shape used by the frontend
+  const order = await getCanonicalOrder(input.empresaId, orderId);
+  if (!order) throw new Error('Pedido criado, mas não foi possível carregá-lo.');
+  return order;
 }

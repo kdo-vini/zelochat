@@ -131,7 +131,7 @@ import {
   updatePublicCartSession,
   updateZeloMenuStoreSettings,
 } from './zelomenuCartSessions.js';
-import { cancelCanonicalOrder, getCanonicalOrder, LEGACY_CANONICAL_ORDER_SELECT, transitionCanonicalOrder } from './canonicalOrders.js';
+import { cancelCanonicalOrder, createManualZeloOrder, getCanonicalOrder, LEGACY_CANONICAL_ORDER_SELECT, transitionCanonicalOrder } from './canonicalOrders.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -1933,6 +1933,84 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
     res.json({ ok: true });
   } catch (error) {
     sendDriverError(res, error);
+  }
+});
+
+/**
+ * POST /api/orders/manual
+ * Body: { customerName, customerPhone, items: [{product, quantity, unitPrice}], pickupDate, pickupTime,
+ *         deliveryAddress?, paymentMethod?, observations? }
+ * Creates a manual order via the canonical create_zelo_order RPC (source='manual').
+ */
+router.post('/api/orders/manual', express.json({ limit: '50kb' }), async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const body = req.body as Record<string, unknown>;
+
+    // Validate required fields
+    const customerName = typeof body.customerName === 'string' ? body.customerName.trim() : '';
+    const customerPhone = typeof body.customerPhone === 'string' ? body.customerPhone.trim() : '';
+    const pickupDate = typeof body.pickupDate === 'string' ? body.pickupDate.trim() : '';
+    const pickupTime = typeof body.pickupTime === 'string' ? body.pickupTime.trim() : '';
+
+    if (!customerName) { res.status(400).json({ error: 'Nome do cliente é obrigatório.' }); return; }
+    if (!pickupDate || !pickupTime) { res.status(400).json({ error: 'Data e hora são obrigatórias.' }); return; }
+
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    const items: Array<{ product: string; quantity: number; unitPrice: number }> = [];
+    for (const raw of rawItems) {
+      if (!raw || typeof raw !== 'object') continue;
+      const r = raw as Record<string, unknown>;
+      const product = typeof r.product === 'string' ? r.product.trim() : '';
+      const quantity = Number(r.quantity);
+      const unitPrice = Number(r.unitPrice);
+      if (!product || !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) continue;
+      items.push({ product, quantity, unitPrice: Math.round(unitPrice * 100) / 100 });
+    }
+    if (items.length === 0) {
+      res.status(400).json({ error: 'Adicione ao menos um item com preço.' });
+      return;
+    }
+
+    const deliveryAddress = typeof body.deliveryAddress === 'string' ? body.deliveryAddress.trim() : '';
+    const paymentMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
+    const observations = typeof body.observations === 'string' ? body.observations.trim() : '';
+    // Client-supplied so a retry after a lost response reuses the same key
+    // instead of risking a duplicate order (create_zelo_order dedupes on
+    // (empresa_id, idempotency_key)); createManualZeloOrder falls back to a
+    // fresh one if this is missing/invalid.
+    const idempotencyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim().slice(0, 128) : undefined;
+
+    const order = await createManualZeloOrder({
+      empresaId,
+      customerName,
+      customerPhone,
+      items,
+      pickupDate,
+      pickupTime,
+      deliveryAddress: deliveryAddress || undefined,
+      paymentMethod: paymentMethod || undefined,
+      observations: observations || undefined,
+      idempotencyKey: idempotencyKey || undefined,
+    });
+
+    res.json({ order });
+  } catch (error: any) {
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      sendAuthError(res, error); return;
+    }
+    if (error instanceof Error && error.message === 'EMPRESA_NOT_FOUND') {
+      sendAuthError(res, error); return;
+    }
+    const msg = error instanceof Error ? error.message : 'unknown';
+    if (msg.includes('Produto não encontrado')) {
+      res.status(400).json({ error: msg, code: 'PRODUCT_NOT_FOUND' }); return;
+    }
+    if (msg.includes('total não confere')) {
+      res.status(400).json({ error: msg, code: 'TOTAL_MISMATCH' }); return;
+    }
+    console.error('[Router] POST /api/orders/manual error:', error);
+    res.status(500).json({ error: 'Não foi possível criar o pedido.' });
   }
 });
 

@@ -163,7 +163,7 @@ export interface Order {
   revision?: number;
   customerName: string;
   customerPhone: string;
-  items: { product: string; quantity: number }[];
+  items: { product: string; quantity: number; unitPrice?: number }[];
   pickupDate: string; // YYYY-MM-DD
   pickupTime: string; // HH:MM
   deliveryAddress?: string; // Optional delivery address (presence implies delivery, not pickup)
