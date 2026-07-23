@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-07-23',
+    category: 'hotfix',
+    title: 'Pedidos normais não são mais tratados como reclamação',
+    description: 'O atendimento automático agora reconhece a diferença entre um pedido comum e uma reclamação, encaminhando para a equipe humana apenas quando houver um sinal claro de insatisfação.',
+  },
+  {
     date: '2026-06-24',
     category: 'minor',
     title: 'Fotos mais alinhadas no cardápio',

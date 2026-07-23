@@ -15,7 +15,7 @@ export const BUILTIN_TRIGGERS: TriggerRecord[] = [
     kind: 'escalate_human',
     name: 'Reclamação ou cliente irritado',
     conditionDescription:
-      'O cliente está fazendo uma reclamação clara, demonstrando insatisfação, frustração ou raiva — exemplos: "quero reclamar", "estou insatisfeito", "veio errado", "veio sem recheio", "atendimento péssimo", "demorou demais".',
+      'A mensagem atual do cliente precisa trazer uma reclamação clara, demonstrar insatisfação, frustração ou raiva — exemplos: "quero reclamar", "estou insatisfeito", "veio errado", "veio sem recheio", "atendimento péssimo", "demorou demais". Um pedido normal, saudação ou consulta de status não é reclamação.',
     naturalInput: '[gatilho do sistema] Reclamações e clientes insatisfeitos',
     active: true,
     redirectPhone: null,

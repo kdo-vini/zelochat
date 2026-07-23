@@ -12,7 +12,11 @@
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
 - **Audit:** P0 100% ✅ · P1 94% ✅ · P2 63% · P3 21%
 
-## Entregue nesta sessão (2026-07-22)
+## Entregue nesta sessão (2026-07-23)
+
+- **Pedidos online nos relatorios/caixa** — ao entregar um pedido canonico, o banco agora materializa venda e itens no caixa que cobria o horario da entrega; entregas ZeloMenu antigas sem venda tambem sao recuperadas.
+
+- **Hotfix: pedido normal não dispara “cliente frustrado”** — a escalação automática por reclamação agora exige um sinal claro na mensagem atual do cliente; pedidos do ZeloMenu, saudações e consultas de status não são tratados como frustração. Ver [[FIXES_PROGRESS]].
 
 - **Landing ZeloChat + ZeloMenu** + preço **R$149 / R$198** (fonte única `src/data/pricing.ts`) + PIX no valor novo. Em prod.
 - **Horário de funcionamento por dia + múltiplas janelas** (`horario_semanal`, migração 046): editor no `SettingsView`, IA informativa fora de horário; ZeloMenu (repo separado) lê `horario_semanal` e bloqueia por janela do dia, com shadow legado preservado. Migração aplicada. Em prod.
@@ -23,7 +27,6 @@
 - **Fix: acompanhamentos de produto configurável sumiam do Kanban** — `canonicalRowToOrder` não lia a coluna `zelo_order_items.modifiers`; pedidos com produto tipo "Monte sua Massa" apareciam sem massa/molho/proteína escolhidos no Pedidos/Kanban, mesmo salvos corretamente no banco. Ver [[FIXES_PROGRESS]] Sprint 70.
 
 ## Em aberto
-
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
 - `ai.ts:1778` — bug latente: query usa status `'dispatched'` (inexistente no DB) em vez de `'out_for_delivery'` → pedidos em entrega nunca aparecem no contexto da IA

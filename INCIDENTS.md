@@ -11,6 +11,39 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XIII. Pedido ZeloMenu sem venda nos relatorios
+
+### Sintoma
+O pedido #33BCA323 apareceu no chat, mas nao apareceu nos relatorios nem no caixa.
+
+### Causa-raiz
+A transicao direta para delivered nao passava pelo fechamento financeiro do ZeloPDV, deixando zelo_orders.sale_id nulo.
+
+### Fix
+Trigger compartilhado cria venda e itens de forma idempotente e escolhe o caixa cujo intervalo contem o horario da entrega; a migration tambem recupera entregas antigas — ../zelopdv/.ai/migrations/canonical_order_sales_2026_07_23.sql:1.
+
+### Recovery
+O pedido afetado foi reparado e esta vinculado a venda 13505 no caixa 588; novas entregas passam pelo mesmo boundary automaticamente.
+
+---
+
+## XII. Pedido normal escalado como cliente frustrado
+
+### Sintoma
+Uma mensagem normal de pedido pelo cardápio digital era encaminhada para atendimento humano com o motivo "Reclamação ou cliente irritado".
+
+### Causa-raiz
+O modelo podia escolher o gatilho nativo amplo de reclamação e o backend executava a escalação sem conferir se a mensagem atual do cliente tinha um sinal explícito de insatisfação.
+
+### Fix
+O planejador de ferramentas agora valida os gatilhos nativos contra a última mensagem do cliente; pedidos, saudações e consultas de status não passam pela escalação, enquanto reclamações claras continuam passando — `src/domain/escalationIntent.ts`, `server/ai.ts`, `server/builtinTriggers.ts`.
+
+### Recovery
+1. Após o deploy, testar uma confirmação normal do ZeloMenu e uma reclamação explícita (por exemplo, "veio errado").
+2. A primeira deve continuar no atendimento automático; a segunda deve abrir a escalação humana.
+
+---
+
 ## XI. Pedido confirmado entra na produção mas gerente não é avisado
 
 ### Sintoma

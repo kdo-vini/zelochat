@@ -50,6 +50,10 @@ import {
   type ActiveOrderRow,
 } from '../src/domain/conversationState.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
+import {
+  detectEscalationIntentFromText,
+  isBuiltinEscalationSupportedByMessage,
+} from '../src/domain/escalationIntent.js';
 // ZLM-310: imports de criação de pedido pela IA removidos
 // (buildWhatsAppCartLinkMessage, buildPublicCartUrl, openWhatsAppCartSession) —
 // a IA não monta carrinhos no WhatsApp. O cliente usa o cardápio online.
@@ -277,10 +281,6 @@ const NEGATIVE_INTENTS = new Set<string>([
   'para', 'pare', 'parar',
 ]);
 
-type EscalationIntentFromText =
-  | { category: ReasonCategory; triggerName: string; reasonText: string }
-  | null;
-
 function normalizeIntentText(value: string): string {
   return value
     .toLowerCase()
@@ -288,37 +288,6 @@ function normalizeIntentText(value: string): string {
     .normalize('NFD')
     .replace(/\p{Mn}/gu, '')
     .replace(/[\s\p{P}\p{S}]+$/u, '');
-}
-
-function detectEscalationIntentFromText(value: string): EscalationIntentFromText {
-  const normalized = normalizeIntentText(value);
-  if (!normalized) return null;
-
-  if (/\b(humano|atendente|gerente|pessoa real|alguem de verdade|falar com alguem|chama alguem|chamar alguem)\b/.test(normalized)) {
-    return {
-      category: 'explicit_human_request',
-      triggerName: 'Cliente pediu atendente humano',
-      reasonText: 'Cliente pediu atendimento humano enquanto havia um fluxo automatico em andamento.',
-    };
-  }
-
-  if (/\b(reclam\w*|insatisfeit\w*|pessim\w*|horrivel|veio errado|veio sem|faltou|demorou demais|atrasou)\b/.test(normalized)) {
-    return {
-      category: 'complaint',
-      triggerName: 'Reclamacao durante atendimento automatico',
-      reasonText: 'Cliente trouxe uma reclamacao junto de outra intencao; automacao interrompida por seguranca.',
-    };
-  }
-
-  if (/\b(ofens\w*|xing\w*|palavr\w*|idiot\w*|burro|merda|porra|caralho|raiva|irritad\w*|nervos\w*)\b/.test(normalized)) {
-    return {
-      category: /raiva|irritad|nervos/.test(normalized) ? 'frustration' : 'offensive_language',
-      triggerName: 'Cliente irritado ou ofensivo',
-      reasonText: 'Cliente demonstrou irritacao ou linguagem ofensiva; automacao interrompida por seguranca.',
-    };
-  }
-
-  return null;
 }
 
 // ZLM-310: o cluster de detecção "force criar_pedido após a pergunta de
@@ -2809,8 +2778,25 @@ function buildAssistantToolCallMessage(toolCalls: AiToolCall[]): ChatCompletionM
 export function planToolCallsForTurn(
   rawToolCalls: unknown[] | undefined,
   triggers: TriggerRecord[],
+  latestCustomerMessage = '',
 ): ToolCallPlan | null {
-  const calls = getFunctionToolCalls(rawToolCalls);
+  const calls = getFunctionToolCalls(rawToolCalls).filter((toolCall) => {
+    if (toolCall.function.name !== 'dispatch_trigger') return true;
+
+    const { triggerId, trig } = resolveTriggerFromToolCall(toolCall, triggers);
+    if (
+      !isBuiltinTriggerId(triggerId) ||
+      trig?.kind !== 'escalate_human' ||
+      isBuiltinEscalationSupportedByMessage(triggerId, latestCustomerMessage)
+    ) {
+      return true;
+    }
+
+    // A generic order, greeting, or status message must not be escalated just
+    // because the model selected the broad built-in complaint trigger.
+    console.warn(`[AI] Ignoring unsupported built-in escalation trigger=${triggerId}`);
+    return false;
+  });
   if (calls.length === 0) return null;
 
   const names = calls.map((toolCall) => toolCall.function.name).join(', ');
@@ -3700,7 +3686,15 @@ export async function generateAndSendReply(
     const choice = response.choices[0];
 
     if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
-      const toolPlan = planToolCallsForTurn(choice.message.tool_calls, triggers);
+      const latestCustomerMessage = [...session.messages]
+        .reverse()
+        .find((message) => message.role === 'user');
+      const latestCustomerText = latestCustomerMessage
+        ? (buildContentForModel(latestCustomerMessage) || latestCustomerMessage.preview || '')
+        : '';
+      // FIX 2026-07-23: o modelo podia escalar um pedido normal como reclamação →
+      // gatilhos nativos agora são validados contra a mensagem atual do cliente.
+      const toolPlan = planToolCallsForTurn(choice.message.tool_calls, triggers, latestCustomerText);
       if (!toolPlan) {
         const names = choice.message.tool_calls.map((tc) => tc.type === 'function' ? tc.function.name : 'unknown').join(', ');
         console.warn(`[AI] Model emitted only unsupported tool_calls; falling back to text. Names: ${names}`);

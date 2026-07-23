@@ -71,6 +71,50 @@ await runSuite('AI tool-call planner', [
     },
   },
   {
+    name: 'does not escalate a basic ZeloMenu order as a complaint',
+    run: () => {
+      const normalMenuOrder = [
+        'Olá! Segue meu pedido pelo cardápio digital.',
+        '',
+        'Pedido #D0A32DC9',
+        'Cliente: Ana Beatriz',
+        '',
+        '• 1x Monte sua Massa (Escolha sua massa: Espaguete • Molho: Sugo (Tomate) • Turbine com Proteínas: Bacon, Carne Moída • Finalize com Acompanhamentos: Parmesão, Azeitona, Milho) — R$ 20,00',
+        '',
+        'Total: R$ 28,00',
+        'Entrega • o quanto antes',
+        'Endereço: Avenida Minas Gerais 151, apto 06, Centro',
+      ].join('\n');
+
+      const plan = planToolCallsForTurn([
+        tool('dispatch_trigger', {
+          trigger_id: 'builtin:complaint',
+          reason: 'cliente frustrado',
+        }, 'false-complaint-1'),
+      ], [], normalMenuOrder);
+
+      assertEqual(plan, null, 'a normal menu order is not a complaint escalation');
+
+      const complaintPlan = planToolCallsForTurn([
+        tool('dispatch_trigger', {
+          trigger_id: 'builtin:complaint',
+          reason: 'cliente informou que o pedido veio errado',
+        }, 'real-complaint-1'),
+      ], [], 'Veio errado e faltou o molho no meu pedido.');
+
+      assertEqual(complaintPlan?.calls[0]?.id, 'real-complaint-1', 'a clear complaint still escalates');
+
+      const frustrationPlan = planToolCallsForTurn([
+        tool('dispatch_trigger', {
+          trigger_id: 'builtin:complaint',
+          reason: 'cliente está frustrado',
+        }, 'real-frustration-1'),
+      ], [], 'Estou frustrado com a demora do pedido.');
+
+      assertEqual(frustrationPlan?.calls[0]?.id, 'real-frustration-1', 'a clear frustration still escalates');
+    },
+  },
+  {
     name: 'redirect_contact wins over order creation and notifications',
     run: () => {
       const plan = planToolCallsForTurn([

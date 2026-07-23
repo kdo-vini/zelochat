@@ -348,6 +348,7 @@
 - Escalation handling:
   - Trigger-based and failure-based escalation live in `server/escalation.ts`.
   - Escalated sessions disable `auto_reply`.
+  - Built-in human-escalation triggers are validated against the latest customer message in `src/domain/escalationIntent.ts` / `server/ai.ts`: normal ZeloMenu orders, greetings, and status questions cannot be escalated as complaints by a model false positive; clear complaints, explicit human requests, and offensive language still can.
 - Failed AI responses:
   - Catch path in `server/ai.ts` records AI usage error and escalates after repeated failures.
 - Token/cost controls present:
@@ -389,6 +390,11 @@
 - Confirmed: `dailyContext` entries are injected into the system prompt without `safeForPrompt()` sanitization or length cap (`server/ai.ts:2062-2064`). All other user-controlled fields use `safeForPrompt(value, maxLen)`. Accepted risk: operator controls their own `dailyContext`.
 - Confirmed 2026-06-01 dependency/warnings review: `localtunnel` was removed because `scripts/tunnel.js` already uses cloudflared; `npm audit --audit-level=low` is clean. Direct dependency majors still pending include `express@5`, `vite@8`, `stripe@22`, `pino@10`, and `typescript@6`; see `DEV_SETUP.md`.
 - Confirmed 2026-06-01 build warning: `npm run build` passes but emits Vite chunk warning; largest app chunk is `index-BgmHYe4Y.js` at 569.66 kB / 162.59 kB gzip.
+
+## Confirmed 2026-07-23: canonical sales and cash
+- Delivered canonical orders now materialize an idempotent `vendas` row and `vendas_itens` through the shared Supabase boundary in the sibling ZeloPDV repo (`.ai/migrations/canonical_order_sales_2026_07_23.sql`). The cash register is selected by the delivery timestamp (`data_abertura <= sale_at <= data_fechamento`, or still open), not by the cash register open when a repair runs.
+- If no cash register covers the delivery timestamp, the sale remains financially recorded with `id_caixa = null` so delivery is not blocked and period reports can still include it; it must be surfaced for reconciliation rather than assigned to a later cash register.
+- Historical `legacy_zelochat` deliveries without `closed_at` are not safely backfilled automatically because their cash interval cannot be proven; they need explicit manual reconciliation.
 
 ## Historical Drift Notes
 - Current supported webhook route is `POST /webhook/:instance`; legacy `POST /webhook` now returns `410`.
