@@ -38,6 +38,7 @@ const tests = [
   'tests/zelomenuEntitlements.test.ts',
   'tests/zelomenuSlug.test.ts',
   'tests/canonicalOrders.test.ts',
+  'tests/orderTransitionError.test.ts',
   'tests/productionLayout.test.ts',
   'tests/orderAutoPrint.test.ts',
   'tests/printerService.test.ts',

@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-07-23',
+    category: 'hotfix',
+    title: 'Mover pedidos ficou mais claro',
+    description: 'Quando um pedido não pode avançar, a tela agora explica o motivo — como estoque insuficiente ou atualização concorrente — e orienta o próximo passo.',
+  },
+  {
+    date: '2026-07-23',
     category: 'minor',
     title: 'Bilhete de cozinha mais fácil de ler',
     description: 'Itens personalizados agora mostram o produto e cada grupo de escolhas em linhas separadas, para a equipe identificar massa, molho, proteínas e acompanhamentos de primeira.',

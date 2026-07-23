@@ -880,7 +880,15 @@ export default function AppShell() {
     void updateOrderStatusInSupabase(orderId, newStatus).catch((err) => {
       console.error('[App] updateOrderStatus Supabase failed:', err);
       setState((prev) => ({ ...prev, orders: prevOrders }));
-      toast.error('Não consegui mover o pedido. Voltei pra coluna anterior.');
+      const detail = err instanceof Error ? err.message : '';
+      const isFriendlyStatusError = detail === 'Pedido não encontrado.'
+        || detail.startsWith('O pedido foi alterado em outra tela.')
+        || detail.startsWith('O pedido não pode avançar a partir do estado atual.')
+        || detail.startsWith('A quantidade de um item ultrapassa o estoque atual.')
+        || detail.startsWith('Você não tem permissão para atualizar este pedido.');
+      toast.error(isFriendlyStatusError
+        ? detail + ' O pedido voltou para a coluna anterior.'
+        : 'Não consegui mover o pedido. Voltei pra coluna anterior.');
     });
   }, [state.orders, toast, updateOrderStatusInSupabase]);
 

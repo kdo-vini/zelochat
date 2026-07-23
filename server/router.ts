@@ -138,6 +138,7 @@ const ACCOUNT_DELETION_GRACE_DAYS = 14;
 import { handleCreatePixCharge, handleGetPixStatus, handleAbacatePayWebhook } from './billingPix.js';
 import { cancelPendingReply } from './replyDebouncer.js';
 import type { ChatAttachment } from '../src/types.js';
+import { classifyOrderTransitionError, getOrderTransitionErrorMessage } from '../src/domain/orderTransitionError.js';
 import {
   DEFAULT_AI_GLOBAL_MODE,
   normalizeAiGlobalMode,
@@ -2014,12 +2015,6 @@ router.post('/api/orders/manual', express.json({ limit: '50kb' }), async (req: R
   }
 });
 
-/**
- * PATCH /api/orders/:id/status
- * Body: { status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' }
- * Updates the order status and, for transitions into preparing/ready/out_for_delivery,
- * fires a WhatsApp notification to the customer if the empresa has the toggle on.
- */
 router.delete('/api/orders/:id', async (req: Request, res: Response) => {
   try {
     const { empresaId, userId } = await requireEmpresaAndUserId(req);
@@ -2037,6 +2032,16 @@ router.delete('/api/orders/:id', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * PATCH /api/orders/:id/status
+ * Body: { status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' }
+ * Updates the order status and, for transitions into preparing/ready/out_for_delivery,
+ * fires a WhatsApp notification to the customer if the empresa has the toggle on.
+ *
+ * FIX 2026-07-23: Supabase transition failures are plain objects, not native
+ * Error instances; normalize them here so a blocked order is not reported as
+ * an opaque 500/UNKNOWN_ERROR to every operator.
+ */
 router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
   const ALLOWED: ReadonlyArray<string> = ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
   try {
@@ -2127,11 +2132,13 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
 
     res.json({ ok: true, order: updated });
   } catch (error) {
-    if (error instanceof Error && error.message === 'REVISION_CONFLICT') {
-      res.status(409).json({ error: 'REVISION_CONFLICT', detail: 'O pedido foi alterado em outra tela.' });
-      return;
-    }
-    sendDriverError(res, error);
+    const failure = classifyOrderTransitionError(error);
+    console.error('[orders/status] transição recusada:', {
+      code: failure.code,
+      message: getOrderTransitionErrorMessage(error),
+      error,
+    });
+    res.status(failure.httpStatus).json({ error: failure.userMessage });
   }
 });
 

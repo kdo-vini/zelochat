@@ -30,6 +30,10 @@
 - **Fix: pedido ZeloMenu aguardando aceite e bilhete incompleto** — o pedido `pending_review` agora é impresso assim que chega, inclusive enquanto o operador está no Atendimento; a Produção identifica o estado e oferece **Aceitar pedido** (vai para Pendente) ou **Recusar pedido**. O texto da impressora quebra linhas em vez de cortar o item no caractere 32, preservando massa, molho, proteínas e acompanhamentos do grupo. `src/AppShell.tsx`, `src/hooks/useOrders.ts`, `src/components/views/ProductionView.tsx`, `src/services/printerService.ts`.
 
 - **Produção responsiva** — fila de pedidos e colunas do Kanban agora se adaptam ao espaço disponível e podem ser redimensionadas individualmente; a preferência fica salva no navegador.
+- **Aceite automático de pedidos do ZeloMenu** — nova página separada de Configurações no Admin do ZeloMenu salva por loja o toggle “Aceitar pedidos automaticamente?”. “Não” mantém a revisão manual; “Sim” aceita pedidos públicos após validação. O bloqueio de Pix só existe quando a conferência de comprovante do ZeloChat está ativa; depois da aprovação, a IA também executa o aceite transacional e escala se houver conflito.
+
+- **Bilhete Tier S** — pedidos com grupos do ZeloMenu preservam nome-base e escolhas estruturadas até o impressor; o bilhete agora separa produto, grupo e opções em linhas próprias usando texto puro (`\n`), sem misturar HTML ao pedido. `src/types.ts`, `src/domain/canonicalOrders.ts`, `src/services/printerService.ts`.
+- **Hotfix: transição de pedido não pode mais virar erro desconhecido** — falhas reais ao mover um pedido (revisão desatualizada, estoque insuficiente ou estado inválido) agora chegam ao operador com orientação clara, em vez de um erro 500/`UNKNOWN_ERROR`. `src/domain/orderTransitionError.ts`, `server/router.ts`, `src/AppShell.tsx`.
 
 ## Em aberto
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.

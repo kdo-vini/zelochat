@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { CANONICAL_ORDER_SELECT, canonicalRowToOrder, uiStatusToCanonicalAction, type CanonicalOrderRow } from '../src/domain/canonicalOrders.js';
+import { getOrderTransitionErrorMessage } from '../src/domain/orderTransitionError.js';
 import type { Order } from '../src/types.js';
 import { getServiceSupabase } from './supabase.js';
 
@@ -38,7 +39,7 @@ export async function transitionCanonicalOrder(input: {
       p_actor_id: input.actorId, p_detail: { source: 'zelochat_kanban' },
     });
     if (acceptError) {
-      if (acceptError.message.includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
+      if (getOrderTransitionErrorMessage(acceptError).includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
       throw acceptError;
     }
     revision += 1;
@@ -51,7 +52,7 @@ export async function transitionCanonicalOrder(input: {
     p_detail: {},
   });
   if (error) {
-    if (error.message.includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
+    if (getOrderTransitionErrorMessage(error).includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
     throw error;
   }
   const order = await getCanonicalOrder(input.empresaId, input.orderId);
@@ -67,7 +68,7 @@ export async function cancelCanonicalOrder(empresaId: string, orderId: string, e
     p_detail: { reason: 'operator_cancel' },
   });
   if (error) {
-    if (error.message.includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
+    if (getOrderTransitionErrorMessage(error).includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
     throw error;
   }
 }

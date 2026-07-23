@@ -11,6 +11,24 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XV. Mover pedido retornava 500/UNKNOWN_ERROR
+
+### Sintoma
+O operador arrastava um pedido no Kanban e ele voltava para a coluna anterior com erro 500; o navegador mostrava apenas `UNKNOWN_ERROR`.
+
+### Causa-raiz
+Erros retornados pela RPC de transição são objetos PostgREST, mas a rota só reconhecia `Error` nativo e descartava a mensagem real.
+
+### Fix
+O normalizador classifica revisão, estoque, permissão e estado inválido; a rota responde com orientação amigável e o toast mostra a causa — `src/domain/orderTransitionError.ts`, `server/router.ts:2040`, `src/AppShell.tsx:880`.
+
+### Recovery
+1. Atualizar a tela e tentar novamente.
+2. Se aparecer estoque insuficiente, corrigir o estoque do item e repetir.
+3. Se aparecer pedido alterado em outra tela, recarregar a lista antes de mover.
+
+---
+
 ## XIV. Pedido ZeloMenu aguardando aceite sem impressao e grupo truncado
 
 ### Sintoma
