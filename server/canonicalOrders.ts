@@ -72,13 +72,20 @@ export async function cancelCanonicalOrder(empresaId: string, orderId: string, e
   }
 }
 
+export type AutoAcceptCanonicalOrderResult = {
+  accepted: boolean;
+  manualReviewRequired: boolean;
+};
+
 /**
  * Completes the second half of ZeloMenu auto-accept for orders that were held
- * for Pix receipt validation. Failing closed is intentional: payment approval
- * must remain successful even if automatic acceptance cannot run.
+ * for Pix receipt validation. The service-role RPC gives the AI the same
+ * transactional authority as the operator; failures are returned explicitly
+ * so the caller cannot tell the customer that the order entered production
+ * when it did not.
  */
-export async function autoAcceptCanonicalOrderIfConfigured(empresaId: string, orderId: string, source?: string): Promise<boolean> {
-  if (source !== 'zelomenu') return false;
+export async function autoAcceptCanonicalOrderIfConfigured(empresaId: string, orderId: string, source?: string): Promise<AutoAcceptCanonicalOrderResult> {
+  if (source !== 'zelomenu') return { accepted: false, manualReviewRequired: false };
   const supabase = getServiceSupabase();
   const { data: profile, error: profileError } = await supabase
     .from('empresa_perfil')
@@ -89,9 +96,9 @@ export async function autoAcceptCanonicalOrderIfConfigured(empresaId: string, or
     // The setting migration may lag behind an app deploy. Keep the safe manual
     // review behavior until the column exists instead of breaking payment ack.
     console.warn('[ZeloChat] auto-accept preference unavailable:', profileError.message);
-    return false;
+    return { accepted: false, manualReviewRequired: true };
   }
-  if (profile?.zelomenu_auto_accept_orders !== true) return false;
+  if (profile?.zelomenu_auto_accept_orders !== true) return { accepted: false, manualReviewRequired: false };
 
   const { data: current, error: currentError } = await supabase
     .from('zelo_orders')
@@ -99,7 +106,9 @@ export async function autoAcceptCanonicalOrderIfConfigured(empresaId: string, or
     .eq('empresa_id', empresaId)
     .eq('id', orderId)
     .maybeSingle();
-  if (currentError || !current || current.status !== 'pending_review') return false;
+  if (currentError || !current) return { accepted: false, manualReviewRequired: true };
+  if (current.status === 'accepted') return { accepted: true, manualReviewRequired: false };
+  if (current.status !== 'pending_review') return { accepted: false, manualReviewRequired: true };
 
   const { error: acceptError } = await supabase.rpc('accept_zelo_order', {
     p_order_id: orderId,
@@ -108,9 +117,9 @@ export async function autoAcceptCanonicalOrderIfConfigured(empresaId: string, or
   });
   if (acceptError) {
     console.error('[ZeloChat] auto-accept after Pix approval failed:', acceptError);
-    return false;
+    return { accepted: false, manualReviewRequired: true };
   }
-  return true;
+  return { accepted: true, manualReviewRequired: false };
 }
 
 export interface ManualOrderInput {

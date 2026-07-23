@@ -3091,10 +3091,24 @@ async function handleReceiptForActiveOrder(
             await sendAndPersistText(jid, pendingAck, empresaId, { responseSource: 'ai_auto' });
             return pendingAck;
           }
-          // The ZeloMenu Admin preference also applies after a Pix receipt is
-          // approved: payment moves the order to review, then this best-effort
-          // step accepts it without changing the payment acknowledgement path.
-          await autoAcceptCanonicalOrderIfConfigured(empresaId, order.id, order.source);
+          // The ZeloMenu preference gives the AI the same transactional
+          // authority as the operator. Never report success if this second
+          // transition needs human intervention.
+          const autoAcceptResult = await autoAcceptCanonicalOrderIfConfigured(empresaId, order.id, order.source);
+          if (autoAcceptResult.manualReviewRequired) {
+            await escalateSession(empresaId, jid, {
+              triggerId: null,
+              triggerKind: 'escalate_human',
+              triggerName: 'Aceite automático do pedido aguardando atendimento',
+              reasonCategory: 'custom',
+              reasonText: `O comprovante do pedido #${shortId} foi validado, mas o pedido não pôde entrar automaticamente na produção. Confira o pedido e aceite manualmente.`,
+              customerMessageExcerpt: 'Pagamento Pix validado, aceite operacional pendente',
+              skipCustomerMessage: true,
+            });
+            const pendingAck = `Recebi seu comprovante do pedido *#${shortId}*. O pagamento foi validado, mas um atendente vai concluir a entrada do pedido na produção. 🙏`;
+            await sendAndPersistText(jid, pendingAck, empresaId, { responseSource: 'ai_auto' });
+            return pendingAck;
+          }
         }
         const ack = `Recebi seu comprovante do pedido *#${shortId}* — beneficiário, valor e data conferem. Obrigado! 🙏\n\nQualquer dúvida, é só chamar.`;
         await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });

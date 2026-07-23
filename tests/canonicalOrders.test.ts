@@ -81,6 +81,7 @@ describe('pedidos canonicos', () => {
 
   it('baixa Pix aprovado no pedido canonico antes do ack final', () => {
     const source = readFileSync(new URL('../server/ai.ts', import.meta.url), 'utf8');
+    const canonicalSource = readFileSync(new URL('../server/canonicalOrders.ts', import.meta.url), 'utf8');
     const approvedBranch = source.slice(source.indexOf('if (result.approved)'), source.indexOf('// Mismatch:'));
     assert.match(approvedBranch, /order\.status === 'pending_payment'/);
     assert.match(approvedBranch, /p_expected_revision:\s*order\.revision/);
@@ -89,5 +90,9 @@ describe('pedidos canonicos', () => {
       approvedBranch.indexOf("p_action: 'payment_approved'") < approvedBranch.indexOf('benefici'),
       'a transicao deve ocorrer antes do reconhecimento final ao cliente',
     );
+    assert.match(approvedBranch, /autoAcceptCanonicalOrderIfConfigured/);
+    assert.match(approvedBranch, /manualReviewRequired/);
+    assert.match(canonicalSource, /rpc\('accept_zelo_order'/);
+    assert.match(canonicalSource, /p_actor_id: null/);
   });
 });
