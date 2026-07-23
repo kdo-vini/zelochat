@@ -87,7 +87,11 @@ export function useOrders(
         .from('zelo_orders')
         .select(ORDER_COLUMNS, { count: 'exact' })
         .eq('empresa_id', empresaId)
-        .or(`status.not.in.(delivered,rejected,cancelled,closed),created_at.gte.${startDate}T00:00:00-03:00`)
+        // Active orders always show, regardless of age. Terminal orders only show
+        // within the lookback window, and only delivered/closed — rejected/cancelled
+        // have no UI status slot (see canonicalStatusToUi) and must never resurface,
+        // or they render as a ghost "Pendente" card that looks impossible to delete.
+        .or(`status.not.in.(delivered,rejected,cancelled,closed),and(status.in.(delivered,closed),created_at.gte.${startDate}T00:00:00-03:00)`)
         .order('created_at', { ascending: false })
         .limit(ORDER_LIST_LIMIT);
 

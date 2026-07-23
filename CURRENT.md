@@ -17,6 +17,7 @@
 - **Landing ZeloChat + ZeloMenu** + preço **R$149 / R$198** (fonte única `src/data/pricing.ts`) + PIX no valor novo. Em prod.
 - **Horário de funcionamento por dia + múltiplas janelas** (`horario_semanal`, migração 046): editor no `SettingsView`, IA informativa fora de horário; ZeloMenu (repo separado) lê `horario_semanal` e bloqueia por janela do dia, com shadow legado preservado. Migração aplicada. Em prod.
 - **Stripe:** prices `chat`/`bundle` (v2, sem assinante) editados in-place no Dashboard pra R$149/R$198 — mesmo `price_id`, sem trocar `STRIPE_PRICE_*` no Dokploy nem redeploy. Price v1 do bundle (Casa dos Salgados, R$147) não foi tocado. PIX e cartão já batem com o preço exibido. Fechado.
+- **Hotfix: "não dá pra excluir pedido do ZeloMenu"** — bug reportado em prod era um ghost card: o backend cancelava certinho (`transition_zelo_order`), mas `useOrders.ts` usava um `.or()` cujo segundo braço (`created_at.gte`) casava qualquer pedido recente *independente do status*, e `canonicalStatusToUi` não tinha case pra `cancelled`/`rejected` (caía em `pending`) — o pedido excluído voltava à tela com badge "Pendente" idêntico a um ativo de verdade. Fix no filtro (`src/hooks/useOrders.ts`) + await ausente corrigido em `ProductionView.tsx`. Ver [[FIXES_PROGRESS]].
 
 ## Em aberto
 

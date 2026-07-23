@@ -438,7 +438,7 @@ function OrderDrawer({
   onClose: () => void;
   setActiveView: (v: View) => void;
   onEdit: () => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
   onUpdateStatus: (id: string, status: Order['status']) => void;
   onReprint?: (order: Order) => Promise<void>;
   canPrint?: boolean;
@@ -665,7 +665,7 @@ function OrderDrawer({
         title="Excluir pedido?"
         message={`Excluir o pedido de ${order.customerName}? Esta ação não pode ser desfeita.`}
         onClose={() => setConfirmDelete(false)}
-        onConfirm={async () => { onDelete(order.id); onClose(); }}
+        onConfirm={async () => { await onDelete(order.id); onClose(); }}
         confirmLabel="Excluir"
         confirmLoadingLabel="Excluindo..."
       />
