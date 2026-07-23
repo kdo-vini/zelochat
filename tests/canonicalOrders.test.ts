@@ -17,6 +17,26 @@ describe('pedidos canonicos', () => {
     assert.deepEqual(order.items, [{ product: 'A', quantity: 2 }, { product: 'B', quantity: 1 }]);
   });
 
+  it('inclui os modificadores selecionados no nome do item (bug: sumiam do Kanban)', () => {
+    const order = canonicalRowToOrder({
+      id: 'order-2', status: 'pending_review', revision: 1,
+      customer: { name: 'Vinicius', phone: '5514999999999' },
+      fulfillment: { pickupDate: '2026-07-23', pickupTime: '19:30' },
+      payment: { declaredMethod: 'pix' }, total: 25, created_at: '2026-07-23T20:00:00Z',
+      zelo_order_items: [{
+        name: 'Monte sua Massa', quantity: 1, position: 0,
+        modifiers: [
+          { groupId: 'g1', groupName: 'Escolha sua massa', kind: 'variacao', selectedOptions: [{ optionId: 'o1', optionName: 'Nhoque', priceDelta: 0 }] },
+          { groupId: 'g2', groupName: 'Turbine com Proteínas', kind: 'adicional', selectedOptions: [
+            { optionId: 'o2', optionName: 'Carne Moída', priceDelta: 0 },
+            { optionId: 'o3', optionName: 'Bacon', priceDelta: 0 },
+          ] },
+        ],
+      }],
+    });
+    assert.equal(order.items[0].product, 'Monte sua Massa (Escolha sua massa: Nhoque • Turbine com Proteínas: Carne Moída, Bacon)');
+  });
+
   it('mapeia o kanban para acoes transacionais', () => {
     assert.deepEqual(
       ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'].map((status) =>

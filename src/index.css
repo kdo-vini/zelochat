@@ -33,6 +33,20 @@
   --shadow-pop: 0 12px 32px -12px rgba(16, 20, 24, 0.18);
 }
 
+.zelomenu-theme {
+  --zm-brand: #6E3AFF;
+  --zm-brand-deep: #5A2EEA;
+  --zm-brand-soft: #E9E2FF;
+  --zm-canvas: #F5F2FF;
+  --zm-surface: #FFFFFF;
+  --zm-surface-muted: #ECEEF3;
+  --zm-ink: #0B1D3A;
+  --zm-ink-soft: #5B6475;
+  --zm-line: #E6E8EF;
+  --zm-line-strong: #d1d5dd;
+  --zm-accent: #C8F000;
+}
+
 :root {
   color-scheme: light;
   font-feature-settings: "ss01", "cv11";
