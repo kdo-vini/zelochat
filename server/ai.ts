@@ -60,6 +60,7 @@ import {
   isOpenAt,
   summarizeWeekly,
   weekdayKeyInTz,
+  type DayKey,
   type WeeklyHours,
 } from '../src/domain/businessHours.js';
 import { LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
@@ -1115,6 +1116,25 @@ function getOperatingWindow(empresaId: string): OperatingWindow | null {
 }
 
 /**
+ * FIX 2026-07-23: `isOpenAt` returns the correct next-open day key, but handing
+ * the model a bare weekday name ("quinta-feira às 11:00") with no anchor for
+ * what day it currently is let it guess wrong — a store closed before its own
+ * lunch window opens (e.g. 08:56 on a Thursday whose window starts 11:00) got
+ * told "reabrimos quinta-feira" and the model hallucinated "amanhã" instead of
+ * recognizing it as later today. `todayFullLabel`/`todayBR` only reach the
+ * prompt via the legacy `closedDays` full-day-off branch, which per-day
+ * multi-window stores don't hit. Resolve hoje/amanhã/weekday deterministically
+ * here instead of leaving the comparison to the model.
+ */
+function buildNextOpenLabel(nextOpen: { day: DayKey; start: string }, now: Date, tz: string): string {
+  const todayKey = weekdayKeyInTz(now, tz);
+  if (nextOpen.day === todayKey) return `ainda hoje às ${nextOpen.start}`;
+  const tomorrowKey = weekdayKeyInTz(new Date(now.getTime() + 86400000), tz);
+  if (nextOpen.day === tomorrowKey) return `amanhã às ${nextOpen.start}`;
+  return `${dayFullLabelBrazil(CLOSED_DAY_LABELS[nextOpen.day])} às ${nextOpen.start}`;
+}
+
+/**
  * Weekly-aware store status for the prompt. Prefers the per-day model
  * (`cfg.weeklyHours` via `isOpenAt`) to decide open-now + next opening, and
  * falls back to the legacy single-window logic when no weekly schedule exists.
@@ -1130,9 +1150,7 @@ function resolveWeeklyStatus(
 
   if (weekly) {
     const status = isOpenAt(weekly, now, tz);
-    const nextOpenLabel = status.nextOpen
-      ? `${dayFullLabelBrazil(CLOSED_DAY_LABELS[status.nextOpen.day])} às ${status.nextOpen.start}`
-      : null;
+    const nextOpenLabel = status.nextOpen ? buildNextOpenLabel(status.nextOpen, now, tz) : null;
     return { open: status.open, hoursLabel: summarizeWeekly(weekly), nextOpenLabel };
   }
 
