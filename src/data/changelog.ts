@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-07-23',
+    category: 'minor',
+    title: 'Bilhete de cozinha mais fácil de ler',
+    description: 'Itens personalizados agora mostram o produto e cada grupo de escolhas em linhas separadas, para a equipe identificar massa, molho, proteínas e acompanhamentos de primeira.',
+  },
+  {
+    date: '2026-07-23',
     category: 'hotfix',
     title: 'Pedidos normais não são mais tratados como reclamação',
     description: 'O atendimento automático agora reconhece a diferença entre um pedido comum e uma reclamação, encaminhando para a equipe humana apenas quando houver um sinal claro de insatisfação.',

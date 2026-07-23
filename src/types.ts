@@ -163,7 +163,7 @@ export interface Order {
   revision?: number;
   customerName: string;
   customerPhone: string;
-  items: { product: string; quantity: number; unitPrice?: number }[];
+  items: OrderItem[];
   pickupDate: string; // YYYY-MM-DD
   pickupTime: string; // HH:MM
   deliveryAddress?: string; // Optional delivery address (presence implies delivery, not pickup)
@@ -176,6 +176,22 @@ export interface Order {
   total: number;
   createdAt: string;
   pixReceiptApproved?: boolean;
+}
+
+export interface OrderItemModifierGroup {
+  groupName: string;
+  optionNames: string[];
+}
+
+export interface OrderItem {
+  /** Existing display value kept for Kanban, chat and legacy callers. */
+  product: string;
+  /** Base product name, present when the item came from ZeloMenu. */
+  productName?: string;
+  /** Structured selections used by semantic renderers such as the printer. */
+  modifierGroups?: OrderItemModifierGroup[];
+  quantity: number;
+  unitPrice?: number;
 }
 
 export interface QuickResponse {

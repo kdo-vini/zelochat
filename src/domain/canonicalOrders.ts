@@ -1,4 +1,4 @@
-import type { Order } from '../types.js';
+import type { Order, OrderItemModifierGroup } from '../types.js';
 import { formatModifierAwareCartItem, type ZeloMenuSelectedModifierGroup } from './zelomenuModifiers.js';
 
 export const CANONICAL_ORDER_SELECT = [
@@ -75,14 +75,23 @@ export function canonicalRowToOrder(row: CanonicalOrderRow): Order {
   const items = rawItems
     .map((raw) => objectValue(raw))
     .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))
-    .map((item) => ({
-      product: formatModifierAwareCartItem({
-        productName: String(item.name ?? 'Item'),
-        selectedModifiers: parseItemModifiers(item.modifiers),
-      }),
-      quantity: Number(item.quantity ?? 0),
-      ...(item.unit_price != null ? { unitPrice: Number(item.unit_price) } : {}),
-    }));
+    .map((item) => {
+      const productName = String(item.name ?? 'Item');
+      const selectedModifiers = parseItemModifiers(item.modifiers);
+      const modifierGroups: OrderItemModifierGroup[] = selectedModifiers.map((group) => ({
+        groupName: group.groupName,
+        optionNames: group.selectedOptions.map((option) => option.optionName),
+      }));
+      return {
+        product: formatModifierAwareCartItem({
+          productName,
+          selectedModifiers,
+        }),
+        ...(selectedModifiers.length > 0 ? { productName, modifierGroups } : {}),
+        quantity: Number(item.quantity ?? 0),
+        ...(item.unit_price != null ? { unitPrice: Number(item.unit_price) } : {}),
+      };
+    });
 
   return {
     id: row.id,

@@ -49,6 +49,28 @@ describe('pedidos canonicos', () => {
     assert.equal((order as unknown as { requiresAcceptance?: boolean }).requiresAcceptance, true);
   });
 
+  it('preserva grupos estruturados para o bilhete separar por linha', () => {
+    const order = canonicalRowToOrder({
+      id: 'order-receipt', status: 'pending_review', revision: 1,
+      customer: { name: 'Vinicius', phone: '5514999999999' },
+      fulfillment: { pickupDate: '2026-07-23', pickupTime: '19:30' },
+      payment: { declaredMethod: 'pix' }, total: 25, created_at: '2026-07-23T20:00:00Z',
+      zelo_order_items: [{
+        name: 'Monte sua Massa', quantity: 1, position: 0,
+        modifiers: [
+          { groupId: 'g1', groupName: 'Escolha sua massa', kind: 'variacao', selectedOptions: [{ optionId: 'o1', optionName: 'Talharim', priceDelta: 0 }] },
+        ],
+      }],
+    });
+
+    assert.deepEqual(order.items[0], {
+      product: 'Monte sua Massa (Escolha sua massa: Talharim)',
+      productName: 'Monte sua Massa',
+      modifierGroups: [{ groupName: 'Escolha sua massa', optionNames: ['Talharim'] }],
+      quantity: 1,
+    });
+  });
+
   it('mapeia o kanban para acoes transacionais', () => {
     assert.deepEqual(
       ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'].map((status) =>

@@ -53,6 +53,21 @@ function wrapText(value: string, width = LINE_WIDTH): string[] {
   return lines;
 }
 
+function wrapIndentedText(value: string, indent = '  '): string[] {
+  return wrapText(value, Math.max(1, LINE_WIDTH - indent.length)).map((lineText) => `${indent}${lineText}`);
+}
+
+function itemReceiptLines(item: Order['items'][number]): string[] {
+  const productName = item.productName || item.product;
+  const lines = wrapText(`${item.quantity}x ${productName}`);
+  for (const group of item.modifierGroups ?? []) {
+    const options = group.optionNames.join(', ');
+    if (!options) continue;
+    lines.push(...wrapIndentedText(`${group.groupName}: ${options}`));
+  }
+  return lines;
+}
+
 function sep(char = '-'): string {
   return char.repeat(LINE_WIDTH);
 }
@@ -88,7 +103,7 @@ export function buildOrderText(order: Order, businessName = 'ZeloChat'): string 
   ];
 
   for (const item of order.items) {
-    rows.push(...wrapText(`${item.quantity}x ${item.product}`));
+    rows.push(...itemReceiptLines(item));
   }
 
   rows.push(
@@ -126,7 +141,7 @@ export function buildDayReportText(dateLabel: string, orders: Order[], businessN
     rows.push(`[${order.pickupTime || '--:--'}] ${order.customerName}`.slice(0, LINE_WIDTH));
     rows.push(`Ped #${shortId} | ${order.status}`.slice(0, LINE_WIDTH));
     for (const item of order.items) {
-      rows.push(...wrapText(`  ${item.quantity}x ${item.product}`));
+      rows.push(...itemReceiptLines(item));
     }
     if (order.deliveryAddress) rows.push('  Entrega');
     rows.push(row('  Total:', fmtMoney(order.total)), sep('-'));
