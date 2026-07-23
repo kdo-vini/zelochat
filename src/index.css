@@ -84,6 +84,69 @@ body {
   background-clip: padding-box;
 }
 
+/* Production layout handles: the queue and every Kanban column can be tuned
+   to the operator's monitor without shrinking cards below a usable width. */
+.production-resize-handle {
+  position: relative;
+  z-index: 20;
+  width: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink-faint);
+  cursor: col-resize;
+  touch-action: none;
+}
+.production-resize-handle::before {
+  position: absolute;
+  inset: 18% 7px;
+  border-radius: 999px;
+  background: var(--color-line);
+  content: '';
+  transition: background 140ms ease, inset 140ms ease;
+}
+.production-resize-handle svg { position: relative; opacity: 0; transition: opacity 140ms ease; }
+.production-resize-handle:hover::before,
+.production-resize-handle:focus-visible::before,
+.production-resize-handle.is-resizing::before {
+  inset: 10% 5px;
+  background: var(--color-brand);
+}
+.production-resize-handle:hover svg,
+.production-resize-handle:focus-visible svg,
+.production-resize-handle.is-resizing svg { opacity: 1; }
+
+.production-column-resize-handle {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: -10px;
+  display: flex;
+  width: 20px;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink-faint);
+  cursor: col-resize;
+  opacity: 0;
+  touch-action: none;
+  transition: opacity 140ms ease, color 140ms ease;
+}
+.production-column:hover .production-column-resize-handle,
+.production-column-resize-handle:hover,
+.production-column-resize-handle:focus-visible,
+.production-column-resize-handle.is-resizing { opacity: 1; }
+.production-column-resize-handle:hover,
+.production-column-resize-handle:focus-visible,
+.production-column-resize-handle.is-resizing { color: var(--color-brand); }
+.production-board-scroll { scrollbar-color: rgba(16, 20, 24, 0.22) transparent; scrollbar-width: thin; }
+
 .wa-pattern {
   background-color: #eae6df;
   background-image:

@@ -22,6 +22,37 @@ function line(value = ''): string {
   return value.slice(0, LINE_WIDTH);
 }
 
+function wrapText(value: string, width = LINE_WIDTH): string[] {
+  const words = String(value || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [''];
+
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    if (word.length > width) {
+      if (current) {
+        lines.push(current);
+        current = '';
+      }
+      for (let offset = 0; offset < word.length; offset += width) {
+        lines.push(word.slice(offset, offset + width));
+      }
+      continue;
+    }
+
+    if (!current) {
+      current = word;
+    } else if (current.length + 1 + word.length <= width) {
+      current += ` ${word}`;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
 function sep(char = '-'): string {
   return char.repeat(LINE_WIDTH);
 }
@@ -57,7 +88,7 @@ export function buildOrderText(order: Order, businessName = 'ZeloChat'): string 
   ];
 
   for (const item of order.items) {
-    rows.push(`${item.quantity}x ${item.product}`.slice(0, LINE_WIDTH));
+    rows.push(...wrapText(`${item.quantity}x ${item.product}`));
   }
 
   rows.push(
@@ -67,13 +98,13 @@ export function buildOrderText(order: Order, businessName = 'ZeloChat'): string 
   );
 
   if (order.deliveryAddress) {
-    rows.push('Entrega:', order.deliveryAddress.slice(0, LINE_WIDTH));
+    rows.push('Entrega:', ...wrapText(order.deliveryAddress));
   } else {
     rows.push(`Retirada: ${order.pickupTime || '-'}`);
   }
 
   if (order.observations) {
-    rows.push(sep(), `Obs: ${order.observations}`.slice(0, LINE_WIDTH));
+    rows.push(sep(), ...wrapText(`Obs: ${order.observations}`));
   }
 
   return `${rows.join('\n')}\n\n\n`;
@@ -95,7 +126,7 @@ export function buildDayReportText(dateLabel: string, orders: Order[], businessN
     rows.push(`[${order.pickupTime || '--:--'}] ${order.customerName}`.slice(0, LINE_WIDTH));
     rows.push(`Ped #${shortId} | ${order.status}`.slice(0, LINE_WIDTH));
     for (const item of order.items) {
-      rows.push(`  ${item.quantity}x ${item.product}`.slice(0, LINE_WIDTH));
+      rows.push(...wrapText(`  ${item.quantity}x ${item.product}`));
     }
     if (order.deliveryAddress) rows.push('  Entrega');
     rows.push(row('  Total:', fmtMoney(order.total)), sep('-'));

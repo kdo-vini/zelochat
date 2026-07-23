@@ -97,6 +97,7 @@ export function canonicalRowToOrder(row: CanonicalOrderRow): Order {
     paymentMethod: String(payment.declaredMethod ?? payment.method ?? '') || undefined,
     observations: typeof row.observations === 'string' ? row.observations : undefined,
     status: canonicalStatusToUi(String(row.status ?? 'pending_review')),
+    requiresAcceptance: String(row.status ?? 'pending_review') === 'pending_review',
     total: Number(row.total ?? 0),
     createdAt: String(row.created_at ?? ''),
     pixReceiptApproved: payment.pixReceiptApproved === true,

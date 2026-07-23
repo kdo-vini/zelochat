@@ -171,6 +171,8 @@ export interface Order {
   paymentMethod?: string; // e.g. "Pix", "Dinheiro", "Cartão"
   observations?: string; // Free-form note from the customer (or operator) — "sem cebola", "ponto bem passado", etc.
   status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered';
+  /** Canonical ZeloMenu order is waiting for the store's accept/reject decision. */
+  requiresAcceptance?: boolean;
   total: number;
   createdAt: string;
   pixReceiptApproved?: boolean;

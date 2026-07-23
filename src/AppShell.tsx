@@ -104,7 +104,8 @@ const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', '
 const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers']);
 const ACTIVE_SESSION_STORAGE_KEY = 'zelochat_active_session_id';
 const BOOT_MARK_PREFIX = 'zelochat:boot';
-const AUTO_PRINT_DEDUPE_WINDOW_MS = 60_000;
+const AUTO_PRINT_DEDUPE_WINDOW_MS = 48 * 60 * 60 * 1000; // 48h — durable across reloads, not just in-tab dedupe
+const PRINTED_ORDER_IDS_KEY = 'zelochat_auto_printed_order_ids_v1';
 
 function readStoredActiveSessionId(): string | null {
   try {
@@ -126,6 +127,26 @@ function writeStoredActiveSessionId(id: string | null): void {
 function markBootStep(name: string): void {
   if (typeof performance === 'undefined' || typeof performance.mark !== 'function') return;
   performance.mark(`${BOOT_MARK_PREFIX}:${name}`);
+}
+
+function loadPrintedOrderIds(): Map<string, number> {
+  try {
+    const raw = localStorage.getItem(PRINTED_ORDER_IDS_KEY);
+    if (!raw) return new Map();
+    return new Map(Object.entries(JSON.parse(raw) as Record<string, number>));
+  } catch {
+    return new Map();
+  }
+}
+
+function savePrintedOrderIds(map: Map<string, number>): void {
+  try {
+    const obj: Record<string, number> = {};
+    map.forEach((value, key) => { obj[key] = value; });
+    localStorage.setItem(PRINTED_ORDER_IDS_KEY, JSON.stringify(obj));
+  } catch {
+    // localStorage can throw in private browsing / quota-exceeded — best-effort only.
+  }
 }
 
 /* ─── NavButton component ─────────────────────────────────────── */
@@ -245,12 +266,9 @@ export default function AppShell() {
     deferredDataReady ||
     activeView === 'ai-configs'
   );
-  const shouldLoadOrders = !!session && !isGeneralMode && (
-    activeView === 'dashboard' ||
-    activeView === 'kanban' ||
-    activeView === 'calendar' ||
-    activeView === 'drivers'
-  );
+  // The order subscription must stay active in Atendimento too. A ZeloMenu
+  // order can arrive there and needs to be printed before the store accepts it.
+  const shouldLoadOrders = !!session && !isGeneralMode;
   const shouldLoadDrivers = !!token && !isGeneralMode && (
     activeView === 'drivers' ||
     activeView === 'settings' ||
@@ -337,7 +355,12 @@ export default function AppShell() {
     deleteTrigger: deleteTriggerRequest,
   } = useTriggers(token, { enabled: shouldLoadTriggers });
   const printer = usePrinter();
-  const autoPrintedOrdersRef = useRef(new Map<string, number>());
+  // Lazy ref init — loadPrintedOrderIds() must run once, not on every render
+  // (useRef(loadPrintedOrderIds()) would re-read+parse localStorage every render).
+  const autoPrintedOrdersRef = useRef<Map<string, number> | null>(null);
+  if (autoPrintedOrdersRef.current === null) {
+    autoPrintedOrdersRef.current = loadPrintedOrderIds();
+  }
   const autoPrintOrder = useCallback((order: Order) => {
     // ZLM-106 — only auto-print "se configurado": when the Zelo Impressão
     // integration is actually active. Without this gate, every accepted order
@@ -345,18 +368,23 @@ export default function AppShell() {
     // would fire a failed print + error toast on machines that never set up a
     // printer. Manual reprint stays available regardless via reprintOrder().
     if (!printer.connected) return;
+    const printedIds = autoPrintedOrdersRef.current ?? new Map<string, number>();
+    autoPrintedOrdersRef.current = printedIds;
 
     const now = Date.now();
-    for (const [orderId, ts] of autoPrintedOrdersRef.current) {
-      if (now - ts > AUTO_PRINT_DEDUPE_WINDOW_MS) autoPrintedOrdersRef.current.delete(orderId);
+    for (const [orderId, ts] of printedIds) {
+      if (now - ts > AUTO_PRINT_DEDUPE_WINDOW_MS) printedIds.delete(orderId);
     }
+    savePrintedOrderIds(printedIds);
 
-    const previousTs = autoPrintedOrdersRef.current.get(order.id);
+    const previousTs = printedIds.get(order.id);
     if (previousTs && now - previousTs < AUTO_PRINT_DEDUPE_WINDOW_MS) return;
-    autoPrintedOrdersRef.current.set(order.id, now);
+    printedIds.set(order.id, now);
+    savePrintedOrderIds(printedIds);
 
     printer.print(order, state.businessInfo.name || 'ZeloChat').catch((err) => {
-      autoPrintedOrdersRef.current.delete(order.id);
+      printedIds.delete(order.id);
+      savePrintedOrderIds(printedIds);
       console.error('[printer] auto-print falhou para pedido', order.id, err);
       toast.error('Não consegui imprimir o pedido automaticamente. Verifique a impressora.');
     });
@@ -606,7 +634,7 @@ export default function AppShell() {
         prev.orders.length === supabaseOrders.length &&
         prev.orders.every((o, i) => {
           const n = supabaseOrders[i];
-          return n && o.id === n.id && o.status === n.status;
+          return n && o.id === n.id && o.status === n.status && o.requiresAcceptance === n.requiresAcceptance;
         });
       return same ? prev : { ...prev, orders: supabaseOrders };
     });
@@ -839,7 +867,15 @@ export default function AppShell() {
     const prevOrders = state.orders;
     setState((prev) => ({
       ...prev,
-      orders: prev.orders.map((o) => o.id === orderId ? { ...o, status: newStatus } : o),
+      orders: prev.orders.map((o) => o.id === orderId
+        ? {
+            ...o,
+            status: newStatus,
+            ...((o.requiresAcceptance && (newStatus === 'pending' || newStatus === 'preparing'))
+              ? { requiresAcceptance: false }
+              : {}),
+          }
+        : o),
     }));
     void updateOrderStatusInSupabase(orderId, newStatus).catch((err) => {
       console.error('[App] updateOrderStatus Supabase failed:', err);

@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ConfirmModal } from '../ConfirmModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import {
   X, Phone, MapPin, Clock, Plus, Package, ChevronRight,
-  User, ShoppingBag, Pencil, Trash2, CreditCard, Truck, Store, Calendar, StickyNote, Printer,
+  User, ShoppingBag, Pencil, Trash2, CreditCard, Truck, Store, Calendar, StickyNote, Printer, GripVertical,
 } from 'lucide-react';
 import { ZeloState, Order } from '../../types';
 import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
@@ -18,6 +18,24 @@ type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'setti
 type ProductionState = Pick<ZeloState, 'orders'>;
 
 const COLUMNS: Order['status'][] = ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
+
+const PRODUCTION_LAYOUT_STORAGE_KEY = 'zelochat.production-layout.v1';
+const DEFAULT_FEED_WIDTH = 280;
+const MIN_FEED_WIDTH = 220;
+const MAX_FEED_WIDTH = 420;
+const DEFAULT_COLUMN_WIDTH = 240;
+const MIN_COLUMN_WIDTH = 152;
+const MAX_COLUMN_WIDTH = 380;
+
+type ColumnWidthOverrides = Partial<Record<Order['status'], number>>;
+type ResizeSession = {
+  kind: 'feed' | 'column';
+  column?: Order['status'];
+  startX: number;
+  startWidth: number;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const COLUMN_STYLE: Record<Order['status'], { header: string; dot: string; border: string }> = {
   pending:          { header: 'text-[var(--color-warn)]',       dot: 'bg-[var(--color-warn)]',       border: 'border-[var(--color-warn)]/20' },
@@ -509,7 +527,7 @@ function OrderDrawer({
           <div className="flex items-center gap-2 flex-wrap">
             <div className={`inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full ${COLUMN_STYLE[order.status].header} bg-[var(--color-surface-muted)]`}>
               <span className={`w-1.5 h-1.5 rounded-full ${COLUMN_STYLE[order.status].dot}`} />
-              {STATUS_LABELS[order.status]}
+              {order.requiresAcceptance ? 'Aguardando aceite' : STATUS_LABELS[order.status]}
             </div>
             {order.deliveryAddress ? (
               <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
@@ -601,7 +619,23 @@ function OrderDrawer({
             </span>
           </section>
 
-          {order.status === 'pending' && (
+          {order.requiresAcceptance && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => onUpdateStatus(order.id, 'pending')}
+                className="flex-1 bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+              >
+                Aceitar pedido
+              </button>
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="flex-1 bg-red-50 text-red-600 py-2.5 rounded-lg text-[13.5px] font-semibold hover:bg-red-100 transition-colors"
+              >
+                Recusar pedido
+              </button>
+            </div>
+          )}
+          {order.status === 'pending' && !order.requiresAcceptance && (
             <button
               onClick={() => onUpdateStatus(order.id, 'preparing')}
               className="w-full bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
@@ -688,7 +722,7 @@ function OrderDrawer({
               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-[13.5px] font-semibold bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
-              Excluir
+              {order.requiresAcceptance ? 'Recusar pedido' : 'Excluir'}
             </button>
           </div>
           <button
@@ -702,12 +736,14 @@ function OrderDrawer({
 
       <ConfirmModal
         open={confirmDelete}
-        title="Excluir pedido?"
-        message={`Excluir o pedido de ${order.customerName}? Esta ação não pode ser desfeita.`}
+        title={order.requiresAcceptance ? 'Recusar pedido?' : 'Excluir pedido?'}
+        message={order.requiresAcceptance
+          ? `Recusar o pedido de ${order.customerName}? O pedido não seguirá para preparo.`
+          : `Excluir o pedido de ${order.customerName}? Esta ação não pode ser desfeita.`}
         onClose={() => setConfirmDelete(false)}
         onConfirm={async () => { await onDelete(order.id); onClose(); }}
-        confirmLabel="Excluir"
-        confirmLoadingLabel="Excluindo..."
+        confirmLabel={order.requiresAcceptance ? 'Recusar pedido' : 'Excluir'}
+        confirmLoadingLabel={order.requiresAcceptance ? 'Recusando...' : 'Excluindo...'}
       />
     </>
   );
@@ -776,7 +812,7 @@ function FeedCard({
       <div className="flex items-center justify-between">
         <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${style.header} bg-[var(--color-surface-muted)]`}>
           <span className={`w-1 h-1 rounded-full ${style.dot}`} />
-          {STATUS_LABELS[order.status]}
+          {order.requiresAcceptance ? 'Aguardando aceite' : STATUS_LABELS[order.status]}
         </span>
         <span className="text-[11px] text-[var(--color-ink-faint)]">
           {scheduled ? pickupBadge : timeAgo(order.createdAt)}
@@ -818,6 +854,125 @@ export const ProductionView = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [feedFilter, setFeedFilter] = useState<Order['status'] | 'all'>('all');
+  const [feedWidth, setFeedWidth] = useState(DEFAULT_FEED_WIDTH);
+  const [columnWidths, setColumnWidths] = useState<ColumnWidthOverrides>({});
+  const [layoutHydrated, setLayoutHydrated] = useState(false);
+  const [resizing, setResizing] = useState<'feed' | Order['status'] | null>(null);
+  const resizeSessionRef = useRef<ResizeSession | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(PRODUCTION_LAYOUT_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as {
+          feedWidth?: unknown;
+          columnWidths?: Record<string, unknown>;
+        };
+        if (typeof parsed.feedWidth === 'number') {
+          setFeedWidth(clamp(parsed.feedWidth, MIN_FEED_WIDTH, MAX_FEED_WIDTH));
+        }
+        if (parsed.columnWidths && typeof parsed.columnWidths === 'object') {
+          const validOverrides = Object.fromEntries(
+            COLUMNS
+              .filter((column) => typeof parsed.columnWidths?.[column] === 'number')
+              .map((column) => [column, clamp(Number(parsed.columnWidths?.[column]), MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)]),
+          ) as ColumnWidthOverrides;
+          setColumnWidths(validOverrides);
+        }
+      }
+    } catch {
+      // Layout preferences are optional; a malformed local value must not block Production.
+    } finally {
+      setLayoutHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!layoutHydrated) return;
+    try {
+      window.localStorage.setItem(PRODUCTION_LAYOUT_STORAGE_KEY, JSON.stringify({ feedWidth, columnWidths }));
+    } catch {
+      // Private browsing/storage limits should not affect the Kanban.
+    }
+  }, [columnWidths, feedWidth, layoutHydrated]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const session = resizeSessionRef.current;
+      if (!session) return;
+      const nextWidth = session.startWidth + event.clientX - session.startX;
+      if (session.kind === 'feed') {
+        setFeedWidth(clamp(nextWidth, MIN_FEED_WIDTH, MAX_FEED_WIDTH));
+        return;
+      }
+      if (session.column) {
+        setColumnWidths((current) => ({
+          ...current,
+          [session.column as Order['status']]: clamp(nextWidth, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH),
+        }));
+      }
+    };
+
+    const stopResizing = () => {
+      resizeSessionRef.current = null;
+      setResizing(null);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResizing);
+    window.addEventListener('pointercancel', stopResizing);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResizing);
+      window.removeEventListener('pointercancel', stopResizing);
+    };
+  }, []);
+
+  const startResize = (
+    event: React.PointerEvent<HTMLButtonElement>,
+    kind: 'feed' | 'column',
+    column?: Order['status'],
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const elementWidth = event.currentTarget.parentElement?.getBoundingClientRect().width;
+    resizeSessionRef.current = {
+      kind,
+      column,
+      startX: event.clientX,
+      startWidth: kind === 'feed' ? feedWidth : (elementWidth || columnWidths[column as Order['status']] || DEFAULT_COLUMN_WIDTH),
+    };
+    setResizing(kind === 'feed' ? 'feed' : (column ?? null));
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleResizeKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    kind: 'feed' | 'column',
+    column?: Order['status'],
+  ) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const delta = event.key === 'ArrowRight' ? 16 : -16;
+    if (kind === 'feed') {
+      setFeedWidth((current) => clamp(current + delta, MIN_FEED_WIDTH, MAX_FEED_WIDTH));
+      return;
+    }
+    if (column) {
+      setColumnWidths((current) => ({
+        ...current,
+        [column]: clamp((current[column] ?? DEFAULT_COLUMN_WIDTH) + delta, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH),
+      }));
+    }
+  };
+
+  const resetLayout = () => {
+    setFeedWidth(DEFAULT_FEED_WIDTH);
+    setColumnWidths({});
+  };
 
   const feedOrders = feedFilter === 'all'
     ? state.orders
@@ -868,7 +1023,10 @@ export const ProductionView = ({
       <div className="flex-1 min-h-0 flex overflow-hidden">
 
         {/* ── Left sidebar: order feed ──────────────────────────── */}
-        <aside className="w-full md:w-[280px] md:flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
+        <aside
+          className="production-feed w-full md:w-[var(--production-feed-width)] md:flex-shrink-0 flex flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]"
+          style={{ '--production-feed-width': `${feedWidth}px` } as React.CSSProperties}
+        >
           {/* Feed header + filter chips */}
           <div className="px-3 py-3 border-b border-[var(--color-line)] space-y-2 flex-shrink-0">
             <div className="flex items-center gap-1.5">
@@ -971,23 +1129,44 @@ export const ProductionView = ({
           </div>
         </aside>
 
+        <button
+          type="button"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Redimensionar fila de pedidos"
+          aria-valuemin={MIN_FEED_WIDTH}
+          aria-valuemax={MAX_FEED_WIDTH}
+          aria-valuenow={Math.round(feedWidth)}
+          title="Arraste para redimensionar a fila. Duplo clique restaura."
+          onPointerDown={(event) => startResize(event, 'feed')}
+          onKeyDown={(event) => handleResizeKeyDown(event, 'feed')}
+          onDoubleClick={resetLayout}
+          className={`production-resize-handle hidden md:flex ${resizing === 'feed' ? 'is-resizing' : ''}`}
+        >
+          <GripVertical className="h-4 w-4" strokeWidth={1.8} />
+        </button>
+
         {/* ── Right: Kanban board (desktop only) ─────────────────── */}
-        <div className="hidden md:block flex-1 min-w-0 overflow-hidden relative">
-          <div className="h-full flex gap-3 overflow-x-auto p-4 custom-scrollbar">
+        <div className="production-board hidden md:block flex-1 min-w-0 overflow-hidden relative">
+          <div className="production-board-scroll h-full min-w-0 flex gap-3 overflow-x-auto p-4 custom-scrollbar">
             {COLUMNS.map((col) => {
               const colOrders = state.orders.filter((o) => o.status === col);
               const style = COLUMN_STYLE[col];
+              const customColumnWidth = columnWidths[col];
               return (
                 <Droppable key={col} droppableId={col}>
                   {(provided, snapshot) => (
                     <div
                       {...provided.droppableProps}
                       ref={provided.innerRef}
-                      className={`w-[260px] flex-shrink-0 flex flex-col rounded-xl border transition-colors ${
+                      className={`production-column group relative flex min-h-0 flex-col rounded-xl border transition-colors ${
+                        customColumnWidth ? 'flex-shrink-0' : 'min-w-[152px] flex-1'
+                      } ${
                         snapshot.isDraggingOver
                           ? 'bg-[var(--color-brand-soft)] border-[var(--color-brand)]/30'
                           : `bg-[var(--color-surface-muted)] ${style.border}`
                       }`}
+                      style={customColumnWidth ? { width: `${customColumnWidth}px` } : undefined}
                     >
                       <div className="px-3.5 py-2.5 flex items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-surface)] rounded-t-xl">
                         <div className="flex items-center gap-2">
@@ -1069,6 +1248,26 @@ export const ProductionView = ({
                           </div>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={`Redimensionar coluna ${STATUS_LABELS[col]}`}
+                        aria-valuemin={MIN_COLUMN_WIDTH}
+                        aria-valuemax={MAX_COLUMN_WIDTH}
+                        aria-valuenow={Math.round(customColumnWidth || DEFAULT_COLUMN_WIDTH)}
+                        title="Arraste para redimensionar. Duplo clique usa o tamanho automático."
+                        onPointerDown={(event) => startResize(event, 'column', col)}
+                        onKeyDown={(event) => handleResizeKeyDown(event, 'column', col)}
+                        onDoubleClick={() => setColumnWidths((current) => {
+                          const next = { ...current };
+                          delete next[col];
+                          return next;
+                        })}
+                        className={`production-column-resize-handle ${resizing === col ? 'is-resizing' : ''}`}
+                      >
+                        <GripVertical className="h-4 w-4" strokeWidth={1.8} />
+                      </button>
                     </div>
                   )}
                 </Droppable>

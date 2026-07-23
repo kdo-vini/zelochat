@@ -6,6 +6,7 @@ import { supabase } from '../services/supabaseClient';
 import { cancelOrderApi, createManualOrderApi, updateOrderStatusApi } from '../services/waApi';
 import type { Order } from '../types';
 import { CANONICAL_ORDER_SELECT, canonicalRowToOrder, type CanonicalOrderRow } from '../domain/canonicalOrders';
+import { selectOrdersToAutoPrint } from '../domain/orderAutoPrint';
 
 type NewOrder = Omit<Order, 'id' | 'createdAt'> & { idempotencyKey?: string };
 
@@ -45,6 +46,14 @@ export function useOrders(
   const onNewOrderRef = useRef(onNewOrder);
   useEffect(() => { onNewOrderRef.current = onNewOrder; }, [onNewOrder]);
 
+  // Reconciliation safety net refs
+  const ordersRef = useRef<Order[]>([]);
+  const hasBaselineRef = useRef(false);
+  const isRefreshingRef = useRef(false);
+
+  // Keep ordersRef in sync with the latest committed orders state
+  useEffect(() => { ordersRef.current = orders; }, [orders]);
+
   const fetchEmpresaId = useCallback(async (userId: string): Promise<string | null> => {
     const { data } = await supabase
       .from('empresa_perfil')
@@ -67,6 +76,9 @@ export function useOrders(
       setOrders([]);
       return;
     }
+
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
 
     setLoading(true);
     setError(null);
@@ -99,11 +111,30 @@ export function useOrders(
       if ((count ?? 0) > ORDER_LIST_LIMIT) {
         console.warn(`[orders] lista operacional limitada a ${ORDER_LIST_LIMIT}/${count} pedidos; histórico precisa de paginação.`);
       }
-      setOrders(((data ?? []) as unknown as Record<string, unknown>[]).map(rowToOrder));
+
+      const mapped = ((data ?? []) as unknown as Record<string, unknown>[]).map(rowToOrder);
+
+      // Reconciliation safety net — on non-baseline calls, diff against the
+      // previously-known orders and auto-print anything new that wasn't caught
+      // by the realtime INSERT event (which has no delivery guarantee).
+      if (hasBaselineRef.current) {
+        const newOrders = selectOrdersToAutoPrint(ordersRef.current, mapped, {
+          maxAgeMs: 15 * 60 * 1000,
+          now: Date.now(),
+        });
+        for (const order of newOrders) {
+          onNewOrderRef.current?.(order);
+        }
+      } else {
+        hasBaselineRef.current = true;
+      }
+
+      setOrders(mapped);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível carregar os pedidos.');
     } finally {
       setLoading(false);
+      isRefreshingRef.current = false;
     }
   }, [session?.user?.id, fetchEmpresaId]);
 
@@ -114,6 +145,7 @@ export function useOrders(
     // Clear cached empresaId whenever the logged-in user changes
     if (userId !== lastUserIdRef.current) {
       empresaIdRef.current = null;
+      hasBaselineRef.current = false;
       lastUserIdRef.current = userId;
     }
 
@@ -180,6 +212,25 @@ export function useOrders(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id, enabled]);
 
+  // Polling safety net — refresh every 30s regardless of Realtime state to
+  // catch any INSERT events that Supabase Realtime missed (no delivery guarantee).
+  useEffect(() => {
+    if (!enabled || !session?.user?.id) return;
+    const id = setInterval(() => { void refresh(); }, 30_000);
+    return () => clearInterval(id);
+  }, [enabled, session?.user?.id, refresh]);
+
+  // Tab visibility — catch the "laptop woke from sleep / tab backgrounded" case
+  // fast, so a missed Realtime event during sleep triggers an immediate reconciliation.
+  useEffect(() => {
+    if (!enabled || !session?.user?.id) return;
+    const handler = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, [enabled, session?.user?.id, refresh]);
+
   const addOrder = useCallback(async (payload: NewOrder): Promise<Order> => {
     if (!session?.user?.id) throw new Error('Faça login para adicionar pedidos.');
     const token = session.access_token;
@@ -217,7 +268,9 @@ export function useOrders(
     const current = orders.find((order) => order.id === id);
     if (!current) throw new Error('Pedido nÃ£o encontrado.');
     await updateOrderStatusApi(token, id, status, current.revision ?? 0);
-    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
+    const accepted = current.requiresAcceptance === true && (status === 'pending' || status === 'preparing');
+    const updatedOrder = { ...current, status, ...(accepted ? { requiresAcceptance: false } : {}) };
+    setOrders((prev) => prev.map((o) => (o.id === id ? updatedOrder : o)));
   }, [session?.access_token, orders]);
 
   const deleteOrder = useCallback(async (id: string): Promise<void> => {

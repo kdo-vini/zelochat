@@ -37,6 +37,18 @@ describe('pedidos canonicos', () => {
     assert.equal(order.items[0].product, 'Monte sua Massa (Escolha sua massa: Nhoque • Turbine com Proteínas: Carne Moída, Bacon)');
   });
 
+  it('mantém visível que um pedido do ZeloMenu ainda aguarda aceite', () => {
+    const order = canonicalRowToOrder({
+      id: 'order-review', status: 'pending_review', revision: 1,
+      customer: { name: 'Vinicius', phone: '5514999999999' },
+      fulfillment: { pickupDate: '2026-07-23', pickupTime: '19:30' },
+      payment: { declaredMethod: 'pix' }, total: 25, created_at: '2026-07-23T20:00:00Z',
+      zelo_order_items: [{ name: 'Monte sua Massa', quantity: 1, position: 0 }],
+    });
+
+    assert.equal((order as unknown as { requiresAcceptance?: boolean }).requiresAcceptance, true);
+  });
+
   it('mapeia o kanban para acoes transacionais', () => {
     assert.deepEqual(
       ['pending', 'preparing', 'ready', 'out_for_delivery', 'delivered'].map((status) =>

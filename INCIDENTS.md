@@ -11,6 +11,25 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XIV. Pedido ZeloMenu aguardando aceite sem impressao e grupo truncado
+
+### Sintoma
+Pedido publico do ZeloMenu chegava sem imprimir enquanto aguardava a decisao da loja; quando impresso, o bilhete mostrava apenas o inicio do produto configuravel.
+
+### Causa-raiz
+O listener de pedidos nao ficava ativo durante o Atendimento e o formatador da impressora cortava cada item em 32 caracteres; `pending_review` tambem nao tinha uma representacao de aceite na interface.
+
+### Fix
+O listener agora fica ativo durante todo o uso do restaurante, `pending_review` imprime na chegada e aparece com acoes explicitas de aceitar/recusar; o bilhete passa a quebrar linhas e preservar os modificadores — `src/AppShell.tsx:271`, `src/hooks/useOrders.ts:192`, `src/components/views/ProductionView.tsx:622`, `src/services/printerService.ts:25`.
+
+### Recovery
+1. Confirmar que o Zelo Impressao esta conectado.
+2. Criar um pedido publico com massa, molho, proteina e acompanhamentos.
+3. Verificar que o bilhete sai antes do aceite e contem todas as escolhas.
+4. Aceitar o pedido e confirmar que ele vai para Pendente sem imprimir um segundo bilhete.
+
+---
+
 ## XIII. Pedido ZeloMenu sem venda nos relatorios
 
 ### Sintoma
