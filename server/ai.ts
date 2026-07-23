@@ -67,7 +67,7 @@ import {
   type DayKey,
   type WeeklyHours,
 } from '../src/domain/businessHours.js';
-import { LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
+import { autoAcceptCanonicalOrderIfConfigured, LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -2986,6 +2986,7 @@ async function findActiveOrderForCustomerPhone(
       })
       .map((row: any): ActiveOrderRow => ({
         id: String(row.id),
+        source: typeof row.source === 'string' ? row.source : undefined,
         revision: Number(row.revision),
         status: row.status,
         total: Number(row.total) || 0,
@@ -3090,6 +3091,10 @@ async function handleReceiptForActiveOrder(
             await sendAndPersistText(jid, pendingAck, empresaId, { responseSource: 'ai_auto' });
             return pendingAck;
           }
+          // The ZeloMenu Admin preference also applies after a Pix receipt is
+          // approved: payment moves the order to review, then this best-effort
+          // step accepts it without changing the payment acknowledgement path.
+          await autoAcceptCanonicalOrderIfConfigured(empresaId, order.id, order.source);
         }
         const ack = `Recebi seu comprovante do pedido *#${shortId}* — beneficiário, valor e data conferem. Obrigado! 🙏\n\nQualquer dúvida, é só chamar.`;
         await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });

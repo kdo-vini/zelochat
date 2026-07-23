@@ -4,7 +4,7 @@ import type { Order } from '../src/types.js';
 import { getServiceSupabase } from './supabase.js';
 
 export const LEGACY_CANONICAL_ORDER_SELECT = [
-  'id', 'revision', 'status', 'total', 'observations', 'created_at',
+  'id', 'source', 'revision', 'status', 'total', 'observations', 'created_at',
   'customer_name:customer->>name', 'customer_phone:customer->>phone',
   'pickup_date:fulfillment->>pickupDate', 'pickup_time:fulfillment->>pickupTime',
   'delivery_address:fulfillment->>deliveryAddress', 'driver_id:fulfillment->>driverId',
@@ -70,6 +70,47 @@ export async function cancelCanonicalOrder(empresaId: string, orderId: string, e
     if (error.message.includes('REVISION_CONFLICT')) throw new Error('REVISION_CONFLICT');
     throw error;
   }
+}
+
+/**
+ * Completes the second half of ZeloMenu auto-accept for orders that were held
+ * for Pix receipt validation. Failing closed is intentional: payment approval
+ * must remain successful even if automatic acceptance cannot run.
+ */
+export async function autoAcceptCanonicalOrderIfConfigured(empresaId: string, orderId: string, source?: string): Promise<boolean> {
+  if (source !== 'zelomenu') return false;
+  const supabase = getServiceSupabase();
+  const { data: profile, error: profileError } = await supabase
+    .from('empresa_perfil')
+    .select('zelomenu_auto_accept_orders')
+    .eq('id', empresaId)
+    .maybeSingle();
+  if (profileError) {
+    // The setting migration may lag behind an app deploy. Keep the safe manual
+    // review behavior until the column exists instead of breaking payment ack.
+    console.warn('[ZeloChat] auto-accept preference unavailable:', profileError.message);
+    return false;
+  }
+  if (profile?.zelomenu_auto_accept_orders !== true) return false;
+
+  const { data: current, error: currentError } = await supabase
+    .from('zelo_orders')
+    .select('status, revision')
+    .eq('empresa_id', empresaId)
+    .eq('id', orderId)
+    .maybeSingle();
+  if (currentError || !current || current.status !== 'pending_review') return false;
+
+  const { error: acceptError } = await supabase.rpc('accept_zelo_order', {
+    p_order_id: orderId,
+    p_expected_revision: Number(current.revision),
+    p_actor_id: null,
+  });
+  if (acceptError) {
+    console.error('[ZeloChat] auto-accept after Pix approval failed:', acceptError);
+    return false;
+  }
+  return true;
 }
 
 export interface ManualOrderInput {

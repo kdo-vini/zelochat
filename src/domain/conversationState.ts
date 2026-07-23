@@ -808,6 +808,7 @@ export type ActiveOrderStatus = 'pending' | 'pending_payment' | 'pending_review'
 
 export interface ActiveOrderRow {
   id: string;
+  source?: string;
   revision?: number;
   status: ActiveOrderStatus;
   total: number;
