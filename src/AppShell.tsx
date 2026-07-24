@@ -419,7 +419,7 @@ export default function AppShell() {
   } = useQuickResponses(session, { enabled: shouldLoadQuickResponses });
   const catalogReadyForConfigSync = isGeneralMode || catalog.hasLoaded;
 
-  useEffect(() => { saveInitialState(state); }, [state.dailyContext, state.businessInfo, state.profile]);
+  useEffect(() => { saveInitialState(state); }, [state.businessInfo, state.profile]);
 
   useEffect(() => {
     try { localStorage.setItem('zelochat_sidebar_expanded', String(sidebarExpanded)); } catch {}
@@ -731,7 +731,6 @@ export default function AppShell() {
           products: s.products,
           catalogHierarchy,
           blockedDates: s.blockedDates,
-          dailyContext: s.dailyContext,
           aiInstructions: s.aiInstructions,
           deliveryConfig: s.deliveryConfig,
           pixReceiptConfig: s.pixReceiptConfig,
@@ -781,7 +780,6 @@ export default function AppShell() {
       businessInfo: state.businessInfo,
       products: state.products,
       blockedDates: state.blockedDates,
-      dailyContext: state.dailyContext,
       aiInstructions: state.aiInstructions,
       deliveryConfig: state.deliveryConfig,
       pixReceiptConfig: state.pixReceiptConfig,
@@ -801,7 +799,7 @@ export default function AppShell() {
     syncConfigTimerRef.current = setTimeout(() => { void syncConfigToServer(state, fingerprint); }, 600);
     return () => { if (syncConfigTimerRef.current) clearTimeout(syncConfigTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, catalogReadyForConfigSync, state.businessInfo, state.products, state.blockedDates, state.dailyContext, state.aiInstructions, state.deliveryConfig, state.pixReceiptConfig, catalog.categorias, catalog.subcategorias]);
+  }, [token, catalogReadyForConfigSync, state.businessInfo, state.products, state.blockedDates, state.aiInstructions, state.deliveryConfig, state.pixReceiptConfig, catalog.categorias, catalog.subcategorias]);
 
   // Count of conversations that have ANY unread message (WhatsApp-style: 1 dot
   // per chat, not a sum of message counts). The per-conversation badge in
@@ -970,9 +968,6 @@ export default function AppShell() {
     updateOrderStatus(result.draggableId, result.destination.droppableId as Order['status']);
   }, [updateOrderStatus]);
 
-  const handleDailyContextUpdate = useCallback((items: ZeloState['dailyContext']) => {
-    setState((prev) => ({ ...prev, dailyContext: [...(prev.dailyContext ?? []), ...items] }));
-  }, []);
 
   const handleResolveEscalation = useCallback(async (jid: string) => {
     await resolveEscalation(jid);
@@ -1340,7 +1335,6 @@ export default function AppShell() {
             bulkArchive={bulkArchive}
             bulkDelete={bulkDelete}
             togglePin={togglePin}
-            onDailyContextUpdate={handleDailyContextUpdate}
             onCreateManualOrder={handleAddOrder}
             resolveEscalation={handleResolveEscalation}
             escalateManually={escalateManually}

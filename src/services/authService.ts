@@ -40,7 +40,7 @@ export async function updateUserPassword(password: string) {
 /**
  * Clear ZeloChat-namespaced local state. Called on signOut so the next user on
  * a shared device doesn't inherit the previous tenant's businessInfo, profile,
- * dailyContext, or UI prefs. Supabase's own auth-token keys (`sb-…-auth-token`)
+ * or UI prefs. Supabase's own auth-token keys (`sb-…-auth-token`)
  * are cleared by `supabase.auth.signOut()` separately, so we only target our
  * own `zelochat`-prefixed keys here. Wrapped in try/catch because localStorage
  * may be unavailable (private browsing, quota issues, SSR).

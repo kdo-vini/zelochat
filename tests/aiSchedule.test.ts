@@ -66,7 +66,6 @@ function makeConfig(overrides: Partial<BusinessConfig> = {}): BusinessConfig {
     ],
     catalogHierarchy: [],
     blockedDates: [],
-    dailyContext: [],
     aiInstructions: '',
     managerPhone: '5511999999999',
     aiEnabled: true,

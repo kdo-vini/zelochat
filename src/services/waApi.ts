@@ -117,7 +117,6 @@ export interface ZeloMenuReviewAcceptResponse extends ZeloMenuReviewResponse {
 }
 export interface ManagerAssistantStatePatch {
   blockedDates?: { date: string; reason: string }[];
-  dailyContext?: { id: string; text: string }[];
   businessInfo?: {
     openTime?: string;
     closeTime?: string;

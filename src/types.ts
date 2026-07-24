@@ -257,7 +257,6 @@ export interface ZeloState {
   deliveryConfig: DeliveryConfig | null;
   pixReceiptConfig: PixReceiptConfig;
   quickResponses: QuickResponse[];
-  dailyContext: { id: string, text: string }[];
   triggers: Trigger[];
   managerHistory: ChatMessage[];
   drivers: DeliveryDriver[];

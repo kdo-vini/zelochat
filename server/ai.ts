@@ -2485,9 +2485,6 @@ COMO ENVIAR O LINK DO CARDÁPIO:
     ? blockedDates.map((bd) => `${safeForPrompt(bd.date, 10)} (${safeForPrompt(bd.reason || 'sem motivo informado', 100)})`).join(', ')
     : 'Nenhuma';
 
-  const dailyContextStr = cfg.dailyContext.length > 0
-    ? `\n\nAVISOS DE HOJE:\n${cfg.dailyContext.map((c) => `- ${c.text}`).join('\n')}`
-    : '';
 
   const tz = getEmpresaTimezone(empresaId);
   const now = new Date();
@@ -2608,7 +2605,7 @@ REGRAS FIXAS DO MODO GERAL:
 INFORMAÇÕES DA EMPRESA:
 - Nome: ${cfg.name || 'Empresa'}
 - Especialidade: ${cfg.specialty || 'atendimento ao cliente'}
-- Contato: ${cfg.managerPhone || cfg.address || 'use este WhatsApp para continuar o atendimento'}${dailyContextStr}
+- Contato: ${cfg.managerPhone || cfg.address || 'use este WhatsApp para continuar o atendimento'}
 
 GATILHOS ATIVOS (chame dispatch_trigger se a condição ocorrer):
 ${triggersBlock}
@@ -2650,7 +2647,7 @@ INFORMAÇÕES DA LANCHONETE:
 - Dias fechados: ${cfg.closedDays.join(', ') || 'Nenhum'}
 - Endereço: ${cfg.address || 'Consulte a loja'}
 - Chave Pix: ${cfg.pixKey || 'Consulte a loja'}
-- Datas bloqueadas: ${blockedDatesStr}${dailyContextStr}${offHoursGuidance}
+- Datas bloqueadas: ${blockedDatesStr}${offHoursGuidance}
 
 ${orderingBlock}
 

@@ -10,7 +10,6 @@ export const INITIAL_STATE: ZeloState = {
   deliveryConfig: null,
   pixReceiptConfig: DEFAULT_PIX_RECEIPT_CONFIG,
   quickResponses: [],
-  dailyContext: [],
   triggers: [],
   managerHistory: [],
   drivers: [],

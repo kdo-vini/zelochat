@@ -3122,10 +3122,10 @@ router.post('/api/sync-config', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
-            blockedDates, dailyContext, aiInstructions, managerPhone,
+            blockedDates, aiInstructions, managerPhone,
             aiEnabled, aiCanReengagePending, deliveryConfig, pixReceiptConfig } = req.body;
     setConfig(empresaId, { name, specialty, hours, openTime, closeTime, closedDays, address, pixKey,
-                           blockedDates, dailyContext, aiInstructions, managerPhone,
+                           blockedDates, aiInstructions, managerPhone,
                            ...(typeof aiEnabled === 'boolean' ? { aiEnabled } : {}),
                            ...(typeof aiCanReengagePending === 'boolean' ? { aiCanReengagePending } : {}),
                            ...(deliveryConfig !== undefined ? { deliveryConfig } : {}),

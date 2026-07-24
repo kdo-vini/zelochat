@@ -66,10 +66,6 @@ export async function getClientResponse(
     ? state.blockedDates.map(bd => `${bd.date} (Motivo: ${bd.reason})`).join(", ")
     : "Nenhuma data bloqueada no momento.";
 
-  const dailyContextStr = state.dailyContext && state.dailyContext.length > 0
-    ? `\n\nATENÇÃO - BASE DE CONHECIMENTO MOMENTÂNEA (AVISOS DE HOJE):\n${state.dailyContext.map(c => `- ${c.text}`).join('\n')}\n!!! VOCÊ DEVE OBEDECER E INFORMAR O CLIENTE SOBRE ESTAS REGRAS ACIMA SE O ASSUNTO FOR MENCIONADO !!!`
-    : '';
-
   const alertsStr = '';
 
   const systemInstruction = `
@@ -81,7 +77,7 @@ export async function getClientResponse(
     - Horário: ${state.businessInfo.openTime}–${state.businessInfo.closeTime}
     - Fechado: ${state.businessInfo.closedDays.join(", ")}
     - Encomendas: Qualquer quantidade, retirada no local.
-    - Datas Bloqueadas: ${blockedDatesStr} (NÃO aceite encomendas nessas datas e explique o EXATO motivo para o cliente).${dailyContextStr}${alertsStr}
+    - Datas Bloqueadas: ${blockedDatesStr} (NÃO aceite encomendas nessas datas e explique o EXATO motivo para o cliente).${alertsStr}
 
     DIRETRIZES PERSONALIZADAS:
     ${state.aiInstructions || "Siga o comportamento padrão de atendimento amigável."}
@@ -172,47 +168,6 @@ export async function simulateAtendimento(
     throw new Error(body.error || `AI simulate error: ${res.status}`);
   }
   return await res.json() as SimulateAtendimentoResult;
-}
-
-/**
- * Agente 2: Construcao do Contexto Diario (Uso Interno)
- */
-export async function getOwnerResponse(managerInput: string): Promise<string[]> {
-  const nowContext = getBrazilNowContext();
-  const systemInstruction = `
-    Você é um classificador de comandos gerenciais para a lanchonete ZeloChat.
-    O gerente digitou um recado/aviso operacional em linguagem natural (ex: falta de estoque, mudança de horário de hoje).
-    Sua função é APENAS extrair do texto as diretrizes imperativas e diretas que a IA de Atendimento a Clientes deve seguir.
-
-    CONTEXTO ATUAL:
-    - ${nowContext}
-
-    REGRAS DE RETORNO:
-    - Retorne APENAS um array JSON de strings com os "bullet points" extraídos. Zero formatação Markdown antes/depois do JSON.
-    - Seja direto, claro e afirmativo.
-
-    EXEMPLOS:
-    Input: "Faltou massa hoje, nao tem coxinha nem risole, e avisa que vamos fechar as 16h hoje"
-    Output: ["ESTOQUE ESGOTADO: Coxinha e Risole. Não venda.", "HORÁRIO ALTERADO: Fecharemos às 16h hoje."]
-  `;
-
-  try {
-    const text = await callAI([
-      { role: "system", content: systemInstruction },
-      { role: "user", content: managerInput }
-    ], 0);
-
-    try {
-      const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(cleaned) as string[];
-    } catch(e) {
-      console.error("[openaiService] getOwnerResponse parse failed:", e);
-      return [managerInput];
-    }
-  } catch (error) {
-    console.error("[openaiService] getOwnerResponse failed:", error);
-    return [managerInput];
-  }
 }
 
 /**

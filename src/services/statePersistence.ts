@@ -5,11 +5,10 @@ const STORAGE_KEY = 'zelochat_state_v2';
 
 // blockedDates and managerHistory are now persisted in Supabase (migration 006).
 // They are intentionally excluded here to avoid stale localStorage data overriding DB values.
-type PersistedState = Pick<ZeloState, 'dailyContext' | 'businessInfo' | 'profile'>;
+type PersistedState = Pick<ZeloState, 'businessInfo' | 'profile'>;
 
 function getPersistedSlice(state: ZeloState): PersistedState {
   return {
-    dailyContext: state.dailyContext,
     businessInfo: state.businessInfo,
     profile: state.profile,
   };
@@ -26,7 +25,6 @@ export function loadInitialState(): ZeloState {
 
     return {
       ...INITIAL_STATE,
-      dailyContext: parsed.dailyContext ?? INITIAL_STATE.dailyContext,
       businessInfo: {
         ...INITIAL_STATE.businessInfo,
         ...parsed.businessInfo,
