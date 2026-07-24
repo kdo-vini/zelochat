@@ -236,7 +236,7 @@ export interface DeliveryConfig {
   neighborhoods: DeliveryNeighborhood[];
 }
 
-export type PixReceiptFallback = 'ask_retry' | 'escalate_human';
+type PixReceiptFallback = 'ask_retry' | 'escalate_human';
 
 export interface PixReceiptConfig {
   available: boolean;

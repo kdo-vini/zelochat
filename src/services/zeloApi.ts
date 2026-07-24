@@ -67,13 +67,3 @@ export function inferCategoria(nome: string): Product['category'] {
 
   return 'salgado';
 }
-
-export function mapProdutoToProduct(produto: Produto): Product {
-  return {
-    id: produto.id,
-    name: produto.nome,
-    price: normalizePreco(produto.preco),
-    available: !produto.ocultar_no_pdv,
-    category: inferCategoria(produto.nome),
-  };
-}

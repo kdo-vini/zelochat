@@ -1,4 +1,4 @@
-import { ZeloState, ChatMessage } from "../types";
+import { ChatMessage } from "../types";
 import { API_BASE, apiFetch } from "../config";
 import { supabase } from "./supabaseClient";
 
@@ -51,60 +51,6 @@ function getBrazilNowContext(): string {
 }
 
 /**
- * Agente 1: Atendimento ao Cliente (WhatsApp Style)
- */
-export async function getClientResponse(
-  state: ZeloState,
-  history: ChatMessage[],
-  userInput: string
-) {
-  const availableProducts = state.products
-    .filter(p => p.available && (!p.stockControlled || Number(p.stockQuantity ?? 0) > 0))
-    .map(p => `${p.name} (R$ ${p.price.toFixed(2)}${p.stockControlled ? `; estoque atual: ${Math.max(0, Math.floor(Number(p.stockQuantity ?? 0)))}` : ''})`)
-    .join(", ");
-  const blockedDatesStr = state.blockedDates.length > 0
-    ? state.blockedDates.map(bd => `${bd.date} (Motivo: ${bd.reason})`).join(", ")
-    : "Nenhuma data bloqueada no momento.";
-
-  const alertsStr = '';
-
-  const systemInstruction = `
-    Você é o assistente virtual da lanchonete ${state.businessInfo.name}, especialista em ${state.businessInfo.specialty}.
-    Sua linguagem deve ser informal, simpática e típica de WhatsApp brasileiro (pode usar emojis, mas sem exagero).
-
-    INFORMAÇÕES DA LANCHONETE:
-    - Cardápio Disponível: ${availableProducts}
-    - Horário: ${state.businessInfo.openTime}–${state.businessInfo.closeTime}
-    - Fechado: ${state.businessInfo.closedDays.join(", ")}
-    - Encomendas: Qualquer quantidade, retirada no local.
-    - Datas Bloqueadas: ${blockedDatesStr} (NÃO aceite encomendas nessas datas e explique o EXATO motivo para o cliente).${alertsStr}
-
-    DIRETRIZES PERSONALIZADAS:
-    ${state.aiInstructions || "Siga o comportamento padrão de atendimento amigável."}
-
-    OBJETIVOS:
-    1. Responder dúvidas sobre o cardápio e horários.
-    2. Coletar dados para encomendas: Produto, Quantidade, Data de retirada, Nome e Telefone.
-    3. Se o cliente pedir em uma data bloqueada ou domingo, explique educadamente o MOTIVO e diga que não estamos aceitando para esse dia.
-
-    IMPORTANTE: Mantenha as respostas curtas e objetivas, como se estivesse digitando no celular.
-  `;
-
-  try {
-    const messages = [
-      { role: "system", content: systemInstruction },
-      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: contentForInternalAi(m) })),
-      { role: "user", content: userInput }
-    ];
-
-    return await callAI(messages, 0.7);
-  } catch (error) {
-    console.error("[openaiService] getClientResponse failed:", error);
-    return "Ops, tive um probleminha técnico. Pode tentar de novo?";
-  }
-}
-
-/**
  * Gera um prompt mestre inicial usando IA — chamado pelo botão ✨ no Cérebro IA.
  */
 export async function generateAgentInstructions(hint?: string): Promise<string> {
@@ -125,23 +71,7 @@ export async function generateAgentInstructions(hint?: string): Promise<string> 
   return data.instructions || '';
 }
 
-/**
- * Agente 2: Construção do Contexto Diário (Uso Interno)
- */
-/**
- * Simulador do atendimento automatico, sem WhatsApp e sem escrita no banco.
- */
 export interface SimulateAtendimentoPayload {
-  customerMessage: string;
-  customerName?: string;
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  configOverride?: {
-    aiInstructions?: string;
-    storeName?: string;
-  };
-}
-
-export interface SimulateAtendimentoResult {
   reply: string;
   toolCallsMade: string[];
   wouldCreateOrder: boolean;
@@ -168,60 +98,6 @@ export async function simulateAtendimento(
     throw new Error(body.error || `AI simulate error: ${res.status}`);
   }
   return await res.json() as SimulateAtendimentoResult;
-}
-
-/**
- * Agente 3: Gestão Geral (Conversacional interno)
- */
-export async function getGeneralManagerResponse(
-  history: ChatMessage[],
-  userInput: string
-) {
-  const nowContext = getBrazilNowContext();
-  const systemInstruction = `
-    Você é o Assistente de Gestão Geral da Lanchonete ZeloChat.
-    Você conversa com a dona da lanchonete para realizar configurações estruturais do sistema, como bloquear dias no calendário.
-
-    CONTEXTO ATUAL OBRIGATÓRIO:
-    - ${nowContext}
-    - Ao interpretar "hoje", "amanhã", "sexta", "dia 1" ou qualquer data relativa, use SEMPRE o contexto atual acima.
-    - Se o histórico trouxer anos antigos, como 2023, ignore para cálculo de novas ações.
-
-    REGRA DE BLOQUEIO DE CALENDÁRIO:
-    - A dona pode pedir para bloquear dias (ex: "não vamos abrir dia x, y e z").
-    - Se a dona não informar O MOTIVO do bloqueio na mesma frase, você deve PERGUNTAR antes de efetuar a ação. NÃO DEVOLVA AÇÃO SE NÃO TIVER O MOTIVO.
-    - O motivo será revelado aos clientes se eles tentarem pedir nesta data, então ele deve ser claro e profissional.
-
-    REGRAS DE RETORNO (JSON OBRIGATÓRIO):
-    Responda em formato JSON contendo DOIS CAMPOS:
-    1. "reply": A sua resposta de texto para a dona.
-    2. "actions": Um array de objetos de ações a executar (vazio [] se não houver ação ou se ainda estiver aguardando o motivo).
-
-    Tipos de Action suportados:
-    - { "type": "BLOCK_DATE", "payload": { "date": "YYYY-MM-DD", "reason": "Motivo claro" } }
-
-    Mapeie os dias do mês corretamente baseando-se no contexto atual. Formate datas sempre YYYY-MM-DD no payload.
-  `;
-
-  try {
-    const messages = [
-      { role: "system", content: systemInstruction },
-      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: contentForInternalAi(m) })),
-      { role: "user", content: userInput }
-    ];
-
-    const text = await callAI(messages, 0, 'json');
-
-    try {
-      return JSON.parse(text) as { reply: string; actions: unknown[] };
-    } catch (e) {
-      console.error("[openaiService] getGeneralManagerResponse parse failed:", e);
-      return { reply: "Erro ao decodificar minha própria ação.", actions: [] };
-    }
-  } catch (error) {
-    console.error("[openaiService] getGeneralManagerResponse failed:", error);
-    return { reply: "Tive um erro ao processar seu comando.", actions: [] };
-  }
 }
 
 type ManualChatAssistMode = 'improve' | 'reply';

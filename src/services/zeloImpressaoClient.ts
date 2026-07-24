@@ -40,21 +40,6 @@ export interface ZeloImpressaoPrintJob {
   metadata?: Record<string, unknown>;
 }
 
-function normalizeReleaseChannel(channel: string | undefined): string {
-  const value = String(channel || 'latest').trim();
-  return value || 'latest';
-}
-
-export function getZeloImpressaoInstallerUrl(channel = 'latest'): string {
-  const normalizedChannel = normalizeReleaseChannel(channel);
-  if (normalizedChannel === 'latest') return ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL;
-  return `${ZELO_IMPRESSAO_DOWNLOADS_BASE_URL}/${encodeURIComponent(normalizedChannel)}/${ZELO_IMPRESSAO_INSTALLER_FILENAME}`;
-}
-
-export function getZeloImpressaoDownloadPageUrl(): string {
-  return ZELO_IMPRESSAO_DOWNLOAD_PAGE_URL;
-}
-
 function getStoredToken(): string {
   try {
     return localStorage.getItem(TOKEN_KEY) || '';
