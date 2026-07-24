@@ -25,7 +25,6 @@ import {
 } from "lucide-react";
 import {
   ZeloState,
-  ChatMessage,
   Trigger,
   TriggerKind,
   QuickResponse,
@@ -36,14 +35,12 @@ import { useTags } from "../../hooks/useTags";
 import { normalizePixReceiptConfig } from "../../domain/pixReceipt";
 import { maskBrazilianPhone, normalizePhoneNumber } from "../../domain/chat";
 import {
-  getOwnerResponse,
   generateAgentInstructions,
   simulateAtendimento,
   type SimulateAtendimentoResult,
 } from "../../services/openaiService";
 import {
   getAiHealth,
-  sendManagerAssistantMessage,
   type AiHealthReport,
   type AiHealthSummaryStatus,
 } from "../../services/waApi";
@@ -57,8 +54,6 @@ type AIConfigsState = Pick<
   ZeloState,
   | "aiInstructions"
   | "blockedDates"
-  | "dailyContext"
-  | "managerHistory"
   | "pixReceiptConfig"
 >;
 
@@ -312,9 +307,6 @@ export const AIConfigsView = ({
     id: string;
     name: string;
   } | null>(null);
-  const [managerInput, setManagerInput] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [managerChatInput, setManagerChatInput] = useState("");
   const [simulateInput, setSimulateInput] = useState(
     "vc pode mandar o cardapio?",
   );
@@ -446,104 +438,6 @@ export const AIConfigsView = ({
     );
     setKindMenuOpen(false);
     setTriggerLocalError(null);
-  };
-
-  const handleProcessContext = async () => {
-    if (!managerInput.trim()) return;
-    setIsProcessing(true);
-    try {
-      const newRules = await getOwnerResponse(managerInput);
-      const newContexts = newRules.map((text: string) => ({
-        id: Date.now().toString() + Math.random(),
-        text,
-      }));
-      setState((prev) => ({
-        ...prev,
-        dailyContext: [...(prev.dailyContext || []), ...newContexts],
-      }));
-      setManagerInput("");
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleGeneralManagerSend = async () => {
-    if (isProcessing) return;
-    const message = managerChatInput.trim();
-    if (!message) return;
-    if (!token) {
-      toast.error("Sessão expirada. Faça login novamente.");
-      return;
-    }
-    const userMsg: ChatMessage = {
-      id: Date.now().toString(),
-      role: "user",
-      content: message,
-      preview: message,
-      kind: "text",
-      timestamp: new Date().toISOString(),
-    };
-    // P2.22 — cap at 100 entries to prevent unbounded JSONB growth in empresa_perfil
-    setState((prev) => ({
-      ...prev,
-      managerHistory: [...(prev.managerHistory || []), userMsg].slice(-100),
-    }));
-    setManagerChatInput("");
-    setIsProcessing(true);
-    try {
-      const result = await sendManagerAssistantMessage(token, {
-        message,
-        history: state.managerHistory || [],
-      });
-      setState((prev) => ({
-        ...prev,
-        managerHistory: result.managerHistory.slice(-100),
-        blockedDates: result.statePatch.blockedDates ?? prev.blockedDates,
-        dailyContext: result.statePatch.dailyContext ?? prev.dailyContext,
-        businessInfo: result.statePatch.businessInfo
-          ? { ...prev.businessInfo, ...result.statePatch.businessInfo }
-          : prev.businessInfo,
-      }));
-      if (result.statePatch.aiInstructionsDraft) {
-        setPromptDraft(result.statePatch.aiInstructionsDraft);
-        setPromptJustSaved(false);
-        toast.info(
-          "A IA preparou um rascunho de instruções. Revise e salve se estiver correto.",
-        );
-        promptRef.current?.focus();
-      }
-      if (result.statePatch.health) setAiHealth(result.statePatch.health);
-      if (result.actionsApplied.length > 0) {
-        toast.success(
-          result.actionsApplied.map((action) => action.label).join(" · "),
-        );
-      }
-      if (
-        result.statePatch.notificationToggles ||
-        result.statePatch.aiEnabled !== undefined
-      ) {
-        await refreshEmpresa?.();
-      }
-      void loadAiHealth();
-    } catch (e) {
-      console.error(e);
-      toast.error(
-        e instanceof Error
-          ? e.message
-          : "Tive um erro ao processar seu comando.",
-      );
-      setManagerChatInput(message);
-      setState((prev) => ({
-        ...prev,
-        managerHistory: prev.managerHistory.filter(
-          (msg) => msg.id !== userMsg.id,
-        ),
-      }));
-    } finally {
-      setIsProcessing(false);
-    }
   };
 
   const handleSimulateAtendimento = async () => {
@@ -1034,156 +928,6 @@ export const AIConfigsView = ({
                   </p>
                 </div>
               ) : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {/* Daily Context */}
-          <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col h-[300px]">
-            <SectionHeader
-              icon={Clock}
-              title="Avisos de hoje"
-              subtitle="O que mudou hoje na lanchonete?"
-              action={
-                state.dailyContext?.length > 0 ? (
-                  <button
-                    onClick={() =>
-                      setState((prev) => ({ ...prev, dailyContext: [] }))
-                    }
-                    className="text-[11.5px] font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)] px-2 py-1 rounded-md transition-colors"
-                  >
-                    Limpar
-                  </button>
-                ) : undefined
-              }
-            />
-            <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-              {!state.dailyContext || state.dailyContext.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-[var(--color-ink-faint)]">
-                  <p className="text-[13px]">Nenhum aviso ativo.</p>
-                  <p className="text-[12px] mt-1">
-                    A lanchonete opera normalmente.
-                  </p>
-                </div>
-              ) : (
-                state.dailyContext.map((ctx) => (
-                  <div
-                    key={ctx.id}
-                    className="flex gap-2 items-center bg-[var(--color-surface-muted)] border border-[var(--color-line)] px-3 py-2 rounded-lg group"
-                  >
-                    <span className="w-1.5 h-1.5 bg-[var(--color-brand)] rounded-full flex-shrink-0" />
-                    <input
-                      type="text"
-                      value={ctx.text}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          dailyContext: prev.dailyContext.map((c) =>
-                            c.id === ctx.id
-                              ? { ...c, text: e.target.value }
-                              : c,
-                          ),
-                        }))
-                      }
-                      className="flex-1 bg-transparent outline-none text-[13px]"
-                    />
-                    <button
-                      onClick={() =>
-                        setState((prev) => ({
-                          ...prev,
-                          dailyContext: prev.dailyContext.filter(
-                            (c) => c.id !== ctx.id,
-                          ),
-                        }))
-                      }
-                      className="opacity-0 group-hover:opacity-100 p-1 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)] rounded-md transition-all"
-                      aria-label="Remover aviso"
-                    >
-                      <Plus className="w-3.5 h-3.5 rotate-45" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="p-3 border-t border-[var(--color-line)] bg-[var(--color-surface)]">
-              <div className="flex gap-2">
-                <input
-                  value={managerInput}
-                  onChange={(e) => setManagerInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleProcessContext()}
-                  placeholder='Ex: "Acabou a coxinha de frango"'
-                  className={`${FIELD} flex-1`}
-                />
-                <button
-                  onClick={handleProcessContext}
-                  disabled={isProcessing || !managerInput.trim()}
-                  className="h-10 w-10 rounded-lg bg-[var(--color-ink)] text-white flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-ink-soft)] transition-colors"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* General Manager Chat */}
-          <div className="bg-[var(--color-surface)] border border-[var(--color-line)] rounded-xl overflow-hidden flex flex-col h-[300px]">
-            <SectionHeader
-              icon={Bot}
-              title="Gestão por conversa"
-              subtitle="Bloqueie dias ou ajuste horários conversando com a IA"
-            />
-            <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-              {state.managerHistory.length === 0 ? (
-                <div className="h-full flex items-center justify-center">
-                  <p className="text-[13px] text-[var(--color-ink-faint)] text-center">
-                    Ex: "Não vamos abrir no sábado"
-                  </p>
-                </div>
-              ) : (
-                state.managerHistory.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`text-[13px] px-3 py-2 rounded-lg max-w-[85%] ${
-                        msg.role === "user"
-                          ? "bg-[var(--color-ink)] text-white rounded-br-[4px]"
-                          : "bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-bl-[4px]"
-                      }`}
-                    >
-                      {msg.content}
-                    </div>
-                  </div>
-                ))
-              )}
-              {isProcessing && (
-                <div className="text-[12.5px] text-[var(--color-ink-faint)] italic">
-                  IA digitando...
-                </div>
-              )}
-            </div>
-            <div className="p-3 border-t border-[var(--color-line)] bg-[var(--color-surface)]">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={managerChatInput}
-                  onChange={(e) => setManagerChatInput(e.target.value)}
-                  onKeyDown={(e) =>
-                    e.key === "Enter" && handleGeneralManagerSend()
-                  }
-                  placeholder="Pedir para a IA..."
-                  className={`${FIELD} flex-1`}
-                />
-                <button
-                  onClick={handleGeneralManagerSend}
-                  disabled={isProcessing || !managerChatInput.trim()}
-                  className="h-10 w-10 rounded-lg bg-[var(--color-ink)] text-white flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-ink-soft)] transition-colors"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
             </div>
           </div>
         </div>

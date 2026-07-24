@@ -542,18 +542,6 @@ export async function getAiHealth(token: string): Promise<AiHealthReport> {
   return body.health;
 }
 
-export async function sendManagerAssistantMessage(
-  token: string,
-  payload: { message: string; history?: ChatMessage[] },
-): Promise<ManagerAssistantResult> {
-  const response = await apiFetch(apiUrl('/api/ai/manager'), {
-    method: 'POST',
-    headers: authHeaders(token),
-    body: JSON.stringify(payload),
-  });
-  return parseResponse<ManagerAssistantResult>(response);
-}
-
 export async function setAiEnabled(token: string, enabled: boolean): Promise<void> {
   const response = await apiFetch(apiUrl('/api/ai-enabled'), {
     method: 'POST',

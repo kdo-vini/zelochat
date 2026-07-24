@@ -185,19 +185,19 @@ async function notifyManagerForConfirmedOrder(params: {
     return;
   }
 
-  const itemsList = params.items.map((item) => `${item.quantity}x ${item.product}`).join(', ');
+  const itemsList = params.items.map((item) => `• ${item.quantity}x ${item.product}`).join('\n');
   const dateBR = isoToDisplayBR(params.pickupDate) || params.pickupDate;
   for (const match of matches) {
     try {
       await sendTextMessage(
         managerJid,
         `🔔 *${safeForPrompt(match.trigger.name, 80)}*\n` +
-          `Cliente: ${safeForPrompt(params.customerName, 80)} (${safeForPrompt(params.customerPhone, 30)})\n` +
-          `Pedido: ${safeForPrompt(itemsList, 240)}\n` +
-          `Retirada/entrega: ${safeForPrompt(dateBR, 20)} às ${safeForPrompt(params.pickupTime, 20)}\n` +
-          `Pagamento: ${safeForPrompt(params.paymentMethod || 'Não informado', 40)}\n` +
-          `Total: R$ ${params.total.toFixed(2)}\n` +
-          `Motivo: ${safeForPrompt(match.reason, 180)}`,
+          `*Cliente:* ${safeForPrompt(params.customerName, 80)} (${safeForPrompt(params.customerPhone, 30)})\n` +
+          `*Itens do pedido:*\n${safeForPrompt(itemsList, 480)}\n` +
+          `*Retirada/entrega:* ${safeForPrompt(dateBR, 20)} às ${safeForPrompt(params.pickupTime, 20)}\n` +
+          `*Pagamento:* ${safeForPrompt(params.paymentMethod || 'Não informado', 40)}\n` +
+          `*Total:* R$ ${params.total.toFixed(2)}\n` +
+          `*Motivo:* ${safeForPrompt(match.reason, 180)}`,
         params.empresaId,
       );
       if (params.toolCallId) {
@@ -600,16 +600,16 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   });
 
   const shortId = orderId.slice(0, 8).toUpperCase();
-  const itemsList = pending.items.map((i) => `${i.quantity}x ${i.product}`).join(', ');
+  const itemsList = pending.items.map((i) => `• ${i.quantity}x ${i.product}`).join('\n');
   const cfg = getConfig(pending.empresaId);
   const isDelivery = pending.orderType === 'delivery';
-  const scheduleLabel = isDelivery ? '🛵 Entrega' : '📅 Retirada';
+  const scheduleLabel = isDelivery ? '🛵 *Entrega*' : '📅 *Retirada*';
   const deliveryLine = isDelivery && pending.deliveryAddress
-    ? `\n📍 ${pending.deliveryAddress}\n🏘️ Taxa${pending.deliveryNeighborhood ? ` (${pending.deliveryNeighborhood})` : ''}: R$ ${(pending.deliveryFee ?? 0).toFixed(2)}`
+    ? `\n📍 Endereço: ${pending.deliveryAddress}\n🏘️ Taxa de entrega${pending.deliveryNeighborhood ? ` (${pending.deliveryNeighborhood})` : ''}: R$ ${(pending.deliveryFee ?? 0).toFixed(2)}`
     : '';
   const dateBR = isoToDisplayBR(pending.pickupDate) || pending.pickupDate;
-  const obsLine = pending.observations ? `\n📝 Obs: ${pending.observations}` : '';
-  const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 ${itemsList}${deliveryLine}${obsLine}\n${scheduleLabel}: ${dateBR} às ${pending.pickupTime}\n💳 Pagamento: ${pending.paymentMethod || 'Não informado'}\n💰 Total: R$ ${pending.total.toFixed(2)}\n\nPagamento via Pix: *${cfg.pixKey || 'consulte a loja'}*\n\nQualquer dúvida é só chamar! 😊`;
+  const obsLine = pending.observations ? `\n📝 Observação: ${pending.observations}` : '';
+  const reply = `✅ Pedido confirmado! Número: *#${shortId}*\n\n📦 *Itens do pedido:*\n${itemsList}${deliveryLine}${obsLine}\n\n${scheduleLabel}: ${dateBR} às ${pending.pickupTime}\n💳 *Pagamento:* ${pending.paymentMethod || 'Não informado'}\n💰 *Total:* R$ ${pending.total.toFixed(2)}\n\n🔑 *Chave Pix:* ${cfg.pixKey || 'consulte a loja'}\n\nSe precisar de algo, é só chamar!`;
 
   // P1.10 — send-failure detection. Antes, se sendTextMessage throws aqui
   // (Whatsmiau 5xx, network blip), a exceção propagava e o operador via
@@ -2105,9 +2105,10 @@ async function fetchUpcomingOrders(empresaId: string): Promise<string> {
     // FIX H2: sanitize every user-supplied field before interpolating into the prompt.
     return (data as unknown as any[]).map((o) => {
       const items = (o.items as { product: string; quantity: number }[])
-        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 200)}`)
         .join(', ');
-      return `- ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${safeForPrompt(o.customer_name, 60)} (${safeForPrompt(o.customer_phone, 20)}) | ${items} | R$${Number(o.total).toFixed(2)} | ${safeForPrompt(o.status, 20)}`;
+      const fulfillmentType = (o as any).fulfillment_type === 'delivery' ? '🛵Entrega' : '📅Retirada';
+      return `- ${fulfillmentType} ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${safeForPrompt(o.customer_name, 60)} (${safeForPrompt(o.customer_phone, 20)}) | ${items} | R$${Number(o.total).toFixed(2)} | ${safeForPrompt(o.status, 20)}`;
     }).join('\n');
   } catch {
     return 'Agenda indisponível no momento.';
@@ -2139,9 +2140,10 @@ async function fetchCustomerHistory(empresaId: string, customerPhone: string): P
     // FIX H2: sanitize every user-supplied field before interpolating into the prompt.
     return matches.map((o) => {
       const items = (o.items as { product: string; quantity: number }[])
-        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 200)}`)
         .join(', ');
-      return `- ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${items} | R$${Number(o.total).toFixed(2)} | ${safeForPrompt(o.status, 20)}`;
+      const fulfillmentType = (o as any).fulfillment_type === 'delivery' ? 'Entrega' : 'Retirada';
+      return `- ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${fulfillmentType} | ${items} | R$${Number(o.total).toFixed(2)} | ${safeForPrompt(o.status, 20)}`;
     }).join('\n');
   } catch {
     return 'Histórico indisponível.';
@@ -2173,10 +2175,11 @@ async function fetchActiveOrdersForCustomer(empresaId: string, customerPhone: st
     if (matches.length === 0) return '(nenhum)';
     return matches.map((o) => {
       const items = (o.items as { product: string; quantity: number }[])
-        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 200)}`)
         .join(', ');
       const shortId = String(o.id).slice(0, 8).toUpperCase();
-      return `- #${shortId} | ${safeForPrompt(o.pickup_date, 10)} ${safeForPrompt(o.pickup_time, 10)} | ${items} | R$${Number(o.total).toFixed(2)} | status: ${safeForPrompt(o.status, 20)}`;
+      const fulfillmentType = (o as any).fulfillment_type === 'delivery' ? 'Entrega' : 'Retirada';
+      return `- Pedido #${shortId} | ${fulfillmentType}: ${safeForPrompt(o.pickup_date, 10)} às ${safeForPrompt(o.pickup_time, 10)} | Itens: ${items} | Total: R$${Number(o.total).toFixed(2)} | Status: ${safeForPrompt(o.status, 20)}`;
     }).join('\n');
   } catch {
     return '(consulta indisponível)';
@@ -2237,12 +2240,13 @@ export async function fetchOrderForCustomer(
     }
 
     const items = (target.items as { product: string; quantity: number }[])
-      .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 60)}`)
+      .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 200)}`)
       .join(', ');
     const shortIdOut = String(target.id).slice(0, 8).toUpperCase();
     const driverPart = driverName ? ` | Entregador: ${safeForPrompt(driverName, 60)}` : '';
+    const fulfillmentType = (target as any).fulfillment_type === 'delivery' ? 'Entrega' : 'Retirada';
 
-    return `Pedido #${shortIdOut} | Status: ${safeForPrompt(target.status, 20)} | Retirada/Entrega: ${safeForPrompt(target.pickup_date, 10)} às ${safeForPrompt(target.pickup_time, 10)} | Itens: ${items} | Total: R$${Number(target.total).toFixed(2)}${driverPart}`;
+    return `Pedido #${shortIdOut} | Status: ${safeForPrompt(target.status, 20)} | ${fulfillmentType}: ${safeForPrompt(target.pickup_date, 10)} às ${safeForPrompt(target.pickup_time, 10)} | Itens: ${items} | Total: R$${Number(target.total).toFixed(2)}${driverPart}`;
   } catch (err) {
     console.error('[AI] fetchOrderForCustomer error:', err);
     return 'Não consegui consultar o pedido agora.';
@@ -2664,9 +2668,19 @@ ${activeOrdersBlock}
 Se o cliente perguntar sobre o status de UM pedido específico (ex: "cadê meu pedido?", "saiu pra entrega?"), CHAME consultar_pedido para obter o status atualizado. NÃO responda sobre status de pedido sem antes consultar.
 
 APÓS O CLIENTE FAZER O PEDIDO (via ZeloMenu):
-- Pergunte se precisa de algo mais.
-- Ofereça: "Quer que eu acompanhe o status do pedido para voce?"
+- SEMPRE reconheça o pedido com uma mensagem acolhedora e organizada antes de qualquer oferta.
+- Inclua: os itens com os complementos escolhidos (já estão no nome do produto), se é entrega ou retirada, e o valor total.
+- Seja natural e calorosa, como uma atendente de verdade. Exemplo:
+  "Que bom! Seu pedido já está confirmado:
+  • 1x Monte sua Massa (Escolha sua massa: Espaguete • Molho: Sugo • Turbine com Proteínas: Carne Moída, Bacon • Finalize com Acompanhamentos: Parmesão, Azeitona)
+  📅 Retirada: 24/07 às 20h08
+  💰 Total: R$ 25,99
+
+  Precisa de mais alguma coisa?"
+- Depois de confirmar, pergunte se precisa de algo mais.
+- Ofereça: "Quer que eu acompanhe o status do pedido para você?"
 - Se quiser, pergunte sobre preferências para sugerir produtos.
+- NUNCA use jargão técnico (ex: "status do pedido", "ID", "código"). Prefira linguagem natural: "Seu pedido", "número do pedido", "andamento".
 
 GATILHOS ATIVOS (chame dispatch_trigger se a condição ocorrer):
 ${triggersBlock}
@@ -2693,6 +2707,12 @@ OBJETIVOS:
 3. Acompanhar status de pedidos usando consultar_pedido quando o cliente perguntar.
 4. Oferecer suporte pós-venda: "Gostou do pedido? Precisa de algo mais?"
 5. Sugerir produtos com base no histórico (apenas como sugestão amigável, sem montar pedido).
+
+COMUNICAÇÃO TIER S:
+- Todas as mensagens para o cliente devem ser em português claro, natural e bem estruturado.
+- Quando mencionar um pedido, inclua: os itens (com complementos), se é entrega ou retirada, e o valor.
+- Evite jargão técnico como "status", "código", "ID", "sistema", "plataforma". Use linguagem de atendente de lanchonete.
+- Organize as informações de forma legível: cada item em sua linha, dados de retirada/entrega agrupados.
 
 IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular. NUNCA tente criar, calcular ou confirmar pedidos. O cardápio online é a única ferramenta de pedido.`.trim();
 }
@@ -3482,7 +3502,7 @@ export async function generateAndSendReply(
       console.log(`[AI] Pending order edit detected for ${jid}; clearing pending and processing the edit in the same AI turn.`);
       await clearPendingOrder(jid, resolvedEmpresaId);
       const pendingItems = pendingForEdit.items
-        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 80)}`)
+        .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 200)}`)
         .join(', ');
       pendingEditInstruction =
         `CONTEXTO DE EDIÇÃO DE PEDIDO PENDENTE: o cliente tinha um pedido aguardando confirmação e acabou de pedir alteração. ` +

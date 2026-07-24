@@ -1014,11 +1014,9 @@ export default function AppShell() {
     () => ({
       aiInstructions: state.aiInstructions,
       blockedDates: state.blockedDates,
-      dailyContext: state.dailyContext,
-      managerHistory: state.managerHistory,
       pixReceiptConfig: state.pixReceiptConfig,
     }),
-    [state.aiInstructions, state.blockedDates, state.dailyContext, state.managerHistory, state.pixReceiptConfig],
+    [state.aiInstructions, state.blockedDates, state.pixReceiptConfig],
   );
   const settingsState = useMemo(
     () => ({

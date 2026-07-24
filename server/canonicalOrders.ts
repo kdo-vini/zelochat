@@ -9,6 +9,7 @@ export const LEGACY_CANONICAL_ORDER_SELECT = [
   'customer_name:customer->>name', 'customer_phone:customer->>phone',
   'pickup_date:fulfillment->>pickupDate', 'pickup_time:fulfillment->>pickupTime',
   'delivery_address:fulfillment->>deliveryAddress', 'driver_id:fulfillment->>driverId',
+  'fulfillment_type:fulfillment->>type',
   'payment_method:payment->>declaredMethod', 'pix_receipt_analysis:payment->pixReceiptAnalysis',
   'items:zelo_order_items(product:name,quantity,position)',
 ].join(', ');
