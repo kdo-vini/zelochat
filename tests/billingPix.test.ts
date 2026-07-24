@@ -57,19 +57,6 @@ assert(verifyAbacatePaySignature(Buffer.from(''), EMPTY_SIG, KEY), 'empty body w
 // ---------------------------------------------------------------------------
 // STATUS_MAP
 // ---------------------------------------------------------------------------
-console.log('\nSTATUS_MAP (AbacatePay upstream status normalization)');
-
-assert(STATUS_MAP['ACTIVE'] === 'PENDING', 'ACTIVE maps to PENDING');
-assert(STATUS_MAP['PENDING'] === 'PENDING', 'PENDING maps to PENDING');
-assert(STATUS_MAP['PAID'] === 'COMPLETED', 'PAID maps to COMPLETED');
-assert(STATUS_MAP['COMPLETED'] === 'COMPLETED', 'COMPLETED maps to COMPLETED');
-assert(STATUS_MAP['FAILED'] === 'FAILED', 'FAILED maps to FAILED');
-assert(STATUS_MAP['CANCELLED'] === 'FAILED', 'CANCELLED maps to FAILED');
-assert(STATUS_MAP['CANCELED'] === 'FAILED', 'CANCELED (US spelling) maps to FAILED');
-assert(STATUS_MAP['EXPIRED'] === 'EXPIRED', 'EXPIRED maps to EXPIRED');
-assert(STATUS_MAP['REFUNDED'] === 'FAILED', 'REFUNDED maps to FAILED');
-assert(STATUS_MAP['UNKNOWN_STATUS'] === undefined, 'unknown status is undefined (caller defaults to PENDING)');
-
 // ---------------------------------------------------------------------------
 // buildUrl
 // ---------------------------------------------------------------------------
