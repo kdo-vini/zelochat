@@ -3,6 +3,7 @@ import { getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import { transcribeAudio } from './transcription.js';
 import { sendTextMessage } from './whatsapp.js';
 import { redactJid } from './redact.js';
+import { setTimeout } from 'node:timers/promises';
 import type { AudioTranscriptStatus, ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
 import {
   buildAttachmentPreview,
@@ -47,10 +48,6 @@ function normalizeSessionRows(
 
 function transcriptionKey(empresaId: string, jid: string): string {
   return `${empresaId}:${jid}`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -222,7 +219,7 @@ export async function waitForPendingAudioTranscriptions(
     const activeJobs = pending
       .map((m) => audioTranscriptionJobs.get(m.id))
       .filter((job): job is Promise<void> => !!job);
-    const pollDelay = sleep(Math.min(AUDIO_TRANSCRIPTION_POLL_MS, remaining));
+    const pollDelay = setTimeout(Math.min(AUDIO_TRANSCRIPTION_POLL_MS, remaining));
     if (activeJobs.length > 0) {
       await Promise.race([Promise.allSettled(activeJobs).then(() => undefined), pollDelay]);
     } else {

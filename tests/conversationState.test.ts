@@ -41,19 +41,7 @@ import {
   type CatalogProductLike,
   type ClassifyContext,
 } from '../src/domain/conversationState.js';
-
-let pass = 0;
-let fail = 0;
-
-function assert(cond: boolean, msg: string): void {
-  if (cond) {
-    console.log('  PASS', msg);
-    pass++;
-  } else {
-    console.log('  FAIL', msg);
-    fail++;
-  }
-}
+import { assert, pass, fail } from './testHarness.js';
 
 const observationCtx: ClassifyContext = { lastAiQuestion: 'observation_or_change' };
 const summaryCtx: ClassifyContext = { lastAiQuestion: 'confirm_order_summary' };

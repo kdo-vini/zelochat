@@ -3,8 +3,8 @@ export type TestCase = {
   run: () => void | Promise<void>;
 };
 
-let pass = 0;
-let fail = 0;
+export let pass = 0;
+export let fail = 0;
 
 export function assert(condition: unknown, message: string): void {
   if (condition) {

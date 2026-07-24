@@ -2,21 +2,9 @@
 // Run via: npx tsx tests/audioTranscriptionRearm.test.ts
 
 import { __audioTranscriptionWaitForTests } from '../server/messageHandler.js';
+import { assert, pass, fail } from './testHarness.js';
 
 const { pendingAudioMessagesForNextReply } = __audioTranscriptionWaitForTests;
-
-let pass = 0;
-let fail = 0;
-
-function assert(cond: boolean, msg: string): void {
-  if (cond) {
-    console.log('  PASS', msg);
-    pass++;
-  } else {
-    console.log('  FAIL', msg);
-    fail++;
-  }
-}
 
 console.log('\nAudio transcription wait/re-arm eligibility');
 

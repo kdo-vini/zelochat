@@ -12,19 +12,7 @@ import {
   windowEndMinutes,
   type WeeklyHours,
 } from '../src/domain/businessHours.js';
-
-let pass = 0;
-let fail = 0;
-
-function assert(condition: boolean, message: string): void {
-  if (condition) {
-    console.log('  PASS', message);
-    pass++;
-  } else {
-    console.log('  FAIL', message);
-    fail++;
-  }
-}
+import { assert, pass, fail } from './testHarness.js';
 
 function emptyWeekly(): WeeklyHours {
   return { sun: [], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [] };

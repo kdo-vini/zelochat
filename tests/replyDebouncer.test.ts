@@ -4,6 +4,9 @@
 //
 // Run from zelochat/: npx tsx tests/replyDebouncer.test.ts
 
+import { setTimeout } from 'node:timers/promises';
+import { assert, pass, fail } from './testHarness.js';
+
 // Set short delays BEFORE module loads (it reads env at init).
 process.env.AI_DEBOUNCE_READ_MS = '50';
 process.env.AI_DEBOUNCE_TYPING_MS = '50';
@@ -14,22 +17,6 @@ const { scheduleReply, cancelPendingReply } = await import('../server/replyDebou
 
 const TOTAL_MS = 150; // 50 + 50 + 50
 const SETTLE_MS = 100;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-let pass = 0;
-let fail = 0;
-function assert(cond: boolean, msg: string): void {
-  if (cond) {
-    console.log('  PASS', msg);
-    pass++;
-  } else {
-    console.log('  FAIL', msg);
-    fail++;
-  }
-}
 
 console.log('\nTest 1: single message → fires once after ~150ms');
 {
@@ -45,7 +32,7 @@ console.log('\nTest 1: single message → fires once after ~150ms');
       firedAt = Date.now() - startedAt;
     },
   });
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   assert(fireCount === 1, `fire called exactly once (got ${fireCount})`);
   assert(firedAt >= TOTAL_MS - 20, `fired at >= ${TOTAL_MS}ms (got ${firedAt}ms)`);
   assert(firedAt <= TOTAL_MS + SETTLE_MS, `fired before timeout (got ${firedAt}ms)`);
@@ -55,11 +42,11 @@ console.log('\nTest 2: 3 rapid messages → fires once with the LATEST callback'
 {
   const calls: string[] = [];
   scheduleReply({ empresaId: 'e2', jid: 'j2', messageId: 'm1', fire: async () => { calls.push('cb-m1'); } });
-  await sleep(30);
+  await setTimeout(30);
   scheduleReply({ empresaId: 'e2', jid: 'j2', messageId: 'm2', fire: async () => { calls.push('cb-m2'); } });
-  await sleep(30);
+  await setTimeout(30);
   scheduleReply({ empresaId: 'e2', jid: 'j2', messageId: 'm3', fire: async () => { calls.push('cb-m3'); } });
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   assert(calls.length === 1, `fire called once (got ${calls.length})`);
   assert(calls[0] === 'cb-m3', `latest callback used (got "${calls[0]}")`);
 }
@@ -79,10 +66,10 @@ console.log('\nTest 3: rapid burst total time > TOTAL_MS but each gap < TOTAL_MS
         firedAt = Date.now() - startedAt;
       },
     });
-    await sleep(50); // each new msg arrives within the 150ms window → reset
+    await setTimeout(50); // each new msg arrives within the 150ms window → reset
   }
   // Last scheduleReply at t=200ms. fire should happen at t=200+150=350ms.
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   assert(fireCount === 1, `fire called once even after 5 resets (got ${fireCount})`);
   assert(firedAt >= 350 - 20, `fire delayed by burst (got ${firedAt}ms, expected ~350ms)`);
 }
@@ -91,9 +78,9 @@ console.log('\nTest 4: cancelPendingReply during window → fire NOT called');
 {
   let fireCount = 0;
   scheduleReply({ empresaId: 'e4', jid: 'j4', messageId: 'm1', fire: async () => { fireCount++; } });
-  await sleep(30);
+  await setTimeout(30);
   cancelPendingReply('e4', 'j4');
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   assert(fireCount === 0, `fire NOT called after cancel (got ${fireCount})`);
 }
 
@@ -105,7 +92,7 @@ console.log('\nTest 5: distinct (empresa, jid) keys are isolated');
   scheduleReply({ empresaId: 'eA', jid: 'jA', messageId: 'm1', fire: async () => { fireA++; } });
   scheduleReply({ empresaId: 'eA', jid: 'jB', messageId: 'm1', fire: async () => { fireB++; } });
   scheduleReply({ empresaId: 'eB', jid: 'jA', messageId: 'm1', fire: async () => { fireC++; } });
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   assert(fireA === 1 && fireB === 1 && fireC === 1, `all 3 keys fired independently (a=${fireA} b=${fireB} c=${fireC})`);
 }
 
@@ -129,7 +116,7 @@ console.log('\nTest 7: messageId undefined → fire still happens (markAsRead si
     messageId: undefined,
     fire: async () => { fireCount++; },
   });
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   assert(fireCount === 1, `fire happens even without messageId (got ${fireCount})`);
 }
 
@@ -144,7 +131,7 @@ console.log('\nTest 8: fire callback that throws → caught (does not crash next
       throw new Error('boom');
     },
   });
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   // Now schedule a second reply on the same key — should still work.
   scheduleReply({
     empresaId: 'e7',
@@ -154,7 +141,7 @@ console.log('\nTest 8: fire callback that throws → caught (does not crash next
       secondCycleFired = true;
     },
   });
-  await sleep(TOTAL_MS + SETTLE_MS);
+  await setTimeout(TOTAL_MS + SETTLE_MS);
   assert(secondCycleFired, 'next cycle on same key works after thrown error');
 }
 

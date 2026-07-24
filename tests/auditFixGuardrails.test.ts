@@ -3,19 +3,7 @@
 // Run via: npx tsx tests/auditFixGuardrails.test.ts
 
 import { readFileSync } from 'node:fs';
-
-let pass = 0;
-let fail = 0;
-
-function assert(cond: boolean, msg: string): void {
-  if (cond) {
-    console.log('  PASS', msg);
-    pass++;
-  } else {
-    console.log('  FAIL', msg);
-    fail++;
-  }
-}
+import { assert, pass, fail } from './testHarness.js';
 
 function read(path: string): string {
   return readFileSync(path, 'utf8');

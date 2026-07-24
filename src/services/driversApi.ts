@@ -1,25 +1,9 @@
 import type { DeliveryDriver } from '../types';
 import { apiUrl, apiFetch } from '../config';
+import { authHeaders, parseResponse } from './shared';
 
 type DriversResponse = { drivers: DeliveryDriver[] };
 type DriverResponse = { driver: DeliveryDriver };
-
-function authHeaders(token: string): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-  };
-}
-
-async function parseResponse<T>(response: Response): Promise<T> {
-  const body = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error((body as { error?: string }).error || `HTTP ${response.status}`);
-  }
-
-  return body as T;
-}
 
 export async function getDrivers(token: string): Promise<DeliveryDriver[]> {
   const response = await apiFetch(apiUrl('/api/drivers'), {

@@ -6,19 +6,7 @@
 import { createHmac } from 'node:crypto';
 import { verifyAbacatePaySignature, buildUrl, STATUS_MAP } from '../server/abacatepay.js';
 import { safeEqualStr, extractTransparentId } from '../server/billingPix.js';
-
-let pass = 0;
-let fail = 0;
-
-function assert(cond: boolean, msg: string): void {
-  if (cond) {
-    console.log('  PASS', msg);
-    pass++;
-  } else {
-    console.log('  FAIL', msg);
-    fail++;
-  }
-}
+import { assert, pass, fail } from './testHarness.js';
 
 // ---------------------------------------------------------------------------
 // safeEqualStr

@@ -4,19 +4,7 @@ import {
   isSubscriptionCurrentlyActive,
   type ActiveSubscriptionLike,
 } from '../src/domain/subscription.js';
-
-let pass = 0;
-let fail = 0;
-
-function assert(cond: boolean, msg: string): void {
-  if (cond) {
-    console.log('  PASS', msg);
-    pass++;
-  } else {
-    console.log('  FAIL', msg);
-    fail++;
-  }
-}
+import { assert, pass, fail } from './testHarness.js';
 
 console.log('\nsubscription expiry');
 

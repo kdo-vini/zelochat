@@ -36,10 +36,7 @@ function sanitizePayloadForLog(body: unknown): unknown {
   try {
     cloned = structuredClone(body);
   } catch {
-    // structuredClone fails on non-cloneable values (functions, etc.). Webhook
-    // bodies are always plain JSON so this should never fire, but fall back
-    // to JSON round-trip rather than throwing.
-    try { cloned = JSON.parse(JSON.stringify(body)); } catch { return body; }
+    return body;
   }
 
   const stripField = (obj: any, key: string) => {

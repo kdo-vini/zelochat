@@ -13,6 +13,7 @@ import type {
   TriggerKind,
 } from '../types';
 import { apiUrl, apiFetch } from '../config';
+import { authHeaders, parseResponse } from './shared';
 import type { AiGlobalMode, AiScheduleDays } from '../domain/aiSchedule';
 
 type SessionsResponse = ChatSessionsPage;
@@ -143,23 +144,6 @@ type SendMessagePayload = {
   attachment?: ChatAttachment;
   quoted?: { waMessageId: string; fromMe: boolean; remoteJid: string; previewText?: string } | null;
 };
-
-async function parseResponse<T>(response: Response): Promise<T> {
-  const body = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error((body as { error?: string }).error || `HTTP ${response.status}`);
-  }
-
-  return body as T;
-}
-
-function authHeaders(token: string): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-  };
-}
 
 export async function bindEmpresa(token: string): Promise<void> {
   const response = await apiFetch(apiUrl('/api/bind-empresa'), {

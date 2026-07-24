@@ -1,4 +1,5 @@
 import { apiFetch, apiUrl } from '../config';
+import { parseResponse } from './shared';
 
 import type {
   ZeloMenuModifierGroup,
@@ -179,14 +180,6 @@ export type ZeloMenuUpdateCartPayload = {
   paymentMethod?: string | null;
   observations?: string | null;
 };
-
-async function parseResponse<T>(response: Response): Promise<T> {
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error((body as { error?: string }).error || `HTTP ${response.status}`);
-  }
-  return body as T;
-}
 
 export async function getPublicCart(token: string): Promise<ZeloMenuPublicCartResponse> {
   const response = await apiFetch(apiUrl(`/api/public/zelomenu/cart/${encodeURIComponent(token)}`), {

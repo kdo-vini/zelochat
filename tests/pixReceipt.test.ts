@@ -6,19 +6,7 @@ import {
   normalizePixReceiptConfig,
   type PixReceiptAnalysis,
 } from '../src/domain/pixReceipt';
-
-let pass = 0;
-let fail = 0;
-
-function assert(cond: boolean, msg: string): void {
-  if (cond) {
-    console.log('  PASS', msg);
-    pass++;
-  } else {
-    console.log('  FAIL', msg);
-    fail++;
-  }
-}
+import { assert, pass, fail } from './testHarness.js';
 
 const baseConfig = normalizePixReceiptConfig({
   ...DEFAULT_PIX_RECEIPT_CONFIG,

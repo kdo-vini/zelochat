@@ -1,4 +1,5 @@
 import { apiUrl, apiFetch, WaServerOfflineError } from '../config';
+import { authHeaders } from './shared';
 
 export type PlanTier = 'pdv' | 'chat' | 'bundle';
 export type ChangePlanTarget = 'chat' | 'bundle';
@@ -28,13 +29,6 @@ export interface CheckoutResult {
 
 export interface PortalResult {
   url: string;
-}
-
-function authHeaders(token: string): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-  };
 }
 
 async function callBilling<T>(
