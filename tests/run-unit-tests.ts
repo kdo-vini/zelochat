@@ -22,6 +22,7 @@ const tests = [
   'tests/aiZeloMenuGuardrails.test.ts',
   'tests/aiToolPlan.test.ts',
   'tests/aiSimulatorScheduleGuard.test.ts',
+  'tests/aiScheduleEdgeCases.test.ts',
   'tests/aiPromptGuardrails.test.ts',
   'tests/aiTurnDecision.test.ts',
   'tests/routerWebhookGuardrails.test.ts',

@@ -1147,8 +1147,17 @@ function isWithinOperatingWindow(minutes: number, window: OperatingWindow): bool
   return minutes >= window.openMinutes || minutes <= window.closeMinutes;
 }
 
+// FIX 2026-07-24: pedido "pra já" (retirada/entrega imediata) recebia pickupTime ≈ agora,
+// mas o guard rejeitava qualquer horário <= o minuto atual → um pedido às 20:08 validado
+// às 20:09 caía em "esse horário já passou" (mensagem sem sentido pro cliente). Damos uma
+// tolerância: só é "passado" quando o horário está claramente atrás de agora (mais do que
+// SAME_DAY_PAST_GRACE_MINUTES), cobrindo latência de processamento e a natureza aproximada
+// de "agora". Horários genuinamente passados (ex: 14h às 20h) continuam sendo pegos.
+const SAME_DAY_PAST_GRACE_MINUTES = 15;
+
 function isPastSameDaySchedule(isoDate: string, timeMinutes: number, now = new Date(), tz: string = DEFAULT_TIMEZONE): boolean {
-  return isoDate === toIsoBrazil(now, tz) && timeMinutes <= getBrazilTimeParts(now, tz).minutes;
+  if (isoDate !== toIsoBrazil(now, tz)) return false;
+  return timeMinutes < getBrazilTimeParts(now, tz).minutes - SAME_DAY_PAST_GRACE_MINUTES;
 }
 
 function collectRequestedTimeMinutes(text: string): number[] {
@@ -1191,7 +1200,12 @@ function collectRequestedTimeMinutes(text: string): number[] {
 
   if (/\bmeio\s+dia\b/.test(normalized)) addTime('12', undefined);
 
-  const prepositionRe = /\b(?:as|a)\s+([01]?\d|2[0-3])(?:[:h]([0-5]\d))?\b/g;
+  // FIX 2026-07-24: o "a"/"as" solto casava com preço/quantidade ("a 5 reais" → 05:00,
+  // "me vê 3 a 10 reais" → 10:00, "daqui a 20 minutos" → 20:00), disparando rejeições de
+  // horário sem sentido pro cliente. Só tratamos como horário quando NÃO vem seguido de
+  // unidade de preço/quantidade/tempo-relativo. Horário com marcador (h/:) já é pego pelas
+  // regras acima, então isso só cobre o caso solto "às 20".
+  const prepositionRe = /\b(?:as|a)\s+([01]?\d|2[0-3])(?:[:h]([0-5]\d))?(?!\s*(?:reais?|r\$|contos?|pilas?|unidades?|un|pecas?|porcao|porcoes|pessoas?|centos?|duzias?|caixas?|minutos?|min|reai|kg|ml|(?:da\s+)?(?:manha|tarde|noite))\b)\b/g;
   while ((match = prepositionRe.exec(normalized)) !== null) {
     addTime(match[1], match[2]);
   }

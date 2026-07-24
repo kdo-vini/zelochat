@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-07-24',
     category: 'hotfix',
+    title: 'Atendimento não recusa mais horário "pra agora"',
+    description: 'Quando o cliente pede pra retirar ou receber na hora, o atendimento automático aceita normalmente. Antes, em alguns casos, ele respondia que o horário "já tinha passado" mesmo sendo agora. Também deixou de confundir preço e quantidade ("2 a 5 reais") com horário.',
+  },
+  {
+    date: '2026-07-24',
+    category: 'hotfix',
     title: 'Pedidos entregues saem do quadro de Produção',
     description: 'Depois de marcar um pedido como entregue, ele sai do quadro sozinho em alguns minutos, deixando a tela limpa com o que ainda falta fazer. Os pedidos finalizados continuam disponíveis na Agenda.',
   },

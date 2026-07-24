@@ -11,6 +11,22 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XVI. IA recusava pedido "pra já" dizendo que o horário já passou
+
+### Sintoma
+Cliente pedia pra retirar/receber na hora e a IA respondia algo como "Esse horário já passou hoje: 20:08. Agora são 20:09. O atendimento funciona das 11:00 às 23:00." (Bem Servido). Mensagem sem sentido: 20:08 está dentro do horário e é ~agora.
+
+### Causa-raiz
+Pedido imediato recebe `pickupTime ≈ agora`; `isPastSameDaySchedule` (`server/ai.ts`) marcava como passado qualquer horário `<=` o minuto atual (tolerância zero), então 1 min de latência entre o carimbo e a validação virava "já passou". Bug adjacente: o parser de horário (`collectRequestedTimeMinutes`) tratava o "a"/"as" solto como horário, confundindo preço/quantidade/tempo-relativo ("a 5 reais" → 05:00, "daqui a 20 minutos" → 20:00, "as 5 da tarde" → falso 05:00).
+
+### Fix
+Tolerância de 15 min (`SAME_DAY_PAST_GRACE_MINUTES`) — só é "passado" quando claramente atrás de agora — e negative lookahead no parser excluindo unidades de preço/quantidade/período. `server/ai.ts:1150`, `server/ai.ts:1203`. Regressão: `tests/aiScheduleEdgeCases.test.ts` (63 casos de comunicação informal BR).
+
+### Recovery
+Já corrigido em código. Se reaparecer, checar se `SAME_DAY_PAST_GRACE_MINUTES` cobre a latência real e se o horário veio de preço/quantidade mal interpretado no texto do cliente.
+
+---
+
 ## XV. Mover pedido retornava 500/UNKNOWN_ERROR
 
 ### Sintoma
