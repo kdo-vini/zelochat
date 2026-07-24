@@ -3,6 +3,9 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Sprint 10 (shipped 2026-07-24) — Hotfix pós-refactor do Cérebro IA
+- ✅ AI-CONFIGS-001 — refactor removeu bindings ainda usados pela tela e causava `ReferenceError: qrSaveState is not defined` ao abrir respostas rápidas → estado de salvamento, debounce e foco das instruções foram restaurados, com regressão dedicada — `src/components/views/AIConfigsView.tsx:196`, `tests/aiConfigsViewGuardrails.test.ts:1`
+
 ### Sprint 8 (shipped 2026-07-24) — IA conhece complementos do cardápio
 - ✅ AI-001 — perguntas sobre opções dentro de produtos configuráveis ignoravam grupos/complementos → o prompt agora inclui grupos e opções ativos, preço adicional e obrigatoriedade, mantendo produtos não publicados fora do contexto do cliente; regressão cobre “Monte sua Massa → Nhoque” e produto interno — `server/ai.ts:1663`, `tests/aiPromptGuardrails.test.ts:98`
 - ✅ AI-002 — IA respondia "esse horário já passou: 20:08. Agora são 20:09" para pedido imediato (Bem Servido). Causa: `isPastSameDaySchedule` marcava como passado qualquer horário `<=` o minuto atual (tolerância zero) → pedido "pra já" com pickupTime ≈ agora caía em past_time por 1 min de latência. Bug adjacente: o "a"/"as" solto de `collectRequestedTimeMinutes` casava preço/quantidade/tempo-relativo como horário ("a 5 reais" → 05:00, "daqui a 20 minutos" → 20:00, "as 5 da tarde" → falso 05:00). Fix: tolerância de 15 min (`SAME_DAY_PAST_GRACE_MINUTES`) no guard de horário passado + negative lookahead excluindo unidades de preço/quantidade/período no parser. Cobertura: 63 casos de comunicação informal BR — `server/ai.ts:1150`, `server/ai.ts:1203`, `tests/aiScheduleEdgeCases.test.ts`

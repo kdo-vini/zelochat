@@ -34,6 +34,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     description: 'Quando uma opção fica dentro de um produto montável, como o nhoque na massa, o atendimento automático agora consegue reconhecê-la e orientar o cliente corretamente.',
   },
   {
+    date: '2026-07-24',
+    category: 'medium',
+    title: 'Cliente acompanha o pedido pelo link',
+    description: 'Depois de confirmar, o cliente vê o andamento do pedido em uma linha do tempo simples, do recebimento até a entrega ou retirada.',
+  },
+  {
     date: '2026-07-23',
     category: 'hotfix',
     title: 'Mover pedidos ficou mais claro',
@@ -50,6 +56,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     category: 'hotfix',
     title: 'Pedidos normais não são mais tratados como reclamação',
     description: 'O atendimento automático agora reconhece a diferença entre um pedido comum e uma reclamação, encaminhando para a equipe humana apenas quando houver um sinal claro de insatisfação.',
+  },
+  {
+    date: '2026-07-23',
+    category: 'medium',
+    title: 'Produção ficou mais flexível para a equipe',
+    description: 'A fila e as colunas aproveitam melhor o espaço disponível, e a equipe também pode criar pedidos manuais direto na Produção quando precisar.',
   },
   {
     date: '2026-06-24',

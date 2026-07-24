@@ -37,6 +37,8 @@
 
 ## Entregue nesta sessão (2026-07-24)
 
+- **Hotfix: Cérebro IA travando após refactor** — referências de estado removidas junto com seções aposentadas causavam `qrSaveState is not defined` ao abrir a tela de configurações; bindings de respostas rápidas e instruções restaurados, com guardrail dedicado. `src/components/views/AIConfigsView.tsx`, `tests/aiConfigsViewGuardrails.test.ts`.
+
 - **Hotfix: IA reconhece complementos do cardápio** — opções como Nhoque, quando ficam dentro de um grupo de um produto configurável publicado, agora entram no contexto da IA junto com grupos ativos, obrigatoriedade e preços adicionais; produtos não publicados e seus complementos continuam fora da resposta ao cliente. `server/ai.ts`, `tests/aiPromptGuardrails.test.ts`.
 
 - **AppShell refatorado (−31%)** — o monolito de 1543 linhas foi dividido em: `Sidebar.tsx` (nav desktop), `MobileBottomNav.tsx` (tab bar + bottom sheet mobile), `MainContent.tsx` (paywall + view switch), `useAutoPrint.ts` (hook de impressão). AppShell final: 1063 linhas. Navegação inativa em `Sidebar.tsx`, auto-print em `useAutoPrint.ts`. `server/router.ts` substituiu normalização inline por `normalizeLoose` (conversationState.ts). Nova suíte `tests/orderConfirmationPipeline.test.ts` (77 testes do hard-button/soft-confirm normalization). `diagnostico.html` — relatório estratégico. `APP_SHELL_PLAN.md` — plano do refactor.

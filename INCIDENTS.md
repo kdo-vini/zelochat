@@ -11,6 +11,22 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XVII. Cérebro IA travava após refactor da tela
+
+### Sintoma
+Ao abrir Configurações → Cérebro IA em produção, a tela quebrava com `qrSaveState is not defined` ao renderizar as respostas rápidas.
+
+### Causa-raiz
+O refactor removeu os bindings locais de estado/ref junto com seções aposentadas, mas manteve usos desses bindings no salvamento das respostas rápidas e no campo de instruções.
+
+### Fix
+Os bindings `qrSaveState`, `qrDebounceRef` e `promptRef` foram restaurados em `AIConfigsView`, com guardrail de regressão — `src/components/views/AIConfigsView.tsx:196`, `tests/aiConfigsViewGuardrails.test.ts:1`.
+
+### Recovery
+Publicar o build corrigido e recarregar a tela; não é necessário alterar dados ou configurações da empresa.
+
+---
+
 ## XVI. IA recusava pedido "pra já" dizendo que o horário já passou
 
 ### Sintoma

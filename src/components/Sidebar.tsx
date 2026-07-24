@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { PrinterButton } from './PrinterButton';
 import type { Order } from '../types';
+import type { UsePrinterReturn } from '../hooks/usePrinter';
 
 export type View =
   | 'dashboard'
@@ -114,7 +115,7 @@ interface Props {
   firstNameOnly: string;
   profileAvatar: string;
   profileRole: string;
-  printer: { connected: boolean; print: (order: Order, businessName?: string) => Promise<void> };
+  printer: UsePrinterReturn;
   testOrder?: Order;
 }
 

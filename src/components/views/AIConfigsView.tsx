@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import {
   Plus, Send, Bot, Bell, AlignLeft, Clock, Loader2, Trash2, Zap,
@@ -193,6 +193,13 @@ export const AIConfigsView = ({
   const [promptJustSaved, setPromptJustSaved] = useState(false);
   const [promptGenerating, setPromptGenerating] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
+  // FIX 2026-07-24: o refactor removeu estes bindings junto com seções aposentadas
+  // → respostas rápidas e foco das instruções voltam a ter estado local próprio.
+  const qrDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [qrSaveState, setQrSaveState] = useState<
+    Record<string, 'saving' | 'saved'>
+  >({});
+  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (hasPromptDraft) {

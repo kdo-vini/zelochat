@@ -72,6 +72,16 @@ export async function generateAgentInstructions(hint?: string): Promise<string> 
 }
 
 export interface SimulateAtendimentoPayload {
+  customerMessage: string;
+  customerName?: string;
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  configOverride?: {
+    aiInstructions?: string;
+    storeName?: string;
+  };
+}
+
+export interface SimulateAtendimentoResult {
   reply: string;
   toolCallsMade: string[];
   wouldCreateOrder: boolean;
