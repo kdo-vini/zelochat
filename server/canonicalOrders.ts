@@ -11,7 +11,7 @@ export const LEGACY_CANONICAL_ORDER_SELECT = [
   'delivery_address:fulfillment->>deliveryAddress', 'driver_id:fulfillment->>driverId',
   'fulfillment_type:fulfillment->>type',
   'payment_method:payment->>declaredMethod', 'pix_receipt_analysis:payment->pixReceiptAnalysis',
-  'items:zelo_order_items(product:name,quantity,position)',
+  'items:zelo_order_items(product:name,quantity,position,modifiers)',
 ].join(', ');
 
 export async function getCanonicalOrder(empresaId: string, orderId: string): Promise<Order | null> {

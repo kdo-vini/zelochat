@@ -21,7 +21,7 @@ assert(tagMigration.includes('zelochat_session_tags_session_empresa_fk'), 'migra
 assert(tagMigration.includes('zelochat_session_tags_tag_empresa_fk'), 'migration enforces tag/empresa FK');
 
 const router = read('server/router.ts');
-assert(router.includes('WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT'), 'webhook has explicit rollout bypass name');
+assert(router.includes('WEBHOOK_REQUIRE_TOKEN'), 'webhook has explicit strict-mode toggle env');
 assert(router.includes("res.status(401).json({ error: 'webhook token required' })"), 'missing webhook token fails closed by default');
 assert(router.includes('safeEqualString(headerToken, webhookToken)'), 'webhook token comparison is constant-time');
 assert(router.includes('messageExistsByWhatsAppId'), 'fromMe echo skip checks database persistence');
