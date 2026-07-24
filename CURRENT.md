@@ -5,12 +5,12 @@
 
 ---
 
-## Estado do produto (2026-05-31)
+## Estado do produto (2026-07-24)
 
 - **2 cliente pagante:** Casa dos Salgados, Agreste Salgados
 - **1 founder test:** Donutopia
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
-- **Audit:** P0 100% ✅ · P1 94% ✅ · P2 63% · P3 21%
+- **Audit:** P0 100% ✅ · P1 100% ✅ (acionáveis, 3 deferred p/ multi-replica) · P2 63% · P3 21%
 
 ## Entregue nesta sessão (2026-07-23)
 
@@ -39,14 +39,15 @@
 
 - **Hotfix: IA reconhece complementos do cardápio** — opções como Nhoque, quando ficam dentro de um grupo de um produto configurável publicado, agora entram no contexto da IA junto com grupos ativos, obrigatoriedade e preços adicionais; produtos não publicados e seus complementos continuam fora da resposta ao cliente. `server/ai.ts`, `tests/aiPromptGuardrails.test.ts`.
 
+- **AppShell refatorado (−31%)** — o monolito de 1543 linhas foi dividido em: `Sidebar.tsx` (nav desktop), `MobileBottomNav.tsx` (tab bar + bottom sheet mobile), `MainContent.tsx` (paywall + view switch), `useAutoPrint.ts` (hook de impressão). AppShell final: 1063 linhas. Navegação inativa em `Sidebar.tsx`, auto-print em `useAutoPrint.ts`. `server/router.ts` substituiu normalização inline por `normalizeLoose` (conversationState.ts). Nova suíte `tests/orderConfirmationPipeline.test.ts` (77 testes do hard-button/soft-confirm normalization). `diagnostico.html` — relatório estratégico. `APP_SHELL_PLAN.md` — plano do refactor.
+
+- **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
+
 ## Em aberto
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
-- `ai.ts:1778` — bug latente: query usa status `'dispatched'` (inexistente no DB) em vez de `'out_for_delivery'` → pedidos em entrega nunca aparecem no contexto da IA
-- `supabase/migrations/014_zelochat_rls_hardening.sql` — ainda marcado `DRAFT`, não aplicado em prod
-- `server/router.ts:806` / `tests/auditFixGuardrails.test.ts` — drift de webhook auth: docs/teste esperam `WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT`, mas o código atual usa `WEBHOOK_REQUIRE_TOKEN` como strict opt-in e aceita token ausente por padrão para instância conhecida
-- `npm run build` — aviso de chunk >500 kB voltou; maior chunk app atual `index-WPPUGIRI.js` = 597.68 kB / 168.38 kB gzip (ver [[DEV_SETUP]])
-- Dependências antigas — `npm audit` limpo após remover `localtunnel`; majors ainda pendentes exigem migração dedicada (`express@5`, `vite@8`, `stripe@22`, `typescript@6`, etc.; ver [[DEV_SETUP]])
+- `npm run build` — aviso de chunk >500 kB; maior chunk `index-BirF1qk8.js` = 603.87 kB / 171.61 kB gzip
+- Dependências antigas — `npm audit` limpo; majors pendentes (`express@5`, `vite@8`, `stripe@22`, `typescript@6`)
 
 ## Dívida técnica aceita (conhecido, não prioritário)
 
@@ -58,6 +59,9 @@ Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA n�
 | ~~P1.13 — Whatsmiau continua cobrado após cancelamento~~ | **RESOLVIDO** — `subscriptionSweeper.ts` deleta instância após 7 dias de grace (provider-agnostic: Stripe + AbacatePay/Pix) | —                                                           |
 | P1.4 — instance names aparecem em logs                   | Auth boundary é o sufixo de 64 bits, não o nome; logs são internos                                                          | Logs ficarem públicos ou acessíveis externamente            |
 | `dailyContext` sem `safeForPrompt`                       | Operador controla o próprio `dailyContext`; risco de prompt injection é auto-infligido                                      | Multitenancy expandir ou campo virar editável por terceiros |
+| `zelochat-media` bucket público                          | Whatsmiau exige URL pública para baixar mídia; paths não-enumeráveis mitigam enumeração (128-bit slug por arquivo)         | Whatsmiau suportar download autenticado ou proxy próprio     |
+| Sem teste integrado do pipeline crítico de pedido        | Caminho webhook→IA→confirmação→Kanban nunca falhou em prod pós-fix; hard-button normalization já coberta por `orderConfirmationPipeline.test.ts` (77 testes); teste full pipeline exigiria mock Whatsmiau | Próxima alteração no `server/ai.ts` ou `server/router.ts`    |
+| `AppShell.tsx` ainda concentra estado global             | Já teve lazy-loading + otimizações + −31% por extração de Sidebar/MainContent/MobileBottomNav/useAutoPrint; ZeloState monolítico continua por decisão (separar é risco sem testes) | Mudança no ZeloState ou performance mensurável               |
 
 ## Próximas fatias recomendadas
 

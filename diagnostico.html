@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZeloChat — Diagnóstico Técnico</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #282c3a;
+    --text: #e4e6ef;
+    --text-secondary: #8b8fa3;
+    --red: #f87171;
+    --red-bg: rgba(248,113,113,0.08);
+    --red-border: rgba(248,113,113,0.2);
+    --amber: #fbbf24;
+    --amber-bg: rgba(251,191,36,0.08);
+    --amber-border: rgba(251,191,36,0.15);
+    --blue: #60a5fa;
+    --blue-bg: rgba(96,165,250,0.08);
+    --blue-border: rgba(96,165,250,0.15);
+    --green: #34d399;
+    --green-bg: rgba(52,211,153,0.08);
+    --green-border: rgba(52,211,153,0.15);
+    --gray: #6b7280;
+    --accent: #a78bfa;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 0;
+  }
+  .container { max-width: 900px; margin: 0 auto; padding: 48px 24px; }
+
+  /* Header */
+  .header { margin-bottom: 48px; }
+  .header h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  .header .subtitle {
+    color: var(--text-secondary);
+    font-size: 1rem;
+  }
+  .header .meta {
+    display: flex;
+    gap: 16px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  .header .meta span {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    background: var(--card);
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+  }
+  .header .meta .ok { color: var(--green); border-color: var(--green-border); }
+  .header .meta .nok { color: var(--red); border-color: var(--red-border); }
+
+  /* Summary cards */
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+  .summary-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+  }
+  .summary-card .value { font-size: 1.5rem; font-weight: 700; }
+  .summary-card .label { font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; }
+
+  /* Section */
+  .section { margin-bottom: 40px; }
+  .section-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Card */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 12px;
+    transition: border-color 0.15s;
+  }
+  .card:hover { border-color: #3b3f52; }
+
+  .card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .card-title {
+    font-size: 1rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-tag {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .tag-red { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+  .tag-amber { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+  .tag-blue { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-border); }
+  .tag-green { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .tag-gray { background: rgba(107,114,128,0.1); color: var(--gray); border: 1px solid rgba(107,114,128,0.2); }
+
+  .card-desc {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-bottom: 12px;
+  }
+
+  .card-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 16px;
+    font-size: 0.8125rem;
+  }
+  .card-details dt {
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+  .card-details dd {
+    color: var(--text);
+  }
+
+  .ecosystem-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .ecosystem-tag {
+    font-size: 0.6875rem;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(167,139,250,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(167,139,250,0.2);
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+
+  .footer {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    padding: 24px 0;
+  }
+
+  @media (max-width: 640px) {
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    .card-details { grid-template-columns: 1fr; }
+    .card-header { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <h1>ZeloChat &mdash; Diagnóstico Técnico</h1>
+  <p class="subtitle">Mapeamento de riscos, dívida técnica e prioridades em 24 de julho de 2026</p>
+  <div class="meta">
+    <span class="ok">P0 100% resolvidos</span>
+    <span class="ok">P1 100% resolvidos (3 adiados)</span>
+    <span class="nok">P2 63%</span>
+    <span class="nok">P3 21%</span>
+    <span>2 pagantes + 1 teste</span>
+  </div>
+</div>
+
+<!-- Summary -->
+<div class="summary">
+  <div class="summary-card"><div class="value" style="color:var(--red)">0</div><div class="label">Críticos (P0)</div></div>
+  <div class="summary-card"><div class="value" style="color:var(--amber)">3</div><div class="label">Importantes</div></div>
+  <div class="summary-card"><div class="value" style="color:var(--blue)">5</div><div class="label">Táticos</div></div>
+  <div class="summary-card"><div class="value" style="color:var(--gray)">4</div><div class="label">Dívida aceita</div></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CRITICAL -->
+<!-- ============================================================ -->
+<div class="section">
+  <div class="section-title">🔴 Crítico &mdash; risco agora</div>
+  <p style="color:var(--text-secondary);font-size:0.875rem;margin-bottom:16px">
+    Nenhum. Os 24 P0 originais foram fechados. O que existia de risco de prejuízo, vazamento de dados ou perda de cliente já foi corrigido.
+  </p>
+  <div class="card" style="border-color:var(--green-border);background:var(--green-bg)">
+    <div class="card-header">
+      <div class="card-title">Nenhum item crítico pendente</div>
+      <span class="card-tag tag-green">OK</span>
+    </div>
+    <div class="card-desc">
+      Todos os bloqueios de ship (24 P0) foram resolvidos: pedido duplicado, vazamento cross-tenant, paywall bypass, schema versionado, logout sem limpeza, bucket protegido contra enumeração, idempotência de webhook.
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- IMPORTANT -->
+<!-- ============================================================ -->
+<div class="section">
+  <div class="section-title">🟡 Importante &mdash; risco crescente</div>
+
+  <!-- 1. AppShell -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">AppShell monolítico</div>
+      <span class="card-tag tag-amber">Dívida estrutural</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+    </div>
+    <div class="card-desc">
+      O componente central do frontend concentra estado global, navegação, Kanban, notificações, pedidos e integrações. Já recebeu lazy-loading e otimizações de re-render, mas a estrutura não foi separada em hooks e módulos independentes.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Cada nova feature exige tocar no mesmo arquivo de 1300+ linhas. Risco de regressão cresce a cada sprint. Onboarding de novo desenvolvedor é lento.</dd>
+      <dt>Quando resolve</dt>
+      <dd>Próxima feature que exija novo estado global. Idealmente antes de qualquer expansão multi-tenant no frontend.</dd>
+      <dt>Ecossistema</dt>
+      <dd>Só ZeloChat. ZeloMenu tem páginas separadas (store, cart) que não passam pelo AppShell.</dd>
+    </div>
+  </div>
+
+  <!-- 2. Test pipeline crítico -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Pipeline crítico sem teste automatizado</div>
+      <span class="card-tag tag-amber">Risco de regressão</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+      <span class="ecosystem-tag">ZeloMenu</span>
+    </div>
+    <div class="card-desc">
+      O caminho webhook &rarr; IA &rarr; pending order &rarr; confirmação &rarr; Kanban &rarr; notificação ao cliente não tem nenhum teste integrado. Só existem testes de funções isoladas (regras de agenda, lógica de confirmação, guardrails).
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Qualquer alteração em <code>server/ai.ts</code>, <code>server/router.ts</code> ou <code>server/messageHandler.ts</code> é "torcer pra não quebrar". O bug de pedido duplicado (que já aconteceu em prod) só foi pego porque o cliente reclamou.</dd>
+      <dt>Quando resolve</dt>
+      <dd>Antes da próxima mudança no pipeline de pedido. O risco atual é baixo porque ninguém está mexendo nesse caminho, mas qualquer sprint que toque em <code>server/ai.ts</code> deve incluí-lo.</dd>
+      <dt>Afeta ZeloMenu</dt>
+      <dd>Sim &mdash; pedidos do ZeloMenu passam pelo mesmo pipeline de confirmação e Kanban.</dd>
+    </div>
+  </div>
+
+  <!-- 3. Bucket de mídia público -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Bucket de fotos/áudios público por limitação do Whatsmiau</div>
+      <span class="card-tag tag-amber">Trade-off aceito</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+      <span class="ecosystem-tag">Whatsmiau</span>
+    </div>
+    <div class="card-desc">
+      O bucket <code>zelochat-media</code> continua público porque o Whatsmiau precisa de URLs públicas para baixar e enviar mídia no WhatsApp. A mitigação aplicada (paths não-enumeráveis com slug de 128 bits + limpeza de arquivos históricos) elimina o risco de varredura, mas não o risco de um link vazar individualmente.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Baixo hoje. Um link só vaza se alguém explicitamente compartilhar. Mas é um passivo LGPD: fotos de cliente estão num bucket público, mesmo que não enumerável.</dd>
+      <dt>Quando resolve</dt>
+      <dd>Quando o Whatsmiau suportar download autenticado, ou se criarmos um proxy próprio que baixa e reenvia sem expor a URL original.</dd>
+      <dt>Ecossistema</dt>
+      <dd>Só ZeloChat. ZeloMenu usa o mesmo bucket? Não &mdash; ZeloMenu tem publicação própria em storage separado.</dd>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TACTICAL -->
+<!-- ============================================================ -->
+<div class="section">
+  <div class="section-title">🔵 Tático &mdash; deve ser feito, não quebra agora</div>
+
+  <!-- Bug ai.ts -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Bug: consulta de pedido em entrega usa status inexistente</div>
+      <span class="card-tag tag-blue">Bug conhecido</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+    </div>
+    <div class="card-desc">
+      Em <code>server/ai.ts:1778</code>, a query que busca pedidos em rota usa <code>'dispatched'</code> (inexistente no banco) em vez de <code>'out_for_delivery'</code>. Pedidos que já saíram para entrega nunca entram no contexto da IA.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>A IA não sabe que o pedido do cliente já saiu para entrega. Se o cliente perguntar "e meu pedido?", a IA pode responder algo genérico em vez de "saiu para entrega às 19:30".</dd>
+      <dt>Correção</dt>
+      <dd>Uma linha: trocar <code>'dispatched'</code> por <code>'out_for_delivery'</code>. Mas <code>ai.ts</code> é função crítica (ver CLAUDE.md) &mdash; requer verificação manual antes.</dd>
+    </div>
+  </div>
+
+  <!-- Webhook auth drift -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Drift de documentação vs código no webhook</div>
+      <span class="card-tag tag-blue">Inconsistência</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+    </div>
+    <div class="card-desc">
+      O teste <code>tests/auditFixGuardrails.test.ts</code> e a documentação esperam a env <code>WEBHOOK_ALLOW_MISSING_TOKEN_DURING_ROLLOUT</code>, mas o código atual usa <code>WEBHOOK_REQUIRE_TOKEN</code> como opt-in estrito e aceita token ausente por padrão.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Só o teste automatizado quebra. Produção funciona normalmente, mas o teste falso-positivo reduz confiança na suíte.</dd>
+      <dt>Correção</dt>
+      <dd>Alinhar teste + documentação com o comportamento real do código, ou alterar o código para corresponder ao que o teste espera.</dd>
+    </div>
+  </div>
+
+  <!-- Chunk size -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Bundle do frontend acima de 500 KB</div>
+      <span class="card-tag tag-blue">Performance</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+    </div>
+    <div class="card-desc">
+      O chunk principal (<code>index-WPPUGIRI.js</code>) tem 597 KB (168 KB gzip). O Vite alerta quando passa de 500 KB. Isso não inclui o ZeloMenu (que é um build separado).
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Primeiro carregamento ~0.5s mais lento em 3G. Navegação subsequente é rápida (cache).</dd>
+      <dt>Correção</dt>
+      <dd>Separar bibliotecas grandes em chunks vendors. Ou adiar quando o AppShell for refatorado (aproveita para dividir em módulos).</dd>
+    </div>
+  </div>
+
+  <!-- Dependencies -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Dependências principais desatualizadas (major)</div>
+      <span class="card-tag tag-blue">Manutenção</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+      <span class="ecosystem-tag">ZeloMenu</span>
+    </div>
+    <div class="card-desc">
+      Várias dependências estão uma ou mais majors atrás: <code>express@5</code>, <code>vite@8</code>, <code>stripe@22</code>, <code>typescript@6</code>. Cada uma exige migração dedicada (especialmente Express 4&rarr;5 e Stripe).
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Nenhum hoje. Mas quanto mais tempo passa, maior o salto e mais coisa quebra na migração. Stripe especialmente &mdash; versões muito antigas perdem suporte a novas APIs.</dd>
+      <dt>Ordem recomendada</dt>
+      <dd>TypeScript 6 (só tipo, menor risco) &rarr; Stripe 22 (testar billing) &rarr; Vite 8 (testar build) &rarr; Express 5 (testar rotas). Cada um em PR separado.</dd>
+      <dt>Afeta ZeloMenu</dt>
+      <dd>Sim, compartilham as mesmas dependências do backend (Express, Stripe). O frontend do ZeloMenu é build separado.</dd>
+    </div>
+  </div>
+
+  <!-- IMAGE VAULT -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">IMAGE_VAULT_BRAINSTORM.md &mdash; spec parada</div>
+      <span class="card-tag tag-blue">Feature não iniciada</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+    </div>
+    <div class="card-desc">
+      Especulação de funcionalidade: um vault de imagens para o cardápio, brainstorming feito mas não iniciado.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Nenhum. Item de backlog, não urgente.</dd>
+      <dt>Quando retomar</dt>
+      <dd>Quando houver demanda explícita de cliente ou sobra de capacidade.</dd>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- DEFERRED P1s -->
+<!-- ============================================================ -->
+<div class="section">
+  <div class="section-title">⚪ P1 adiados &mdash; só relevantes se sair do single-node</div>
+  <p style="color:var(--text-secondary);font-size:0.875rem;margin-bottom:16px">
+    Três achados do audit foram classificados como "resolve quando sair do single-node backend". Hoje o ZeloChat roda em um servidor só. Se escalar para múltiplas réplicas, esses viram P0.
+  </p>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">P1.16 &mdash; recordAiFailure em memória</div>
+      <span class="card-tag tag-gray">Adiado</span>
+    </div>
+    <div class="card-desc">
+      O contador de falhas consecutivas da IA está na memória do processo. Com duas réplicas, cada uma tem metade das falhas &rarr; nenhuma dispara a escalação automática.
+    </div>
+    <div class="card-details">
+      <dt>Resolve quando</dt>
+      <dd>Backend for multi-replica. Até lá, single-node significa contador único.</dd>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">P1.17 &mdash; configStore desync entre réplicas</div>
+      <span class="card-tag tag-gray">Adiado</span>
+    </div>
+    <div class="card-desc">
+      O cache de configurações (cardápio, horários) é local. Duas réplicas podem ter versões diferentes do cardápio ao mesmo tempo &rarr; IA responde com preços desatualizados em uma delas.
+    </div>
+    <div class="card-details">
+      <dt>Resolve quando</dt>
+      <dd>Multi-replica. Precisa de Redis ou cache centralizado.</dd>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">P1.43 &mdash; getAllSessions table scan</div>
+      <span class="card-tag tag-gray">Adiado</span>
+    </div>
+    <div class="card-desc">
+      A listagem de conversas carrega tudo do banco e agrupa em memória. Com 2 mil+ sessões por loja, começa a ficar lento.
+    </div>
+    <div class="card-details">
+      <dt>Resolve quando</dt>
+      <dd>Cliente atingir ~2.000 conversas. Hoje nenhum passou de 500.</dd>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CROSS-ECOSYSTEM -->
+<!-- ============================================================ -->
+<div class="section">
+  <div class="section-title">🔗 Pontes entre ecossistemas (ZeloChat &times; ZeloMenu &times; ZeloPDV)</div>
+  <p style="color:var(--text-secondary);font-size:0.875rem;margin-bottom:16px">
+    Riscos que não são de código, mas de coordenação entre os dois produtos.
+  </p>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Tabelas compartilhadas com ZeloPDV</div>
+      <span class="card-tag tag-amber">Regra de ouro</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+      <span class="ecosystem-tag">ZeloPDV</span>
+    </div>
+    <div class="card-desc">
+      ZeloChat e ZeloPDV compartilham o mesmo banco Supabase. ZeloChat NUNCA pode ALTERAR tabelas do PDV (<code>empresa_perfil</code>, <code>subscriptions</code>, <code>produtos</code>, <code>categorias</code>, <code>subcategorias</code>, etc.). Só adiciona colunas próprias em <code>empresa_perfil</code>. Isso já causou alertas no passado.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>DDL errado deste repo quebra o PDV silenciosamente &mdash; faturamento, caixa, catálogo. Já documentado em CLAUDE.md, mas não há barreira técnica, só processo manual.</dd>
+      <dt>Mitigação</dt>
+      <dd>Nenhuma nova, além da documentação existente. Ideal: um CI job que detecta ALTER TABLE em tabelas PDV-owned e bloqueia o PR.</dd>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">ZLM-203 &mdash; slug público bloqueado no ZeloPDV</div>
+      <span class="card-tag tag-blue">Dependência externa</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+      <span class="ecosystem-tag">ZeloMenu</span>
+      <span class="ecosystem-tag">ZeloPDV</span>
+    </div>
+    <div class="card-desc">
+      A coluna <code>zelomenu_slug</code> em <code>empresa_perfil</code> precisa ser criada pelo repo do ZeloPDV (a tabela é PDV-owned). O código do ZeloChat já está pronto para ler e servir o slug &mdash; falta a DDL do outro lado.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>ZeloMenu funciona sem slug (fallback para humano). Cliente sem slug não recebe link do cardápio. Bloqueia rollout automático de novas lojas.</dd>
+      <dt>O que fazer</dt>
+      <dd>Abrir issue no repo ZeloPDV para criar a coluna. Depois migration daqui para popular os slugs existentes.</dd>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">ZLM-205 &mdash; rollout de entitlements (parcialmente bloqueado)</div>
+      <span class="card-tag tag-blue">Dependência externa</span>
+    </div>
+    <div class="ecosystem-tags">
+      <span class="ecosystem-tag">ZeloChat</span>
+      <span class="ecosystem-tag">ZeloMenu</span>
+      <span class="ecosystem-tag">ZeloPDV</span>
+      <span class="ecosystem-tag">Stripe</span>
+    </div>
+    <div class="card-desc">
+      A parte local (resolver de capability) já está entregue. Falta: price IDs Stripe para o addon ZeloMenu + flag <code>has_zelo_menu</code> no PDV + grandfathering da Casa dos Salgados e migração da Agreste.
+    </div>
+    <div class="card-details">
+      <dt>Impacto</dt>
+      <dd>Não bloqueia clientes existentes. Impede vender ZeloMenu como addon para novos clientes até os prices estarem no Stripe e a flag no banco.</dd>
+      <dt>O que fazer</dt>
+      <dd>Criar prices no Stripe Dashboard + abrir issue no ZeloPDV para a coluna. Migração da Agreste precisa de comunicação com o cliente.</dd>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- HEALTH MATRIX -->
+<!-- ============================================================ -->
+<hr>
+
+<div class="section">
+  <div class="section-title">📊 Matriz de saúde por ecossistema</div>
+
+  <table style="width:100%;border-collapse:collapse;font-size:0.875rem">
+    <thead>
+      <tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:8px 12px;color:var(--text-secondary);font-weight:500">Ecossistema</th>
+        <th style="text-align:center;padding:8px 12px;color:var(--text-secondary);font-weight:500">Estado</th>
+        <th style="text-align:center;padding:8px 12px;color:var(--text-secondary);font-weight:500">P0</th>
+        <th style="text-align:center;padding:8px 12px;color:var(--text-secondary);font-weight:500">Riscos abertos</th>
+        <th style="text-align:left;padding:8px 12px;color:var(--text-secondary);font-weight:500">Próximo passo</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 12px;font-weight:600">ZeloChat</td>
+        <td style="padding:10px 12px;text-align:center;color:var(--green)">✅ Estável</td>
+        <td style="padding:10px 12px;text-align:center">0</td>
+        <td style="padding:10px 12px;text-align:center">AppShell, testes, bucket, bug ai.ts, drift, chunk, deps</td>
+        <td style="padding:10px 12px">Testar pipeline crítico + corrigir ai.ts:1778</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 12px;font-weight:600">ZeloMenu</td>
+        <td style="padding:10px 12px;text-align:center;color:var(--green)">✅ Estável</td>
+        <td style="padding:10px 12px;text-align:center">0</td>
+        <td style="padding:10px 12px;text-align:center">Slug bloqueado (ZLM-203), rollout (ZLM-205)</td>
+        <td style="padding:10px 12px">Issue no ZeloPDV para criar coluna slug + prices Stripe</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 12px;font-weight:600">ZeloPDV (interface)</td>
+        <td style="padding:10px 12px;text-align:center;color:var(--green)">✅ Estável</td>
+        <td style="padding:10px 12px;text-align:center">0</td>
+        <td style="padding:10px 12px;text-align:center">Risco de DDL acidental deste repo</td>
+        <td style="padding:10px 12px">CI guard que detecta ALTER TABLE em tabelas PDV-owned</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<!-- TIMELINE -->
+<!-- ============================================================ -->
+<div class="section">
+  <div class="section-title">📅 Timeline sugerida</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+
+    <div class="card" style="border-color:var(--blue-border)">
+      <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:4px">Fase 1 &mdash; Esta sprint</div>
+      <div style="font-size:0.9375rem;font-weight:600;margin-bottom:8px">🔥 Apagar incêndios latentes</div>
+      <ul style="color:var(--text-secondary);font-size:0.8125rem;padding-left:16px">
+        <li>Corrigir <code>ai.ts:1778</code> (trocar 'dispatched' por 'out_for_delivery')</li>
+        <li>Alinhar drift do webhook auth (teste passa de novo)</li>
+      </ul>
+    </div>
+
+    <div class="card" style="border-color:var(--amber-border)">
+      <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:4px">Fase 2</div>
+      <div style="font-size:0.9375rem;font-weight:600;margin-bottom:8px">🏗️ Fundação</div>
+      <ul style="color:var(--text-secondary);font-size:0.8125rem;padding-left:16px">
+        <li>Criar teste integrado do pipeline webhook &rarr; IA &rarr; pedido</li>
+        <li>Issue no ZeloPDV: coluna slug + flag has_zelo_menu</li>
+        <li>Criar prices Stripe do addon ZeloMenu</li>
+      </ul>
+    </div>
+
+    <div class="card" style="border-color:var(--green-border)">
+      <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:4px">Fase 3</div>
+      <div style="font-size:0.9375rem;font-weight:600;margin-bottom:8px">🧹 Dívida estrutural</div>
+      <ul style="color:var(--text-secondary);font-size:0.8125rem;padding-left:16px">
+        <li>Extrair hooks do AppShell</li>
+        <li>Migrar dependências (TS6 &rarr; Stripe22 &rarr; Vite8 &rarr; Express5)</li>
+        <li>Resolver chunk size (vem naturalmente com refactor)</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<div class="footer">
+  ZeloChat &mdash; gerado em 24 de julho de 2026 &mdash; baseado em CURRENT.md, FIXES_PROGRESS.md, CODE_REVIEW.md, CLAUDE.md
+</div>
+
+</div>
+</body>
+</html>
