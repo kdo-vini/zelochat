@@ -35,6 +35,10 @@
 - **Bilhete Tier S** — pedidos com grupos do ZeloMenu preservam nome-base e escolhas estruturadas até o impressor; o bilhete agora separa produto, grupo e opções em linhas próprias usando texto puro (`\n`), sem misturar HTML ao pedido. `src/types.ts`, `src/domain/canonicalOrders.ts`, `src/services/printerService.ts`.
 - **Hotfix: transição de pedido não pode mais virar erro desconhecido** — falhas reais ao mover um pedido (revisão desatualizada, estoque insuficiente ou estado inválido) agora chegam ao operador com orientação clara, em vez de um erro 500/`UNKNOWN_ERROR`. `src/domain/orderTransitionError.ts`, `server/router.ts`, `src/AppShell.tsx`.
 
+## Entregue nesta sessão (2026-07-24)
+
+- **Hotfix: IA reconhece complementos do cardápio** — opções como Nhoque, quando ficam dentro de um grupo de um produto configurável publicado, agora entram no contexto da IA junto com grupos ativos, obrigatoriedade e preços adicionais; produtos não publicados e seus complementos continuam fora da resposta ao cliente. `server/ai.ts`, `tests/aiPromptGuardrails.test.ts`.
+
 ## Em aberto
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**

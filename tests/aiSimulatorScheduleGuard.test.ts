@@ -47,7 +47,6 @@ function setupConfig(empresaId: string): void {
     blockedDates: [
       { date: '2026-06-04', reason: 'feriado' },
     ],
-    dailyContext: [],
     aiInstructions: 'Atenda de forma curta.',
     deliveryConfig: { enabled: false, neighborhoods: [] },
     zelochatMode: 'restaurant',

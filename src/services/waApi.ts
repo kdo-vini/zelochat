@@ -117,7 +117,6 @@ export interface ZeloMenuReviewAcceptResponse extends ZeloMenuReviewResponse {
 }
 export interface ManagerAssistantStatePatch {
   blockedDates?: { date: string; reason: string }[];
-  dailyContext?: { id: string; text: string }[];
   businessInfo?: {
     openTime?: string;
     closeTime?: string;
@@ -540,18 +539,6 @@ export async function getAiHealth(token: string): Promise<AiHealthReport> {
   });
   const body = await parseResponse<{ health: AiHealthReport }>(response);
   return body.health;
-}
-
-export async function sendManagerAssistantMessage(
-  token: string,
-  payload: { message: string; history?: ChatMessage[] },
-): Promise<ManagerAssistantResult> {
-  const response = await apiFetch(apiUrl('/api/ai/manager'), {
-    method: 'POST',
-    headers: authHeaders(token),
-    body: JSON.stringify(payload),
-  });
-  return parseResponse<ManagerAssistantResult>(response);
 }
 
 export async function setAiEnabled(token: string, enabled: boolean): Promise<void> {

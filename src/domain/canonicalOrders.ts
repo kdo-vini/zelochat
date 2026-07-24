@@ -13,6 +13,7 @@ export const CANONICAL_ORDER_SELECT = [
   'observations',
   'total',
   'created_at',
+  'closed_at',
   'zelo_order_items(id, name, quantity, unit_price, subtotal, position, modifiers)',
 ].join(', ');
 
@@ -109,6 +110,7 @@ export function canonicalRowToOrder(row: CanonicalOrderRow): Order {
     requiresAcceptance: String(row.status ?? 'pending_review') === 'pending_review',
     total: Number(row.total ?? 0),
     createdAt: String(row.created_at ?? ''),
+    ...(row.closed_at ? { closedAt: String(row.closed_at) } : {}),
     pixReceiptApproved: payment.pixReceiptApproved === true,
   };
 }

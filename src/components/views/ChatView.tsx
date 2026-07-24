@@ -52,7 +52,6 @@ import { MessageDateSeparator } from './MessageDateSeparator';
 import {
   getManualChatAssistSuggestion,
   getManualOrderDraftSuggestion,
-  getOwnerResponse,
   type ManualOrderDraftSuggestion,
 } from '../../services/openaiService';
 import type { ChatAttachment, ChatListFilter, ChatMessage, ChatSession, Order, QuickResponse, Tag } from '../../types';
@@ -566,7 +565,6 @@ export interface ChatViewProps {
   bulkArchive: (jids: string[]) => Promise<void>;
   bulkDelete: (jids: string[]) => Promise<void>;
   togglePin: (jid: string) => Promise<void>;
-  onDailyContextUpdate: (items: { id: string; text: string }[]) => void;
   onCreateManualOrder: (payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   resolveEscalation: (jid: string) => Promise<void>;
   escalateManually: (jid: string, reason?: string) => Promise<void>;
@@ -609,7 +607,6 @@ export function ChatView({
   bulkArchive,
   bulkDelete,
   togglePin,
-  onDailyContextUpdate,
   onCreateManualOrder,
   resolveEscalation,
   escalateManually,
@@ -1514,12 +1511,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
         finally { setIsSending(false); }
         return;
       }
-      try {
-        const result = await getOwnerResponse(text.slice(1));
-        const newCtx = (result as string[]).map((t) => ({ id: crypto.randomUUID(), text: t }));
-        onDailyContextUpdate(newCtx);
-        setOwnerInput('');
-      } catch { setChatActionError('Não foi possível atualizar o contexto da IA agora.'); }
+      setChatActionError(`Resposta rápida "${cmd}" não encontrada.`);
       return;
     }
 

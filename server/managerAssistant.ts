@@ -24,7 +24,6 @@ export interface ManagerRequestPayload {
 
 export interface ManagerStatePatch {
   blockedDates?: BusinessConfig['blockedDates'];
-  dailyContext?: BusinessConfig['dailyContext'];
   businessInfo?: {
     openTime?: string;
     closeTime?: string;
@@ -60,7 +59,6 @@ type ModelAction = {
 
 const MAX_MANAGER_MESSAGE_CHARS = 1500;
 const MAX_MANAGER_HISTORY = 40;
-const MAX_DAILY_CONTEXT_ITEMS = 20;
 const MAX_MANAGER_HISTORY_PERSISTED = 100;
 const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'] as const;
 const DAY_ALIASES = new Map<string, string>([
@@ -224,7 +222,6 @@ function buildSystemPrompt(config: BusinessConfig): string {
     operatingHours: { openTime: config.openTime, closeTime: config.closeTime },
     closedDays: config.closedDays,
     blockedDates: config.blockedDates,
-    dailyContext: config.dailyContext,
     aiHealth: buildAiHealthReport(config),
   };
 
@@ -242,8 +239,6 @@ Acoes permitidas:
 - BLOCK_DATE: { "date": "YYYY-MM-DD", "reason": "motivo claro para o cliente" }
 - UNBLOCK_DATE: { "date": "YYYY-MM-DD" }
 - SET_AI_ENABLED: { "enabled": true | false }
-- ADD_DAILY_CONTEXT: { "text": "aviso curto para hoje" }
-- CLEAR_DAILY_CONTEXT: {}
 - SET_OPERATING_HOURS: { "openTime": "HH:MM", "closeTime": "HH:MM" }
 - SET_CLOSED_DAYS: { "closedDays": ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"] }
 - SET_CUSTOMER_NOTIFICATION: { "status": "preparing" | "ready" | "out_for_delivery", "enabled": true | false }
@@ -398,26 +393,6 @@ export async function runManagerAssistant(
       profilePatch.ai_mode = mode;
       broadcast({ type: 'ai_enabled', data: { enabled } }, empresaId);
       actionsApplied.push({ type, label: enabled ? 'IA ligada' : 'IA desligada' });
-      continue;
-    }
-
-    if (type === 'ADD_DAILY_CONTEXT') {
-      const text = sanitizeText(payloadObj.text, 240);
-      if (!text) {
-        actionsRejected.push('Nao adicionei aviso porque o texto veio vazio ou longo demais.');
-        continue;
-      }
-      const dailyContext = [...nextConfig.dailyContext, { id: makeId('daily'), text }].slice(-MAX_DAILY_CONTEXT_ITEMS);
-      applyConfig({ dailyContext });
-      statePatch.dailyContext = dailyContext;
-      actionsApplied.push({ type, label: 'Aviso de hoje adicionado' });
-      continue;
-    }
-
-    if (type === 'CLEAR_DAILY_CONTEXT') {
-      applyConfig({ dailyContext: [] });
-      statePatch.dailyContext = [];
-      actionsApplied.push({ type, label: 'Avisos de hoje limpos' });
       continue;
     }
 

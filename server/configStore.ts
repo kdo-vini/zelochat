@@ -102,7 +102,6 @@ export interface BusinessConfig {
   products: CatalogProduct[];
   catalogHierarchy: CatalogCategoriaGroup[];
   blockedDates: { date: string; reason: string }[];
-  dailyContext: { id: string; text: string }[];
   aiInstructions: string;
   managerPhone: string;
   /**
@@ -147,7 +146,6 @@ const DEFAULT_CONFIG: BusinessConfig = {
   products: [],
   catalogHierarchy: [],
   blockedDates: [],
-  dailyContext: [],
   aiInstructions: '',
   managerPhone: '',
   aiScheduleStart: null,
