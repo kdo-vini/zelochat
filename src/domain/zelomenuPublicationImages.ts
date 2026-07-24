@@ -14,7 +14,7 @@ export function sanitizeZeloMenuPublicationImageFileName(fileName: string): stri
 
 export function buildZeloMenuPublicationImagePath(userId: string, productId: number, fileName: string): string {
   const safeFileName = sanitizeZeloMenuPublicationImageFileName(fileName);
-  const unique = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const unique = crypto.randomUUID();
   return `${ZELOMENU_PUBLICATION_IMAGE_PREFIX}/${userId}/${productId}-${unique}-${safeFileName}`;
 }
 

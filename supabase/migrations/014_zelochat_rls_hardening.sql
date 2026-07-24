@@ -2,8 +2,8 @@
 -- 014_zelochat_rls_hardening — defense-in-depth RLS for ZeloChat tables
 -- ============================================================================
 --
--- 🟡 STATUS: DRAFT. NOT YET APPLIED TO PROD. Apply via Supabase MCP / CLI
---    only after operator review. See FIXES_PROGRESS.md → P0.7, P0.8.
+-- ✅ APPLIED em prod 2026-04-29 (version 20260429192428, verified via MCP).
+-- See FIXES_PROGRESS.md: P0.7 (zelochat_pending_orders), P0.8 (messages/escalation).
 --
 -- Why this exists:
 --
