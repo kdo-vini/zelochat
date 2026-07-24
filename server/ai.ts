@@ -58,6 +58,7 @@ import {
 // (buildWhatsAppCartLinkMessage, buildPublicCartUrl, openWhatsAppCartSession) —
 // a IA não monta carrinhos no WhatsApp. O cliente usa o cardápio online.
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
+import type { ZeloMenuModifierGroup } from '../src/domain/zelomenuModifiers.js';
 import {
   CLOSED_DAY_LABELS,
   hasAnyOpenWindow,
@@ -1652,8 +1653,16 @@ export type AvailableProduct = {
   unitBased?: boolean;
   stockControlled?: boolean;
   stockQuantity?: number;
+  modifierGroups?: ZeloMenuModifierGroup[];
 };
 
+/**
+ * Customer-facing prompt boundary. `loadAiSettingsFromDb()` maps the
+ * ZeloMenu publication toggle (`visivel_online`) to `available`, so products
+ * kept only for internal operations never enter the catalog shown to the AI.
+ * Keep this filter at the boundary instead of reading `getConfig().products`
+ * directly when building customer-facing context.
+ */
 export function getAvailableProducts(empresaId: string): AvailableProduct[] {
   return getConfig(empresaId).products.filter((p) => p.available && (!p.stockControlled || Number(p.stockQuantity ?? 0) > 0));
 }
@@ -1662,7 +1671,30 @@ function formatProductForPrompt(product: AvailableProduct): string {
   const stock = product.stockControlled
     ? `; estoque atual: ${Math.max(0, Math.floor(Number(product.stockQuantity ?? 0)))}`
     : '';
-  return `${product.name} (R$ ${product.price.toFixed(2)}${product.unitBased ? ' por unidade' : ''}${stock})`;
+  const modifiers = formatModifierGroupsForPrompt(product);
+  return `${product.name} (R$ ${product.price.toFixed(2)}${product.unitBased ? ' por unidade' : ''}${stock}${modifiers})`;
+}
+
+function formatModifierGroupsForPrompt(product: AvailableProduct): string {
+  const groups = (product.modifierGroups ?? [])
+    .filter((group) => group.active)
+    .map((group) => {
+      const options = group.options
+        .filter((option) => option.active)
+        .map((option) => {
+          const priceDelta = Number(option.priceDelta);
+          if (!Number.isFinite(priceDelta) || priceDelta === 0) return option.name;
+          const sign = priceDelta > 0 ? '+' : '';
+          return `${option.name} (${sign}R$ ${priceDelta.toFixed(2)})`;
+        })
+        .join(', ');
+      if (!options) return null;
+      const required = group.minSelections > 0 ? ' (obrigatório)' : '';
+      return `${group.name}${required}: ${options}`;
+    })
+    .filter((group): group is string => group !== null);
+
+  return groups.length > 0 ? `; opções: ${groups.join('; ')}` : '';
 }
 
 export function findStockIssue(

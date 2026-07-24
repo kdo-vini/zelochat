@@ -16,6 +16,18 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-07-24',
+    category: 'hotfix',
+    title: 'Pedidos entregues saem do quadro de Produção',
+    description: 'Depois de marcar um pedido como entregue, ele sai do quadro sozinho em alguns minutos, deixando a tela limpa com o que ainda falta fazer. Os pedidos finalizados continuam disponíveis na Agenda.',
+  },
+  {
+    date: '2026-07-24',
+    category: 'hotfix',
+    title: 'A IA agora reconhece as opções do cardápio',
+    description: 'Quando uma opção fica dentro de um produto montável, como o nhoque na massa, o atendimento automático agora consegue reconhecê-la e orientar o cliente corretamente.',
+  },
+  {
     date: '2026-07-23',
     category: 'hotfix',
     title: 'Mover pedidos ficou mais claro',

@@ -17,6 +17,25 @@ function setupRestaurantConfig(
     aiEnabled: true,
     aiMode: 'always_on',
     products: [
+      {
+        name: 'Monte sua Massa',
+        price: 20,
+        available: true,
+        modifierGroups: [{
+          id: 'massa-group',
+          productId: 99,
+          name: 'Escolha sua massa',
+          kind: 'variacao',
+          minSelections: 1,
+          maxSelections: 1,
+          active: true,
+          order: 0,
+          options: [
+            { id: 'penne', name: 'Penne', priceDelta: 0, active: true, order: 0 },
+            { id: 'nhoque', name: 'Nhoque', priceDelta: 0, active: true, order: 1 },
+          ],
+        }],
+      },
       { name: 'Cento Tradicionais Sortidos', price: 80, available: true, unitBased: true },
       { name: 'Mini Kibe', price: 1.5, available: true, unitBased: true, stockControlled: true, stockQuantity: 3 },
       { name: 'Coxinha Zerada', price: 7, available: false, stockControlled: true, stockQuantity: 0 },
@@ -76,6 +95,7 @@ await runSuite('AI prompt guardrails', [
       assertIncludes(prompt, 'NUNCA chame ferramenta de criar pedido — ela não existe mais', 'order-creation tool is declared gone');
       assertIncludes(prompt, 'NUNCA monte, calcule ou confirme pedidos', 'AI is forbidden from assembling/confirming orders');
       assertIncludes(prompt, 'Mini Kibe (R$ 1.50 por unidade; estoque atual: 3)', 'stock-limited products still expose the max quantity');
+      assertIncludes(prompt, 'Monte sua Massa (R$ 20.00; opções: Escolha sua massa (obrigatório): Penne, Nhoque)', 'active modifier options are exposed to the AI');
       assertIncludes(prompt, 'Se for redirect_contact', 'redirect trigger rule is present');
       assertIncludes(prompt, 'encerra este turno', 'redirect trigger is terminal for the turn');
       assert(!prompt.includes('criar_pedido IMEDIATAMENTE'), 'legacy create-order terminal rule is gone');
@@ -107,6 +127,38 @@ await runSuite('AI prompt guardrails', [
       assert(available.includes('Mini Kibe'), 'positive stock product remains available');
       assert(!available.includes('Coxinha Zerada'), 'zero-stock product is unavailable to AI runtime');
       assert(!available.includes('Produto Oculto'), 'hidden product remains unavailable');
+    },
+  },
+  {
+    name: 'unpublished products and their modifiers stay out of the customer prompt',
+    run: () => {
+      const empresaId = `prompt-unpublished-${Date.now()}`;
+      setConfig(empresaId, {
+        name: 'Casa Interna',
+        zelomenuSlug: 'casa-interna',
+        aiEnabled: true,
+        aiMode: 'always_on',
+        zelochatMode: 'restaurant',
+        products: [{
+          name: 'Produto Interno',
+          price: 99,
+          available: false,
+          modifierGroups: [{
+            id: 'internal-group',
+            productId: 500,
+            name: 'Escolha interna',
+            kind: 'variacao',
+            minSelections: 1,
+            maxSelections: 1,
+            active: true,
+            order: 0,
+            options: [{ id: 'internal-option', name: 'Nhoque Interno', priceDelta: 0, active: true, order: 0 }],
+          }],
+        }],
+      });
+      const prompt = buildSystemInstruction(empresaId, '', '', [], '');
+      assert(!prompt.includes('Produto Interno'), 'unpublished base product is not exposed');
+      assert(!prompt.includes('Nhoque Interno'), 'modifiers of unpublished products are not exposed');
     },
   },
   {

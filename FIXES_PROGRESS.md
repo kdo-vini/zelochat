@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Sprint 8 (shipped 2026-07-24) — IA conhece complementos do cardápio
+- ✅ AI-001 — perguntas sobre opções dentro de produtos configuráveis ignoravam grupos/complementos → o prompt agora inclui grupos e opções ativos, preço adicional e obrigatoriedade, mantendo produtos não publicados fora do contexto do cliente; regressão cobre “Monte sua Massa → Nhoque” e produto interno — `server/ai.ts:1663`, `tests/aiPromptGuardrails.test.ts:98`
+- ✅ PROD-002 — pedidos entregues acumulavam no quadro de Produção (bug real de prod: 4 pedidos de ontem presos na coluna ENTREGUE). Causa: `ProductionView` renderizava `state.orders` sem filtro de idade, enquanto `useOrders` carrega 14 dias de entregues de propósito (Dashboard/Agenda). Fix: novo helper puro `filterProductionBoardOrders` esconde do quadro (feed + kanban) os entregues fora da janela de permanência (30min medidos a partir de `zelo_orders.closed_at`), preservando-os na Agenda; `closed_at` mapeado para `Order.closedAt`. Tick de 1min re-avalia a janela sem precisar de refetch — `src/domain/productionBoard.ts`, `src/components/views/ProductionView.tsx`, `src/domain/canonicalOrders.ts`, `src/types.ts`, `tests/productionBoard.test.ts`
+
 ### Sprint 8 (shipped 2026-07-23) — layout responsivo da Produção
 - ✅ PROD-001 — fila de pedidos e colunas do Kanban ganharam largura adaptativa, alças de redimensionamento, persistência local e suporte a teclado — `src/components/views/ProductionView.tsx`, `src/index.css`
 - ✅ ZLM-AUTO-001 — Admin do ZeloMenu ganhou a página separada de Configurações com toggle de aceite automático por loja; o bloqueio Pix só permanece com a conferência de comprovante do ZeloChat ativa, e a aprovação da IA executa o aceite transacional ou escala conflitos para atendimento — `../zelomenu/src/pages/SettingsPage.tsx`, `../zelomenu/server/zelomenuCartSessions.ts:1432`, `server/canonicalOrders.ts:75`, `server/ai.ts:3094`
