@@ -1,54 +1,11 @@
-import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
-import {
-  Bike,
-  Bot,
-  Calendar as CalendarIcon,
-  Coffee,
-  Kanban,
-  LayoutDashboard,
-  MessageCircle,
-  MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-  ShoppingBag,
-  Sparkles,
-  User as UserIcon,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-// ChatView is eager — it is the default active view and the most-used feature.
-// All other views are lazy so they only add JS when first navigated to.
-import { ChatView } from './components/views/ChatView';
-const DashboardView = lazy(() =>
-  import('./components/views/DashboardView').then((m) => ({ default: m.DashboardView })),
-);
-const ProductionView = lazy(() =>
-  import('./components/views/ProductionView').then((m) => ({ default: m.ProductionView })),
-);
-const CalendarView = lazy(() =>
-  import('./components/views/CalendarView').then((m) => ({ default: m.CalendarView })),
-);
-const AIConfigsView = lazy(() =>
-  import('./components/views/AIConfigsView').then((m) => ({ default: m.AIConfigsView })),
-);
-const SettingsView = lazy(() =>
-  import('./components/views/SettingsView').then((m) => ({ default: m.SettingsView })),
-);
-const ProfileView = lazy(() =>
-  import('./components/views/ProfileView').then((m) => ({ default: m.ProfileView })),
-);
-const DriversView = lazy(() =>
-  import('./components/views/DriversView').then((m) => ({ default: m.DriversView })),
-);
-const NovidadesView = lazy(() =>
-  import('./components/views/NovidadesView').then((m) => ({ default: m.NovidadesView })),
-);
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { DropResult } from '@hello-pangea/dnd';
+import { Sparkles, Settings, User as UserIcon } from 'lucide-react';
 import { useDrivers } from './hooks/useDrivers';
 import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
+import { useAutoPrint } from './hooks/useAutoPrint';
 import { usePrinter } from './hooks/usePrinter';
-import { PrinterButton } from './components/PrinterButton';
 import { useCatalog } from './hooks/useCatalog';
 import { useEmpresaPerfil } from './hooks/useEmpresaPerfil';
 import { useQuickResponses } from './hooks/useQuickResponses';
@@ -65,47 +22,18 @@ import { apiUrl } from './config';
 import { inferCategoria } from './services/zeloApi';
 import { loadInitialState, saveInitialState } from './services/statePersistence';
 import type { Order, ZeloState } from './types';
-import { PRICING } from './data/pricing';
 import { normalizeZeloChatMode } from './domain/zelochatMode';
 import type { OrderFocusRequest } from './domain/orderFocus';
+import { Sidebar, NAV_PRIMARY, NAV_SECONDARY, RESTAURANT_ONLY_VIEWS, GENERAL_ALLOWED_VIEWS } from './components/Sidebar';
+import type { View } from './components/Sidebar';
+import { MainContent } from './components/MainContent';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { ChatView } from './components/views/ChatView';
 
-type View =
-  | 'dashboard'
-  | 'chat'
-  | 'kanban'
-  | 'calendar'
-  | 'ai-configs'
-  | 'settings'
-  | 'profile'
-  | 'drivers'
-  | 'novidades';
-
-/* ─── Nav definitions ─────────────────────────────────────────── */
-interface NavItem {
-  id: View;
-  icon: LucideIcon;
-  label: string;
-  description: string;
-}
-
-const NAV_PRIMARY: NavItem[] = [
-  { id: 'dashboard', icon: LayoutDashboard, label: 'Visão geral',  description: 'Métricas e alertas do dia' },
-  { id: 'chat',      icon: MessageCircle,   label: 'Atendimento',  description: 'Conversas no WhatsApp' },
-  { id: 'kanban',    icon: Kanban,          label: 'Produção',     description: 'Fila de pedidos' },
-  { id: 'drivers',   icon: Bike,            label: 'Motoboys',     description: 'Entregadores' },
-];
-
-const NAV_SECONDARY: NavItem[] = [
-  { id: 'calendar',   icon: CalendarIcon, label: 'Agenda',     description: 'Pedidos por data' },
-  { id: 'ai-configs', icon: Bot,          label: 'Cérebro IA', description: 'Configurar assistente' },
-];
-
-const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile', 'novidades']);
-const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers']);
+/* ─── Nav definitions (in Sidebar.tsx) ──────────────────────────── */
 const ACTIVE_SESSION_STORAGE_KEY = 'zelochat_active_session_id';
 const BOOT_MARK_PREFIX = 'zelochat:boot';
-const AUTO_PRINT_DEDUPE_WINDOW_MS = 48 * 60 * 60 * 1000; // 48h — durable across reloads, not just in-tab dedupe
-const PRINTED_ORDER_IDS_KEY = 'zelochat_auto_printed_order_ids_v1';
+
 
 function readStoredActiveSessionId(): string | null {
   try {
@@ -129,83 +57,7 @@ function markBootStep(name: string): void {
   performance.mark(`${BOOT_MARK_PREFIX}:${name}`);
 }
 
-function loadPrintedOrderIds(): Map<string, number> {
-  try {
-    const raw = localStorage.getItem(PRINTED_ORDER_IDS_KEY);
-    if (!raw) return new Map();
-    return new Map(Object.entries(JSON.parse(raw) as Record<string, number>));
-  } catch {
-    return new Map();
-  }
-}
-
-function savePrintedOrderIds(map: Map<string, number>): void {
-  try {
-    const obj: Record<string, number> = {};
-    map.forEach((value, key) => { obj[key] = value; });
-    localStorage.setItem(PRINTED_ORDER_IDS_KEY, JSON.stringify(obj));
-  } catch {
-    // localStorage can throw in private browsing / quota-exceeded — best-effort only.
-  }
-}
-
-/* ─── NavButton component ─────────────────────────────────────── */
-interface NavButtonProps {
-  item: NavItem;
-  active: boolean;
-  expanded: boolean;
-  badge?: number;
-  badgeTone?: 'unread' | 'alert';
-  onClick: () => void;
-}
-
-const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badge, badgeTone = 'unread', onClick }) => {
-  const Icon = item.icon;
-  return (
-    <button
-      onClick={onClick}
-      title={!expanded ? item.label : undefined}
-      className={`group relative w-full flex items-center rounded-[10px] transition-all ${
-        expanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
-      } ${
-        active
-          ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
-          : 'text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]'
-      }`}
-    >
-      <Icon
-        className="w-[18px] h-[18px] flex-shrink-0"
-        strokeWidth={active ? 2.2 : 1.8}
-      />
-
-      {expanded && (
-        <div className="flex-1 text-left overflow-hidden">
-          <p className="text-[13.5px] font-medium leading-tight">{item.label}</p>
-          <p className="text-[11px] text-[var(--color-ink-faint)] truncate mt-[-1px]">{item.description}</p>
-        </div>
-      )}
-
-      {badge != null && badge > 0 && (
-        <span className={`flex-shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-white text-[10px] font-bold ${
-          badgeTone === 'alert' ? 'bg-[var(--color-alert)]' : 'bg-[#25D366]'
-        } ${
-          expanded ? '' : 'absolute top-1.5 right-1.5 min-w-[14px] h-[14px] text-[9px]'
-        }`}>
-          {badge > 99 ? '99+' : badge}
-        </span>
-      )}
-
-      {/* Tooltip when collapsed */}
-      {!expanded && (
-        <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-md bg-[var(--color-ink)] px-2.5 py-1.5 text-[12px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-          {item.label}
-        </span>
-      )}
-    </button>
-  );
-});
-
-NavButton.displayName = 'NavButton';
+/* ─── NavButton moved to Sidebar.tsx ────────────────────────────── */
 
 // ChatView stays eager and memoised — it is the default route and renders on
 // every page load. Lazy views use their own internal memo; wrapping a lazy
@@ -355,53 +207,7 @@ export default function AppShell() {
     deleteTrigger: deleteTriggerRequest,
   } = useTriggers(token, { enabled: shouldLoadTriggers });
   const printer = usePrinter();
-  // Lazy ref init — loadPrintedOrderIds() must run once, not on every render
-  // (useRef(loadPrintedOrderIds()) would re-read+parse localStorage every render).
-  const autoPrintedOrdersRef = useRef<Map<string, number> | null>(null);
-  if (autoPrintedOrdersRef.current === null) {
-    autoPrintedOrdersRef.current = loadPrintedOrderIds();
-  }
-  const autoPrintOrder = useCallback((order: Order) => {
-    // ZLM-106 — only auto-print "se configurado": when the Zelo Impressão
-    // integration is actually active. Without this gate, every accepted order
-    // (the ZeloMenu accept flow inserts a real order row, which triggers this)
-    // would fire a failed print + error toast on machines that never set up a
-    // printer. Manual reprint stays available regardless via reprintOrder().
-    if (!printer.connected) return;
-    const printedIds = autoPrintedOrdersRef.current ?? new Map<string, number>();
-    autoPrintedOrdersRef.current = printedIds;
-
-    const now = Date.now();
-    for (const [orderId, ts] of printedIds) {
-      if (now - ts > AUTO_PRINT_DEDUPE_WINDOW_MS) printedIds.delete(orderId);
-    }
-    savePrintedOrderIds(printedIds);
-
-    const previousTs = printedIds.get(order.id);
-    if (previousTs && now - previousTs < AUTO_PRINT_DEDUPE_WINDOW_MS) return;
-    printedIds.set(order.id, now);
-    savePrintedOrderIds(printedIds);
-
-    printer.print(order, state.businessInfo.name || 'ZeloChat').catch((err) => {
-      printedIds.delete(order.id);
-      savePrintedOrderIds(printedIds);
-      console.error('[printer] auto-print falhou para pedido', order.id, err);
-      toast.error('Não consegui imprimir o pedido automaticamente. Verifique a impressora.');
-    });
-  }, [printer, state.businessInfo.name, toast]);
-
-  // ZLM-106 — manual reprint. Always attempts (an explicit operator action),
-  // unlike auto-print, and reports the outcome so a failure is never silent.
-  const reprintOrder = useCallback(async (order: Order) => {
-    try {
-      await printer.print(order, state.businessInfo.name || 'ZeloChat');
-      toast.success('Pedido enviado para a impressora.');
-    } catch (err) {
-      console.error('[printer] reimpressão falhou para pedido', order.id, err);
-      toast.error(err instanceof Error ? err.message : 'Não consegui imprimir o pedido. Verifique a impressora.');
-      throw err;
-    }
-  }, [printer, state.businessInfo.name, toast]);
+  const { autoPrintOrder, reprintOrder } = useAutoPrint(printer, state.businessInfo.name || 'ZeloChat', toast);
 
   const {
     orders: supabaseOrders,
@@ -1022,6 +828,7 @@ export default function AppShell() {
       drivers: state.drivers,
       quickResponses: state.quickResponses,
       triggers: state.triggers,
+      pixReceiptConfig: state.pixReceiptConfig,
     }),
     [
       state.aiInstructions,
@@ -1031,6 +838,7 @@ export default function AppShell() {
       state.drivers,
       state.quickResponses,
       state.triggers,
+      state.pixReceiptConfig,
     ],
   );
   const profileState = useMemo(
@@ -1133,146 +941,23 @@ export default function AppShell() {
       )}
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
-      {/* ── Sidebar (desktop only) ──────────────────────────────── */}
-      <aside
-        className={`bg-[var(--color-surface)] border-r border-[var(--color-line)] hidden md:flex flex-col py-3 flex-shrink-0 z-30 transition-[width] duration-200 ease-in-out overflow-hidden ${
-          sidebarExpanded ? 'w-[220px]' : 'w-[60px]'
-        }`}
-      >
-        {/* Logo + toggle */}
-        <div className={`flex items-center mb-4 flex-shrink-0 ${sidebarExpanded ? 'px-3 justify-between' : 'px-0 justify-center flex-col gap-3'}`}>
-          <div className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl bg-[var(--color-brand)] text-white shadow-sm">
-            <Coffee className="w-5 h-5" />
-          </div>
-          {sidebarExpanded && (
-            <span className="text-[13px] font-semibold text-[var(--color-ink)] tracking-tight flex-1 ml-2 truncate">
-              ZeloChat
-            </span>
-          )}
-          <button
-            onClick={() => setSidebarExpanded((v) => !v)}
-            className="w-7 h-7 flex items-center justify-center rounded-md text-[var(--color-ink-faint)] hover:text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] transition-colors flex-shrink-0"
-          >
-            {sidebarExpanded
-              ? <PanelLeftClose className="w-4 h-4" strokeWidth={1.8} />
-              : <PanelLeftOpen className="w-4 h-4" strokeWidth={1.8} />
-            }
-          </button>
-        </div>
+        <Sidebar
+          activeView={activeView}
+          expanded={sidebarExpanded}
+          onToggle={() => setSidebarExpanded((v) => !v)}
+          onNavigate={setActiveView}
+          primaryNavItems={primaryNavItems}
+          secondaryNavItems={secondaryNavItems}
+          openEscalationCount={openEscalationCount}
+          unreadConversationsCount={unreadConversationsCount}
+          isGeneralMode={isGeneralMode}
+          firstNameOnly={firstNameOnly}
+          profileAvatar={state.profile.avatar}
+          profileRole={state.profile.role}
+          printer={printer}
+          testOrder={state.orders[0]}
+        />
 
-        {/* Primary nav */}
-        <div className={`px-2 flex-1 overflow-y-auto custom-scrollbar`}>
-          {sidebarExpanded && (
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-ink-faint)] px-1 mb-1.5">
-              Operação
-            </p>
-          )}
-          <nav className="flex flex-col gap-0.5">
-            {primaryNavItems.map((item) => (
-              <NavButton
-                key={item.id}
-                item={item}
-                active={activeView === item.id}
-                expanded={sidebarExpanded}
-                badge={item.id === 'chat' ? (openEscalationCount > 0 ? openEscalationCount : unreadConversationsCount) : undefined}
-                badgeTone={item.id === 'chat' && openEscalationCount > 0 ? 'alert' : 'unread'}
-                onClick={() => setActiveView(item.id)}
-              />
-            ))}
-          </nav>
-
-          <div className="my-3 border-t border-[var(--color-line)]" />
-
-          {sidebarExpanded && (
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-ink-faint)] px-1 mb-1.5">
-              Gestão
-            </p>
-          )}
-          <nav className="flex flex-col gap-0.5">
-            {secondaryNavItems.map((item) => (
-              <NavButton
-                key={item.id}
-                item={item}
-                active={activeView === item.id}
-                expanded={sidebarExpanded}
-                onClick={() => setActiveView(item.id)}
-              />
-            ))}
-            {!isGeneralMode && (
-              <a
-                href="https://menu.zelopdv.com.br/admin"
-                target="_blank"
-                rel="noopener noreferrer"
-                title={!sidebarExpanded ? 'Cardápio' : undefined}
-                className={`group relative w-full flex items-center rounded-[10px] transition-all text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] ${
-                  sidebarExpanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
-                }`}
-              >
-                <ShoppingBag className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={1.8} />
-                {sidebarExpanded && (
-                  <div className="flex-1 text-left overflow-hidden">
-                    <p className="text-[13.5px] font-medium leading-tight">Cardápio</p>
-                    <p className="text-[11px] text-[var(--color-ink-faint)] truncate mt-[-1px]">Abrir ZeloMenu ↗</p>
-                  </div>
-                )}
-                {!sidebarExpanded && (
-                  <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-md bg-[var(--color-ink)] px-2.5 py-1.5 text-[12px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-                    Cardápio
-                  </span>
-                )}
-              </a>
-            )}
-          </nav>
-        </div>
-
-        {/* Bottom: novidades + settings + printer + profile */}
-        <div className="mt-auto px-2 flex flex-col gap-0.5 flex-shrink-0 pt-2 border-t border-[var(--color-line)]">
-          <NavButton
-            item={{ id: 'novidades', icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' }}
-            active={activeView === 'novidades'}
-            expanded={sidebarExpanded}
-            onClick={() => setActiveView('novidades')}
-          />
-          <NavButton
-            item={{ id: 'settings', icon: Settings, label: 'Configurações', description: 'Empresa e integrações' }}
-            active={activeView === 'settings'}
-            expanded={sidebarExpanded}
-            onClick={() => setActiveView('settings')}
-          />
-          {!isGeneralMode && (
-            <PrinterButton
-              printer={printer}
-              expanded={sidebarExpanded}
-              testOrder={state.orders[0]}
-            />
-          )}
-
-          <button
-            onClick={() => setActiveView('profile')}
-            className={`w-full flex items-center rounded-[10px] transition-all ${
-              sidebarExpanded ? 'gap-3 px-3 py-2' : 'justify-center px-0 py-2'
-            } ${
-              activeView === 'profile'
-                ? 'bg-[var(--color-brand-soft)]'
-                : 'hover:bg-[var(--color-surface-muted)]'
-            }`}
-          >
-            <img
-              src={state.profile.avatar}
-              alt={firstNameOnly}
-              className="w-7 h-7 rounded-full object-cover flex-shrink-0 ring-1 ring-[var(--color-line)]"
-            />
-            {sidebarExpanded && (
-              <div className="flex-1 text-left overflow-hidden">
-                <p className="text-[13px] font-medium leading-tight text-[var(--color-ink)] truncate">{firstNameOnly}</p>
-                <p className="text-[11px] text-[var(--color-ink-faint)] truncate">{state.profile.role}</p>
-              </div>
-            )}
-          </button>
-        </div>
-      </aside>
-
-      {/* ── Main content ─────────────────────────────────────────── */}
       <div className="relative flex flex-1 flex-col overflow-hidden pb-[64px] md:pb-0">
         <BackendOfflineBanner />
         {token && (
@@ -1283,34 +968,15 @@ export default function AppShell() {
             notificationPermission={notificationPermission}
           />
         )}
-        {token && !subscriptionLoading && !subscriptionActive
-          && activeView !== 'settings' && activeView !== 'profile' && activeView !== 'novidades' ? (
-          // Paywall gate: when subscription is inactive, every view except
-          // Settings / Profile / Novidades shows this placeholder. Backend
-          // /api/* endpoints already 402 on the same condition, so trying
-          // to render the underlying views just produces a parade of error
-          // toasts. See P0.16 in CODE_REVIEW.md.
-          <div className="flex flex-1 items-center justify-center bg-[var(--color-canvas)] px-6">
-            <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-line)] rounded-2xl shadow-sm p-8 text-center">
-              <div className="text-3xl mb-3">🔒</div>
-              <h2 className="text-[20px] font-semibold text-[var(--color-ink)] mb-2">
-                Ative seu plano para usar o ZeloChat
-              </h2>
-              <p className="text-[14px] text-[var(--color-ink-muted)] leading-relaxed mb-6">
-                {isGeneralMode
-                  ? `A IA e o WhatsApp ficam disponíveis assim que sua assinatura estiver ativa. R$${PRICING.chat.priceBRL}/mês, cancela quando quiser.`
-                  : `A IA, o WhatsApp, o kanban e o catálogo ficam disponíveis assim que sua assinatura estiver ativa. R$${PRICING.chat.priceBRL}/mês, cancela quando quiser.`}
-              </p>
-              <button
-                onClick={() => setActiveView('settings')}
-                className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-[var(--color-brand)] text-white text-[14px] font-medium hover:bg-[var(--color-brand-deep)] transition-colors"
-              >
-                Ver planos
-              </button>
-            </div>
-          </div>
-        ) : activeView === 'chat' ? (
-          <MemoChatView
+      <MainContent
+        activeView={activeView}
+        token={token}
+        isGeneralMode={isGeneralMode}
+        subscriptionLoading={subscriptionLoading}
+        subscriptionActive={subscriptionActive}
+        setState={setState}
+        setActiveView={setActiveView}
+        chatView={<MemoChatView
             sessions={state.sessions}
             activeSessionId={activeSessionId}
             setActiveSessionId={setActiveSessionId}
@@ -1347,197 +1013,60 @@ export default function AppShell() {
             empresaName={empresa?.nome_exibicao}
             operatorName={state.profile.name}
           />
-        ) : (
-          /* ── Other views (lazy-loaded) ──────────────────────────── */
-          /* Suspense boundary is placed here, inside the paywall gate,
-             so the fallback spinner only appears while the view chunk is
-             being fetched — never on the initial app load (ChatView is
-             eager) and never during auth/paywall resolution. */
-          <Suspense
-            fallback={
-              <div className="flex flex-1 items-center justify-center bg-[var(--color-canvas)]">
-                <div className="w-6 h-6 rounded-full border-2 border-[var(--color-brand)] border-t-transparent animate-spin" />
-              </div>
-            }
-          >
-            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
-              {activeView === 'dashboard' && !isGeneralMode && (
-                <DashboardView state={dashboardState} setActiveView={setActiveView} token={token} />
-              )}
-              {activeView === 'kanban' && !isGeneralMode && (
-                <DragDropContext onDragEnd={onDragEnd}>
-                  <ProductionView
-                    state={productionState}
-                    onDragEnd={onDragEnd}
-                    setActiveView={setActiveView}
-                    onAddOrder={handleAddOrder}
-                    onEditOrder={handleEditOrder}
-                    onDeleteOrder={handleDeleteOrder}
-                    onUpdateStatus={updateOrderStatus}
-                    onReprintOrder={reprintOrder}
-                    canPrint={printer.connected}
-                    isAuthenticated={!!token}
-                    focusedOrderRequest={pendingOrderFocus?.request ?? null}
-                    focusedOrderRequestKey={pendingOrderFocus?.key ?? null}
-                  />
-                </DragDropContext>
-              )}
-              {activeView === 'calendar' && !isGeneralMode && (
-                <CalendarView
-                  state={calendarState}
-                  setState={setState}
-                  onNavigateToKanban={handleNavigateToKanban}
-                />
-              )}
-              {activeView === 'ai-configs' && (
-                <AIConfigsView
-                  state={aiConfigsState}
-                  setState={setState}
-                  triggers={triggers}
-                  triggersError={triggersError}
-                  createTrigger={createTrigger}
-                  updateTrigger={updateTriggerRequest}
-                  deleteTrigger={deleteTriggerRequest}
-                  quickResponses={quickResponses}
-                  addQuickResponse={addQuickResponse}
-                  updateQuickResponse={updateQuickResponse}
-                  deleteQuickResponse={deleteQuickResponse}
-                  saveAiInstructions={saveAiInstructions}
-                  savePixReceiptConfig={savePixReceiptConfig}
-                  token={token}
-                  refreshEmpresa={refreshEmpresa}
-                />
-              )}
-              {activeView === 'settings' && (
-                <SettingsView
-                  state={settingsState}
-                  setState={setState}
-                  empresa={empresa}
-                  saveEmpresa={saveEmpresa}
-                  isAuthenticated={!!token}
-                  token={token}
-                  zelochatMode={zelochatMode}
-                />
-              )}
-              {activeView === 'profile' && (
-                <ProfileView
-                  state={profileState}
-                  setState={setState}
-                  empresa={empresa}
-                  saveEmpresa={saveEmpresa}
-                  token={token}
-                />
-              )}
-              {activeView === 'drivers' && !isGeneralMode && (
-                <DriversView
-                  orders={state.orders}
-                  drivers={drivers}
-                  isAuthenticated={!!token}
-                  loading={driversLoading}
-                  error={driversError}
-                  createDriver={createDriver}
-                  updateDriver={updateDriver}
-                  deleteDriver={deleteDriver}
-                  token={token}
-                  onDispatchSuccess={handleDispatchSuccess}
-                />
-              )}
-              {activeView === 'novidades' && (
-                <NovidadesView />
-              )}
-            </div>
-          </Suspense>
-        )}
-      </div>
+        }
+        dashboardState={dashboardState}
+        productionState={productionState}
+        calendarState={calendarState}
+        aiConfigsState={aiConfigsState}
+        settingsState={settingsState}
+        profileState={profileState}
+        onDragEnd={onDragEnd}
+        handleAddOrder={handleAddOrder}
+        handleEditOrder={handleEditOrder}
+        handleDeleteOrder={handleDeleteOrder}
+        updateOrderStatus={updateOrderStatus}
+        reprintOrder={reprintOrder}
+        canPrint={printer.connected}
+        pendingOrderFocus={pendingOrderFocus}
+        handleNavigateToKanban={handleNavigateToKanban}
+        triggers={triggers}
+        triggersError={triggersError}
+        createTrigger={createTrigger}
+        updateTriggerRequest={updateTriggerRequest}
+        deleteTriggerRequest={deleteTriggerRequest}
+        quickResponses={quickResponses}
+        addQuickResponse={addQuickResponse}
+        updateQuickResponse={updateQuickResponse}
+        deleteQuickResponse={deleteQuickResponse}
+        saveAiInstructions={saveAiInstructions}
+        empresa={empresa}
+        saveEmpresa={saveEmpresa}
+        zelochatMode={zelochatMode}
+        drivers={drivers}
+        driversLoading={driversLoading}
+        driversError={driversError}
+        createDriver={createDriver}
+        updateDriver={updateDriver}
+        deleteDriver={deleteDriver}
+        onDispatchSuccess={handleDispatchSuccess}
+        orders={state.orders}
+      />
 
-      {/* ── Bottom tab bar (mobile only) ──────────────────────────── */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden h-[64px] items-stretch border-t border-[var(--color-line)] bg-[var(--color-surface)]">
-        {primaryNavItems.map((item) => {
-          const Icon = item.icon;
-          const active = activeView === item.id;
-          const isAlert = item.id === 'chat' && openEscalationCount > 0;
-          const badge = item.id === 'chat' ? (isAlert ? openEscalationCount : unreadConversationsCount) : 0;
-          return (
-            <button
-              key={item.id}
-              onClick={() => { setActiveView(item.id); setMoreSheetOpen(false); }}
-              className={`relative flex flex-1 flex-col items-center justify-center gap-1 transition-colors ${
-                active ? 'text-[var(--color-brand)]' : 'text-[var(--color-ink-muted)]'
-              }`}
-            >
-              <Icon className="h-5 w-5" strokeWidth={active ? 2.2 : 1.8} />
-              <span className="text-[10.5px] font-medium leading-none">{item.label}</span>
-              {badge > 0 && (
-                <span className={`absolute top-1.5 left-1/2 ml-1 rounded-full min-w-[16px] h-[16px] px-1 flex items-center justify-center text-[9.5px] font-bold text-white ${
-                  isAlert ? 'bg-[var(--color-alert)]' : 'bg-[#25D366]'
-                }`}>
-                  {badge > 99 ? '99+' : badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
-        <button
-          onClick={() => setMoreSheetOpen(true)}
-          className={`flex flex-1 flex-col items-center justify-center gap-1 transition-colors ${
-            moreSheetOpen ? 'text-[var(--color-brand)]' : 'text-[var(--color-ink-muted)]'
-          }`}
-        >
-          <MoreHorizontal className="h-5 w-5" strokeWidth={moreSheetOpen ? 2.2 : 1.8} />
-          <span className="text-[10.5px] font-medium leading-none">Mais</span>
-        </button>
-      </nav>
-
-      {/* ── "Mais" bottom sheet (mobile only) ─────────────────────── */}
-      {moreSheetOpen && (
-        <div className="md:hidden fixed inset-0 z-50">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setMoreSheetOpen(false)}
-          />
-          <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] pb-6">
-            <div className="mx-auto mt-2 mb-2 h-1 w-10 rounded-full bg-[var(--color-line)]" />
-            <div className="px-2 py-1">
-              {bottomSheetItems.map((item) => {
-                const Icon = item.icon;
-                const active = activeView === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => { setActiveView(item.id); setMoreSheetOpen(false); }}
-                    className={`w-full flex items-center gap-3 rounded-xl px-3 py-3 transition-colors ${
-                      active ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]'
-                    }`}
-                  >
-                    <Icon className="h-5 w-5 flex-shrink-0" strokeWidth={1.8} />
-                    <div className="text-left">
-                      <p className="text-[14px] font-medium leading-tight">{item.label}</p>
-                      <p className="text-[11.5px] text-[var(--color-ink-faint)] leading-tight mt-0.5">{item.description}</p>
-                    </div>
-                  </button>
-                );
-              })}
-              {!isGeneralMode && (
-                <a
-                  href="https://menu.zelopdv.com.br/admin"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setMoreSheetOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-xl px-3 py-3 transition-colors text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]"
-                >
-                  <ShoppingBag className="h-5 w-5 flex-shrink-0" strokeWidth={1.8} />
-                  <div className="text-left">
-                    <p className="text-[14px] font-medium leading-tight">Cardápio</p>
-                    <p className="text-[11.5px] text-[var(--color-ink-faint)] leading-tight mt-0.5">Abrir ZeloMenu ↗</p>
-                  </div>
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <MobileBottomNav
+        activeView={activeView}
+        primaryNavItems={primaryNavItems}
+        bottomSheetItems={bottomSheetItems}
+        moreSheetOpen={moreSheetOpen}
+        openEscalationCount={openEscalationCount}
+        unreadConversationsCount={unreadConversationsCount}
+        isGeneralMode={isGeneralMode}
+        onNavigate={setActiveView}
+        onToggleMore={() => setMoreSheetOpen(true)}
+        onCloseMore={() => setMoreSheetOpen(false)}
+      />
 
       </div> {/* end flex-1 inner wrapper */}
+    </div>
     </div>
   );
 }

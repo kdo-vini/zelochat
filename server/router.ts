@@ -68,6 +68,7 @@ import {
   getPublicAppBaseUrl,
 } from './ai.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
+import { normalizeLoose } from '../src/domain/conversationState.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { redactInstance, redactJid } from './redact.js';
@@ -557,12 +558,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     // era um pedido novo → duplicate-order bug. Agora normalizamos accent +
     // case + emoji + punct e checamos se o token "confirmar"/"cancelar" está
     // presente.
-    const buttonTextNormalized = msgText
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/\p{Mn}/gu, '')          // strip combining accents
-      .replace(/[\p{S}\p{P}\s]+/gu, ' ') // collapse symbols/emoji/punct/whitespace
-      .trim();
+    const buttonTextNormalized = normalizeLoose(msgText);
     // Match only exact button labels/tokens. Natural text such as
     // "confirmar mais tarde?" or "cancelar só a coca" is an edit/question, not
     // consent to confirm/cancel the whole order.
