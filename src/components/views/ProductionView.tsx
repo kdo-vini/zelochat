@@ -9,6 +9,7 @@ import {
 import { ZeloState, Order } from '../../types';
 import { maskBrazilianPhone, maskTime24h } from '../../domain/chat';
 import { resolveOrderFocusRequest, type OrderFocusRequest } from '../../domain/orderFocus';
+import { filterProductionBoardOrders } from '../../domain/productionBoard';
 import { STATUS_LABELS, STATUS_COLORS } from '../../constants';
 import { format, parseISO, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -860,6 +861,16 @@ export const ProductionView = ({
   const [resizing, setResizing] = useState<'feed' | Order['status'] | null>(null);
   const resizeSessionRef = useRef<ResizeSession | null>(null);
 
+  // Delivered orders drop off the board a few minutes after being finalized.
+  // The realtime/30s refetch already re-renders periodically, but a delivered
+  // card also needs to disappear on its own when no data change happens, so we
+  // tick a clock every minute to re-evaluate the linger window.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(PRODUCTION_LAYOUT_STORAGE_KEY);
@@ -974,9 +985,15 @@ export const ProductionView = ({
     setColumnWidths({});
   };
 
+  // Orders shown on the operational board: active orders always, delivered ones
+  // only while inside the linger window (see filterProductionBoardOrders). The
+  // full state.orders (14-day history) still feeds the drawer lookup, focus
+  // requests and the Agenda — only the board itself hides finished orders.
+  const boardOrders = filterProductionBoardOrders(state.orders, nowMs);
+
   const feedOrders = feedFilter === 'all'
-    ? state.orders
-    : state.orders.filter((o) => o.status === feedFilter);
+    ? boardOrders
+    : boardOrders.filter((o) => o.status === feedFilter);
 
   // Split the feed by pickup date relative to today (Brasília TZ to match how the date is stored).
   // "Hoje" = pickup_date <= today (today + any past dates not yet delivered/cleaned up).
@@ -1150,7 +1167,7 @@ export const ProductionView = ({
         <div className="production-board hidden md:block flex-1 min-w-0 overflow-hidden relative">
           <div className="production-board-scroll h-full min-w-0 flex gap-3 overflow-x-auto p-4 custom-scrollbar">
             {COLUMNS.map((col) => {
-              const colOrders = state.orders.filter((o) => o.status === col);
+              const colOrders = boardOrders.filter((o) => o.status === col);
               const style = COLUMN_STYLE[col];
               const customColumnWidth = columnWidths[col];
               return (

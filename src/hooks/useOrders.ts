@@ -269,7 +269,18 @@ export function useOrders(
     if (!current) throw new Error('Pedido nÃ£o encontrado.');
     await updateOrderStatusApi(token, id, status, current.revision ?? 0);
     const accepted = current.requiresAcceptance === true && (status === 'pending' || status === 'preparing');
-    const updatedOrder = { ...current, status, ...(accepted ? { requiresAcceptance: false } : {}) };
+    // Optimistically stamp closedAt on delivery so the Produção board keeps the
+    // card during its linger window (see filterProductionBoardOrders). The
+    // server sets the authoritative closed_at ~immediately; the AppShell sync
+    // effect treats same-status rows as equal, so this optimistic value is what
+    // reaches the board until a full status change re-syncs.
+    const stampClosedAt = status === 'delivered' && !current.closedAt;
+    const updatedOrder = {
+      ...current,
+      status,
+      ...(stampClosedAt ? { closedAt: new Date().toISOString() } : {}),
+      ...(accepted ? { requiresAcceptance: false } : {}),
+    };
     setOrders((prev) => prev.map((o) => (o.id === id ? updatedOrder : o)));
   }, [session?.access_token, orders]);
 

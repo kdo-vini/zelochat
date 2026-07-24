@@ -175,6 +175,10 @@ export interface Order {
   requiresAcceptance?: boolean;
   total: number;
   createdAt: string;
+  /** Stamped by the canonical engine (zelo_orders.closed_at) when the order was
+   *  finalized (delivered/closed). Used to age delivered cards off the Produção
+   *  board. Absent for active orders and for legacy imports. */
+  closedAt?: string;
   pixReceiptApproved?: boolean;
 }
 

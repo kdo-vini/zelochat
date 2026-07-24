@@ -40,6 +40,7 @@ const tests = [
   'tests/canonicalOrders.test.ts',
   'tests/orderTransitionError.test.ts',
   'tests/productionLayout.test.ts',
+  'tests/productionBoard.test.ts',
   'tests/orderAutoPrint.test.ts',
   'tests/printerService.test.ts',
   'tests/updateReloadGuardrails.test.ts',

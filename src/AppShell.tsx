@@ -871,6 +871,12 @@ export default function AppShell() {
         ? {
             ...o,
             status: newStatus,
+            // Stamp closedAt on delivery so the Produção board's linger filter
+            // (filterProductionBoardOrders) keeps the card visible for the
+            // window instead of hiding it instantly — the server's real
+            // closed_at is within ~2s and the sync effect treats same-status
+            // rows as equal, so the optimistic timestamp is what sticks.
+            ...(newStatus === 'delivered' && !o.closedAt ? { closedAt: new Date().toISOString() } : {}),
             ...((o.requiresAcceptance && (newStatus === 'pending' || newStatus === 'preparing'))
               ? { requiresAcceptance: false }
               : {}),
