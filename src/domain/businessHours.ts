@@ -79,8 +79,9 @@ export function windowStartMinutes(w: HoursWindow): number | null {
  * quando o início também é 00:00 (caso 24h / wrap). null se inválido.
  */
 export function windowEndMinutes(w: HoursWindow): number | null {
-  const raw = w.end?.trim();
-  if (raw === '24:00' || (raw === '00:00' && w.start?.trim() !== '00:00')) return 1440;
+  const raw = typeof w.end === 'string' ? w.end.trim() : null;
+  const start = typeof w.start === 'string' ? w.start.trim() : null;
+  if (raw === '24:00' || (raw === '00:00' && start !== '00:00')) return 1440;
   return parseTimeToMinutes(w.end);
 }
 
@@ -88,7 +89,21 @@ function isValidWindow(w: unknown): w is HoursWindow {
   if (!w || typeof w !== 'object') return false;
   const start = (w as HoursWindow).start;
   const end = (w as HoursWindow).end;
-  return parseTimeToMinutes(start) !== null && windowEndMinutes({ start, end } as HoursWindow) !== null;
+  return typeof start === 'string'
+    && typeof end === 'string'
+    && parseTimeToMinutes(start) !== null
+    && windowEndMinutes({ start, end }) !== null;
+}
+
+/**
+ * Valida a regra do modelo semanal. A única faixa com início igual ao fim
+ * permitida é 00:00–00:00, que representa uma loja aberta 24 horas.
+ */
+export function isValidWeeklyWindow(window: HoursWindow): boolean {
+  const start = windowStartMinutes(window);
+  const end = windowEndMinutes(window);
+  if (start === null || end === null) return false;
+  return end > start || (start === 0 && end === 0);
 }
 
 function emptyWeekly(): WeeklyHours {
@@ -111,7 +126,9 @@ export function normalizeWeeklyHours(raw: unknown): WeeklyHours | null {
     // Aceita tanto [] direto quanto { windows: [] } (tolerância de shape).
     const windows = Array.isArray(dayVal)
       ? dayVal
-      : Array.isArray((dayVal as { windows?: unknown }).windows)
+      : dayVal !== null
+        && typeof dayVal === 'object'
+        && Array.isArray((dayVal as { windows?: unknown }).windows)
         ? (dayVal as { windows: unknown[] }).windows
         : [];
     out[key] = windows
@@ -119,6 +136,32 @@ export function normalizeWeeklyHours(raw: unknown): WeeklyHours | null {
       .map((w) => ({ start: w.start.trim(), end: w.end.trim() }));
   }
   return sawAnyKey ? out : null;
+}
+
+/**
+ * Normaliza um payload de gravação sem descartar silenciosamente dias ou
+ * janelas inválidas. Diferentemente da leitura tolerante acima, exige os sete
+ * dias e uma lista de janelas em cada dia.
+ */
+export function normalizeWeeklyHoursForWrite(raw: unknown): WeeklyHours | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const source = raw as Record<string, unknown>;
+  const out = emptyWeekly();
+
+  for (const key of DAY_KEYS) {
+    const dayVal = source[key];
+    if (!Array.isArray(dayVal)) return null;
+    const windows: HoursWindow[] = [];
+    for (const rawWindow of dayVal) {
+      if (!isValidWindow(rawWindow)) return null;
+      const window = { start: rawWindow.start.trim(), end: rawWindow.end.trim() };
+      if (!isValidWeeklyWindow(window)) return null;
+      windows.push(window);
+    }
+    out[key] = windows;
+  }
+
+  return out;
 }
 
 /** True se a loja abre em pelo menos um dia. */

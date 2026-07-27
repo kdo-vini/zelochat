@@ -27,8 +27,7 @@ import {
   CLOSED_DAY_LABELS,
   deriveLegacyFromWeekly,
   deriveWeeklyFromLegacy,
-  parseTimeToMinutes,
-  windowEndMinutes,
+  isValidWeeklyWindow,
   type WeeklyHours,
 } from '../../domain/businessHours';
 import {
@@ -477,17 +476,15 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
 
 /**
  * Valida as janelas de todos os dias: cada faixa precisa ter início < fim.
- * `end` "00:00" conta como meia-noite (1440) via windowEndMinutes. Retorna uma
+ * `end` "00:00" conta como meia-noite (1440), inclusive 00:00–00:00 para loja 24h. Retorna uma
  * mensagem PT no primeiro dia inválido, ou null se tudo certo. Espelha a lógica
  * de bloqueio de save do painel antigo (agora por dia/faixa).
  */
 function validateWeeklyHours(weekly: WeeklyHours): string | null {
   for (const key of DAY_KEYS) {
     for (const win of weekly[key]) {
-      const start = parseTimeToMinutes(win.start);
-      const end = windowEndMinutes(win);
-      if (start === null || end === null || start >= end) {
-        return `Confira os horários de ${CLOSED_DAY_LABELS[key]}: o horário de início precisa ser antes do horário de fim.`;
+      if (!isValidWeeklyWindow(win)) {
+        return `Confira os horários de ${CLOSED_DAY_LABELS[key]}: o início precisa ser antes do fim (00:00–00:00 significa 24 horas).`;
       }
     }
   }

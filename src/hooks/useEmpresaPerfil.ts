@@ -298,16 +298,10 @@ export function useEmpresaPerfil(session: Session | null): UseEmpresaPerfilResul
             return false;
           }
         } else if (dbError.message.includes('horario_semanal') && patch.horario_semanal !== undefined) {
-          console.warn('[useEmpresaPerfil] horario_semanal column missing - saving without it. Run migration 046.');
-          const { horario_semanal: _hs, ...patchWithout } = patch as Partial<EmpresaPerfil>;
-          const { error: retryError } = await supabase
-            .from('empresa_perfil')
-            .update({ ...patchWithout, updated_at: new Date().toISOString() })
-            .eq('id', empresa.id);
-          if (retryError) {
-            setError(retryError.message);
-            return false;
-          }
+          const message = 'A migration 046 do horário semanal ainda não foi aplicada neste banco.';
+          console.error('[useEmpresaPerfil]', message);
+          setError(message);
+          return false;
         } else {
           setError(dbError.message);
           return false;

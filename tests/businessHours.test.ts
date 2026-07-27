@@ -5,8 +5,10 @@ import {
   isMinuteWithinDay,
   isMinuteWithinWindow,
   isOpenAt,
+  isValidWeeklyWindow,
   minutesInTz,
   normalizeWeeklyHours,
+  normalizeWeeklyHoursForWrite,
   summarizeWeekly,
   weekdayKeyInTz,
   windowEndMinutes,
@@ -62,6 +64,16 @@ const tolerant = normalizeWeeklyHours({ mon: { windows: [{ start: '18:00', end: 
 assert(tolerant !== null && tolerant.mon.length === 1, 'tolera shape { windows: [...] }');
 const filtered = normalizeWeeklyHours({ mon: [{ start: '25:99', end: '14:00' }, { start: '11:00', end: '14:00' }] });
 assert(filtered !== null && filtered.mon.length === 1, 'janela inválida é descartada');
+assert(normalizeWeeklyHours({ mon: null })?.mon.length === 0, 'dia malformado não quebra o fallback');
+
+// ---------------------------------------------------------------------------
+console.log('\nvalidação de gravação');
+assert(isValidWeeklyWindow({ start: '00:00', end: '00:00' }), '00:00–00:00 = loja 24h');
+assert(!isValidWeeklyWindow({ start: '09:00', end: '09:00' }), 'horários iguais fora da meia-noite são inválidos');
+const completeWrite = { sun: [{ start: '00:00', end: '00:00' }], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [] };
+assert(normalizeWeeklyHoursForWrite(completeWrite)?.sun.length === 1, 'payload completo aceita 24h');
+assert(normalizeWeeklyHoursForWrite({ mon: [] }) === null, 'payload de gravação exige os sete dias');
+assert(normalizeWeeklyHoursForWrite({ ...completeWrite, mon: [{ start: 9, end: '18:00' }] }) === null, 'payload não descarta janela malformada');
 
 // ---------------------------------------------------------------------------
 console.log('\nderiveWeeklyFromLegacy');
