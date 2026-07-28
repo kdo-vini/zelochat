@@ -8,8 +8,6 @@
 // Decisões aplicáveis:
 //  - D-005/D-100: vocabulário de capability separado de "qual app abre".
 //  - D-014: ZeloChat (chat) e bundle INCLUEM ZeloMenu obrigatoriamente.
-//  - D-099: `has_pedidos_addon` é entitlement LEGADO/grandfathered — libera só a
-//    superfície operacional de pedidos/cozinha, nunca publicação/menu público.
 //  - D-103: `has_zelo_menu` é PDV-owned e nasce no repo ZeloPDV. Enquanto a coluna
 //    não existir, o resolver é FAIL-SAFE PARA ON em chat/bundle (flipar a copy de
 //    pricing nunca pode trancar quem já tem direito) e expõe UM ÚNICO seam
@@ -35,12 +33,6 @@ export interface ZeloMenuEntitlementSignals {
   planTier: ZeloMenuPlanTier | null;
   /** Assinatura efetivamente ativa hoje (status + expiração). Já resolvido pelo chamador. */
   active: boolean;
-  /**
-   * Flag legada `has_pedidos_addon` (D-099). Grandfathered: mantém só
-   * `ordering_review`/`kitchen_queue` no PDV. NUNCA concede `menu_publication`
-   * nem `chat_app`.
-   */
-  hasPedidosAddonLegacy?: boolean;
   /**
    * SEAM ÚNICO (D-103) para o futuro `has_zelo_menu` PDV-owned.
    * `undefined`/`null` = coluna ainda não publicada → o resolver ignora e
@@ -89,23 +81,20 @@ export function resolveZeloMenuCapabilities(signals: ZeloMenuEntitlementSignals)
   // (coluna ainda não publicada) e `false` não concedem — mas tampouco trancam
   // chat/bundle, que entram por D-014 abaixo.
   const hasZeloMenuExplicit = signals.hasZeloMenuFlag === true;
-  const hasPedidosLegacy = signals.hasPedidosAddonLegacy === true;
-
   caps.chat_app = isChatTier;
   caps.pdv_core = isPdvTier;
 
   // Acesso ao ZeloMenu (publicação + runtime do menu público):
   //  - chat/bundle: ON sempre (D-014, fail-safe ON);
   //  - pdv puro: só com a flag nova explícita (tier R$99);
-  //  - legado has_pedidos_addon NÃO concede (D-099).
   const zeloMenuAccess = isChatTier || (isPdvTier && hasZeloMenuExplicit);
   caps.menu_publication = zeloMenuAccess;
   caps.public_menu_runtime = zeloMenuAccess;
 
   // Revisão/aceite de pedidos online:
   //  - chat/bundle: ON;
-  //  - pdv com ZeloMenu novo OU legado has_pedidos_addon: ON (grandfather).
-  const orderingReview = isChatTier || (isPdvTier && (hasZeloMenuExplicit || hasPedidosLegacy));
+  //  - pdv com ZeloMenu novo: ON.
+  const orderingReview = isChatTier || (isPdvTier && hasZeloMenuExplicit);
   caps.ordering_review = orderingReview;
 
   // Fila de cozinha: tudo que libera ordering_review, mais Mesas com cozinha
