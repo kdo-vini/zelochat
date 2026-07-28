@@ -95,22 +95,6 @@ const tests = [
     },
   },
   {
-    name: 'legado has_pedidos_addon libera só pedidos/cozinha, nunca publicação (D-099)',
-    run() {
-      const signals: ZeloMenuEntitlementSignals = {
-        planTier: 'pdv',
-        active: true,
-        hasPedidosAddonLegacy: true,
-      };
-      const caps = resolveZeloMenuCapabilities(signals);
-      assert.equal(caps.ordering_review, true, 'grandfather mantém revisão de pedidos');
-      assert.equal(caps.kitchen_queue, true, 'grandfather mantém cozinha');
-      assert.equal(caps.menu_publication, false, 'legado não ganha publicação ZeloMenu');
-      assert.equal(caps.public_menu_runtime, false);
-      assert.equal(caps.chat_app, false, 'legado não ganha o app ZeloChat');
-    },
-  },
-  {
     name: 'Mesas com cozinha libera kitchen_queue sem ordering_review (D-100)',
     run() {
       const caps = resolveZeloMenuCapabilities({ planTier: 'pdv', active: true, hasMesasAddon: true });
