@@ -3,6 +3,9 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Sprint 11 (fix 2026-07-29) — preço da landing
+- ✅ LANDING-001 — preço da seção de planos podia ficar preso em `0` enquanto o `IntersectionObserver` aguardava a animação → `NumberTicker` agora renderiza o valor real desde o primeiro paint e só anima mudanças posteriores — `src/components/landing/ui/NumberTicker.tsx:18`
+
 ### Sprint 10 (shipped 2026-07-24) — Hotfix pós-refactor do Cérebro IA
 - ✅ AI-CONFIGS-001 — refactor removeu bindings ainda usados pela tela e causava `ReferenceError: qrSaveState is not defined` ao abrir respostas rápidas → estado de salvamento, debounce e foco das instruções foram restaurados, com regressão dedicada — `src/components/views/AIConfigsView.tsx:196`, `tests/aiConfigsViewGuardrails.test.ts:1`
 

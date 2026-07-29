@@ -17,9 +17,12 @@ export function NumberTicker({
   suffix = '',
   className = '',
 }: NumberTickerProps) {
-  const [display, setDisplay] = useState(0);
+  // Never render a misleading zero while the visibility observer is waiting
+  // to start the optional animation. The value itself is the source of truth.
+  const [display, setDisplay] = useState(value);
   const ref = useRef<HTMLSpanElement>(null);
   const startedRef = useRef(false);
+  const previousValueRef = useRef(value);
 
   useEffect(() => {
     const node = ref.current;
@@ -28,6 +31,15 @@ export function NumberTicker({
     const reduceMotion = window.matchMedia(
       '(prefers-reduced-motion: reduce)'
     ).matches;
+    const from = previousValueRef.current;
+    previousValueRef.current = value;
+
+    // The first paint already contains the real value. Only animate later
+    // prop changes; otherwise the ticker would briefly reset a visible price
+    // back to zero when it enters the viewport.
+    if (from === value) return;
+    startedRef.current = false;
+
     if (reduceMotion) {
       setDisplay(value);
       return;
@@ -39,7 +51,6 @@ export function NumberTicker({
           if (entry.isIntersecting && !startedRef.current) {
             startedRef.current = true;
             const start = performance.now();
-            const from = 0;
             const to = value;
             const step = (now: number) => {
               const t = Math.min(1, (now - start) / durationMs);
