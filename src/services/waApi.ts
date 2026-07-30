@@ -330,6 +330,22 @@ export async function deleteMessage(
   await parseResponse(response);
 }
 
+export async function retryFailedMessage(token: string, messageId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(messageId)}/retry`), {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  await parseResponse(response);
+}
+
+export async function deleteFailedMessage(token: string, messageId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/messages/failed/${encodeURIComponent(messageId)}`), {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+  await parseResponse(response);
+}
+
 export async function markSessionRead(token: string, jid: string): Promise<void> {
   const response = await apiFetch(apiUrl(`/api/sessions/${encodeURIComponent(jid)}/read`), {
     method: 'POST',

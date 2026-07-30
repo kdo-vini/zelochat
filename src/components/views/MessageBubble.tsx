@@ -15,6 +15,7 @@ import {
   Package,
   Pause,
   Play,
+  RotateCcw,
   Sparkles,
   Trash2,
   X,
@@ -516,6 +517,8 @@ export interface MessageBubbleProps {
   sessionCustomerPhone?: string;
   onDelete?: (message: ChatMessage) => void | Promise<void>;
   isDeleting?: boolean;
+  onRetry?: (message: ChatMessage) => void | Promise<void>;
+  isRetrying?: boolean;
   onOpenOrder?: (request: OrderFocusRequest) => void;
   onReply?: (message: ChatMessage) => void;
 }
@@ -531,6 +534,8 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   sessionCustomerPhone,
   onDelete,
   isDeleting = false,
+  onRetry,
+  isRetrying = false,
   onOpenOrder,
   onReply,
 }: MessageBubbleProps) {
@@ -556,7 +561,10 @@ const MessageBubbleInner = React.memo(function MessageBubble({
     remoteJid: sessionRemoteJid,
   });
 
-  const deleteMenuButton = isOutgoing && message.waMessageId && onDelete ? (
+  const canRetry = isOutgoing && message.status === 'failed' && !!onRetry;
+  const canDelete = isOutgoing && !!onDelete && (!!message.waMessageId || message.status === 'failed');
+  const isUpdating = isDeleting || isRetrying;
+  const deleteMenuButton = canDelete ? (
     <div className="absolute right-1 top-1 z-30">
       <button
         ref={menuTriggerRef}
@@ -585,12 +593,12 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           }
           setMenuOpen((open) => !open);
         }}
-        disabled={isDeleting}
+        disabled={isUpdating}
         title="Opções da mensagem"
         aria-label="Opções da mensagem"
         className="flex h-6 w-6 items-center justify-center rounded-md bg-white/75 text-[#667781] opacity-80 transition-all hover:bg-white hover:text-[#111b21] focus:opacity-100 disabled:cursor-wait disabled:opacity-70 group-hover/bubble:opacity-100"
       >
-        {isDeleting
+        {isUpdating
           ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
           : <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />}
       </button>
@@ -608,17 +616,31 @@ const MessageBubbleInner = React.memo(function MessageBubble({
               menuOpenUp ? 'bottom-7' : 'top-7'
             }`}
           >
+            {canRetry && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  void onRetry?.(message);
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-medium text-[var(--color-brand)] transition-colors hover:bg-emerald-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
+                <span>Tentar novamente</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
                 setMenuOpen(false);
-                void onDelete(message);
+                void onDelete?.(message);
               }}
               className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-medium text-[#b42318] transition-colors hover:bg-[#fee4e2]"
             >
               <Trash2 className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
-              <span>Apagar mensagem para todos</span>
+              <span>{message.status === 'failed' ? 'Excluir mensagem' : 'Apagar mensagem para todos'}</span>
             </button>
           </div>
         </>

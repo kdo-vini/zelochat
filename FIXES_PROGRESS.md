@@ -3,6 +3,9 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Sprint 12 (fix 2026-07-30) — reenvio de mensagem
+- ✅ CHAT-RETRY-001 — mensagens manuais que falhavam ficavam apenas com o ícone de erro, sem ação porque não recebem ID do WhatsApp → o menu da mensagem agora permite **Tentar novamente** (reusa o mesmo registro, com trava contra duplo envio) ou **Excluir mensagem** do histórico; as duas ações respeitam o escopo da empresa. Regressão comportamental cobre envio único, colisão, falha, mídia/quote e conteúdo vazio — `src/components/views/MessageBubble.tsx:561`, `src/hooks/useWhatsAppSessions.ts:419`, `server/failedMessageRetry.ts:45`, `tests/retryFailedMessage.test.ts:1`
+
 ### Sprint 11 (fix 2026-07-29) — preço da landing
 - ✅ LANDING-001 — preço da seção de planos podia ficar preso em `0` enquanto o `IntersectionObserver` aguardava a animação → `NumberTicker` agora renderiza o valor real desde o primeiro paint e só anima mudanças posteriores — `src/components/landing/ui/NumberTicker.tsx:18`
 

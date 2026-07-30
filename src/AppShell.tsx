@@ -173,6 +173,7 @@ export default function AppShell() {
     toggleAutoReply,
     deleteSession,
     deleteMessage,
+    retryFailedMessage,
     updateSessionName,
     lastEscalation,
     dismissEscalation,
@@ -989,6 +990,7 @@ export default function AppShell() {
             send={send}
             toggleAutoReply={toggleAutoReply}
             deleteMessage={deleteMessage}
+            retryFailedMessage={retryFailedMessage}
             updateSessionName={updateSessionName}
             hydrateSession={hydrateSession}
             loadOlderMessages={loadOlderMessages}

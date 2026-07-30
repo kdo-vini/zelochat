@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-07-30',
+    category: 'minor',
+    title: 'Você pode reenviar mensagens que falharam',
+    description: 'Quando uma mensagem não conseguir ser enviada, abra as opções dela para tentar novamente ou excluir apenas esse registro do histórico.',
+  },
+  {
     date: '2026-07-24',
     category: 'hotfix',
     title: 'Atendimento não recusa mais horário "pra agora"',

@@ -553,6 +553,7 @@ export interface ChatViewProps {
   send: (jid: string, payload: { text: string; attachment?: ChatAttachment; quoted?: { waMessageId: string; fromMe: boolean; remoteJid: string; previewText?: string } | null }) => Promise<void>;
   toggleAutoReply: (jid: string, enabled: boolean) => Promise<void>;
   deleteMessage: (jid: string, message: ChatMessage) => Promise<void>;
+  retryFailedMessage: (jid: string, message: ChatMessage) => Promise<void>;
   updateSessionName: (jid: string, name: string) => Promise<void>;
   hydrateSession: (jid: string) => Promise<void>;
   loadOlderMessages: (jid: string) => Promise<void>;
@@ -595,6 +596,7 @@ export function ChatView({
   send,
   toggleAutoReply,
   deleteMessage,
+  retryFailedMessage,
   updateSessionName,
   hydrateSession,
   loadOlderMessages,
@@ -764,6 +766,7 @@ export function ChatView({
   const [deleteSessionPending, setDeleteSessionPending] = useState<{ id: string; name: string } | null>(null);
   const [deleteMessagePending, setDeleteMessagePending] = useState<ChatMessage | null>(null);
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
   const [aiAssistMenuOpen, setAiAssistMenuOpen] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [aiAssistLoading, setAiAssistLoading] = useState<'improve' | 'reply' | 'order' | null>(null);
@@ -1548,11 +1551,24 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
   };
 
   const handleDeleteMessage = async (message: ChatMessage) => {
-    if (!message.waMessageId) {
+    if (!message.waMessageId && message.status !== 'failed') {
       setChatActionError('Esta mensagem ainda nao pode ser apagada para todos.');
       return;
     }
     setDeleteMessagePending(message);
+  };
+
+  const handleRetryFailedMessage = async (message: ChatMessage) => {
+    if (!activeSession) return;
+    setRetryingMessageId(message.id);
+    setChatActionError(null);
+    try {
+      await retryFailedMessage(activeSession.id, message);
+    } catch (error) {
+      setChatActionError(error instanceof Error ? error.message : 'Não foi possível reenviar a mensagem.');
+    } finally {
+      setRetryingMessageId(null);
+    }
   };
 
   const handleConfirmDeleteMessage = async () => {
@@ -2384,6 +2400,8 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                             sessionCustomerPhone={activeSession.customerPhone}
                             onDelete={handleDeleteMessage}
                             isDeleting={deletingMessageId === message.id}
+                            onRetry={handleRetryFailedMessage}
+                            isRetrying={retryingMessageId === message.id}
                             onOpenOrder={handleOpenOrderRequest}
                             onReply={message.waMessageId ? setReplyingTo : undefined}
                           />
@@ -3499,7 +3517,9 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
       <ConfirmModal
         open={deleteMessagePending !== null}
         title="Apagar mensagem?"
-        message="Essa acao tenta apagar a mensagem para todos no WhatsApp e nao pode ser desfeita."
+        message={deleteMessagePending?.status === 'failed'
+          ? 'Esta mensagem não foi enviada e será removida apenas do histórico.'
+          : 'Essa acao tenta apagar a mensagem para todos no WhatsApp e nao pode ser desfeita.'}
         onClose={() => setDeleteMessagePending(null)}
         onConfirm={handleConfirmDeleteMessage}
         confirmLabel="Apagar"

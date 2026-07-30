@@ -53,6 +53,7 @@
   - `src/components/views/ChatView.tsx`
   - `src/components/views/MessageBubble.tsx`
   - `server/messageHandler.ts`
+  - Failed manual sends can be retried through `POST /api/messages/:id/retry`, which atomically claims only an `outbound_status='failed'` assistant intent before sending. `DELETE /api/messages/failed/:id` removes only an undelivered local intent; it must never call WhatsApp revoke.
 - API routes:
   - `server/router.ts`
   - `server/index.ts`

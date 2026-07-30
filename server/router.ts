@@ -42,6 +42,8 @@ import {
   createAssistantMessageIntent,
   handleOutboundMessage,
   messageExistsByWhatsAppId,
+  claimFailedAssistantMessageForRetry,
+  deleteFailedAssistantMessage,
   markAssistantMessageSendFailed,
   markAssistantMessageSendSucceeded,
   updateMessageReaction,
@@ -69,6 +71,7 @@ import {
 } from './ai.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
+import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { redactInstance, redactJid } from './redact.js';
@@ -3301,6 +3304,105 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
       return;
     }
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Failed sends have no WhatsApp message ID to revoke. These routes operate on
+// the persisted intent, always scoped to the authenticated empresa.
+router.post('/api/messages/:id/retry', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const supabase = getServiceSupabase();
+    const { data: message, error: messageError } = await supabase
+      .from('zelochat_messages')
+      .select('id, session_id, role, content, outbound_status, quoted_wa_id, quoted_from_me, quoted_preview')
+      .eq('empresa_id', empresaId)
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (messageError) throw new Error(messageError.message);
+    if (!message || message.role !== 'assistant' || message.outbound_status !== 'failed') {
+      res.status(404).json({ error: 'Mensagem não encontrada para reenviar.' });
+      return;
+    }
+
+    const { data: session, error: sessionError } = await supabase
+      .from('zelochat_sessions')
+      .select('remote_jid')
+      .eq('empresa_id', empresaId)
+      .eq('id', message.session_id)
+      .maybeSingle();
+    if (sessionError) throw new Error(sessionError.message);
+    if (!session?.remote_jid) {
+      res.status(404).json({ error: 'Conversa não encontrada para reenviar a mensagem.' });
+      return;
+    }
+
+    const result = await retryFailedAssistantMessage(message, session.remote_jid, {
+      claim: (messageId) => claimFailedAssistantMessageForRetry(empresaId, messageId),
+      send: async ({ jid, text, attachment, quoted }) => {
+        if (!attachment?.dataUrl) return sendTextMessage(jid, text, empresaId, quoted);
+        if (attachment.type === 'audio') return sendWhatsAppAudio(jid, attachment.dataUrl, empresaId, quoted);
+        return sendMediaMessage(jid, {
+          mediatype: attachment.type === 'image' ? 'image' : attachment.type === 'video' ? 'video' : 'document',
+          mimetype: attachment.mimeType,
+          media: attachment.dataUrl,
+          caption: text || undefined,
+          fileName: attachment.fileName,
+        }, empresaId, quoted);
+      },
+      markSucceeded: (messageId, waMessageId) => markAssistantMessageSendSucceeded(empresaId, messageId, waMessageId ?? null).catch((markError) => {
+        console.warn('[Router] WhatsApp retry sent, but failed to mark DB message as sent:', markError);
+      }),
+      markFailed: (messageId, errorMessage) => markAssistantMessageSendFailed(empresaId, messageId, errorMessage).catch((markError) => {
+        console.warn('[Router] Failed to mark WhatsApp retry as failed:', markError);
+      }),
+      getErrorMessage: (error) => {
+        const payload = serializeManualSendError(error);
+        return payload.providerMessage ?? payload.message;
+      },
+    });
+
+    if (result.type === 'not_retryable') {
+      res.status(400).json({ error: 'Esta mensagem não possui conteúdo para reenviar.' });
+      return;
+    }
+    if (result.type === 'already_sending') {
+      res.status(409).json({ error: 'Esta mensagem já está sendo enviada.' });
+      return;
+    }
+    if (result.type === 'send_failed') {
+      console.error('[Router] WhatsApp retry provider send error:', result.error);
+      res.status(502).json({ error: result.message });
+      return;
+    }
+
+    res.json({ ok: true, messageId: result.waMessageId ?? null, dbMessageId: message.id });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    console.error('[Router] Retry message error:', error);
+    res.status(500).json({ error: 'Não foi possível reenviar a mensagem.' });
+  }
+});
+
+router.delete('/api/messages/failed/:id', async (req: Request, res: Response) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const deleted = await deleteFailedAssistantMessage(empresaId, req.params.id);
+    if (!deleted.deleted) {
+      res.status(404).json({ error: 'Mensagem não encontrada para excluir.' });
+      return;
+    }
+    res.json({ ok: true, ...deleted });
+  } catch (error: any) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+      sendAuthError(res, error);
+      return;
+    }
+    console.error('[Router] Delete failed message error:', error);
+    res.status(500).json({ error: 'Não foi possível excluir a mensagem.' });
   }
 });
 

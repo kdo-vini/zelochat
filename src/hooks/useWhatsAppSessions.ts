@@ -15,6 +15,7 @@ import {
   bindEmpresa,
   bulkDeleteSessions as bulkDeleteSessionsApi,
   deleteMessage as deleteMessageApi,
+  deleteFailedMessage as deleteFailedMessageApi,
   deleteSession as deleteSessionApi,
   escalateSessionManually as escalateSessionManuallyApi,
   fetchProfilePicture as fetchProfilePictureApi,
@@ -25,6 +26,7 @@ import {
   markSessionsRead,
   resolveSession as resolveSessionApi,
   sendMessage,
+  retryFailedMessage as retryFailedMessageApi,
   setSessionAutoReply,
   setSessionPinned as setSessionPinnedApi,
   updateSessionName as updateSessionNameApi,
@@ -381,7 +383,8 @@ export function useWhatsAppSessions(token: string | null) {
     if (!token) {
       throw new Error('Faca login para apagar mensagens.');
     }
-    if (!message.waMessageId) {
+    const isFailedOutgoing = message.role === 'assistant' && message.status === 'failed';
+    if (!message.waMessageId && !isFailedOutgoing) {
       throw new Error('Esta mensagem ainda nao tem o ID do WhatsApp para apagar para todos.');
     }
 
@@ -398,11 +401,37 @@ export function useWhatsAppSessions(token: string | null) {
     );
 
     try {
+      if (isFailedOutgoing) {
+        await deleteFailedMessageApi(token, message.id);
+        return;
+      }
       await deleteMessageApi(token, message.waMessageId, {
         remoteJid: jid,
         fromMe: message.role === 'assistant',
         dbMessageId: message.id,
       });
+    } catch (error) {
+      void hydrateSession(jid);
+      throw error;
+    }
+  }, [hydrateSession, token]);
+
+  const retryFailedMessage = useCallback(async (jid: string, message: ChatMessage) => {
+    if (!token) throw new Error('Faça login para reenviar mensagens.');
+    if (message.role !== 'assistant' || message.status !== 'failed') {
+      throw new Error('Apenas mensagens que não foram enviadas podem ser reenviadas.');
+    }
+
+    setSessions((previous) =>
+      previous.map((session) =>
+        session.id === jid
+          ? { ...session, messages: session.messages.map((item) => item.id === message.id ? { ...item, status: 'sending' } : item) }
+          : session,
+      ),
+    );
+
+    try {
+      await retryFailedMessageApi(token, message.id);
     } catch (error) {
       void hydrateSession(jid);
       throw error;
@@ -835,6 +864,7 @@ export function useWhatsAppSessions(token: string | null) {
     toggleAutoReply,
     deleteSession,
     deleteMessage,
+    retryFailedMessage,
     fetchProfilePicture,
     updateSessionName,
     lastEscalation,

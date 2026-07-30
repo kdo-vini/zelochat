@@ -1309,6 +1309,74 @@ export async function markAssistantMessageSendFailed(
   broadcast({ type: 'message_status', data: { messageId, dbMessageId: messageId, status: 'failed' } }, empresaId);
 }
 
+/**
+ * Claims a failed operator message before retrying it. The conditional update
+ * prevents two tabs (or two quick clicks) from sending the same message twice.
+ */
+export async function claimFailedAssistantMessageForRetry(
+  empresaId: string,
+  messageId: string,
+): Promise<boolean> {
+  const { data, error } = await getServiceSupabase()
+    .from('zelochat_messages')
+    .update({ outbound_status: 'sending', outbound_error: null })
+    .eq('empresa_id', empresaId)
+    .eq('id', messageId)
+    .eq('role', 'assistant')
+    .eq('outbound_status', 'failed')
+    .select('id');
+
+  if (error) throw new Error(error.message);
+  if (!data?.length) return false;
+
+  broadcast({ type: 'message_status', data: { messageId, dbMessageId: messageId, status: 'sending' } }, empresaId);
+  return true;
+}
+
+/** Removes a message that never reached WhatsApp, without attempting a revoke. */
+export async function deleteFailedAssistantMessage(
+  empresaId: string,
+  messageId: string,
+): Promise<{ deleted: boolean; dbMessageId: string | null }> {
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from('zelochat_messages')
+    .delete()
+    .eq('empresa_id', empresaId)
+    .eq('id', messageId)
+    .eq('role', 'assistant')
+    .eq('outbound_status', 'failed')
+    .select('id, session_id')
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return { deleted: false, dbMessageId: null };
+
+  const { data: session, error: sessionError } = await supabase
+    .from('zelochat_sessions')
+    .select('remote_jid')
+    .eq('empresa_id', empresaId)
+    .eq('id', data.session_id)
+    .maybeSingle();
+  if (sessionError) throw new Error(sessionError.message);
+
+  if (session?.remote_jid) {
+    broadcast(
+      {
+        type: 'message_deleted',
+        data: {
+          sessionId: session.remote_jid,
+          messageId,
+          dbMessageId: data.id,
+        },
+      },
+      empresaId,
+    );
+  }
+
+  return { deleted: true, dbMessageId: data.id };
+}
+
 export async function deleteMessageByWhatsAppId(params: {
   empresaId: string;
   jid: string;
