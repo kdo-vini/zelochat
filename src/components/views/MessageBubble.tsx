@@ -25,6 +25,7 @@ import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../d
 import { parseChatEventCard, type ChatEventCardData, type ChatEventTone } from '../../domain/chatFeedback';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
 import { Modal, useModalTitleId } from '../Modal';
+import { PDFViewer } from './PDFViewer';
 
 /* ─── Helpers ─────────────────────────────────────────────────────── */
 
@@ -357,6 +358,7 @@ function WhatsAppText({ text }: { text: string }) {
 function docIcon(mimeType: string) {
   if (mimeType.startsWith('audio/')) return <FileAudio className="h-5 w-5" strokeWidth={1.8} />;
   if (mimeType.startsWith('video/')) return <FileVideo className="h-5 w-5" strokeWidth={1.8} />;
+  if (mimeType === 'application/pdf') return <FileText className="h-5 w-5 text-red-500" strokeWidth={1.8} />;
   return <FileText className="h-5 w-5" strokeWidth={1.8} />;
 }
 
@@ -540,7 +542,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   onReply,
 }: MessageBubbleProps) {
   const isOutgoing = message.role === 'assistant';
-  const [lightbox, setLightbox] = useState<{ type: 'image' | 'video'; src: string } | null>(null);
+  const [lightbox, setLightbox] = useState<{ type: 'image' | 'video' | 'document'; src: string; fileName?: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuOpenUp, setMenuOpenUp] = useState(false);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
@@ -761,7 +763,14 @@ const MessageBubbleInner = React.memo(function MessageBubble({
 
   return (
     <>
-      {lightbox && (
+      {lightbox && lightbox.type === 'document' && (
+        <PDFViewer
+          src={lightbox.src}
+          fileName={lightbox.fileName ?? 'documento'}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+      {lightbox && lightbox.type !== 'document' && (
         <Lightbox
           type={lightbox.type}
           src={lightbox.src}
@@ -932,10 +941,10 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           {message.kind === 'document' && message.attachment && (
             <div style={{ padding: '4px 4px 0' }}>
               {message.attachment.dataUrl ? (
-                <a
-                  href={message.attachment.dataUrl}
-                  download={message.attachment.fileName}
-                  className="flex items-center gap-3 no-underline"
+                <button
+                  type="button"
+                  onClick={() => setLightbox({ type: 'document', src: message.attachment!.dataUrl!, fileName: message.attachment!.fileName })}
+                  className="flex items-center gap-3 w-full text-left"
                   style={{
                     background: isOutgoing ? 'rgba(0,0,0,0.04)' : '#f5f6f6',
                     borderRadius: 8,
@@ -959,7 +968,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                       {formatAttachmentSize(message.attachment.sizeBytes)}
                     </p>
                   </div>
-                </a>
+                </button>
               ) : (
                 <div
                   className="flex items-center gap-3"
