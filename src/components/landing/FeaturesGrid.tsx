@@ -81,7 +81,7 @@ const SUPPORTING_FEATURES: Feature[] = [
     icon: Printer,
     title: 'Impressão na cozinha',
     description:
-      'Zelo Impressão instalado no computador, conexão simples e ticket automático a cada pedido criado.',
+      'Instale o Zelo Impressão no computador da operação e deixe o programa aberto: o ZeloChat encontra a impressora e imprime cada pedido automaticamente.',
   },
   {
     icon: Link2,

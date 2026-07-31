@@ -13,6 +13,9 @@ export const ZELO_IMPRESSAO_UNAVAILABLE_MESSAGE =
 export const ZELO_IMPRESSAO_PRINTER_UNAVAILABLE_MESSAGE =
   'Não conseguimos acessar a impressora selecionada. Verifique se ela está ligada e conectada.';
 
+export const ZELO_IMPRESSAO_AUTO_CONNECT_FALLBACK_MESSAGE =
+  'A conexão automática não foi concluída. Se o aplicativo pedir, digite o código exibido no Zelo Impressão.';
+
 export type ZeloImpressaoSource = 'zelopdv' | 'zelochat';
 export type ZeloImpressaoJobType = 'receipt' | 'kitchen_order' | 'test' | 'raw_escpos';
 
@@ -119,7 +122,7 @@ async function request(
     }
     const message =
       code === 'PAIRING_REQUIRED'
-        ? 'Conecte este navegador ao Zelo Impressão usando o código exibido no aplicativo.'
+        ? ZELO_IMPRESSAO_AUTO_CONNECT_FALLBACK_MESSAGE
         : friendlyMessage((data?.message as string) || response.statusText);
     throw Object.assign(new Error(message), {
       code,
@@ -142,6 +145,25 @@ function friendlyMessage(message: string): string {
   return raw || 'Não conseguimos concluir a impressão agora.';
 }
 
+export async function connectZeloImpressao(
+  options: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const response = await request('/connect', {
+    ...options,
+    method: 'POST',
+    token: '',
+    body: {},
+  }) as Record<string, unknown>;
+  if (!response.token) {
+    throw Object.assign(new Error(ZELO_IMPRESSAO_AUTO_CONNECT_FALLBACK_MESSAGE), {
+      code: 'AUTO_CONNECT_INVALID_RESPONSE',
+      data: response,
+    });
+  }
+  setStoredToken(response.token as string);
+  return response;
+}
+
 export async function detectZeloImpressao(
   options: Record<string, unknown> = {},
 ): Promise<{
@@ -151,16 +173,35 @@ export async function detectZeloImpressao(
   health?: unknown;
   error?: unknown;
   message?: string;
+  autoConnected?: boolean;
+  autoConnectError?: unknown;
 }> {
   try {
     const health = await request('/health', { ...options, token: '' });
     const hasToken = !!getStoredToken();
     const h = health as Record<string, unknown>;
+    let autoConnected = false;
+    let autoConnectError: unknown = null;
+    const alreadyPaired = !h.pairingRequired || (!!h.paired && hasToken);
+
+    if (!alreadyPaired && options.autoConnect !== false) {
+      try {
+        await connectZeloImpressao(options);
+        autoConnected = true;
+      } catch (error) {
+        autoConnectError = error;
+      }
+    }
+
+    const paired = alreadyPaired || autoConnected;
     return {
       installed: true,
       running: true,
-      paired: !h.pairingRequired || (!!h.paired && hasToken),
+      paired,
+      autoConnected,
+      autoConnectError,
       health,
+      message: paired ? undefined : ZELO_IMPRESSAO_AUTO_CONNECT_FALLBACK_MESSAGE,
     };
   } catch (error) {
     return {

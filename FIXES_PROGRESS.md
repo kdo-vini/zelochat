@@ -3,6 +3,9 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Sprint 14 (2026-07-31) — conexão automática do Zelo Impressão
+- ✅ PRINT-AUTO-001 — a primeira instalação exigia código mesmo quando o agente Windows podia autorizar o navegador → `zeloImpressaoClient` tenta `POST /connect` ao detectar o aplicativo aberto, mantém o código como fallback e atualiza a copy da landing, da barra lateral e do fluxo de instalação — `src/services/zeloImpressaoClient.ts:145`, `src/services/printerService.ts:155`, `src/components/PrinterButton.tsx:63`, `src/components/landing/FAQ.tsx:86`.
+
 ### Sprint 13 (shipped 2026-07-31) — viewer de PDF inline
 - ✅ DOC-001 — PDFs e documentos enviados pelo cliente não eram visualizáveis no app (só no WhatsApp) → visualizador inline via iframe nativo com fallback embed para data URIs; botão de download no header do modal; ícone vermelho para PDFs; migração corrige gap entre limite do servidor (25MB) e bucket Supabase (10MB) — `src/components/views/PDFViewer.tsx:1`, `src/components/views/MessageBubble.tsx:358`, `supabase/migrations/047_media_bucket_size_limit.sql:1`
 - ✅ DOC-002 — PDFs encapsulados por wrappers do WhatsApp eram reconhecidos como texto, mas o anexo/base64 não era extraído → normalização recursiva aplicada à entrada/saída, MIME de PDF com parâmetros normalizado e regressão adicionada; bucket remoto atualizado para 25MB via Supabase CLI — `server/messageHandler.ts:751`, `server/messageHandler.ts:2118`, `tests/messageHandlerMedia.test.ts:1`

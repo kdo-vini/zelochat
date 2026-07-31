@@ -174,7 +174,7 @@ export async function getLocalPrintStatus(): Promise<{
       supported: true,
       connected: detection.paired,
       deviceName: config?.selectedPrinterName || 'Zelo Impressão',
-      error: detection.paired ? null : 'Conecte este navegador ao Zelo Impressão usando o código exibido no aplicativo.',
+      error: detection.paired ? null : 'A conexão automática não foi concluída. Se o aplicativo pedir, digite o código exibido no Zelo Impressão.',
     };
   } catch (error) {
     return {

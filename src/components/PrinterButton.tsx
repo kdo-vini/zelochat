@@ -44,7 +44,7 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
         role="button"
         tabIndex={0}
         onClick={connect}
-        title={!expanded ? (error ? 'Impressora: ação necessária' : 'Conectar impressora') : undefined}
+        title={!expanded ? (error ? 'Impressão: ação necessária' : 'Impressão automática') : undefined}
         className={`w-full flex items-center rounded-[10px] transition-all text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] ${
           expanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
         }`}
@@ -60,7 +60,7 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
         {expanded && (
           <div className="flex-1 text-left overflow-hidden">
             <p className="text-[13.5px] font-medium leading-tight">
-              {error ? 'Zelo Impressão offline' : 'Impressão automática'}
+              {error ? (needsPairing ? 'Conexão manual necessária' : 'Zelo Impressão indisponível') : 'Impressão automática'}
             </p>
             {error && (
               <p className="text-[11px] text-red-400 truncate mt-[-1px]">{error}</p>
@@ -70,7 +70,7 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
             {needsPairing && (
               <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                 <p className="text-[11px] text-[var(--color-ink-muted)] mb-1.5 leading-snug">
-                  Abra o Zelo Impressão — o código aparece na tela inicial.
+                  A conexão é automática. Se o aplicativo mostrar um código, informe-o aqui para concluir.
                 </p>
                 <div className="flex gap-1.5">
                   <input
@@ -123,7 +123,7 @@ export function PrinterButton({ printer, expanded, testOrder }: PrinterButtonPro
 
         {!expanded && (
           <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-md bg-[var(--color-ink)] px-2.5 py-1.5 text-[12px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-            {error ? 'Impressora: ação necessária' : 'Impressão automática'}
+            {error ? 'Impressão: ação necessária' : 'Impressão automática'}
           </span>
         )}
       </div>

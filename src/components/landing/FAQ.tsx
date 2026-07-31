@@ -87,7 +87,7 @@ const FAQS: QAItem[] = [
         <a href={ZELO_IMPRESSAO_INSTALLER_DOWNLOAD_URL} target="_blank" rel="noreferrer" className="text-[#0B7A3B] font-medium hover:underline">
           baixar e instalar o Zelo Impressão
         </a>
-        {' '}no computador da operação. Depois disso, conecte uma única vez clicando em "Impressão automática" na barra lateral. Pronto: todo pedido criado sai automaticamente na cozinha.
+        {' '}no computador da operação e deixe o programa aberto. Ao entrar no ZeloChat, ele tenta encontrar e conectar automaticamente; se o sistema pedir, informe o código exibido no aplicativo. Depois escolha a impressora e faça um teste. Pronto: todo pedido criado sai automaticamente na cozinha.
       </>
     ),
   },
