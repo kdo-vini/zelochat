@@ -749,7 +749,7 @@ function firstString(...values: unknown[]): string | undefined {
 }
 
 function getInboundBase64Raw(msg: any): string | undefined {
-  const message = msg?.message;
+  const message = unwrapMessage(msg?.message);
   return firstString(
     msg?.base64,
     message?.base64,
@@ -762,7 +762,7 @@ function getInboundBase64Raw(msg: any): string | undefined {
 }
 
 function getInboundMediaUrlRaw(msg: any): string | undefined {
-  const message = msg?.message;
+  const message = unwrapMessage(msg?.message);
   return firstString(
     msg?.mediaUrl,
     message?.mediaUrl,
@@ -790,6 +790,7 @@ export const __mediaExtractionForTests = {
   getInboundMediaUrlRaw,
   isAllowedMediaUrl,
   normalizeBase64Payload,
+  normalizeDocumentMime,
 };
 
 async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string, empresaId: string): Promise<string | undefined> {
@@ -2098,6 +2099,13 @@ function sanitizeFileName(raw: string | null | undefined, fallback: string): str
   return raw.replace(/[/\\<>:"|?*\x00-\x1f]/g, '_').slice(0, 200) || fallback;
 }
 
+function normalizeDocumentMime(rawMime: unknown): string {
+  const mime = typeof rawMime === 'string'
+    ? rawMime.split(';', 1)[0]?.trim().toLowerCase()
+    : '';
+  return mime && ALLOWED_DOC_MIMES.has(mime) ? mime : 'application/octet-stream';
+}
+
 async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<boolean> {
   const jid = msg.key.remoteJid;
   console.log(`[InboundTrace] message_handler_start empresa=${resolvedEmpresaId} jid=${redactJid(jid)} messageId=${msg.key?.id ?? '<missing>'} hasPushName=${!!msg.pushName}`);
@@ -2108,46 +2116,50 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   const displayTime = formatClock(sentAt);
   const incomingText = extractText(msg);
   const shouldTriggerAutoReply = shouldTriggerAutoReplyForMessage(msg);
+  // FIX 2026-07-31: wrappers eram desembrulhados só para texto → use o mesmo payload
+  // normalizado na criação do anexo para não perder PDFs/documentos encapsulados.
+  const message = unwrapMessage(msg.message);
   let attachment: ChatAttachment | undefined;
 
-  if (msg.message?.imageMessage) {
-    const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
+  if (message?.imageMessage) {
+    const mime = message.imageMessage.mimetype || 'image/jpeg';
     attachment = {
       type: 'image',
       mimeType: mime,
       fileName: 'imagem-whatsapp.jpg',
-      sizeBytes: msg.message.imageMessage.fileLength
-        ? Number(msg.message.imageMessage.fileLength)
+      sizeBytes: message.imageMessage.fileLength
+        ? Number(message.imageMessage.fileLength)
         : undefined,
       dataUrl: await extractAttachmentDataUrl(msg, mime, 'imagem-whatsapp.jpg', resolvedEmpresaId),
     };
-  } else if (msg.message?.audioMessage) {
-    const mime = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
+  } else if (message?.audioMessage) {
+    const mime = message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
     attachment = {
       type: 'audio',
       mimeType: mime,
       fileName: 'audio-whatsapp.ogg',
-      sizeBytes: msg.message.audioMessage.fileLength
-        ? Number(msg.message.audioMessage.fileLength)
+      sizeBytes: message.audioMessage.fileLength
+        ? Number(message.audioMessage.fileLength)
         : undefined,
-      durationSeconds: msg.message?.audioMessage?.seconds ?? undefined,
+      durationSeconds: message.audioMessage.seconds ?? undefined,
       dataUrl: await extractAttachmentDataUrl(msg, mime, 'audio-whatsapp.ogg', resolvedEmpresaId),
     };
-  } else if (msg.message?.documentMessage) {
-    const rawMime = msg.message.documentMessage.mimetype || 'application/octet-stream';
-    const mime = ALLOWED_DOC_MIMES.has(rawMime) ? rawMime : 'application/octet-stream';
+  } else if (message?.documentMessage) {
+    const documentMessage = message.documentMessage;
+    const mime = normalizeDocumentMime(documentMessage.mimetype);
+    const fileName = sanitizeFileName(documentMessage.fileName, 'documento');
     attachment = {
       type: 'document',
       mimeType: mime,
-      fileName: sanitizeFileName(msg.message.documentMessage.fileName, 'documento'),
-      sizeBytes: msg.message.documentMessage.fileLength
-        ? Number(msg.message.documentMessage.fileLength)
+      fileName,
+      sizeBytes: documentMessage.fileLength
+        ? Number(documentMessage.fileLength)
         : undefined,
-      dataUrl: await extractAttachmentDataUrl(msg, mime, sanitizeFileName(msg.message.documentMessage.fileName, 'documento'), resolvedEmpresaId),
+      dataUrl: await extractAttachmentDataUrl(msg, mime, fileName, resolvedEmpresaId),
     };
-  } else if (msg.message?.videoMessage) {
-    const mime = msg.message.videoMessage.mimetype || 'video/mp4';
-    const rawFileName = msg.message.videoMessage.fileName;
+  } else if (message?.videoMessage) {
+    const mime = message.videoMessage.mimetype || 'video/mp4';
+    const rawFileName = message.videoMessage.fileName;
     const fileName = rawFileName
       ? sanitizeFileName(rawFileName, 'video-whatsapp.mp4')
       : 'video-whatsapp.mp4';
@@ -2155,19 +2167,19 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
       type: 'video',
       mimeType: mime,
       fileName,
-      sizeBytes: msg.message.videoMessage.fileLength
-        ? Number(msg.message.videoMessage.fileLength)
+      sizeBytes: message.videoMessage.fileLength
+        ? Number(message.videoMessage.fileLength)
         : undefined,
       dataUrl: await extractAttachmentDataUrl(msg, mime, fileName, resolvedEmpresaId),
     };
-  } else if (msg.message?.stickerMessage) {
-    const mime = msg.message.stickerMessage.mimetype || 'image/webp';
+  } else if (message?.stickerMessage) {
+    const mime = message.stickerMessage.mimetype || 'image/webp';
     attachment = {
       type: 'sticker',
       mimeType: mime,
       fileName: 'figurinha.webp',
-      sizeBytes: msg.message.stickerMessage.fileLength
-        ? Number(msg.message.stickerMessage.fileLength)
+      sizeBytes: message.stickerMessage.fileLength
+        ? Number(message.stickerMessage.fileLength)
         : undefined,
       dataUrl: await extractAttachmentDataUrl(msg, mime, 'figurinha.webp', resolvedEmpresaId),
     };
@@ -2223,11 +2235,11 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   const waMessageId = (msg.key?.id ?? null) as string | null;
 
   // Extract quoted/reply context from contextInfo (present when customer replies to a specific message)
-  const contextInfo = msg.message?.extendedTextMessage?.contextInfo
-    ?? msg.message?.imageMessage?.contextInfo
-    ?? msg.message?.videoMessage?.contextInfo
-    ?? msg.message?.audioMessage?.contextInfo
-    ?? msg.message?.documentMessage?.contextInfo
+  const contextInfo = message?.extendedTextMessage?.contextInfo
+    ?? message?.imageMessage?.contextInfo
+    ?? message?.videoMessage?.contextInfo
+    ?? message?.audioMessage?.contextInfo
+    ?? message?.documentMessage?.contextInfo
     ?? null;
   const quotedWaId: string | null = contextInfo?.stanzaId ?? null;
   const quotedFromMe: boolean | null = quotedWaId ? (contextInfo?.participant == null) : null;
@@ -2355,54 +2367,56 @@ export async function handleOutboundMessage(data: any, empresaId: string): Promi
   const msgId: string = data.key?.id ?? '';
   if (!jid || !empresaId) return;
 
+  const message = unwrapMessage(data.message);
+
   const msgText = (
-    data.message?.conversation ??
-    data.message?.extendedTextMessage?.text ??
-    data.message?.imageMessage?.caption ??
-    data.message?.videoMessage?.caption ??
-    data.message?.documentMessage?.caption ??
+    message?.conversation ??
+    message?.extendedTextMessage?.text ??
+    message?.imageMessage?.caption ??
+    message?.videoMessage?.caption ??
+    message?.documentMessage?.caption ??
     ''
   ).trim();
 
   let attachment: ChatAttachment | undefined;
-  if (data.message?.imageMessage) {
-    const mime = data.message.imageMessage.mimetype || 'image/jpeg';
+  if (message?.imageMessage) {
+    const mime = message.imageMessage.mimetype || 'image/jpeg';
     attachment = {
       type: 'image',
       mimeType: mime,
       fileName: 'imagem-whatsapp.jpg',
-      sizeBytes: data.message.imageMessage.fileLength ? Number(data.message.imageMessage.fileLength) : undefined,
+      sizeBytes: message.imageMessage.fileLength ? Number(message.imageMessage.fileLength) : undefined,
       dataUrl: await extractAttachmentDataUrl(data, mime, 'imagem-whatsapp.jpg', empresaId),
     };
-  } else if (data.message?.audioMessage) {
-    const mime = data.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
+  } else if (message?.audioMessage) {
+    const mime = message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
     attachment = {
       type: 'audio',
       mimeType: mime,
       fileName: 'audio-whatsapp.ogg',
-      sizeBytes: data.message.audioMessage.fileLength ? Number(data.message.audioMessage.fileLength) : undefined,
-      durationSeconds: data.message?.audioMessage?.seconds ?? undefined,
+      sizeBytes: message.audioMessage.fileLength ? Number(message.audioMessage.fileLength) : undefined,
+      durationSeconds: message.audioMessage.seconds ?? undefined,
       dataUrl: await extractAttachmentDataUrl(data, mime, 'audio-whatsapp.ogg', empresaId),
     };
-  } else if (data.message?.documentMessage) {
-    const rawMime = data.message.documentMessage.mimetype || 'application/octet-stream';
-    const mime = ALLOWED_DOC_MIMES.has(rawMime) ? rawMime : 'application/octet-stream';
-    const fileName = sanitizeFileName(data.message.documentMessage.fileName, 'documento');
+  } else if (message?.documentMessage) {
+    const documentMessage = message.documentMessage;
+    const mime = normalizeDocumentMime(documentMessage.mimetype);
+    const fileName = sanitizeFileName(documentMessage.fileName, 'documento');
     attachment = {
       type: 'document',
       mimeType: mime,
       fileName,
-      sizeBytes: data.message.documentMessage.fileLength ? Number(data.message.documentMessage.fileLength) : undefined,
+      sizeBytes: documentMessage.fileLength ? Number(documentMessage.fileLength) : undefined,
       dataUrl: await extractAttachmentDataUrl(data, mime, fileName, empresaId),
     };
-  } else if (data.message?.videoMessage) {
-    const mime = data.message.videoMessage.mimetype || 'video/mp4';
-    const fileName = sanitizeFileName(data.message.videoMessage.fileName, 'video-whatsapp.mp4');
+  } else if (message?.videoMessage) {
+    const mime = message.videoMessage.mimetype || 'video/mp4';
+    const fileName = sanitizeFileName(message.videoMessage.fileName, 'video-whatsapp.mp4');
     attachment = {
       type: 'video',
       mimeType: mime,
       fileName,
-      sizeBytes: data.message.videoMessage.fileLength ? Number(data.message.videoMessage.fileLength) : undefined,
+      sizeBytes: message.videoMessage.fileLength ? Number(message.videoMessage.fileLength) : undefined,
       dataUrl: await extractAttachmentDataUrl(data, mime, fileName, empresaId),
     };
   }

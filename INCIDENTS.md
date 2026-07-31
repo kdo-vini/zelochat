@@ -11,6 +11,22 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XVIII. PDF/documento recebido não aparecia no app (2026-07-31)
+
+### Sintoma
+Cliente enviava um anexo pelo WhatsApp, mas a empresa não via o PDF no ZeloChat; o arquivo permanecia visível apenas no WhatsApp.
+
+### Causa-raiz
+O texto era extraído após `unwrapMessage`, mas a criação do anexo e a busca de `base64`/`mediaUrl` liam apenas `msg.message.*` direto; payloads `documentWithCaptionMessage` e wrappers equivalentes perdiam o documento. Na tentativa específica da cliente `Téchne Sistemas`, o log bruto registrou nove eventos para o número informado, mas nenhum `documentMessage` — apenas três `imageMessage`, cinco textos e uma reação — então o PDF testado não chegou ao webhook nessa tentativa.
+
+### Fix
+Entrada e saída passaram a usar o payload desembrulhado recursivamente; MIME `application/pdf` com parâmetros também é normalizado. O bucket `zelochat-media` foi corrigido de 10 MB para 25 MB via Supabase CLI — `server/messageHandler.ts:751`, `server/messageHandler.ts:2118`, `tests/messageHandlerMedia.test.ts:1`, `supabase/migrations/047_media_bucket_size_limit.sql:1`.
+
+### Recovery
+Publicar o build do commit corrigido. Se um novo teste não aparecer no log bruto como `documentMessage`/`documentWithCaptionMessage`, o problema está antes do ZeloChat (entrega/formato do provedor); se aparecer, conferir `processed_at`, `processing_error` e o tipo do anexo persistido.
+
+---
+
 ## XVII. Cérebro IA travava após refactor da tela
 
 ### Sintoma

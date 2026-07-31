@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-07-31',
+    category: 'hotfix',
+    title: 'PDFs enviados pelo cliente agora aparecem no atendimento',
+    description: 'Documentos enviados pelo WhatsApp passam a aparecer corretamente no histórico do atendimento, inclusive quando chegam em formatos encapsulados.',
+  },
+  {
     date: '2026-07-30',
     category: 'minor',
     title: 'Você pode reenviar mensagens que falharam',

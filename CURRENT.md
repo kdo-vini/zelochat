@@ -12,6 +12,10 @@
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
 - **Audit:** P0 100% ✅ · P1 100% ✅ (acionáveis, 3 deferred p/ multi-replica) · P2 63% · P3 21%
 
+## Entregue nesta sessão (2026-07-31)
+
+- **Hotfix de anexos PDF/documentos** — mensagens encapsuladas pelos wrappers do WhatsApp agora têm o payload desembrulhado também na criação do anexo e na extração de mídia; MIME de PDF com parâmetros é normalizado. O bucket remoto `zelochat-media` foi atualizado de 10 MB para 25 MB pela Supabase CLI. Regressão em `tests/messageHandlerMedia.test.ts`. O histórico remoto ainda contém versões antigas de migração ausentes neste checkout; o `db push` completo continua bloqueado por essa divergência.
+
 ## Entregue nesta sessão (2026-07-23)
 
 - **Pedidos online nos relatorios/caixa** — ao entregar um pedido canonico, o banco agora materializa venda e itens no caixa que cobria o horario da entrega; entregas ZeloMenu antigas sem venda tambem sao recuperadas.

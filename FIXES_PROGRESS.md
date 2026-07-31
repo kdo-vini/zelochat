@@ -5,6 +5,7 @@
 
 ### Sprint 13 (shipped 2026-07-31) — viewer de PDF inline
 - ✅ DOC-001 — PDFs e documentos enviados pelo cliente não eram visualizáveis no app (só no WhatsApp) → visualizador inline via iframe nativo com fallback embed para data URIs; botão de download no header do modal; ícone vermelho para PDFs; migração corrige gap entre limite do servidor (25MB) e bucket Supabase (10MB) — `src/components/views/PDFViewer.tsx:1`, `src/components/views/MessageBubble.tsx:358`, `supabase/migrations/047_media_bucket_size_limit.sql:1`
+- ✅ DOC-002 — PDFs encapsulados por wrappers do WhatsApp eram reconhecidos como texto, mas o anexo/base64 não era extraído → normalização recursiva aplicada à entrada/saída, MIME de PDF com parâmetros normalizado e regressão adicionada; bucket remoto atualizado para 25MB via Supabase CLI — `server/messageHandler.ts:751`, `server/messageHandler.ts:2118`, `tests/messageHandlerMedia.test.ts:1`
 
 ### Sprint 12 (fix 2026-07-30) — reenvio de mensagem
 - ✅ CHAT-RETRY-001 — mensagens manuais que falhavam ficavam apenas com o ícone de erro, sem ação porque não recebem ID do WhatsApp → o menu da mensagem agora permite **Tentar novamente** (reusa o mesmo registro, com trava contra duplo envio) ou **Excluir mensagem** do histórico; as duas ações respeitam o escopo da empresa. Regressão comportamental cobre envio único, colisão, falha, mídia/quote e conteúdo vazio — `src/components/views/MessageBubble.tsx:561`, `src/hooks/useWhatsAppSessions.ts:419`, `server/failedMessageRetry.ts:45`, `tests/retryFailedMessage.test.ts:1`
