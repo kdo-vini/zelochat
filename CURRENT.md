@@ -17,6 +17,10 @@
 - **Hotfix de anexos PDF/documentos** — mensagens encapsuladas pelos wrappers do WhatsApp agora têm o payload desembrulhado também na criação do anexo e na extração de mídia; MIME de PDF com parâmetros é normalizado. O bucket remoto `zelochat-media` foi atualizado de 10 MB para 25 MB pela Supabase CLI. Regressão em `tests/messageHandlerMedia.test.ts`. O histórico remoto ainda contém versões antigas de migração ausentes neste checkout; o `db push` completo continua bloqueado por essa divergência.
 - **Conexão automática do Zelo Impressão** — ao detectar o aplicativo Windows aberto, o ZeloChat tenta criar a sessão local automaticamente. O código de 6 dígitos ficou somente como fallback, e a copy da landing, da barra lateral e da instalação foi alinhada para explicar o novo caminho.
 
+## Entregue nesta sessão (2026-08-01)
+
+- **Gatilhos personalizados simplificados** — removido o botão redundante “Encaminhar para outra linha”; o dropdown de tipo continua oferecendo a opção “Encaminhar”.
+
 ## Entregue nesta sessão (2026-07-23)
 
 - **Pedidos online nos relatorios/caixa** — ao entregar um pedido canonico, o banco agora materializa venda e itens no caixa que cobria o horario da entrega; entregas ZeloMenu antigas sem venda tambem sao recuperadas.

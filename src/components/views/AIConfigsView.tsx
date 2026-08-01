@@ -255,18 +255,6 @@ export const AIConfigsView = ({
     }
   };
 
-  const applyRedirectTemplate = () => {
-    setTriggerKind("redirect_contact");
-    setTriggerInput(
-      "Quando o cliente pedir para um número diferente, outra unidade ou pedir delivery",
-    );
-    setRedirectMessage(
-      "Para pedidos de delivery, entre em contato pelo nosso número de entregas: {link} 🛵",
-    );
-    setKindMenuOpen(false);
-    setTriggerLocalError(null);
-  };
-
   const handleSimulateAtendimento = async () => {
     const customerMessage = simulateInput.trim();
     if (!customerMessage) return;
@@ -764,14 +752,6 @@ export const AIConfigsView = ({
                     {triggerLocalError ?? triggersError}
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={applyRedirectTemplate}
-                  className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-[var(--color-surface-muted)] text-[12px] font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-line)] transition-colors"
-                >
-                  <Smartphone className="w-3.5 h-3.5" />
-                  Encaminhar para outra linha
-                </button>
                 <div className="flex gap-2">
                   <div className="relative" ref={kindMenuRef}>
                     <button

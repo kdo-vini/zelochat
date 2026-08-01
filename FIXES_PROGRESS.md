@@ -3,6 +3,9 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Sprint 15 (2026-08-01) — simplificação dos gatilhos personalizados
+- ✅ AI-CONFIGS-002 — o atalho redundante “Encaminhar para outra linha” aparecia abaixo do card de gatilhos personalizados, embora a mesma ação já estivesse disponível no dropdown de tipo → removido o botão e seu template exclusivo; a opção **Encaminhar** do dropdown permanece funcionando — `src/components/views/AIConfigsView.tsx`.
+
 ### Sprint 14 (2026-07-31) — conexão automática do Zelo Impressão
 - ✅ PRINT-AUTO-001 — a primeira instalação exigia código mesmo quando o agente Windows podia autorizar o navegador → `zeloImpressaoClient` tenta `POST /connect` ao detectar o aplicativo aberto, mantém o código como fallback e atualiza a copy da landing, da barra lateral e do fluxo de instalação — `src/services/zeloImpressaoClient.ts:145`, `src/services/printerService.ts:155`, `src/components/PrinterButton.tsx:63`, `src/components/landing/FAQ.tsx:86`.
 
