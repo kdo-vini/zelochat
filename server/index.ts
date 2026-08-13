@@ -124,6 +124,9 @@ const PAYWALL_EXEMPT_EXACT = new Set<string>([
   // trial no ZeloChat, então quem termina o setup pode estar sem subscription
   // ativa. Sem essa exceção, o paywall 402 trava o disparo do email + WA Day 0.
   '/api/onboarding/welcome',
+  // A conta pode estar sem assinatura ativa durante o grace period. A rota
+  // continua autenticada e libera somente o cancelamento da deleção pendente.
+  '/api/account/reactivate',
   // Cron interno autenticado por CRON_SECRET, não usa JWT de empresa.
   '/api/cron/onboarding-followup',
 ]);

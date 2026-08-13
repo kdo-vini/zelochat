@@ -1226,6 +1226,10 @@ router.get('/api/qr', async (req: Request, res: Response) => {
       sendAuthError(res, err);
       return;
     }
+    if (err instanceof Error && err.message === 'ACCOUNT_DELETION_IN_PROGRESS') {
+      res.status(409).json({ error: 'A exclusão definitiva desta conta já está em processamento.' });
+      return;
+    }
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
 });
@@ -1282,6 +1286,10 @@ router.post('/api/qr/refresh', async (req: Request, res: Response) => {
   } catch (err) {
     if (err instanceof Error && (err.message === 'UNAUTHORIZED' || err.message === 'SUBSCRIPTION_INACTIVE' || err.message === 'EMPRESA_NOT_FOUND')) {
       sendAuthError(res, err);
+      return;
+    }
+    if (err instanceof Error && err.message === 'ACCOUNT_DELETION_IN_PROGRESS') {
+      res.status(409).json({ error: 'A exclusão definitiva desta conta já está em processamento.' });
       return;
     }
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
@@ -2577,6 +2585,35 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
 router.delete('/api/account', async (req: Request, res: Response) => {
   try {
     const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const supabase = getServiceSupabase();
+    const { data: deletionState, error: deletionStateError } = await supabase
+      .from('empresa_perfil')
+      .select('deletion_scheduled_at, deletion_purge_token, deletion_reactivation_token')
+      .eq('id', empresaId)
+      .maybeSingle();
+    if (deletionStateError) {
+      console.error('[account/delete] state lookup error:', deletionStateError);
+      res.status(500).json({ error: 'Falha ao verificar a exclusão.' });
+      return;
+    }
+    const state = deletionState as {
+      deletion_scheduled_at?: string | null;
+      deletion_purge_token?: string | null;
+      deletion_reactivation_token?: string | null;
+    } | null;
+    if (state?.deletion_purge_token || state?.deletion_reactivation_token) {
+      res.status(409).json({ error: 'A exclusão definitiva desta conta já está em processamento.' });
+      return;
+    }
+    if (state?.deletion_scheduled_at) {
+      res.json({
+        ok: true,
+        scheduledAt: state.deletion_scheduled_at,
+        graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+        alreadyScheduled: true,
+      });
+      return;
+    }
 
     // Cancel Stripe at period end (reversible on reactivation). No-op for
     // Pix/AbacatePay customers — setStripeCancelAtPeriodEnd returns early when
@@ -2591,17 +2628,61 @@ router.delete('/api/account', async (req: Request, res: Response) => {
 
     const now = new Date();
     const scheduledAt = new Date(now.getTime() + ACCOUNT_DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000);
-    const { error } = await getServiceSupabase()
+    const { data: scheduled, error } = await supabase
       .from('empresa_perfil')
       .update({
         deletion_scheduled_at: scheduledAt.toISOString(),
         deletion_requested_at: now.toISOString(),
         deletion_source: 'zelochat',
       })
-      .eq('id', empresaId);
+      .eq('id', empresaId)
+      .is('deletion_scheduled_at', null)
+      .is('deletion_purge_token', null)
+      .is('deletion_reactivation_token', null)
+      .select('id')
+      .maybeSingle();
     if (error) {
       console.error('[account/delete] schedule error:', error);
       res.status(500).json({ error: 'Falha ao agendar a exclusão.' });
+      return;
+    }
+    if (!(scheduled as { id?: string } | null)?.id) {
+      const { data: concurrentSchedule, error: concurrentScheduleError } = await supabase
+        .from('empresa_perfil')
+        .select('deletion_scheduled_at, deletion_purge_token, deletion_reactivation_token')
+        .eq('id', empresaId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (concurrentScheduleError) {
+        console.error('[account/delete] concurrent schedule lookup error:', concurrentScheduleError);
+        res.status(500).json({ error: 'Falha ao confirmar o agendamento da exclusão.' });
+        return;
+      }
+      const concurrentScheduledAt = (
+        concurrentSchedule as {
+          deletion_scheduled_at?: string | null;
+          deletion_purge_token?: string | null;
+          deletion_reactivation_token?: string | null;
+        } | null
+      )?.deletion_scheduled_at;
+      const concurrentState = concurrentSchedule as {
+        deletion_purge_token?: string | null;
+        deletion_reactivation_token?: string | null;
+      } | null;
+      if (
+        concurrentScheduledAt
+        && !concurrentState?.deletion_purge_token
+        && !concurrentState?.deletion_reactivation_token
+      ) {
+        res.json({
+          ok: true,
+          scheduledAt: concurrentScheduledAt,
+          graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+          alreadyScheduled: true,
+        });
+        return;
+      }
+      res.status(409).json({ error: 'A exclusão definitiva desta conta já está em processamento.' });
       return;
     }
 
@@ -2618,21 +2699,66 @@ router.delete('/api/account', async (req: Request, res: Response) => {
 router.post('/api/account/reactivate', async (req: Request, res: Response) => {
   try {
     const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const supabase = getServiceSupabase();
+    const { data: reactivationToken, error: beginError } = await supabase.rpc(
+      'begin_account_deletion_reactivation',
+      { p_empresa_id: empresaId, p_user_id: userId },
+    );
+    if (beginError) {
+      console.error('[account/reactivate] begin error:', beginError);
+      const conflict = /PURGE_IN_PROGRESS|REACTIVATION_IN_PROGRESS/.test(beginError.message ?? '');
+      res.status(conflict ? 409 : 500).json({
+        error: conflict
+          ? 'A exclusão definitiva desta conta já está em processamento.'
+          : 'Falha ao iniciar a reativação da conta.',
+      });
+      return;
+    }
+    if (typeof reactivationToken !== 'string' || !reactivationToken) {
+      res.json({ ok: true, alreadyActive: true });
+      return;
+    }
 
     try {
       await setStripeCancelAtPeriodEnd(userId, false);
     } catch (err) {
-      console.warn('[account/reactivate] Stripe resume warning (continuing):', err);
+      console.error('[account/reactivate] Stripe resume failed:', err);
+      // The Stripe outcome may be ambiguous (for example, a network timeout
+      // after the provider committed the update). Keep the database fence so
+      // the purge cannot delete an account whose subscription may be active.
+      res.status(502).json({ error: 'Não foi possível reativar a assinatura. Tente novamente.' });
+      return;
     }
 
-    const { error } = await getServiceSupabase()
-      .from('empresa_perfil')
-      .update({ deletion_scheduled_at: null, deletion_requested_at: null, deletion_source: null })
-      .eq('id', empresaId);
-    if (error) {
-      console.error('[account/reactivate] error:', error);
+    const { data: completed, error: completeError } = await supabase.rpc(
+      'complete_account_deletion_reactivation',
+      {
+        p_empresa_id: empresaId,
+        p_user_id: userId,
+        p_reactivation_token: reactivationToken,
+      },
+    );
+    if (completeError) {
+      console.error('[account/reactivate] complete error:', completeError);
       res.status(500).json({ error: 'Falha ao reativar a conta.' });
       return;
+    }
+    if (completed !== true) {
+      const { data: current, error: currentError } = await supabase
+        .from('empresa_perfil')
+        .select('deletion_scheduled_at')
+        .eq('id', empresaId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (currentError) {
+        console.error('[account/reactivate] completion lookup error:', currentError);
+        res.status(500).json({ error: 'Falha ao confirmar a reativação da conta.' });
+        return;
+      }
+      if ((current as { deletion_scheduled_at?: string | null } | null)?.deletion_scheduled_at) {
+        res.status(409).json({ error: 'Outra reativação desta conta está em processamento.' });
+        return;
+      }
     }
 
     res.json({ ok: true });

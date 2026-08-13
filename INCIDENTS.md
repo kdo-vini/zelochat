@@ -11,6 +11,31 @@ antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.
 
 ---
 
+## XIX. Sweeper de exclusão podia duplicar trabalho ou apagar a instância fallback (risco auditado em 2026-08-13)
+
+> Não houve deleção real executada durante a validação nem incidente de cliente confirmado. Este bloco registra um failure mode reproduzível no código que roda em produção.
+
+### Sintoma possível
+
+Duas réplicas podiam selecionar a mesma conta vencida; uma reativação podia disputar com a purga; falhas de listagem/remoção de Storage eram tratadas como sucesso; e uma empresa sem instância própria podia chegar ao fallback global de WhatsApp em um fluxo destrutivo.
+
+### Causa-raiz
+
+O worker fazia SELECT direto por `deletion_scheduled_at`, sem claim cercado, usava `deleteInstance()` (que preserva um fallback legado válido para envio), listava no máximo 1.000 objetos por prefixo e continuava até `delete_account` mesmo após falhas externas. A rota de reativação também ficava atrás do paywall e limpava o agendamento mesmo quando a retomada de billing falhava.
+
+### Fix
+
+Claim/finalização atômicos por token no banco compartilhado, com renovação/validação do lease antes de cada efeito externo; reativação adquire um token mutuamente exclusivo antes do Stripe e somente o token exato conclui, enquanto resultado externo ambíguo mantém a conta cercada; deleter usa somente o pointer de instância capturado pelo claim e nunca o fallback; QR/connect checa ambos os fences e compensa criação upstream em CAS perdido; Storage paginado e fail-closed; erros de lookup de assinatura propagados. Cobertura em `tests/accountDeletionReliability.test.ts`.
+
+### Recovery / rollout
+
+1. Aplicar primeiro a migration que cria os pares de token de purge/reativação e os RPCs `claim_due_account_deletions`, `renew_account_deletion_claim`, `finalize_claimed_account_deletion`, `begin_account_deletion_reactivation`, `complete_account_deletion_reactivation` e `abort_account_deletion_reactivation`.
+2. Só depois publicar o backend ZeloChat; inverter a ordem faz o tick do sweeper falhar fechado, sem deletar conta, mas gera erro operacional a cada execução.
+3. Em falha de cleanup, corrigir o provedor/bucket e aguardar o lease permitir novo claim; nunca chamar `delete_account` manualmente para “destravar”.
+4. Um fence de reativação abandonado bloqueia purge por segurança. O titular pode repetir a reativação após 30 minutos; se não voltar, reconciliar manualmente o resultado do Stripe antes de liberar qualquer fence.
+
+---
+
 ## XVIII. PDF/documento recebido não aparecia no app (2026-07-31)
 
 ### Sintoma

@@ -332,7 +332,10 @@ Dois sweepers rodam em background e limpam instâncias órfãs automaticamente:
 
 **`server/accountDeletionSweeper.ts`** — deleção de conta:
 - Roda 3min após startup + a cada hora
-- Após 14 dias de grace (`DELETE /api/account` stampa `deletion_scheduled_at`): cancela Stripe (no-op para clientes Pix — cobrança única, sem recorrência), deleta instância Whatsmiau, limpa storage, executa RPC `delete_account` (purga tudo).
+- Após 14 dias de grace (`DELETE /api/account` stampa `deletion_scheduled_at`), reclama a conta atomicamente por `claim_due_account_deletions`: antes de cada efeito externo renova/valida o lease por `renew_account_deletion_claim`; cancela Stripe (no-op para clientes Pix — cobrança única, sem recorrência), deleta somente a instância dedicada capturada pelo claim (nunca lookup/fallback legado), limpa todo o Storage por páginas e conclui por `finalize_claimed_account_deletion` com fencing token.
+- Qualquer falha externa interrompe antes da purga DB e fica disponível para retry após o lease. Reativação adquire `begin_account_deletion_reactivation` antes do Stripe e só libera o agendamento por `complete_account_deletion_reactivation`; resultado externo ambíguo mantém o fence, e o purge nunca reclama uma conta com reativação pendente.
+- QR/connect sempre lê os fences de purge e reativação diretamente antes de retornar cache/criar instância; a gravação do pointer novo também exige ambos nulos e compensa a criação no provedor se perder a corrida.
+- **Rollout:** a migration dos RPCs/colunas compartilhados precisa ser aplicada antes do deploy do backend.
 
 ## Notificações de status de pedido (JÁ IMPLEMENTADO)
 

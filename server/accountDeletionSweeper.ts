@@ -1,5 +1,5 @@
 import { getServiceSupabase } from './supabase.js';
-import { deleteInstance } from './instanceManager.js';
+import { deleteDedicatedInstance } from './instanceManager.js';
 import { cancelStripeSubscriptionForUser } from './billing.js';
 
 /**
@@ -14,13 +14,12 @@ import { cancelStripeSubscriptionForUser } from './billing.js';
  *      customers — those are one-time charges with no recurrence to cancel)
  *   2. deletes the Whatsmiau WhatsApp instance
  *   3. removes the account's storage objects (all buckets)
- *   4. calls the service_role `delete_account` RPC (purges PDV + ZeloChat data and
- *      the auth identity in one transaction — which also removes the empresa_perfil
- *      row, so the work is naturally idempotent).
+ *   4. finalizes the service-role claim (which validates the fencing token and
+ *      purges PDV + ZeloChat data and the auth identity in one transaction).
  *
  * Lives in the ZeloChat backend because it already has the service role, Stripe,
- * Whatsmiau and storage access; it purges PDV-only accounts too (deleteInstance is
- * a no-op when there's no instance).
+ * Whatsmiau and storage access; it purges PDV-only accounts too (the dedicated
+ * instance delete is a no-op when the account has no assigned instance).
  *
  * Schedule: 3 min after startup, then hourly. Idempotent.
  */
@@ -29,9 +28,11 @@ const STARTUP_DELAY_MS = 3 * 60 * 1000;
 const INTERVAL_MS = 60 * 60 * 1000;
 const BATCH = 50;
 
-interface DueAccount {
+export interface DueAccount {
   empresaId: string;
   userId: string;
+  claimToken: string;
+  whatsmiauInstance: string | null;
 }
 
 export interface DeletionSweepResult {
@@ -40,80 +41,232 @@ export interface DeletionSweepResult {
   errors: Array<{ empresaId: string; error: string }>;
 }
 
-async function removePrefix(bucket: string, prefix: string): Promise<void> {
-  try {
-    const supabase = getServiceSupabase();
-    const { data } = await supabase.storage.from(bucket).list(prefix, { limit: 1000 });
-    const paths = (data ?? []).filter((o) => o.id).map((o) => `${prefix}/${o.name}`);
-    if (paths.length) await supabase.storage.from(bucket).remove(paths);
-  } catch (err) {
-    console.warn(`[account-deletion-sweeper] storage cleanup ${bucket}/${prefix} failed:`, err);
+interface StorageError {
+  message?: string;
+}
+
+interface StorageObject {
+  id?: string | null;
+  name: string;
+}
+
+interface AccountDeletionStorageBucket {
+  list(
+    prefix: string,
+    options: { limit: number; offset: number },
+  ): Promise<{ data: StorageObject[] | null; error: StorageError | null }>;
+  remove(paths: string[]): Promise<{ data: unknown; error: StorageError | null }>;
+}
+
+export interface AccountDeletionStorage {
+  from(bucket: string): AccountDeletionStorageBucket;
+}
+
+const STORAGE_PAGE_SIZE = 1000;
+
+function messageOf(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) return String(error.message);
+  return String(error);
+}
+
+async function removeStorageObjects(
+  storage: AccountDeletionStorage,
+  bucket: string,
+  paths: string[],
+  label: string,
+  beforeExternalEffect?: () => Promise<void>,
+): Promise<void> {
+  for (let offset = 0; offset < paths.length; offset += STORAGE_PAGE_SIZE) {
+    const chunk = paths.slice(offset, offset + STORAGE_PAGE_SIZE);
+    await beforeExternalEffect?.();
+    const { error } = await storage.from(bucket).remove(chunk);
+    if (error) throw new Error(`storage remove ${bucket}/${label} failed: ${messageOf(error)}`);
   }
 }
 
-async function purgeAccount(acc: DueAccount): Promise<void> {
-  // 1) Stop billing. No-op for Pix/AbacatePay users (one-time charges, nothing to cancel).
-  await cancelStripeSubscriptionForUser(acc.userId);
-  // 2) Revoke WhatsApp (no-op if no instance).
-  try {
-    await deleteInstance(acc.empresaId);
-  } catch (err) {
-    console.warn('[account-deletion-sweeper] deleteInstance failed (continuing):', err);
+export async function removeStoragePrefix(
+  storage: AccountDeletionStorage,
+  bucket: string,
+  prefix: string,
+  beforeExternalEffect?: () => Promise<void>,
+): Promise<void> {
+  const paths: string[] = [];
+  for (let offset = 0; ; offset += STORAGE_PAGE_SIZE) {
+    await beforeExternalEffect?.();
+    const { data, error } = await storage.from(bucket).list(prefix, {
+      limit: STORAGE_PAGE_SIZE,
+      offset,
+    });
+    if (error) throw new Error(`storage list ${bucket}/${prefix} failed: ${messageOf(error)}`);
+
+    const page = data ?? [];
+    paths.push(...page.filter((object) => object.id).map((object) => `${prefix}/${object.name}`));
+    if (page.length < STORAGE_PAGE_SIZE) break;
   }
-  // 3) Storage cleanup (best-effort).
-  await Promise.allSettled([
-    removePrefix('zelochat-media', `send/${acc.empresaId}`),
-    removePrefix('zelochat-media', `received/${acc.empresaId}`),
-    removePrefix('delivery-assets', acc.empresaId),
-    removePrefix('logos', `zelomenu-products/${acc.userId}`),
-    getServiceSupabase()
-      .storage.from('logos')
-      .remove([`${acc.userId}.png`, `${acc.userId}.jpg`, `${acc.userId}.jpeg`, `${acc.userId}.webp`])
-      .then(() => undefined)
-      .catch(() => undefined),
-  ]);
-  // 4) Purge DB + auth identity.
-  const { error } = await getServiceSupabase().rpc('delete_account', {
-    p_user_id: acc.userId,
-    p_source: 'grace-purge',
-  });
-  if (error) throw new Error(error.message);
+
+  await removeStorageObjects(storage, bucket, paths, prefix, beforeExternalEffect);
 }
 
-export async function sweepDueAccountDeletions(): Promise<DeletionSweepResult> {
-  const supabase = getServiceSupabase();
-  const nowIso = new Date().toISOString();
+export interface AccountDeletionPurgeDependencies {
+  storage: AccountDeletionStorage;
+  renewClaim(account: DueAccount): Promise<boolean>;
+  cancelBilling(userId: string): Promise<void>;
+  deleteDedicatedInstance(empresaId: string, instance: string, claimToken: string): Promise<void>;
+  finalizeDatabasePurge(account: DueAccount): Promise<void>;
+}
+
+async function renewClaimOrThrow(
+  account: DueAccount,
+  renewClaim: AccountDeletionPurgeDependencies['renewClaim'],
+): Promise<void> {
+  if (!await renewClaim(account)) {
+    throw new Error('Account deletion claim expired or was superseded');
+  }
+}
+
+export async function purgeAccountReliably(
+  account: DueAccount,
+  deps: AccountDeletionPurgeDependencies,
+): Promise<void> {
+  await renewClaimOrThrow(account, deps.renewClaim);
+  await deps.cancelBilling(account.userId);
+
+  if (account.whatsmiauInstance) {
+    await renewClaimOrThrow(account, deps.renewClaim);
+    await deps.deleteDedicatedInstance(account.empresaId, account.whatsmiauInstance, account.claimToken);
+  }
+
+  const renewBeforeStorageEffect = () => renewClaimOrThrow(account, deps.renewClaim);
+  await removeStoragePrefix(
+    deps.storage,
+    'zelochat-media',
+    `send/${account.empresaId}`,
+    renewBeforeStorageEffect,
+  );
+
+  await removeStoragePrefix(
+    deps.storage,
+    'zelochat-media',
+    `received/${account.empresaId}`,
+    renewBeforeStorageEffect,
+  );
+
+  await removeStoragePrefix(
+    deps.storage,
+    'delivery-assets',
+    account.empresaId,
+    renewBeforeStorageEffect,
+  );
+
+  await removeStoragePrefix(
+    deps.storage,
+    'logos',
+    `zelomenu-products/${account.userId}`,
+    renewBeforeStorageEffect,
+  );
+
+  await removeStorageObjects(
+    deps.storage,
+    'logos',
+    [
+      `${account.userId}.png`,
+      `${account.userId}.jpg`,
+      `${account.userId}.jpeg`,
+      `${account.userId}.webp`,
+    ],
+    account.userId,
+    renewBeforeStorageEffect,
+  );
+
+  await renewClaimOrThrow(account, deps.renewClaim);
+  await deps.finalizeDatabasePurge(account);
+}
+
+export interface AccountDeletionSweepDependencies {
+  claimDueAccounts(): Promise<DueAccount[]>;
+  purgeAccount(account: DueAccount): Promise<void>;
+}
+
+export async function runAccountDeletionSweep(
+  deps: AccountDeletionSweepDependencies,
+): Promise<DeletionSweepResult> {
   const result: DeletionSweepResult = { due: 0, purged: 0, errors: [] };
-
-  const { data, error } = await supabase
-    .from('empresa_perfil')
-    .select('id, user_id')
-    .not('deletion_scheduled_at', 'is', null)
-    .lte('deletion_scheduled_at', nowIso)
-    .limit(BATCH);
-
-  if (error) {
-    console.error('[account-deletion-sweeper] query failed:', error.message);
-    return result;
+  let due: DueAccount[];
+  try {
+    due = await deps.claimDueAccounts();
+  } catch (error) {
+    throw new Error(`account deletion due query failed: ${messageOf(error)}`, { cause: error });
   }
 
-  const due = (data ?? []).filter((r) => r.user_id) as Array<{ id: string; user_id: string }>;
   result.due = due.length;
   if (!due.length) return result;
 
   console.log(`[account-deletion-sweeper] purging ${due.length} due account(s)`);
-  for (const row of due) {
+  for (const account of due) {
     try {
-      await purgeAccount({ empresaId: row.id, userId: row.user_id });
+      await deps.purgeAccount(account);
       result.purged += 1;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      result.errors.push({ empresaId: row.id, error: msg });
-      console.error(`[account-deletion-sweeper] purge failed for empresa=${row.id}:`, msg);
+    } catch (error) {
+      const msg = messageOf(error);
+      result.errors.push({ empresaId: account.empresaId, error: msg });
+      console.error(`[account-deletion-sweeper] purge failed for empresa=${account.empresaId}:`, msg);
     }
   }
   console.log(`[account-deletion-sweeper] done: purged=${result.purged}/${result.due} errors=${result.errors.length}`);
   return result;
+}
+
+export async function sweepDueAccountDeletions(): Promise<DeletionSweepResult> {
+  const supabase = getServiceSupabase();
+
+  return runAccountDeletionSweep({
+    claimDueAccounts: async () => {
+      const { data, error } = await supabase.rpc('claim_due_account_deletions', {
+        p_limit: BATCH,
+      });
+      if (error) throw new Error(error.message);
+      return ((data ?? []) as Array<{
+        empresa_id: string | null;
+        user_id: string | null;
+        whatsmiau_instance: string | null;
+        purge_token: string | null;
+      }>).map((row) => {
+        if (!row.empresa_id || !row.user_id || !row.purge_token) {
+          throw new Error('claim_due_account_deletions returned an incomplete claim');
+        }
+        return {
+          empresaId: row.empresa_id,
+          userId: row.user_id,
+          claimToken: row.purge_token,
+          whatsmiauInstance: row.whatsmiau_instance,
+        };
+      });
+    },
+    purgeAccount: (account) => purgeAccountReliably(account, {
+      storage: supabase.storage as unknown as AccountDeletionStorage,
+      renewClaim: async (dueAccount) => {
+        const { data, error } = await supabase.rpc('renew_account_deletion_claim', {
+          p_empresa_id: dueAccount.empresaId,
+          p_user_id: dueAccount.userId,
+          p_purge_token: dueAccount.claimToken,
+        });
+        if (error) throw new Error(error.message);
+        return data === true;
+      },
+      cancelBilling: cancelStripeSubscriptionForUser,
+      deleteDedicatedInstance,
+      finalizeDatabasePurge: async (dueAccount) => {
+        const { data, error } = await supabase.rpc('finalize_claimed_account_deletion', {
+          p_empresa_id: dueAccount.empresaId,
+          p_user_id: dueAccount.userId,
+          p_purge_token: dueAccount.claimToken,
+        });
+        if (error) throw new Error(error.message);
+        if (data !== true) throw new Error('Account deletion claim is stale or no longer due');
+      },
+    }),
+  });
 }
 
 let loopHandle: ReturnType<typeof setInterval> | null = null;

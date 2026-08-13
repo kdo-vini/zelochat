@@ -52,13 +52,14 @@ function stripeObjectId(value: string | { id?: string } | null | undefined): str
  * user reactivates. No-op for Pix-only customers / missing subscriptions.
  */
 export async function setStripeCancelAtPeriodEnd(userId: string, cancel: boolean): Promise<void> {
-  const { data } = await getServiceSupabase()
+  const { data, error } = await getServiceSupabase()
     .from('subscriptions')
     .select('provider_subscription_id, payment_provider, status')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (error) throw new Error(`Subscription lookup failed: ${error.message}`);
   const sub = data as { provider_subscription_id?: string; payment_provider?: string; status?: string } | null;
   if (!sub?.provider_subscription_id || sub.payment_provider !== 'stripe' || sub.status === 'canceled') return;
   try {
@@ -76,13 +77,14 @@ export async function setStripeCancelAtPeriodEnd(userId: string, cancel: boolean
  * subscription (e.g. Pix-only customers).
  */
 export async function cancelStripeSubscriptionForUser(userId: string): Promise<void> {
-  const { data } = await getServiceSupabase()
+  const { data, error } = await getServiceSupabase()
     .from('subscriptions')
     .select('provider_subscription_id, payment_provider')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (error) throw new Error(`Subscription lookup failed: ${error.message}`);
   const sub = data as { provider_subscription_id?: string; payment_provider?: string } | null;
   if (!sub?.provider_subscription_id || sub.payment_provider !== 'stripe') return;
   try {

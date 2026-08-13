@@ -3,6 +3,15 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Contenção arquitetural (2026-08-13) — exclusão de conta
+
+- ✅ DEL-SWEEP-001 — o sweeper não escolhe mais contas vencidas por SELECT direto: usa `claim_due_account_deletions(p_limit)`, renova/valida o token antes de cada efeito externo por `renew_account_deletion_claim` e só conclui por `finalize_claimed_account_deletion`, fechando concorrência entre réplicas, lease vencido e reativação — `server/accountDeletionSweeper.ts`.
+- ✅ DEL-SWEEP-002 — a remoção destrutiva de WhatsApp usa somente o pointer capturado atomicamente pelo claim, sem novo lookup e sem `WHATSMIAU_INSTANCE` fallback; remoção/CAS falham fechado — `server/instanceManager.ts`.
+- ✅ DEL-SWEEP-003 — limpeza de Storage agora percorre todas as páginas e propaga falhas de list/remove; billing, instância ou storage incompletos bloqueiam a purga DB para retry posterior — `server/accountDeletionSweeper.ts`, `server/billing.ts`.
+- ✅ DEL-SWEEP-004 — reativação é uma exceção exata do paywall e adquire um token atômico antes do Stripe; somente o token exato conclui, e resultado externo ambíguo mantém o fence para impedir purge — `server/index.ts`, `server/router.ts`.
+- ✅ DEL-SWEEP-005 — QR/connect não pode criar/reusar instância durante purge ou reativação: faz leitura fresca dos dois tokens antes do cache/provider, persiste com CAS de ambos nulos e apaga a criação upstream se perder a corrida — `server/instanceManager.ts`, `server/router.ts`.
+- ⏳ Cobertura — RED do novo fence confirmado e teste focado verde; lint, typecheck, build e suíte completa serão reexecutados após fechar a migration compartilhada. A migration precisa entrar antes do deploy automático deste backend.
+
 ### Sprint 15 (2026-08-01) — simplificação dos gatilhos personalizados
 - ✅ AI-CONFIGS-002 — o atalho redundante “Encaminhar para outra linha” aparecia abaixo do card de gatilhos personalizados, embora a mesma ação já estivesse disponível no dropdown de tipo → removido o botão e seu template exclusivo; a opção **Encaminhar** do dropdown permanece funcionando — `src/components/views/AIConfigsView.tsx`.
 

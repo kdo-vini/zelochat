@@ -12,6 +12,11 @@
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
 - **Audit:** P0 100% ✅ · P1 100% ✅ (acionáveis, 3 deferred p/ multi-replica) · P2 63% · P3 21%
 
+## Contenção arquitetural (2026-08-13)
+
+- **Sweeper de exclusão de conta endurecido (código pronto; rollout coordenado com o banco compartilhado):** o worker passa a consumir exclusivamente o claim atômico `claim_due_account_deletions`, renova/valida o fencing token antes de cada efeito externo por `renew_account_deletion_claim` e finaliza por `finalize_claimed_account_deletion`; não consulta mais vencidos diretamente nem chama `delete_account` sem o claim. A reativação adquire um fence atômico antes do Stripe e somente o token exato pode concluir; timeout/resultado Stripe ambíguo mantém o fence e impede purge destrutivo. A exclusão usa somente a instância dedicada capturada pelo claim, sem lookup/fallback legado. QR/connect exige os dois fences nulos. Storage é paginado e qualquer erro externo impede a purga final para permitir retry. `/api/account/reactivate` é exceção exata do paywall. Ordem obrigatória: aplicar a migration compartilhada antes de publicar este backend. Regressão: `tests/accountDeletionReliability.test.ts`.
+- **Validação desta fatia:** fence de reativação reexecutado; teste focado, lint, typecheck do server e build verdes. A suíte completa anterior ficou em 47/48 arquivos, com única falha no drift pré-existente e não relacionado de `tests/zelomenuSlug.test.ts`; esse teste continua fora desta alteração.
+
 ## Entregue nesta sessão (2026-07-31)
 
 - **Hotfix de anexos PDF/documentos** — mensagens encapsuladas pelos wrappers do WhatsApp agora têm o payload desembrulhado também na criação do anexo e na extração de mídia; MIME de PDF com parâmetros é normalizado. O bucket remoto `zelochat-media` foi atualizado de 10 MB para 25 MB pela Supabase CLI. Regressão em `tests/messageHandlerMedia.test.ts`. O histórico remoto ainda contém versões antigas de migração ausentes neste checkout; o `db push` completo continua bloqueado por essa divergência.

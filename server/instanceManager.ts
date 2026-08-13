@@ -23,6 +23,15 @@ function apiHeaders() {
   return { apikey: API_KEY };
 }
 
+async function deleteProviderInstanceExact(instance: string): Promise<void> {
+  try {
+    await axios.delete(`${BASE_URL}/v2/instance/delete/${instance}`, { headers: apiHeaders() });
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status !== 404) throw err;
+  }
+}
+
 async function refreshCache(): Promise<void> {
   try {
     const { data, error } = await getServiceSupabase()
@@ -193,11 +202,24 @@ export async function createInstance(empresaId: string): Promise<string> {
     const alreadyExists = status === 409 || /already.*exists|exists.*already|conflict/i.test(msg);
     if (!alreadyExists) throw err;
   }
-  const { error } = await getServiceSupabase()
+  const { data: persisted, error } = await getServiceSupabase()
     .from('empresa_perfil')
     .update({ whatsmiau_instance: instanceName, updated_at: new Date().toISOString() })
-    .eq('id', empresaId);
-  if (error) throw new Error(`Failed to persist whatsmiau_instance: ${error.message}`);
+    .eq('id', empresaId)
+    .is('deletion_purge_token', null)
+    .is('deletion_reactivation_token', null)
+    .select('id')
+    .maybeSingle();
+  if (error || !(persisted as { id?: string } | null)?.id) {
+    try {
+      await deleteProviderInstanceExact(instanceName);
+    } catch (cleanupError) {
+      const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      throw new Error(`Failed to persist WhatsApp instance and compensate provider creation: ${cleanupMessage}`);
+    }
+    const reason = error?.message ?? 'account deletion is in progress';
+    throw new Error(`Failed to persist whatsmiau_instance: ${reason}`);
+  }
   invalidateCache();
   return instanceName;
 }
@@ -236,25 +258,30 @@ export async function getOrCreateOwnInstanceForEmpresa(empresaId: string): Promi
   if (inFlight) return inFlight;
 
   const promise = (async () => {
-    await ensureCache();
-    const cached = empresaToInstance.get(empresaId);
-    if (cached) return cached;
+    // Destructive account deletion is fenced in the database. This lookup must
+    // be fresh even when the instance cache is warm: returning a cached pointer
+    // after a purge claim would let QR/connect recreate provider state mid-purge.
+    const { data, error: lookupError } = await getServiceSupabase()
+      .from('empresa_perfil')
+      .select('whatsmiau_instance, deletion_purge_token, deletion_reactivation_token')
+      .eq('id', empresaId)
+      .maybeSingle();
+    if (lookupError) throw new Error(`Failed to resolve dedicated WhatsApp instance: ${lookupError.message}`);
 
-    // Cache miss — try direct lookup before paying the create round-trip.
-    try {
-      const { data } = await getServiceSupabase()
-        .from('empresa_perfil')
-        .select('whatsmiau_instance')
-        .eq('id', empresaId)
-        .maybeSingle();
-      const inst = (data as { whatsmiau_instance?: string | null } | null)?.whatsmiau_instance;
-      if (inst) {
-        empresaToInstance.set(empresaId, inst);
-        instanceToEmpresa.set(inst, empresaId);
-        return inst;
-      }
-    } catch (err) {
-      console.error('[instanceManager] direct lookup failed:', err instanceof Error ? err.message : err);
+    const row = data as {
+      whatsmiau_instance?: string | null;
+      deletion_purge_token?: string | null;
+      deletion_reactivation_token?: string | null;
+    } | null;
+    if (row?.deletion_purge_token || row?.deletion_reactivation_token) {
+      throw new Error('ACCOUNT_DELETION_IN_PROGRESS');
+    }
+
+    const inst = row?.whatsmiau_instance;
+    if (inst) {
+      empresaToInstance.set(empresaId, inst);
+      instanceToEmpresa.set(inst, empresaId);
+      return inst;
     }
 
     // No instance assigned yet — create one. Webhook registration is a follow-up
@@ -325,6 +352,51 @@ export async function deleteInstance(empresaId: string): Promise<void> {
     })
     .eq('id', empresaId);
   invalidateCache();
+}
+
+/**
+ * Deletes only the instance pointer captured by the database deletion claim.
+ *
+ * Account deletion must never use `getInstanceForEmpresa`: that resolver keeps a
+ * legacy fleet-wide fallback for old outbound paths, and using that fallback in
+ * a destructive workflow could delete another tenant's instance. Receiving the
+ * claimed pointer also prevents a stale worker from looking up and deleting a
+ * newly connected instance after its lease expired. The compare-and-clear is
+ * fenced by both pointer and claim token, so a stale worker cannot mutate the
+ * row after a successor has reclaimed it.
+ */
+export async function deleteDedicatedInstance(
+  empresaId: string,
+  instance: string,
+  claimToken: string,
+): Promise<void> {
+  if (!empresaId) throw new Error('empresaId required');
+  if (!instance) throw new Error('dedicated instance required');
+  if (!claimToken) throw new Error('account deletion claim token required');
+
+  const supabase = getServiceSupabase();
+  await deleteProviderInstanceExact(instance);
+
+  const { data: cleared, error: clearError } = await supabase
+    .from('empresa_perfil')
+    .update({
+      whatsmiau_instance: null,
+      whatsmiau_connected: false,
+      whatsmiau_phone: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', empresaId)
+    .eq('whatsmiau_instance', instance)
+    .eq('deletion_purge_token', claimToken)
+    .select('id')
+    .maybeSingle();
+  if (clearError) throw new Error(`Failed to clear dedicated WhatsApp instance: ${clearError.message}`);
+  if (!(cleared as { id?: string } | null)?.id) {
+    clearEmpresaCache(empresaId);
+    throw new Error('Dedicated WhatsApp instance changed during account deletion');
+  }
+
+  clearEmpresaCache(empresaId);
 }
 
 /**
