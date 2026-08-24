@@ -12,6 +12,21 @@
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
 - **Audit:** P0 100% ✅ · P1 100% ✅ (acionáveis, 3 deferred p/ multi-replica) · P2 63% · P3 21%
 
+## Contrato de visibilidade do catálogo (2026-08-24)
+
+- `produtos.ocultar_no_pdv` é uma flag interna do ZeloPDV para venda manual;
+  ela não decide o que o cliente vê no ZeloMenu.
+- O catálogo público do ZeloChat/ZeloMenu usa o overlay
+  `zelomenu_product_publications`: `visivel_online` para publicar e
+  `pausado_manualmente` para pausar. Estoque, categoria e complementos seguem
+  sendo validações públicas próprias.
+- O resolver, o diretório e os fallbacks de disponibilidade foram alinhados a
+  esse contrato; o caso `ocultar_no_pdv=true` + publicação online ativa tem
+  regressão coberta em `tests/zelomenuPublication.test.ts`.
+- Validação da rodada: lint/build e o teste focado passaram. A suíte completa
+  mantém somente o drift conhecido de `tests/zelomenuSlug.test.ts` (espera a
+  rota legada `/menu/{slug}`, enquanto o contrato atual usa `/{slug}`).
+
 ## Contenção arquitetural (2026-08-13)
 
 - **Sweeper de exclusão de conta endurecido (código pronto; rollout coordenado com o banco compartilhado):** o worker passa a consumir exclusivamente o claim atômico `claim_due_account_deletions`, renova/valida o fencing token antes de cada efeito externo por `renew_account_deletion_claim` e finaliza por `finalize_claimed_account_deletion`; não consulta mais vencidos diretamente nem chama `delete_account` sem o claim. A reativação adquire um fence atômico antes do Stripe e somente o token exato pode concluir; timeout/resultado Stripe ambíguo mantém o fence e impede purge destrutivo. A exclusão usa somente a instância dedicada capturada pelo claim, sem lookup/fallback legado. QR/connect exige os dois fences nulos. Storage é paginado e qualquer erro externo impede a purga final para permitir retry. `/api/account/reactivate` é exceção exata do paywall. Ordem obrigatória: aplicar a migration compartilhada antes de publicar este backend. Regressão: `tests/accountDeletionReliability.test.ts`.

@@ -1,5 +1,28 @@
 # Incidentes e padrões conhecidos
 
+## XX. `ocultar_no_pdv` misturava venda manual com publicação online (2026-08-24)
+
+### Sintoma
+
+Um produto podia ser tornado visível no PDV interno e acabar tratado como
+publicado/ativo no cardápio digital, apesar de serem canais diferentes.
+
+### Causa-raiz
+
+O resolver de `src/domain/zelomenuPublication.ts`, os cálculos de catálogo e
+alguns fallbacks ainda usavam `ocultar_no_pdv` como bloqueio customer-facing.
+Isso contrariava o overlay `zelomenu_product_publications`, que já possui
+`visivel_online` e `pausado_manualmente` próprios.
+
+### Fix / recovery
+
+O código passou a usar `visivel_online`/`pausado_manualmente` para publicação,
+mantendo estoque, categoria e complementos como regras online independentes.
+Não fazer backfill automático: a Bem Servido foi deliberadamente mantida sem
+qualquer alteração de dados nesta rodada.
+
+---
+
 Knowledge base de causas-raiz já vistas em produção. Use como **primeira parada**
 quando algo quebra antes de abrir um ticket pro Whatsmiau, antes de subir um fix,
 antes de re-deployar. Mantenha vivo — cada outage novo vira uma entrada aqui.

@@ -73,18 +73,18 @@ const tests = [
     },
   },
   {
-    name: 'produto oculto vence outros estados',
+    name: 'visibilidade no PDV não oculta produto publicado no ZeloMenu',
     run() {
       const status = getZeloMenuPublicationStatus({
         ...base,
         ocultar_no_pdv: true,
-        controlar_estoque: true,
+        controlar_estoque: false,
         estoque_atual: 0,
-        id_categoria: null,
+        id_categoria: 10,
         publication: { ...base.publication!, visivel_online: true, pausado_manualmente: false },
       });
-      assert.equal(status.status, 'hidden');
-      assert.equal(status.issue, 'hidden');
+      assert.equal(status.status, 'published');
+      assert.equal(status.issue, null);
     },
   },
   {
@@ -190,13 +190,13 @@ const tests = [
       ]);
       assert.deepEqual(summary, {
         total: 6,
-        published: 1,
+        published: 2,
         unpublished: 1,
         paused: 1,
-        hidden: 1,
+        hidden: 0,
         outOfStock: 1,
         missingCategory: 1,
-        attention: 5,
+        attention: 4,
       });
     },
   },

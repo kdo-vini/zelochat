@@ -282,7 +282,7 @@ function normalizeProductRow(row: unknown): CatalogProductWithPlacement | null {
     id,
     name,
     price: normalizeNumber(product.preco),
-    available: !ocultarNoPdv && (!stockControlled || stockQuantity > 0),
+    available: !stockControlled || stockQuantity > 0,
     unitBased: product.eh_item_por_unidade === true,
     stockControlled,
     stockQuantity,

@@ -3,6 +3,17 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Catálogo — separação PDV/ZeloMenu (2026-08-24)
+
+- ✅ CATALOG-VISIBILITY-001 — `ocultar_no_pdv` deixou de bloquear ou publicar
+  item no cardápio digital. O resolver de publicação, a disponibilidade usada
+  pelo runtime e os snapshots enviados pelo AppShell agora preservam a
+  independência entre venda manual interna e publicação customer-facing;
+  `tests/zelomenuPublication.test.ts` cobre produto publicado oculto no PDV.
+- ✅ CATALOG-VISIBILITY-002 — nenhuma escrita de catálogo foi feita na Bem
+  Servido; a migration de contrato metadata-only fica versionada e aplicada no
+  ZeloPDV, que é o repo dono do schema compartilhado.
+
 ### Contenção arquitetural (2026-08-13) — exclusão de conta
 
 - ✅ DEL-SWEEP-001 — o sweeper não escolhe mais contas vencidas por SELECT direto: usa `claim_due_account_deletions(p_limit)`, renova/valida o token antes de cada efeito externo por `renew_account_deletion_claim` e só conclui por `finalize_claimed_account_deletion`, fechando concorrência entre réplicas, lease vencido e reativação — `server/accountDeletionSweeper.ts`.

@@ -94,15 +94,6 @@ export function getZeloMenuPublicationStatus(
     };
   }
 
-  if (product.ocultar_no_pdv) {
-    return {
-      status: 'hidden',
-      label: 'Inativo',
-      description: 'Produto marcado como oculto no cardápio atual.',
-      issue: 'hidden',
-    };
-  }
-
   if (product.controlar_estoque && product.estoque_atual <= 0) {
     return {
       status: 'out_of_stock',

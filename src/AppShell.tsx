@@ -401,7 +401,7 @@ export default function AppShell() {
       id: String(p.id),
       name: p.nome,
       price: p.preco,
-      available: !p.ocultar_no_pdv && (!p.controlar_estoque || p.estoque_atual > 0),
+      available: !p.controlar_estoque || p.estoque_atual > 0,
       unitBased: p.eh_item_por_unidade,
       stockControlled: p.controlar_estoque,
       stockQuantity: p.estoque_atual,
@@ -507,7 +507,7 @@ export default function AppShell() {
               .map((p) => ({
                 name: p.nome,
                 price: p.preco,
-                available: !p.ocultar_no_pdv && (!p.controlar_estoque || p.estoque_atual > 0),
+                available: !p.controlar_estoque || p.estoque_atual > 0,
                 stockControlled: p.controlar_estoque,
                 stockQuantity: p.estoque_atual,
               })),
@@ -517,7 +517,7 @@ export default function AppShell() {
             .map((p) => ({
               name: p.nome,
               price: p.preco,
-              available: !p.ocultar_no_pdv && (!p.controlar_estoque || p.estoque_atual > 0),
+              available: !p.controlar_estoque || p.estoque_atual > 0,
               stockControlled: p.controlar_estoque,
               stockQuantity: p.estoque_atual,
             })),
