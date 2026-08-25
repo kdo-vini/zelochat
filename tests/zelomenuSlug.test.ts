@@ -46,7 +46,7 @@ const tests = [
       assert.equal(buildPublicStorePath('casa-dos-salgados'), '/menu/casa-dos-salgados');
       assert.equal(
         buildPublicStoreUrl('https://menu.zelopdv.com.br/', 'casa-dos-salgados'),
-        'https://menu.zelopdv.com.br/menu/casa-dos-salgados',
+        'https://menu.zelopdv.com.br/casa-dos-salgados',
       );
     },
   },
