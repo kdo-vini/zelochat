@@ -11,6 +11,7 @@ auth_info_baileys/
 test-results/
 playwright-report/
 .claude/settings.local.json
+.worktrees/
 
 # Markdown docs and SQL migrations are SOURCE-OF-TRUTH and MUST be tracked.
 # They were previously ignored which prevented cross-agent visibility of
