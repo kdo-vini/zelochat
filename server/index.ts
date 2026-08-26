@@ -25,6 +25,7 @@ import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
 import { startAccountDeletionSweepLoop } from './accountDeletionSweeper.js';
 import { startAbandonedCartRecoverySweeper } from './abandonedCartSweeper.js';
+import { startAutomationSweeper } from './automations/sweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { startWebhookEventsSweeper } from './webhookEventsSweeper.js';
 import { scheduleReply } from './replyDebouncer.js';
@@ -467,6 +468,7 @@ httpServer.listen(PORT, () => {
   // cart left open 2–24h. Runs 3 min after startup, then every 15 min. Respects
   // the global AI gate; one-shot guaranteed by a race-safe metadata claim.
   startAbandonedCartRecoverySweeper();
+  startAutomationSweeper();
 
   // Webhook events raw retention — deletes processed rows >30d and stuck rows
   // >37d. Prevents unbounded table growth (hit 1.38 GB before this was added).

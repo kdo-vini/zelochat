@@ -140,6 +140,7 @@ import {
 import { cancelCanonicalOrder, createManualZeloOrder, getCanonicalOrder, LEGACY_CANONICAL_ORDER_SELECT, transitionCanonicalOrder } from './canonicalOrders.js';
 import { customerRouter } from './customers/router.js';
 import { campaignRouter } from './campaigns/router.js';
+import { automationRouter } from './automations/router.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -161,6 +162,7 @@ const router = Router();
 // the actor/tenant permission check before touching service_role data.
 router.use(customerRouter);
 router.use(campaignRouter);
+router.use(automationRouter);
 
 router.get('/api/access/me', async (req: Request, res: Response) => {
   try {

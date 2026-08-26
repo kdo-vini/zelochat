@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Clientes CRM — campanhas (2026-08-26)
+
+- ✅ CRM-CAMPAIGNS-015 — não havia uma jornada guiada para campanhas → Clientes agora oferece Segmentos/Campanhas com wizard público → mensagem → teste → revisão → envio/agendamento, contagem de elegíveis/suprimidos e acompanhamento da fila — `src/components/customers/CampaignWizard.tsx:1`, `src/components/customers/CampaignsTab.tsx:1`, `tests/campaignUiGuardrails.test.ts:1`
+
 ### Clientes CRM — fundação de acesso (2026-08-25)
 
 - ✅ CRM-IDENTITY-005 — webhook e sessões agora usam o adaptador único `ensure_customer_from_whatsapp`; vínculos inequívocos persistem `pessoa_id`, conflitos/erros ficam sem pessoa e nunca bloqueiam a mensagem/Atendimento, com fallback pessoa-first e nome manual preservado — `server/customers/identity.ts:1`, `server/messageHandler.ts:1020`, `tests/customerIdentityResolution.test.ts:1`
@@ -919,3 +923,6 @@ If you're closing out a sprint:
 2. Write a short post-deploy checklist at the bottom of the sprint section.
 
 - ✅ ZLM-301 — consumidores de pedidos migrados para `zelo_orders` e transições CAS via RPC — `server/canonicalOrders.ts`, `src/hooks/useOrders.ts`
+# Sprint 2026-08-26 — Clientes CRM
+
+- ✅ CRM-16/17 — automações não tinham regras/ledger comum e carrinho podia seguir caminho separado → migration 054, avaliador idempotente, API protegida por `clientes.comunicar`, sweeper fail-soft e fila única do carrinho atrás de `ZELOCHAT_AUTOMATION_LEDGER=1` — `server/automations/rules.ts`, `server/automations/evaluator.ts`, `server/automations/router.ts`, `server/automations/sweeper.ts`, `server/zelomenuCartSessions.ts`

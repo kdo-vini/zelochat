@@ -2037,6 +2037,34 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
     publicUrl,
   });
 
+  // CRM rollout: the existing cart claim remains the only cart sweeper, but
+  // the delivery decision moves to the shared automation ledger. The worker
+  // will send the queued job; this path never calls WhatsApp directly.
+  if (process.env.ZELOCHAT_AUTOMATION_LEDGER === '1') {
+    const db = getServiceSupabase();
+    const { data: rule, error: ruleError } = await db.from('zelochat_automation_rules')
+      .select('id, message').eq('empresa_id', claimedRow.empresa_id).eq('kind', 'abandoned_cart').eq('enabled', true).maybeSingle();
+    if (ruleError) throw ruleError;
+    if (!rule) return 'skipped';
+    const eventKey = `abandoned_cart:${claimedRow.id}`;
+    const { data: dispatch, error: dispatchError } = await db.from('zelochat_automation_dispatches').upsert({
+      empresa_id: claimedRow.empresa_id, rule_id: rule.id, pessoa_id: null, cart_id: claimedRow.id,
+      event_key: eventKey, status: 'eligible', message: rule.message || message,
+      phone_snapshot: claimedRow.source_ref,
+    }, { onConflict: 'rule_id,event_key', ignoreDuplicates: true }).select('id').maybeSingle();
+    if (dispatchError) throw dispatchError;
+    if (!dispatch) return 'skipped';
+    const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({
+      empresa_id: claimedRow.empresa_id, recipient_id: dispatch.id, job_type: 'automation',
+      idempotency_key: eventKey, phone_snapshot: claimedRow.source_ref, message: rule.message || message,
+      status: 'queued', next_attempt_at: new Date().toISOString(),
+    }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
+    if (jobError) throw jobError;
+    if (job?.id) await db.from('zelochat_automation_dispatches').update({ status: 'queued', outbound_job_id: job.id, queued_at: now, updated_at: now }).eq('id', dispatch.id);
+    await addAssistantMessage(claimedRow.source_ref, rule.message || message, undefined, claimedRow.empresa_id, undefined);
+    return 'sent';
+  }
+
   let waMessageId: string | undefined;
   let sendOk = true;
   try {
