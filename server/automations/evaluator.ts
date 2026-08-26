@@ -12,6 +12,7 @@ export type AutomationCandidate = {
   lastConversationAt?: string | null;
   openOrder?: boolean;
   promotionalContactAt?: string | null;
+  recentAutomationSentAt?: string | null;
   order?: { id: string; status: string; deliveredAt?: string | null; totalCents?: number } | null;
   deliveredOrders?: number;
   totalSpentCents?: number;
@@ -64,6 +65,7 @@ function suppression(kind: AutomationKind, candidate: AutomationCandidate, rule:
   if (kind === 'reactivation') {
     if (candidate.openOrder) return 'open_order';
     if (dateMs(candidate.promotionalContactAt) !== null && now.getTime() - (dateMs(candidate.promotionalContactAt) as number) < 7 * 86400000) return 'recent_promotion';
+    if (dateMs(candidate.recentAutomationSentAt) !== null && now.getTime() - (dateMs(candidate.recentAutomationSentAt) as number) < Number(rule.config.cooldownDays ?? 30) * 86400000) return 'cooldown';
     const last = dateMs(candidate.lastDeliveredAt) ?? dateMs(candidate.lastConversationAt);
     if (last === null || now.getTime() - last < Number(rule.config.inactiveDays ?? 30) * 86400000) return 'not_inactive';
   }

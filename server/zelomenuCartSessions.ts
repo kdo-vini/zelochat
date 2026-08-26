@@ -2004,6 +2004,23 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
     return 'skipped';
   }
 
+  // The legacy rollout path is still governed by the same editable rule.
+  // Disabled means no recovery at all, regardless of the feature flag.
+  const automationDb = getServiceSupabase();
+  const { data: automationRule, error: automationRuleError } = await automationDb.from('zelochat_automation_rules')
+    .select('id, enabled, message, config, daily_limit').eq('empresa_id', sessionRow.empresa_id).eq('kind', 'abandoned_cart').maybeSingle();
+  if (automationRuleError) throw automationRuleError;
+  if (!automationRule?.enabled) return 'skipped';
+  const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+  const { count: sentToday, error: countError } = await automationDb.from('zelochat_automation_dispatches')
+    .select('id', { count: 'exact', head: true }).eq('empresa_id', sessionRow.empresa_id)
+    .in('status', ['queued', 'sending', 'sent']).gte('created_at', dayStart.toISOString());
+  if (countError) throw countError;
+  if ((sentToday ?? 0) >= Math.min(Math.max(Number(automationRule.daily_limit ?? 50), 1), 200)) return 'skipped';
+  const configuredDelayHours = Number((automationRule.config as Record<string, unknown> | null)?.delayHours ?? 2);
+  const ageHours = (Date.now() - Date.parse(sessionRow.updated_at)) / 3600000;
+  if (!Number.isFinite(ageHours) || ageHours < Math.min(Math.max(configuredDelayHours, 2), 24)) return 'skipped';
+
   // Respeita o operador: sem nudge automático com a IA desligada ou fora da
   // janela. Checamos ANTES de marcar a flag para que um carrinho abandonado em
   // horário humano ainda possa ser recuperado quando a automação voltar.
@@ -2042,10 +2059,7 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
   // will send the queued job; this path never calls WhatsApp directly.
   if (process.env.ZELOCHAT_AUTOMATION_LEDGER === '1') {
     const db = getServiceSupabase();
-    const { data: rule, error: ruleError } = await db.from('zelochat_automation_rules')
-      .select('id, message').eq('empresa_id', claimedRow.empresa_id).eq('kind', 'abandoned_cart').eq('enabled', true).maybeSingle();
-    if (ruleError) throw ruleError;
-    if (!rule) return 'skipped';
+    const rule = automationRule;
     const eventKey = `abandoned_cart:${claimedRow.id}`;
     const { data: dispatch, error: dispatchError } = await db.from('zelochat_automation_dispatches').upsert({
       empresa_id: claimedRow.empresa_id, rule_id: rule.id, pessoa_id: null, cart_id: claimedRow.id,
@@ -2068,14 +2082,14 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
   let waMessageId: string | undefined;
   let sendOk = true;
   try {
-    waMessageId = await sendTextMessage(claimedRow.source_ref, message, claimedRow.empresa_id);
+    waMessageId = await sendTextMessage(claimedRow.source_ref, automationRule.message || message, claimedRow.empresa_id);
   } catch (sendErr) {
     sendOk = false;
     console.error('[ZeloMenu] recoverAbandonedCart: recovery message failed:', sendErr);
   }
   await addAssistantMessage(
     claimedRow.source_ref,
-    sendOk ? message : `[FALHA NO ENVIO — reenviar manualmente]\n${message}`,
+    sendOk ? (automationRule.message || message) : `[FALHA NO ENVIO — reenviar manualmente]\n${automationRule.message || message}`,
     undefined,
     claimedRow.empresa_id,
     undefined,
