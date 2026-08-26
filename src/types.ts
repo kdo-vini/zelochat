@@ -23,6 +23,7 @@ export interface Tag {
 
 export interface ChatSession {
   id: string;
+  remoteJid?: string;
   customerName: string;
   customerPhone: string;
   lastMessage: string;
@@ -57,7 +58,7 @@ export interface ChatSessionsPage {
   hasMore: boolean;
 }
 
-export type CustomerActivityState = 'active' | 'inactive';
+export type CustomerActivityState = 'active' | 'inactive' | 'never';
 
 export interface CustomerSummary {
   id: string;
@@ -100,6 +101,7 @@ export interface CustomerFilters {
   activityState?: CustomerActivityState;
   hasPhone?: boolean;
   tagId?: string;
+  tagIds?: string[];
   birthdayMonth?: number;
   vip?: boolean;
   birthdayOnly?: boolean;

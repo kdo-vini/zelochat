@@ -13,15 +13,15 @@ export function parseCustomerFilters(query: Record<string, unknown>): CustomerFi
     if (/[(),.*%\\]/u.test(search)) throw new Error('Busca contém caracteres reservados');
     filters.q = search;
   }
-  if (query.activityState === 'active' || query.activityState === 'inactive') filters.activityState = query.activityState as CustomerActivityState;
-  if (query.status === 'active' || query.status === 'inactive') filters.activityState = query.status as CustomerActivityState;
+  if (query.activityState === 'active' || query.activityState === 'inactive' || query.activityState === 'never') filters.activityState = query.activityState as CustomerActivityState;
+  if (query.status === 'active' || query.status === 'inactive' || query.status === 'never') filters.activityState = query.status as CustomerActivityState;
   if (query.hasPhone === 'true' || query.hasPhone === 'false') filters.hasPhone = query.hasPhone === 'true';
   if (query.hasWhatsApp === 'true' || query.hasWhatsApp === 'false') filters.hasPhone = query.hasWhatsApp === 'true';
   if (typeof query.tagId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(query.tagId)) filters.tagId = query.tagId;
   else if (query.tagId != null) throw new Error('Tag inválida');
   if (typeof query.tags === 'string' && query.tags.trim()) {
-    const firstTag = query.tags.split(',').map((tag) => tag.trim()).find((tag) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tag));
-    if (firstTag) filters.tagId = firstTag;
+    const tagIds = query.tags.split(',').map((tag) => tag.trim()).filter((tag) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tag));
+    if (tagIds.length) { filters.tagId = tagIds[0]; filters.tagIds = tagIds; }
   }
   if (query.vip === 'true') filters.vip = true;
   if (query.birthdayOnly === 'true') filters.birthdayOnly = true;
@@ -34,7 +34,7 @@ export function parseCustomerFilters(query: Record<string, unknown>): CustomerFi
 
 export function resolveCustomerActivity(input: { lastDeliveredOrderAt: string | null; lastConversationAt: string | null; now?: Date; inactiveAfterDays?: number }): { lastActivityAt: string | null; state: CustomerActivityState } {
   const lastActivityAt = input.lastDeliveredOrderAt ?? input.lastConversationAt;
-  if (!lastActivityAt) return { lastActivityAt: null, state: 'inactive' };
+  if (!lastActivityAt) return { lastActivityAt: null, state: 'never' };
   const threshold = (input.now ?? new Date()).getTime() - (input.inactiveAfterDays ?? 30) * 86400000;
   return { lastActivityAt, state: new Date(lastActivityAt).getTime() >= threshold ? 'active' : 'inactive' };
 }

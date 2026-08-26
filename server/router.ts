@@ -112,7 +112,7 @@ import {
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
-import { requireActorAccess, requireOwnerAccess } from './accessControl.js';
+import { requireActorAccess, requireActorPermission, requireOwnerAccess } from './accessControl.js';
 import { sendAuthError } from './authErrors.js';
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
 import {
@@ -1448,7 +1448,7 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
   }
 
   try {
-    const empresaId = await requireEmpresaId(req);
+    const empresaId = (await requireActorPermission(req, 'clientes.comunicar')).empresaId;
     const trimmedMessage = message?.trim() ?? '';
     const validQuoted = quoted?.waMessageId ? quoted : null;
     let waMessageId: string | undefined;
@@ -1504,7 +1504,7 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
       });
     }
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
@@ -3432,7 +3432,7 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
 // the persisted intent, always scoped to the authenticated empresa.
 router.post('/api/messages/:id/retry', async (req: Request, res: Response) => {
   try {
-    const empresaId = await requireEmpresaId(req);
+    const empresaId = (await requireActorPermission(req, 'clientes.comunicar')).empresaId;
     const supabase = getServiceSupabase();
     const { data: message, error: messageError } = await supabase
       .from('zelochat_messages')

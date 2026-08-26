@@ -8,6 +8,7 @@ export interface CustomerMutationAccess {
   isOwner: boolean;
   permissions: Record<string, boolean> | null;
   empresaId: string;
+  ownerUserId?: string;
 }
 
 export function requireCustomerMutationPermission(access: CustomerMutationAccess): boolean {
@@ -105,6 +106,7 @@ export async function deleteCustomerWithPdvRpc(access: CustomerMutationAccess, p
 export interface CustomerRouterDependencies {
   resolveAccess: (req: Request) => Promise<CustomerMutationAccess>;
   store: CustomerWriteStore;
+  toCanonical?: (access: CustomerMutationAccess, personId: string) => Promise<unknown>;
 }
 
 function sendMutationError(res: Response, cause: unknown): void {
@@ -115,8 +117,8 @@ function sendMutationError(res: Response, cause: unknown): void {
 
 export function createCustomersRouter(deps: CustomerRouterDependencies): Router {
   const router = Router();
-  router.post('/', async (req, res) => { try { const value = await createCustomer(await deps.resolveAccess(req), req.body ?? {}, deps.store); res.status(201).json(value); } catch (cause) { sendMutationError(res, cause); } });
-  router.patch('/:personId', async (req, res) => { try { const value = await updateCustomer(await deps.resolveAccess(req), req.params.personId, req.body ?? {}, deps.store); res.json(value); } catch (cause) { sendMutationError(res, cause); } });
+  router.post('/', async (req, res) => { try { const access = await deps.resolveAccess(req); const value = await createCustomer(access, req.body ?? {}, deps.store); const personId = value && typeof value === 'object' && 'id' in value ? String(value.id) : ''; res.status(201).json(deps.toCanonical && personId ? await deps.toCanonical(access, personId) : value); } catch (cause) { sendMutationError(res, cause); } });
+  router.patch('/:personId', async (req, res) => { try { const access = await deps.resolveAccess(req); const value = await updateCustomer(access, req.params.personId, req.body ?? {}, deps.store); res.json(deps.toCanonical ? await deps.toCanonical(access, req.params.personId) : value); } catch (cause) { sendMutationError(res, cause); } });
   router.delete('/:personId', async (req, res) => { try { await deleteCustomerWithPdvRpc(await deps.resolveAccess(req), req.params.personId, deps.store); res.status(204).end(); } catch (cause) { sendMutationError(res, cause); } });
   router.post('/merge/preview', async (req, res) => { try { const value = await previewCustomerMerge(await deps.resolveAccess(req), req.body as CustomerMergeRequest, deps.store); res.json(value); } catch (cause) { sendMutationError(res, cause); } });
   router.post('/merge', async (req, res) => { try { await executeCustomerMerge(await deps.resolveAccess(req), req.body as CustomerMergeRequest, deps.store); res.status(204).end(); } catch (cause) { sendMutationError(res, cause); } });

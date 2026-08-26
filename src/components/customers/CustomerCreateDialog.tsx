@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { CustomerPatch } from '../../services/customerApi';
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 
 interface Props { onCreate: (patch: CustomerPatch) => Promise<void>; onClose: () => void; }
 
@@ -8,6 +9,7 @@ export function CustomerCreateDialog({ onCreate, onClose }: Props) {
   const [phone, setPhone] = useState('');
   const [birthday, setBirthday] = useState('');
   const [saving, setSaving] = useState(false);
+  useDialogFocus(onClose);
   const submit = async () => {
     setSaving(true);
     try {
