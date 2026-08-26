@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DropResult } from '@hello-pangea/dnd';
+import { Sparkles, Settings, User as UserIcon } from 'lucide-react';
 import { useDrivers } from './hooks/useDrivers';
 import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
@@ -23,9 +24,8 @@ import { loadInitialState, saveInitialState } from './services/statePersistence'
 import type { Order, ZeloState } from './types';
 import { normalizeZeloChatMode } from './domain/zelochatMode';
 import type { OrderFocusRequest } from './domain/orderFocus';
-import { Sidebar, GENERAL_ALLOWED_VIEWS } from './components/Sidebar';
-import type { View } from './domain/navigation';
-import { getDesktopNavigation, getMobileNavigation } from './domain/navigation';
+import { Sidebar, NAV_PRIMARY, NAV_SECONDARY, RESTAURANT_ONLY_VIEWS, GENERAL_ALLOWED_VIEWS } from './components/Sidebar';
+import type { View } from './components/Sidebar';
 import { MainContent } from './components/MainContent';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { ChatView } from './components/views/ChatView';
@@ -137,13 +137,23 @@ export default function AppShell() {
     activeView === 'settings' ||
     activeView === 'profile'
   );
-  const navigationMode = isGeneralMode ? 'general' : 'restaurant';
-  const desktopNavigation = useMemo(() => getDesktopNavigation(navigationMode), [navigationMode]);
-  const mobileNavigation = useMemo(() => getMobileNavigation(navigationMode), [navigationMode]);
-  const primaryNavItems = desktopNavigation.primary;
-  const secondaryNavItems = desktopNavigation.secondary;
-  const mobilePrimaryNavItems = mobileNavigation.primary;
-  const bottomSheetItems = mobileNavigation.more;
+  const primaryNavItems = useMemo(
+    () => NAV_PRIMARY.filter((item) => !isGeneralMode || !RESTAURANT_ONLY_VIEWS.has(item.id)),
+    [isGeneralMode],
+  );
+  const secondaryNavItems = useMemo(
+    () => NAV_SECONDARY.filter((item) => !isGeneralMode || !RESTAURANT_ONLY_VIEWS.has(item.id)),
+    [isGeneralMode],
+  );
+  const bottomSheetItems = useMemo(
+    () => [
+      ...secondaryNavItems,
+      { id: 'novidades' as View, icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' },
+      { id: 'settings' as View, icon: Settings, label: 'Configurações', description: 'Empresa e integrações' },
+      { id: 'profile' as View, icon: UserIcon, label: 'Perfil', description: 'Sua conta' },
+    ],
+    [isGeneralMode, secondaryNavItems],
+  );
   const {
     sessions,
     loading: chatLoading,
@@ -1046,9 +1056,8 @@ export default function AppShell() {
 
       <MobileBottomNav
         activeView={activeView}
-        primaryNavItems={mobilePrimaryNavItems}
+        primaryNavItems={primaryNavItems}
         bottomSheetItems={bottomSheetItems}
-        moreActiveViews={mobileNavigation.moreActiveViews}
         moreSheetOpen={moreSheetOpen}
         openEscalationCount={openEscalationCount}
         unreadConversationsCount={unreadConversationsCount}

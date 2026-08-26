@@ -1,4 +1,5 @@
 import React, { memo } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
   Coffee,
   PanelLeftClose,
@@ -16,20 +17,39 @@ import {
 import { PrinterButton } from './PrinterButton';
 import type { Order } from '../types';
 import type { UsePrinterReturn } from '../hooks/usePrinter';
-import {
-  GENERAL_ALLOWED_VIEWS,
-  RESTAURANT_ONLY_VIEWS,
-  type NavItem,
-  type View,
-} from '../domain/navigation';
-export { GENERAL_ALLOWED_VIEWS, RESTAURANT_ONLY_VIEWS } from '../domain/navigation';
-export type { NavItem, View } from '../domain/navigation';
 
-// Kept as compatibility aliases for callers outside AppShell. The definition
-// and ordering itself lives in domain/navigation.ts.
-import { getDesktopNavigation } from '../domain/navigation';
-export const NAV_PRIMARY: NavItem[] = getDesktopNavigation('restaurant').primary;
-export const NAV_SECONDARY: NavItem[] = getDesktopNavigation('restaurant').secondary;
+export type View =
+  | 'dashboard'
+  | 'chat'
+  | 'kanban'
+  | 'calendar'
+  | 'ai-configs'
+  | 'settings'
+  | 'profile'
+  | 'drivers'
+  | 'novidades';
+
+export interface NavItem {
+  id: View;
+  icon: LucideIcon;
+  label: string;
+  description: string;
+}
+
+export const NAV_PRIMARY: NavItem[] = [
+  { id: 'dashboard', icon: LayoutDashboard, label: 'Visão geral',  description: 'Métricas e alertas do dia' },
+  { id: 'chat',      icon: MessageCircle,   label: 'Atendimento',  description: 'Conversas no WhatsApp' },
+  { id: 'kanban',    icon: Kanban,          label: 'Produção',     description: 'Fila de pedidos' },
+  { id: 'drivers',   icon: Bike,            label: 'Motoboys',     description: 'Entregadores' },
+];
+
+export const NAV_SECONDARY: NavItem[] = [
+  { id: 'calendar',   icon: CalendarIcon, label: 'Agenda',     description: 'Pedidos por data' },
+  { id: 'ai-configs', icon: Bot,          label: 'Cérebro IA', description: 'Configurar assistente' },
+];
+
+export const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile', 'novidades']);
+export const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers']);
 
 /* ─── NavButton ───────────────────────────────────────────────── */
 interface NavButtonProps {
