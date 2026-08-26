@@ -5,6 +5,8 @@ export type AutomationCandidate = {
   phone?: string | null;
   conflict?: boolean;
   blocked?: boolean;
+  optedOut?: boolean;
+  employee?: boolean;
   birthday?: { day: number; month: number } | null;
   lastDeliveredAt?: string | null;
   lastConversationAt?: string | null;
@@ -46,6 +48,8 @@ function suppression(kind: AutomationKind, candidate: AutomationCandidate, rule:
   if (!candidate.phone?.trim()) return 'missing_phone';
   if (candidate.conflict) return 'identity_conflict';
   if (candidate.blocked) return 'blocked';
+  if (candidate.optedOut) return 'opt_out';
+  if (candidate.employee) return 'employee';
   if (!isWithinAutomationWindow(now, { start: rule.sendStart, end: rule.sendEnd }, rule.timezone)) return 'outside_window';
   const local = localParts(now, rule.timezone);
   if (kind === 'birthday') {
