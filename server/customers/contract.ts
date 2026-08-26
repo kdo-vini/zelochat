@@ -1,9 +1,16 @@
 /** Errors that prove the shared PDV contract is not deployed yet. */
-export function isMissingCustomerContractError(error: unknown): boolean {
-  const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return code === 'PGRST202' || code === '42703' || code === '42883'
-    || /could not find the function|column .*pessoa_id.*does not exist|function .*create_zelo_order.*does not exist/i.test(message);
+export function isMissingCustomerContractError(error: unknown, operation: 'write' | 'read' = 'write'): boolean {
+  const record = error && typeof error === 'object' ? error as Record<string, unknown> : null;
+  const code = String(record?.code ?? '');
+  const message = typeof record?.message === 'string' ? record.message : String(error ?? '');
+  if (operation === 'write') {
+    // Only PostgREST's exact missing-signature response is safe to retry. A
+    // generic SQL state can be an actual bug inside the RPC and must surface.
+    return code === 'PGRST202'
+      && /create_zelo_order/i.test(message)
+      && /p_pessoa_id/i.test(message);
+  }
+  return code === '42703' && /zelo_orders\.pessoa_id/i.test(message);
 }
 
 export type CustomerSource = 'pdv' | 'whatsapp' | 'zelomenu' | 'manual';

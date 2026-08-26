@@ -21,7 +21,7 @@ export async function getCanonicalOrder(empresaId: string, orderId: string): Pro
   const supabase = getServiceSupabase();
   let { data, error } = await supabase.from('zelo_orders')
     .select(CANONICAL_ORDER_SELECT).eq('empresa_id', empresaId).eq('id', orderId).maybeSingle();
-  if (error && isMissingCustomerContractError(error)) {
+  if (error && isMissingCustomerContractError(error, 'read')) {
     const legacy = await supabase.from('zelo_orders').select(LEGACY_CANONICAL_ORDER_SELECT).eq('empresa_id', empresaId).eq('id', orderId).maybeSingle();
     data = legacy.data; error = legacy.error;
   }

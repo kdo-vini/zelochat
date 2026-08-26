@@ -1,6 +1,10 @@
 import type { CustomerFilters, CustomerActivityState } from '../../src/types.js';
 
 const allowed = new Set(['q', 'activityState', 'hasPhone', 'tagId', 'birthdayMonth', 'cursor', 'limit']);
+function isCanonicalTimestamp(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
+    && new Date(value).toISOString() === value;
+}
 export function parseCustomerFilters(query: Record<string, unknown>): CustomerFilters {
   for (const key of Object.keys(query)) if (!allowed.has(key)) throw new Error(`Filtro não permitido: ${key}`);
   const filters: CustomerFilters = {};
@@ -33,7 +37,7 @@ export function decodeCustomerCursor(cursor: string | null | undefined): { updat
   let value: string;
   try { value = Buffer.from(cursor, 'base64url').toString('utf8'); } catch { throw new Error('Cursor inválido'); }
   const [updatedAt, id] = value.split('|');
-  if (!updatedAt || !id || Number.isNaN(new Date(updatedAt).getTime()) || !/^[A-Za-z0-9_-]{1,128}$/u.test(id)) throw new Error('Cursor inválido');
+  if (!updatedAt || !id || !isCanonicalTimestamp(updatedAt) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(id)) throw new Error('Cursor inválido');
   return { updatedAt, id };
 }
 
@@ -43,6 +47,6 @@ export function encodeTimelineCursor(occurredAt: string, kind: 'message' | 'orde
 export function decodeTimelineCursor(cursor: string | null | undefined): { occurredAt: string; kind: 'message' | 'order'; id: string } | null {
   if (!cursor || !/^[A-Za-z0-9_-]{8,300}$/u.test(cursor)) throw new Error('Cursor inválido');
   const [occurredAt, kind, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
-  if (!occurredAt || (kind !== 'message' && kind !== 'order') || !id || Number.isNaN(new Date(occurredAt).getTime())) throw new Error('Cursor inválido');
+  if (!occurredAt || (kind !== 'message' && kind !== 'order') || !id || !isCanonicalTimestamp(occurredAt) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(id)) throw new Error('Cursor inválido');
   return { occurredAt, kind, id };
 }

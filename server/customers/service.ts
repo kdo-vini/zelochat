@@ -13,18 +13,15 @@ export interface CustomerReadRepository {
 const defaultRepository: CustomerReadRepository = {
   async listPeople(empresaId, ownerUserId, filters, limit) {
     if (filters.q && /[(),.*%\\]/u.test(filters.q)) throw new Error('Busca contém caracteres reservados');
-    let query = getServiceSupabase().from('pessoas').select('id, nome, contato, tipo, updated_at, aniversario_dia, aniversario_mes, aniversario_ano').eq('id_usuario', ownerUserId).eq('tipo', 'cliente').order('updated_at', { ascending: false }).order('id', { ascending: false }).limit(Math.min(limit * 5, 500) + 1);
-    if (filters.q) query = query.or(`nome.ilike.%${filters.q}%,contato.ilike.%${filters.q}%`);
-    if (filters.hasPhone === true) query = query.not('contato', 'is', null);
-    if (filters.hasPhone === false) query = query.is('contato', null);
-    if (filters.birthdayMonth) query = query.eq('aniversario_mes', filters.birthdayMonth);
-    if (filters.tagId) {
-      const { data: tagged, error: tagError } = await getServiceSupabase().from('zelochat_person_tags').select('pessoa_id').eq('empresa_id', empresaId).eq('tag_id', filters.tagId);
-      if (tagError) throw tagError;
-      query = query.in('id', (tagged ?? []).map((row) => row.pessoa_id));
-    }
-    const cursor = decodeCustomerCursor(filters.cursor); if (cursor) query = query.or(`updated_at.lt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.lt.${cursor.id})`);
-    const { data, error } = await query; if (error) throw error; return (data ?? []).map((row) => ({ ...row, empresa_id: empresaId }));
+    const cursor = decodeCustomerCursor(filters.cursor);
+    const { data, error } = await getServiceSupabase().rpc('list_zelochat_customers', {
+      p_empresa_id: empresaId, p_owner_user_id: ownerUserId, p_search: filters.q ?? null,
+      p_activity_state: filters.activityState ?? null, p_has_phone: filters.hasPhone ?? null,
+      p_tag_id: filters.tagId ?? null, p_birthday_month: filters.birthdayMonth ?? null,
+      p_cursor_updated_at: cursor?.updatedAt ?? null, p_cursor_id: cursor?.id ?? null,
+      p_inactive_after_days: 30, p_limit: limit + 1,
+    });
+    if (error) throw error; return (data ?? []).map((row) => ({ ...row, empresa_id: empresaId }));
   },
   async countOrders(empresaId, personIds) {
     if (!personIds.length) return {};
@@ -40,12 +37,12 @@ const defaultRepository: CustomerReadRepository = {
 };
 
 export async function listCustomers(empresaId: string, ownerUserId: string, filters: CustomerFilters, repository = defaultRepository): Promise<CustomerListResult> {
-  const limit = Math.min(filters.limit ?? 30, 100); const rows = await repository.listPeople(empresaId, ownerUserId, filters, limit); const ids = rows.map((row) => row.id); const orders = await repository.countOrders(empresaId, ids); const conversations = await repository.lastConversations(empresaId, ids);
-  const customers = rows.map((row) => { const order = orders[row.id] ?? { count: 0, total: 0, lastDeliveredAt: null }; const activity = resolveCustomerActivity({ lastDeliveredOrderAt: order.lastDeliveredAt, lastConversationAt: conversations[row.id] ?? null }); return { id: row.id, name: row.nome || 'Cliente', phone: row.contato ?? null, hasWhatsApp: Boolean(row.contato), lastActivityAt: activity.lastActivityAt, activityState: activity.state, totalOrders: order.count, totalValue: order.total, tags: [] }; }).filter((customer) => !filters.activityState || customer.activityState === filters.activityState);
+  const limit = Math.min(filters.limit ?? 30, 100); const rows = await repository.listPeople(empresaId, ownerUserId, filters, limit); const ids = rows.map((row) => row.id); const aggregated = rows.some((row) => row.total_orders != null); const orders = aggregated ? {} : await repository.countOrders(empresaId, ids); const conversations = aggregated ? {} : await repository.lastConversations(empresaId, ids);
+  const customers = rows.map((row) => { const order = orders[row.id] ?? { count: Number(row.total_orders ?? 0), total: Number(row.total_value ?? 0), lastDeliveredAt: null }; const activity = row.activity_state ? { lastActivityAt: row.last_activity_at ?? null, state: row.activity_state } : resolveCustomerActivity({ lastDeliveredOrderAt: order.lastDeliveredAt, lastConversationAt: conversations[row.id] ?? null }); return { id: row.id, name: row.nome || 'Cliente', phone: row.contato ?? null, hasWhatsApp: row.has_whatsapp ?? Boolean(row.contato), lastActivityAt: activity.lastActivityAt, activityState: activity.state, totalOrders: order.count, totalValue: order.total, tags: [] }; }).filter((customer) => !filters.activityState || customer.activityState === filters.activityState);
   const page = customers.slice(0, limit); const hasMore = customers.length > limit; const lastRow = rows[page.length - 1]; return { customers: page, hasMore, nextCursor: hasMore && lastRow ? encodeCustomerCursor(lastRow.updated_at, lastRow.id) : null };
 }
 
-export async function getCustomerDetail(empresaId: string, ownerUserId: string, personId: string, repository = defaultRepository): Promise<CustomerDetail | null> { const row = await repository.getPerson(empresaId, ownerUserId, personId); if (!row) return null; const listed = await listCustomers(empresaId, ownerUserId, { q: row.nome, limit: 100 }, repository); const summary = listed.customers.find((item) => item.id === personId) ?? { id: personId, name: row.nome ?? 'Cliente', phone: row.contato ?? null, hasWhatsApp: Boolean(row.contato), lastActivityAt: null, activityState: 'inactive' as const, totalOrders: 0, totalValue: 0, tags: [] }; return { ...summary, aniversario: row.aniversario_mes ? { day: Number(row.aniversario_dia ?? 0), month: Number(row.aniversario_mes), year: row.aniversario_ano ? Number(row.aniversario_ano) : null } : null, internalNotes: null, aiSummary: null, whatsappBlockedAt: null, whatsappBlockReason: null, lastManualContactAt: null, sessions: [] }; }
+export async function getCustomerDetail(empresaId: string, ownerUserId: string, personId: string, repository = defaultRepository): Promise<CustomerDetail | null> { const row = await repository.getPerson(empresaId, ownerUserId, personId); if (!row) return null; const listed = await listCustomers(empresaId, ownerUserId, { limit: 100 }, repository); const summary = listed.customers.find((item) => item.id === personId) ?? { id: personId, name: row.nome ?? 'Cliente', phone: row.contato ?? null, hasWhatsApp: Boolean(row.contato), lastActivityAt: null, activityState: 'inactive' as const, totalOrders: 0, totalValue: 0, tags: [] }; return { ...summary, aniversario: row.aniversario_mes ? { day: Number(row.aniversario_dia ?? 0), month: Number(row.aniversario_mes), year: row.aniversario_ano ? Number(row.aniversario_ano) : null } : null, internalNotes: null, aiSummary: null, whatsappBlockedAt: null, whatsappBlockReason: null, lastManualContactAt: null, sessions: [] }; }
 
 export function customerReadRepository(): CustomerReadRepository { return defaultRepository; }
 export type { CustomerTimelineEntry };
@@ -68,12 +65,18 @@ export async function listCustomerOrders(empresaId: string, personId: string, cu
   const { data, error } = await query; if (error) throw error; const rows = data ?? []; const hasMore = rows.length > limit; const last = rows[limit - 1]; return { items: rows.slice(0, limit), nextCursor: hasMore && last ? encodeTimelineCursor(last.created_at, 'order', last.id) : null, hasMore };
 }
 
-export async function listCustomerTimeline(empresaId: string, personId: string, cursor: string | null, limit = 30) {
-  const [messages, orders] = await Promise.all([listCustomerMessages(empresaId, personId, cursor, limit), listCustomerOrders(empresaId, personId, cursor, limit)]);
-  const items = [
-    ...messages.items.map((row) => ({ kind: 'message', id: row.id, occurredAt: row.sent_at, sessionId: row.session_id, direction: row.role === 'user' ? 'inbound' : 'outbound', preview: String(row.content ?? '').slice(0, 240) })),
-    ...orders.items.map((row) => ({ kind: 'order', id: row.id, occurredAt: row.created_at, status: row.status, total: Number(row.total ?? 0) })),
-  ].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).slice(0, limit);
-  const last = items[items.length - 1];
-  return { items, nextCursor: last ? encodeTimelineCursor(last.occurredAt, last.kind as 'message' | 'order', last.id) : null, hasMore: messages.hasMore || orders.hasMore };
+export async function listCustomerTimeline(empresaId: string, ownerUserId: string, personId: string, cursor: string | null, limit = 30) {
+  const decoded = cursor ? decodeTimelineCursor(cursor) : null;
+  const { data, error } = await getServiceSupabase().rpc('list_zelochat_customer_timeline', {
+    p_empresa_id: empresaId, p_owner_user_id: ownerUserId, p_pessoa_id: personId,
+    p_after_at: decoded?.occurredAt ?? null, p_after_kind: decoded?.kind ?? null,
+    p_after_id: decoded?.id ?? null, p_limit: Math.min(limit, 100) + 1,
+  });
+  if (error) throw error;
+  const rows = data ?? []; const hasMore = rows.length > limit; const page = rows.slice(0, limit);
+  const items = page.map((row) => row.kind === 'message'
+    ? { kind: 'message' as const, id: row.id, occurredAt: row.occurred_at, sessionId: row.session_id, direction: row.direction, preview: row.preview }
+    : { kind: 'order' as const, id: row.id, occurredAt: row.occurred_at, status: row.order_status, total: Number(row.order_total ?? 0) });
+  const last = page[page.length - 1];
+  return { items, nextCursor: hasMore && last ? encodeTimelineCursor(last.occurred_at, last.kind, last.id) : null, hasMore };
 }

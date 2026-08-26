@@ -413,6 +413,20 @@ begin
 end;
 $$;
 
+do $$
+begin
+  if to_regclass('public.zelochat_person_match_conflicts_open_identity_uq') is null then
+    raise exception 'missing atomic open-conflict unique index';
+  end if;
+  if not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname in ('record_zelochat_person_match_conflict', 'list_zelochat_customers', 'list_zelochat_customer_timeline')
+  ) then
+    raise exception 'missing CRM server RPC contract';
+  end if;
+end;
+$$;
+
 rollback;
 
 select 'customer_relationship_authz verification rolled back successfully' as result;
