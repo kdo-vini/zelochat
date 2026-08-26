@@ -1,4 +1,5 @@
 import { supabaseCustomerIdentityRepository, type CustomerIdentityRepository, type CustomerIdentityResult } from './repository.js';
+import type { CustomerSource } from './contract.js';
 
 export function normalizeWhatsAppPhone(value: string | null | undefined): string | null {
   const digits = String(value ?? '').replace(/\D/g, '');
@@ -18,7 +19,7 @@ export interface EnsureCustomerForSessionInput {
   jid: string;
   phone?: string | null;
   observedName?: string | null;
-  source?: string;
+  source?: CustomerSource;
   persistPessoaId?: (pessoaId: string | null) => Promise<void>;
 }
 
@@ -37,15 +38,16 @@ export async function ensureCustomerForSession(
     return result;
   }
   try {
-    const result = await (dependencies.repository ?? supabaseCustomerIdentityRepository).ensureFromWhatsApp({
+    const repository = dependencies.repository ?? supabaseCustomerIdentityRepository;
+    const result = await repository.ensureFromWhatsApp({
       ownerUserId: input.ownerUserId,
       phone,
       jid: input.jid,
       observedName: input.observedName ?? null,
-      source: input.source ?? 'zelochat_webhook',
+      source: input.source ?? 'whatsapp',
     });
-    if (result.status === 'conflict' && dependencies.repository?.recordConflict) {
-      await dependencies.repository.recordConflict({
+    if (result.status === 'conflict' && repository.recordConflict) {
+      await repository.recordConflict({
         empresaId: input.empresaId,
         ownerUserId: input.ownerUserId,
         phone,
@@ -54,7 +56,7 @@ export async function ensureCustomerForSession(
         reason: result.reason ?? 'Mais de uma pessoa corresponde ao telefone',
       });
     }
-    await input.persistPessoaId?.(result.status === 'linked' || result.status === 'created' ? result.pessoaId : null);
+    if (result.status === 'linked' || result.status === 'created') await input.persistPessoaId?.(result.pessoaId);
     return result;
   } catch (error) {
     // CRM is enrichment. A provider/database failure must never drop a message.
@@ -71,7 +73,8 @@ export async function resolveCustomerForOrder(input: {
   phone?: string | null;
   jid?: string | null;
   observedName?: string | null;
+  source?: CustomerSource;
 }, dependencies: EnsureCustomerForSessionDependencies = {}): Promise<CustomerIdentityResult> {
   const jid = input.jid ?? `${String(input.phone ?? '').replace(/\D/g, '')}@s.whatsapp.net`;
-  return ensureCustomerForSession({ ...input, jid, source: 'zelo_order' }, dependencies);
+  return ensureCustomerForSession({ ...input, jid, source: input.source ?? 'manual' }, dependencies);
 }

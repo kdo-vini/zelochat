@@ -45,6 +45,7 @@ import {
   type ZeloMenuCartState,
 } from '../src/domain/zelomenuCart.js';
 import { resolveCustomerForOrder } from './customers/identity.js';
+import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
 
 type SessionRow = {
   id: string;
@@ -1018,6 +1019,7 @@ async function createAcceptedOrderRecord(input: {
         ownerUserId,
         phone: input.customer.phone,
         observedName: input.customer.name,
+        source: 'zelomenu',
       });
       pessoaId = identity.status === 'linked' || identity.status === 'created' ? identity.pessoaId : null;
     } catch (error) {
@@ -1025,7 +1027,7 @@ async function createAcceptedOrderRecord(input: {
       console.error('[ZeloMenu] customer identity unavailable; preserving order snapshot:', error);
     }
   }
-  const { data, error } = await getServiceSupabase().rpc('create_zelo_order', {
+  const { data, error } = await createCanonicalOrderWithOptionalPerson(getServiceSupabase(), {
     p_session_id: input.sessionId,
     p_expected_revision: input.expectedRevision,
     p_idempotency_key: `zelomenu-${input.sessionId}`,

@@ -1108,16 +1108,15 @@ export async function ensureSession(params: {
   const ownerUserId = await getEmpresaUserId(params.empresaId);
   if (ownerUserId) {
     // FIX 2026-08-25: identity enrichment is best-effort; failures/conflicts
-    // preserve the session and message with pessoa_id NULL.
+    // preserve the session and message with its existing pessoa_id.
     const identity = await ensureCustomerForSession({
       empresaId: params.empresaId,
       ownerUserId,
       jid: params.jid,
       phone: params.customerPhone ?? phoneFromJid(params.jid),
       observedName: params.customerName ?? null,
-      persistPessoaId: async (resolved) => { pessoaId = resolved; },
     });
-    if (identity.status !== 'linked' && identity.status !== 'created') pessoaId = null;
+    if (identity.status === 'linked' || identity.status === 'created') pessoaId = identity.pessoaId;
   }
   const formattedPhone = params.customerPhone ?? formatPhone(phoneFromJid(params.jid));
   const preferredNameCandidates = [

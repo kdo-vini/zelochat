@@ -4,6 +4,8 @@ import { getOrderTransitionErrorMessage } from '../src/domain/orderTransitionErr
 import type { Order } from '../src/types.js';
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { resolveCustomerForOrder } from './customers/identity.js';
+import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
+import { isMissingCustomerContractError } from './customers/contract.js';
 
 export const LEGACY_CANONICAL_ORDER_SELECT = [
   'id', 'source', 'revision', 'status', 'total', 'observations', 'created_at',
@@ -16,8 +18,13 @@ export const LEGACY_CANONICAL_ORDER_SELECT = [
 ].join(', ');
 
 export async function getCanonicalOrder(empresaId: string, orderId: string): Promise<Order | null> {
-  const { data, error } = await getServiceSupabase().from('zelo_orders')
+  const supabase = getServiceSupabase();
+  let { data, error } = await supabase.from('zelo_orders')
     .select(CANONICAL_ORDER_SELECT).eq('empresa_id', empresaId).eq('id', orderId).maybeSingle();
+  if (error && isMissingCustomerContractError(error)) {
+    const legacy = await supabase.from('zelo_orders').select(LEGACY_CANONICAL_ORDER_SELECT).eq('empresa_id', empresaId).eq('id', orderId).maybeSingle();
+    data = legacy.data; error = legacy.error;
+  }
   if (error) throw error;
   return data ? canonicalRowToOrder(data as unknown as CanonicalOrderRow) : null;
 }
@@ -168,7 +175,7 @@ export async function createManualZeloOrder(input: ManualOrderInput): Promise<Or
   let pessoaId: string | null = null;
   const ownerUserId = await getEmpresaUserId(input.empresaId);
   if (ownerUserId) {
-    const identity = await resolveCustomerForOrder({ empresaId: input.empresaId, ownerUserId, phone: input.customerPhone, observedName: input.customerName });
+    const identity = await resolveCustomerForOrder({ empresaId: input.empresaId, ownerUserId, phone: input.customerPhone, observedName: input.customerName, source: 'manual' });
     pessoaId = identity.status === 'linked' || identity.status === 'created' ? identity.pessoaId : null;
   }
 
@@ -202,7 +209,7 @@ export async function createManualZeloOrder(input: ManualOrderInput): Promise<Or
     },
   };
 
-  const { data, error } = await supabase.rpc('create_zelo_order', {
+  const { data, error } = await createCanonicalOrderWithOptionalPerson(supabase, {
     p_session_id: null,
     p_expected_revision: 0,
     p_idempotency_key: idempotencyKey,

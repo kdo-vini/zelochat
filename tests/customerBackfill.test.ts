@@ -7,6 +7,7 @@ async function main() {
   const deps: BackfillDependencies = {
     fetchSessions: async () => rows,
     resolve: async () => ({ status: 'linked', pessoaId: 'p1' }),
+    previewResolve: async () => ({ status: 'linked', pessoaId: 'p1' }),
     updateSession: async () => { updated++; },
     loadCheckpoint: async () => ({ cursor: null, counts: { linked: 0, created: 0, incomplete: 0, conflict: 0, failed: 0 } }),
     saveCheckpoint: async () => { saved++; },

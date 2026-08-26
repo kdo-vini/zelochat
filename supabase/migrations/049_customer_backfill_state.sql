@@ -2,7 +2,7 @@ begin;
 
 create table if not exists public.zelochat_customer_backfill_state (
   empresa_id uuid primary key references public.empresa_perfil(id) on delete cascade,
-  cursor timestamptz,
+  cursor text,
   counts jsonb not null default '{"linked":0,"created":0,"incomplete":0,"conflict":0,"failed":0}'::jsonb,
   updated_at timestamptz not null default now()
 );

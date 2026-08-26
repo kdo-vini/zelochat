@@ -8,6 +8,7 @@ export interface BackfillCheckpoint { cursor: string | null; counts: BackfillCou
 export interface BackfillDependencies {
   fetchSessions(empresaId: string, cursor: string | null, limit: number): Promise<BackfillRow[]>;
   resolve(row: BackfillRow): Promise<{ status: BackfillOutcome; pessoaId: string | null }>;
+  previewResolve?(row: BackfillRow): Promise<{ status: BackfillOutcome; pessoaId: string | null }>;
   updateSession(id: string, pessoaId: string | null): Promise<void>;
   loadCheckpoint(empresaId: string): Promise<BackfillCheckpoint>;
   saveCheckpoint(empresaId: string, checkpoint: BackfillCheckpoint): Promise<void>;
@@ -31,7 +32,9 @@ export async function runCustomerBackfill(input: {
   let counts = checkpoint.counts;
   for (const row of rows) {
     try {
-      const result = await input.dependencies.resolve(row);
+      const result = input.dryRun
+        ? await (input.dependencies.previewResolve?.(row) ?? Promise.resolve({ status: 'incomplete' as const, pessoaId: null }))
+        : await input.dependencies.resolve(row);
       counts = mergeCounts(counts, { ...emptyCounts(), [result.status]: 1 });
       if (!input.dryRun && (result.status === 'linked' || result.status === 'created')) {
         await input.dependencies.updateSession(row.id, result.pessoaId);
@@ -65,8 +68,19 @@ export function createSupabaseBackfillDependencies(empresaId: string): BackfillD
     async resolve(row) {
       const owner = await getEmpresaUserId(empresaId);
       if (!owner) return { status: 'incomplete', pessoaId: null };
-      const result = await resolveCustomerForOrder({ empresaId, ownerUserId: owner, phone: row.customer_phone, observedName: row.customer_name });
+      const result = await resolveCustomerForOrder({ empresaId, ownerUserId: owner, phone: row.customer_phone, observedName: row.customer_name, source: 'pdv' });
       return { status: result.status, pessoaId: result.pessoaId };
+    },
+    async previewResolve(row) {
+      const owner = await getEmpresaUserId(empresaId);
+      if (!owner || !row.customer_phone) return { status: 'incomplete', pessoaId: null };
+      const phone = row.customer_phone.replace(/\D/g, '');
+      const { data, error } = await getServiceSupabase().from('pessoas').select('id, tipo').eq('id_usuario', owner).eq('contato', phone).limit(2);
+      if (error) throw error;
+      const customers = (data ?? []).filter((candidate) => candidate.tipo === 'cliente');
+      if (customers.length === 1) return { status: 'linked', pessoaId: customers[0].id };
+      if (customers.length > 1) return { status: 'conflict', pessoaId: null };
+      return { status: 'incomplete', pessoaId: null };
     },
     async updateSession(id, pessoaId) {
       const { error } = await getServiceSupabase().from('zelochat_sessions').update({ pessoa_id: pessoaId }).eq('id', id);
