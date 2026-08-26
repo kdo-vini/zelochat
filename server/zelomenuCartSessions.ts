@@ -5,6 +5,7 @@ import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zel
 import { addAssistantMessage } from './messageHandler.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
+import { getCrmRolloutFlags } from './customers/rollout.js';
 import { sendTextMessage } from './whatsapp.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
@@ -1993,6 +1994,7 @@ export async function listAbandonedCartCandidates(params: {
  */
 export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sent' | 'skipped' | 'failed'> {
   if (sessionRow.context !== 'whatsapp_order') return 'skipped';
+  if (!(await getCrmRolloutFlags(sessionRow.empresa_id)).automations) return 'skipped';
 
   const metadata = parseMetadata(sessionRow.metadata);
   if (!isCartEligibleForAbandonedRecovery({

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Filter, Plus, Search, UserRound } from 'lucide-react';
 import { useCustomers } from '../../hooks/useCustomers';
 import { countActiveCustomerFilters, createCustomer, type CustomerFilters, type CustomerPatch, type CustomerSummary } from '../../services/customerApi';
@@ -10,7 +10,7 @@ import type { CustomerMessagePermission } from '../../domain/customerMessages';
 import { CampaignsTab } from '../customers/CampaignsTab';
 import { AutomationsTab } from '../customers/AutomationsTab';
 
-interface Props { token: string | null; onOpenAtendimento?: (sessionId: string) => void; customerPermissions?: CustomerMessagePermission; canManageCustomers?: boolean; }
+interface Props { token: string | null; onOpenAtendimento?: (sessionId: string) => void; customerPermissions?: CustomerMessagePermission & { campaignsEnabled?: boolean; automationsEnabled?: boolean }; canManageCustomers?: boolean; }
 
 export function CustomersView({ token, onOpenAtendimento, customerPermissions = { pessoasVisualizar: false, clientesComunicar: false }, canManageCustomers = false }: Props) {
   const [filters, setFilters] = useState<CustomerFilters>({});
@@ -20,6 +20,9 @@ export function CustomersView({ token, onOpenAtendimento, customerPermissions = 
   const [area, setArea] = useState<'customers' | 'campaigns' | 'automations'>('customers');
   const { customers, loading, loadingMore, error, hasMore, total, refresh, loadMore } = useCustomers(token, filters);
   const activeFilterCount = countActiveCustomerFilters(filters);
+  const campaignsEnabled = customerPermissions.campaignsEnabled === true;
+  const automationsEnabled = customerPermissions.automationsEnabled === true;
+  useEffect(() => { if (area === 'campaigns' && !campaignsEnabled) setArea('customers'); if (area === 'automations' && !automationsEnabled) setArea('customers'); }, [area, campaignsEnabled, automationsEnabled]);
 
   return (
     <section className="relative flex min-h-0 flex-1 flex-col bg-[var(--color-canvas)]" aria-label="Clientes">
@@ -30,8 +33,8 @@ export function CustomersView({ token, onOpenAtendimento, customerPermissions = 
         </div>
         <nav className="order-2 flex rounded-lg bg-[var(--color-surface-muted)] p-1" aria-label="Área de clientes">
           <button type="button" onClick={() => setArea('customers')} aria-current={area === 'customers' ? 'page' : undefined} className={`min-h-[44px] rounded-md px-3 text-[12px] ${area === 'customers' ? 'bg-[var(--color-surface)] font-semibold text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)]'}`}>Clientes</button>
-          <button type="button" onClick={() => setArea('campaigns')} aria-current={area === 'campaigns' ? 'page' : undefined} className={`min-h-[44px] rounded-md px-3 text-[12px] ${area === 'campaigns' ? 'bg-[var(--color-surface)] font-semibold text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)]'}`}>Campanhas</button>
-          <button type="button" onClick={() => setArea('automations')} aria-current={area === 'automations' ? 'page' : undefined} className={`min-h-[44px] rounded-md px-3 text-[12px] ${area === 'automations' ? 'bg-[var(--color-surface)] font-semibold text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)]'}`}>Automações</button>
+          {campaignsEnabled && <button type="button" onClick={() => setArea('campaigns')} aria-current={area === 'campaigns' ? 'page' : undefined} className={`min-h-[44px] rounded-md px-3 text-[12px] ${area === 'campaigns' ? 'bg-[var(--color-surface)] font-semibold text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)]'}`}>Campanhas</button>}
+          {automationsEnabled && <button type="button" onClick={() => setArea('automations')} aria-current={area === 'automations' ? 'page' : undefined} className={`min-h-[44px] rounded-md px-3 text-[12px] ${area === 'automations' ? 'bg-[var(--color-surface)] font-semibold text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)]'}`}>Automações</button>}
         </nav>
         {area !== 'customers' ? null : <>
         <label className="order-3 flex min-h-[44px] w-full items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 md:order-none md:w-[240px]">
@@ -42,7 +45,7 @@ export function CustomersView({ token, onOpenAtendimento, customerPermissions = 
         <button type="button" onClick={() => setFilterOpen((open) => !open)} aria-expanded={filterOpen} aria-haspopup="dialog" className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-[var(--color-line)] px-3 text-[13px] font-medium text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]"><Filter className="h-4 w-4" aria-hidden="true" />Filtros{activeFilterCount ? ` (${activeFilterCount})` : ''}</button>
         <button type="button" onClick={() => setCreating(true)} className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[var(--color-brand)] px-3 text-[13px] font-medium text-white"><Plus className="h-4 w-4" aria-hidden="true" />Novo cliente</button></>}
       </header>
-      {area === 'campaigns' ? <CampaignsTab token={token} canCommunicate={customerPermissions.clientesComunicar} /> : area === 'automations' ? <AutomationsTab token={token} canCommunicate={customerPermissions.clientesComunicar} /> : <>
+      {area === 'campaigns' && campaignsEnabled ? <CampaignsTab token={token} canCommunicate={customerPermissions.clientesComunicar} /> : area === 'automations' && automationsEnabled ? <AutomationsTab token={token} canCommunicate={customerPermissions.clientesComunicar} /> : <>
       {filterOpen && <><div className="fixed inset-0 z-10 bg-black/30 md:hidden" onClick={() => setFilterOpen(false)} aria-hidden="true" /><CustomerFiltersPanel filters={filters} onChange={setFilters} onClose={() => setFilterOpen(false)} /></>}
       {error && <div role="alert" className="flex items-center justify-between gap-3 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-[13px] text-[var(--color-alert)]"><span>{error}</span><button type="button" onClick={() => void refresh()} className="min-h-[44px] rounded-lg px-3 font-medium text-[var(--color-brand-deep)]">Tentar novamente</button></div>}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">

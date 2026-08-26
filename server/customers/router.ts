@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { AccessControlError, requireActorPermission, type ActorAccessContext } from '../accessControl.js';
-import { requireCrmFeature } from './rollout.js';
+import { crmFeatureErrorStatus, requireCrmFeature } from './rollout.js';
 import { getServiceSupabase, uploadMediaForSend } from '../supabase.js';
 import { sendTextMessage, sendMediaMessage, sendWhatsAppAudio } from '../whatsapp.js';
 import { createAssistantMessageIntent, markAssistantMessageSendFailed, markAssistantMessageSendSucceeded } from '../messageHandler.js';
@@ -12,7 +12,7 @@ export const customerRouter = Router();
 async function actor(req: Request): Promise<ActorAccessContext> { await requireCrmFeature(req, 'crm'); return requireActorPermission(req, 'pessoas.visualizar'); }
 function sendCustomerReadError(res: Response, cause: unknown): void {
   const code = cause instanceof AccessControlError ? cause.code : 'CUSTOMER_READ_FAILED';
-  const status = code === 'UNAUTHORIZED' ? 401 : code === 'FORBIDDEN' ? 403 : 400;
+  const status = crmFeatureErrorStatus(cause) !== 400 ? crmFeatureErrorStatus(cause) : (code === 'UNAUTHORIZED' ? 401 : code === 'FORBIDDEN' ? 403 : 400);
   res.status(status).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para visualizar clientes.' : 'Não foi possível carregar os dados dos clientes.' });
 }
 
@@ -80,5 +80,5 @@ customerRouter.post('/api/customers/:personId/messages', async (req, res) => {
       await markAssistantMessageSendFailed(access.empresaId, intent.id, 'Falha ao enviar a mensagem.').catch(() => undefined);
       res.status(502).json({ code: 'CUSTOMER_SEND_FAILED', message: 'Não foi possível enviar a mensagem. Tente novamente.' , dbMessageId: intent.id, status: 'failed' });
     }
-  } catch (error) { const code = error instanceof Error ? error.message : 'CUSTOMER_SEND_FAILED'; res.status(code === 'FORBIDDEN' ? 403 : 400).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para enviar mensagens.' : 'Não foi possível enviar a mensagem.' }); }
+  } catch (error) { const code = error instanceof Error ? error.message : 'CUSTOMER_SEND_FAILED'; const status = crmFeatureErrorStatus(error) !== 400 ? crmFeatureErrorStatus(error) : (code === 'FORBIDDEN' ? 403 : 400); res.status(status).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para enviar mensagens.' : 'Não foi possível enviar a mensagem.' }); }
 });

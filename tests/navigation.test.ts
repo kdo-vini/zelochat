@@ -10,7 +10,7 @@ await runSuite('navigation configuration', [
   {
     name: 'uses one definition for the desktop operation order',
     run: () => {
-      const desktop = getDesktopNavigation('restaurant');
+      const desktop = getDesktopNavigation('restaurant', { pessoas: { visualizar: true }, rollout: { crm: true } });
       assert(
         JSON.stringify(ids(desktop.primary)) === JSON.stringify(['dashboard', 'chat', 'customers', 'kanban', 'drivers']),
         'desktop operation order includes Clientes between Atendimento and Produção',
@@ -20,7 +20,7 @@ await runSuite('navigation configuration', [
   {
     name: 'keeps mobile restaurant navigation to four destinations',
     run: () => {
-      const mobile = getMobileNavigation('restaurant');
+      const mobile = getMobileNavigation('restaurant', { pessoas: { visualizar: true }, rollout: { crm: true } });
       assert(
         JSON.stringify(ids(mobile.primary)) === JSON.stringify(['chat', 'customers', 'kanban']),
         'restaurant mobile primary tabs are Atendimento, Clientes and Produção',
@@ -31,7 +31,7 @@ await runSuite('navigation configuration', [
   {
     name: 'keeps mobile general navigation to three destinations',
     run: () => {
-      const mobile = getMobileNavigation('general');
+      const mobile = getMobileNavigation('general', { pessoas: { visualizar: true }, rollout: { crm: true } });
       assert(JSON.stringify(ids(mobile.primary)) === JSON.stringify(['chat', 'customers']), 'general mobile primary tabs are Atendimento and Clientes');
       assert(!mobile.primary.some((item) => item.id === 'kanban'), 'Produção is hidden in general mode');
     },
@@ -40,7 +40,7 @@ await runSuite('navigation configuration', [
     name: 'requires customer visibility permission',
     run: () => {
       const withoutPermission = getMobileNavigation('restaurant', { pessoas: { visualizar: false } });
-      const withPermission = getMobileNavigation('restaurant', { pessoas: { visualizar: true } });
+      const withPermission = getMobileNavigation('restaurant', { pessoas: { visualizar: true }, rollout: { crm: true } });
       assert(!withoutPermission.primary.some((item) => item.id === 'customers'), 'Clientes is hidden without pessoas.visualizar');
       assert(withPermission.primary.some((item) => item.id === 'customers'), 'Clientes is visible with pessoas.visualizar');
     },

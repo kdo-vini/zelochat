@@ -7,6 +7,8 @@ import {
   CrmFeatureDisabledError,
   isCrmFeatureEnabled,
   normalizeCrmRolloutFlags,
+  requiredOutboundFeature,
+  isOutboundJobAllowed,
 } from '../server/customers/rollout.js';
 import {
   aggregateCrmMetricRows,
@@ -14,6 +16,8 @@ import {
   sanitizeMetricPatch,
   type CrmMetricRow,
 } from '../server/customers/metrics.js';
+import { OutboundWorker } from '../server/outbound/worker.js';
+import { OutboundQueue, type OutboundJobStore } from '../server/outbound/queue.js';
 
 const migration = readFileSync(resolve('supabase/migrations/057_customer_crm_rollout.sql'), 'utf8');
 
@@ -24,6 +28,22 @@ assert.equal(isCrmFeatureEnabled({ crm: true, campaigns: false, automations: fal
 assert.equal(isCrmFeatureEnabled({ crm: true, campaigns: false, automations: false }, 'campaigns'), false);
 assert.deepEqual(normalizeCrmRolloutFlags({ crm_enabled: true, campaigns_enabled: 1 }), { crm: true, campaigns: false, automations: false });
 assert.equal(new CrmFeatureDisabledError('campaigns').code, 'CRM_FEATURE_DISABLED');
+assert.equal(requiredOutboundFeature({ jobType: 'campaign' }), 'campaigns');
+assert.equal(requiredOutboundFeature({ jobType: 'automation' }), 'automations');
+assert.equal(isOutboundJobAllowed({ crm: true, campaigns: true, automations: false }, { jobType: 'campaign' }), true);
+assert.equal(isOutboundJobAllowed({ crm: true, campaigns: false, automations: true }, { jobType: 'campaign' }), false);
+assert.equal(isOutboundJobAllowed({ crm: false, campaigns: true, automations: true }, { jobType: 'automation' }), false);
+
+let deferred = 0; let sent = 0;
+const workerStore: OutboundJobStore = {
+  async insert(input) { return { ...input, id: 'job', status: 'queued', attempts: 0 }; },
+  async claim() { return { id: 'job', empresaId: 'e', instanceKey: 'i', jobType: 'campaign', campaignId: 'c', idempotencyKey: 'k', phone: '5511999999999', text: 'oi', status: 'sending', attempts: 3 }; },
+  async markSent() { sent++; }, async markFailed() {}, async releaseExpired() {},
+  async defer() { deferred++; },
+};
+assert.equal(await new OutboundWorker({ queue: new OutboundQueue(workerStore), getRolloutFlags: async () => ({ crm: true, campaigns: false, automations: true }), getStatus: async () => { throw new Error('provider should not be called'); }, send: async () => { sent++; return 'message'; } }).runOnce('worker'), false);
+assert.equal(deferred, 1);
+assert.equal(sent, 0);
 
 for (const key of CRM_METRIC_KEYS) assert.equal(typeof sanitizeMetricPatch({ [key]: 2 })[key], 'number');
 assert.deepEqual(sanitizeMetricPatch({ content: 20, phone: 1, jid: 1, jobs_sent: 2 }), { jobs_sent: 2 });

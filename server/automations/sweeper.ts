@@ -30,6 +30,7 @@ export async function runAutomationSweep(deps: AutomationSweepDependencies): Pro
 }
 
 export async function persistAutomationDispatch(rule: AutomationRule, dispatch: EvaluatedDispatch): Promise<void> {
+  if (!(await getCrmRolloutFlags(rule.empresaId)).automations) return;
   const db = getServiceSupabase();
   const { data, error } = await db.from('zelochat_automation_dispatches').upsert({ empresa_id: rule.empresaId, rule_id: rule.id, pessoa_id: dispatch.pessoaId, event_key: dispatch.eventKey, status: dispatch.status, message: dispatch.message, phone_snapshot: dispatch.phone, suppression_reason: dispatch.suppressionReason ?? null }, { onConflict: 'rule_id,event_key', ignoreDuplicates: true }).select('id,status').maybeSingle();
   if (error) throw error;

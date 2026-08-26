@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { CrmFeatureDisabledError } from './rollout.js';
 
 export const CUSTOMER_MUTATION_FIELDS = ['name', 'phones', 'birthday', 'notes', 'tags', 'whatsappBlocked'] as const;
 export type CustomerMutationField = (typeof CUSTOMER_MUTATION_FIELDS)[number];
@@ -110,6 +111,7 @@ export interface CustomerRouterDependencies {
 }
 
 function sendMutationError(res: Response, cause: unknown): void {
+  if (cause instanceof CrmFeatureDisabledError) { res.status(404).json({ code: cause.code, message: 'Clientes ainda não está disponível para esta empresa.' }); return; }
   const mapped = mapCustomerMutationError({ code: cause instanceof Error ? cause.message : null });
   const status = mapped.code === 'FORBIDDEN' ? 403 : mapped.code === 'NOT_FOUND' ? 404 : mapped.code === 'CUSTOMER_OPEN_BALANCE' ? 409 : 400;
   res.status(status).json(mapped);

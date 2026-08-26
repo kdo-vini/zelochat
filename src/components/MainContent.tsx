@@ -61,7 +61,7 @@ interface Props {
   pendingOrderFocus: { request: OrderFocusRequest; key: number } | null;
   handleNavigateToKanban: () => void;
   onOpenAtendimento: (sessionId: string) => void;
-  customerPermissions: { pessoasVisualizar: boolean; clientesComunicar: boolean };
+  customerPermissions: { pessoasVisualizar: boolean; clientesComunicar: boolean; campaignsEnabled: boolean; automationsEnabled: boolean };
   canManageCustomers: boolean;
   // AI configs
   triggers: any[];

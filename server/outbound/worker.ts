@@ -2,6 +2,7 @@ import { getServiceSupabase } from '../supabase.js';
 import { getInstanceForEmpresa } from '../instanceManager.js';
 import { fetchInstanceConnectionState, sendTextMessage } from '../whatsapp.js';
 import { OutboundQueue, type OutboundJob, type OutboundJobInput, type OutboundJobStore } from './queue.js';
+import { getCrmRolloutFlags, isOutboundJobAllowed } from '../customers/rollout.js';
 
 export function createSupabaseOutboundJobStore(): OutboundJobStore {
   const db = getServiceSupabase();
@@ -21,13 +22,21 @@ export function createSupabaseOutboundJobStore(): OutboundJobStore {
   };
 }
 
-export interface OutboundWorkerDependencies { queue: OutboundQueue; resolveInstance?: (empresaId: string) => Promise<string>; getStatus?: (instance: string) => Promise<string>; send?: (phone: string, text: string, empresaId: string) => Promise<string | undefined>; validate?: (job: OutboundJob) => Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }>; }
+export interface OutboundWorkerDependencies { queue: OutboundQueue; resolveInstance?: (empresaId: string) => Promise<string>; getStatus?: (instance: string) => Promise<string>; send?: (phone: string, text: string, empresaId: string) => Promise<string | undefined>; validate?: (job: OutboundJob) => Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }>; getRolloutFlags?: (empresaId: string) => Promise<Awaited<ReturnType<typeof getCrmRolloutFlags>>>; }
 export class OutboundWorker {
   private running = false;
   private readonly locks = new Set<string>();
   constructor(private readonly deps: OutboundWorkerDependencies) {}
   async runOnce(workerId = `campaign-worker-${process.pid}`): Promise<boolean> {
     await this.deps.queue.releaseExpired(); const job = await this.deps.queue.claim(workerId); if (!job || !job.phone) return false;
+    try {
+      const rollout = await (this.deps.getRolloutFlags ?? getCrmRolloutFlags)(job.empresaId);
+      if (!isOutboundJobAllowed(rollout, job)) { await this.deps.queue.defer(job, 'Este recurso está pausado temporariamente; a fila será retomada depois.'); return false; }
+    } catch (error) {
+      console.warn('[outbound] rollout indisponível; job mantido na fila', error instanceof Error ? error.message : 'unknown');
+      await this.deps.queue.defer(job, 'O envio está temporariamente pausado; a fila será retomada depois.');
+      return false;
+    }
     const instance = job.instanceKey || await (this.deps.resolveInstance ?? getInstanceForEmpresa)(job.empresaId); if (this.locks.has(instance)) { await this.deps.queue.defer(job, 'Outra mensagem desta conexão está sendo enviada.'); return false; }
     this.locks.add(instance);
     try {
