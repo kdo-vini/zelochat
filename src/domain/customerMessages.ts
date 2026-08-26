@@ -10,6 +10,10 @@ export function resolveCustomerSessionId(sessions: Array<{ id: string }>, messag
   return sessions.some((session) => session.id === messageSessionId) ? messageSessionId : null;
 }
 
+export function resolveLatestCustomerSessionId(sessions: Array<{ id: string }>, messages: Array<{ sessionId: string }>): string | null {
+  return resolveCustomerSessionId(sessions, messages.at(-1)?.sessionId);
+}
+
 export function isPrimaryWhatsAppJid(jid: string | null | undefined): boolean {
   return /^\d{10,15}@s\.whatsapp\.net$/u.test(jid?.trim() ?? '') && !/^status\d*/u.test(jid?.trim() ?? '');
 }
