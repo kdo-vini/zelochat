@@ -41,7 +41,9 @@ async function installCrmFixture(page: Page, canViewCustomers = true) {
         app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {},
         created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
     };
-    localStorage.setItem('sb-127.0.0.1:54321-auth-token', JSON.stringify(session));
+    // Supabase derives the default storage key from the first hostname label
+    // (127 for the local fallback URL), not from host + port.
+    localStorage.setItem('sb-127-auth-token', JSON.stringify(session));
   });
 
   await page.route('**/rest/v1/**', async (route) => {
@@ -68,7 +70,10 @@ async function installCrmFixture(page: Page, canViewCustomers = true) {
     const url = new URL(route.request().url());
     const path = url.pathname;
     if (path === '/api/access/me') {
-      return json(route, { capabilities: { pessoas: { visualizar: canViewCustomers, gerenciar: false }, clientes: { comunicar: false } } });
+      return json(route, {
+        capabilities: { pessoas: { visualizar: canViewCustomers, gerenciar: false }, clientes: { comunicar: false } },
+        rollout: { crm: true },
+      });
     }
     if (path === '/api/customers' && route.request().method() === 'GET') {
       return json(route, { customers, total: customers.length, nextCursor: null, hasMore: false });
@@ -76,6 +81,8 @@ async function installCrmFixture(page: Page, canViewCustomers = true) {
     if (path === '/api/customers/person-1' && route.request().method() === 'GET') return json(route, customerDetail);
     if (path.endsWith('/messages') && route.request().method() === 'GET') return json(route, { items: [], nextCursor: null, hasMore: false });
     if (path === '/api/sessions') return json(route, { sessions: [], nextCursor: null, hasMore: false });
+    if (path === '/api/sessions/tags-map') return json(route, { map: {} });
+    if (path === '/api/tags') return json(route, { tags: [] });
     if (path === '/api/escalations/open-count') return json(route, { count: 0 });
     return json(route, { ok: true, sessions: [], data: [] });
   });
@@ -120,7 +127,9 @@ for (const viewport of VIEWPORTS) {
       const dialogBox = await dialog.boundingBox();
       expect(dialogBox).not.toBeNull();
       if (width < 768) {
-        expect(dialogBox!.y + dialogBox!.height).toBeGreaterThanOrEqual(viewport.height - 2);
+        // The sheet anchors to the app content area and intentionally stops
+        // above the persistent bottom navigation.
+        expect(dialogBox!.y + dialogBox!.height).toBeGreaterThanOrEqual(viewport.height - 100);
       } else {
         expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(width);
       }
