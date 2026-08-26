@@ -938,3 +938,5 @@ If you're closing out a sprint:
 # Sprint 2026-08-26 — Clientes CRM
 
 - ✅ CRM-16/17 — automações não tinham regras/ledger comum e carrinho podia seguir caminho separado → migration 054, avaliador idempotente, API protegida por `clientes.comunicar`, sweeper fail-soft e fila única do carrinho atrás de `ZELOCHAT_AUTOMATION_LEDGER=1` — `server/automations/rules.ts`, `server/automations/evaluator.ts`, `server/automations/router.ts`, `server/automations/sweeper.ts`, `server/zelomenuCartSessions.ts`
+- ✅ CRM-DB-029 — Gate B não tinha evidência de volume/qualidade → dry-run somente leitura reproduziu o preview do backfill no Supabase conectado: 2.035 sessões, 1 vínculo potencial, 0 conflitos e 2.034 sem correspondência; nenhum dado foi escrito — `supabase/verification/customer_relationship_authz.sql`, `CURRENT.md`
+- ✅ CRM-DB-030 — histórico remoto registrado pelo MCP ficou com timestamps gerados diferentes dos nomes locais → reconciliação foi documentada e mantida pendente de CLI autenticada (`supabase migration repair`); nenhum registro interno foi alterado manualmente — `CURRENT.md`, `docs/ai/ZeloChat.memory.md`
