@@ -5,7 +5,7 @@ Worktree: `clientes-crm`
 
 ## Resultado
 
-**DONE_WITH_CONCERNS** — implementação local concluída e commits separados por task. O Gate A de banco não foi aplicado neste ambiente; a ativação produtiva da RPC do PDV/backfill deve aguardar prova transacional em Supabase de teste.
+**DONE_WITH_CONCERNS** — implementação local concluída e a rodada de auditoria corrigida em commits adicionais. O Gate A de banco não foi aplicado neste ambiente; a ativação produtiva da RPC do PDV/backfill deve aguardar prova transacional em Supabase de teste.
 
 ## RED/GREEN por task
 
@@ -29,6 +29,11 @@ Worktree: `clientes-crm`
 
 ## Riscos e Gate A
 
-- A migration 049 está versionada com RLS e grants apenas para `service_role`, mas não foi aplicada/verificada contra Supabase neste ambiente.
+## Rodada de correção da auditoria
+
+- `85af077` — fallback estrito quando argumento/coluna do contrato compartilhado ainda não existe; fonte enumerada; dry-run sem RPC mutante; conflitos sempre registrados/deduplicados; vínculo existente preservado; caminho legado de IA integrado.
+- `ecd2100` — filtros PostgREST rejeitam sintaxe reservada; cursores keyset opacos incluem timestamp+id; timeline usa cursor unificado; filtros de tag/atividade ocorrem antes da página; subrotas validam pessoa/owner/tipo.
+
+- A migration 049 está versionada com RLS e grants apenas para `service_role`, mas não foi aplicada/verificada contra Supabase neste ambiente; seu cursor agora é `text`, compatível com o cursor opaco `timestamp|id`.
 - A RPC `ensure_customer_from_whatsapp` e o argumento `p_pessoa_id` pertencem ao contrato compartilhado do ZeloPDV; deploy deve ocorrer somente após a migration/RPC correspondente existir.
 - O backfill não envia mensagens e grava checkpoint apenas fora de `dry-run`; ainda requer teste de concorrência, funcionário correspondente em conflito, isolamento cross-tenant e permissões owner/subusuário (Gate A).
