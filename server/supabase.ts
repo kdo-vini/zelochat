@@ -3,12 +3,12 @@ import { randomBytes } from 'crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { isSubscriptionCurrentlyActive } from '../src/domain/subscription.js';
+import { requireActorAccess, resolveActorAccessFromToken } from './accessControl.js';
 
 let serviceClient: SupabaseClient | null = null;
 let boundEmpresaId: string | null = null;
 
 const EMPRESA_CACHE_TTL_MS = 5 * 60 * 1000;
-const empresaIdCache = new Map<string, { empresaId: string; userId: string; cachedAt: number }>();
 
 function getSupabaseUrl(): string {
   const value = process.env.SUPABASE_URL;
@@ -58,36 +58,8 @@ export async function resolveEmpresaIdFromToken(token: string): Promise<string> 
 export async function resolveEmpresaAndUserIdFromToken(
   token: string,
 ): Promise<{ empresaId: string; userId: string }> {
-  const supabase = getServiceSupabase();
-  const { data: authData, error: authError } = await supabase.auth.getUser(token);
-
-  if (authError || !authData.user) {
-    throw new Error('UNAUTHORIZED');
-  }
-
-  const userId = authData.user.id;
-
-  const cached = empresaIdCache.get(userId);
-  if (cached && Date.now() - cached.cachedAt < EMPRESA_CACHE_TTL_MS) {
-    return { empresaId: cached.empresaId, userId: cached.userId };
-  }
-
-  const { data: empresa, error: empresaError } = await supabase
-    .from('empresa_perfil')
-    .select('id')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (empresaError) {
-    throw new Error(empresaError.message);
-  }
-
-  if (!empresa?.id) {
-    throw new Error('EMPRESA_NOT_FOUND');
-  }
-
-  empresaIdCache.set(userId, { empresaId: empresa.id, userId, cachedAt: Date.now() });
-  return { empresaId: empresa.id, userId };
+  const context = await resolveActorAccessFromToken(token);
+  return { empresaId: context.empresaId, userId: context.actorUserId };
 }
 
 const empresaUserIdCache = new Map<string, { userId: string; cachedAt: number }>();
@@ -109,28 +81,15 @@ export async function getEmpresaUserId(empresaId: string): Promise<string | null
 }
 
 export async function requireEmpresaId(req: Request): Promise<string> {
-  const token = extractBearerToken(req);
-  if (!token) {
-    throw new Error('UNAUTHORIZED');
-  }
-
-  const empresaId = await resolveEmpresaIdFromToken(token);
-  (req as Request & { empresaId?: string }).empresaId = empresaId;
-  return empresaId;
+  const context = await requireActorAccess(req);
+  return context.empresaId;
 }
 
 export async function requireEmpresaAndUserId(
   req: Request,
 ): Promise<{ empresaId: string; userId: string }> {
-  const token = extractBearerToken(req);
-  if (!token) {
-    throw new Error('UNAUTHORIZED');
-  }
-
-  const resolved = await resolveEmpresaAndUserIdFromToken(token);
-  (req as Request & { empresaId?: string; userId?: string }).empresaId = resolved.empresaId;
-  (req as Request & { empresaId?: string; userId?: string }).userId = resolved.userId;
-  return resolved;
+  const context = await requireActorAccess(req);
+  return { empresaId: context.empresaId, userId: context.actorUserId };
 }
 
 /**
@@ -223,13 +182,8 @@ export async function requireActiveZelochatSubscription(req: Request): Promise<v
     throw new Error('UNAUTHORIZED');
   }
 
-  const supabase = getServiceSupabase();
-  const { data: authData, error: authError } = await supabase.auth.getUser(token);
-  if (authError || !authData.user) {
-    throw new Error('UNAUTHORIZED');
-  }
-
-  const active = await resolveActiveSubscription(authData.user.id);
+  const context = await resolveActorAccessFromToken(token);
+  const active = await resolveActiveSubscription(context.ownerUserId);
   if (!active) {
     throw new Error('SUBSCRIPTION_INACTIVE');
   }

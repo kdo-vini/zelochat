@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Clientes CRM — fundação de acesso (2026-08-25)
+
+- ✅ CRM-ACCESS-001 — o backend só resolvia `empresa_perfil.user_id` do titular → `requireEmpresaId`/`requireEmpresaAndUserId` agora reutilizam um contexto de ator, dono, empresa e permissões; subusuário ativo usa o cargo compartilhado, vínculos inativos falham fechado, e o cache é indexado pelo ator — `server/accessControl.ts:1`, `server/supabase.ts:83`, `server/router.ts:917`, `tests/customerAccessControl.test.ts:1`
+
 ### Catálogo — separação PDV/ZeloMenu (2026-08-24)
 
 - ✅ CATALOG-VISIBILITY-001 — `ocultar_no_pdv` deixou de bloquear ou publicar

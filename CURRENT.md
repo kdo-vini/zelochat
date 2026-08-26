@@ -12,6 +12,10 @@
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
 - **Audit:** P0 100% ✅ · P1 100% ✅ (acionáveis, 3 deferred p/ multi-replica) · P2 63% · P3 21%
 
+## Clientes CRM — fundação de acesso (2026-08-25)
+
+- **Task 3 concluída:** o backend resolve owner e subusuário ativo pelo RBAC compartilhado (`access_users`/`access_roles`), mantém permissões por ator no cache e aplica o contexto também ao paywall; vínculos inativos falham fechado. Cobertura em `tests/customerAccessControl.test.ts`.
+
 ## Contrato de visibilidade do catálogo (2026-08-24)
 
 - `produtos.ocultar_no_pdv` é uma flag interna do ZeloPDV para venda manual;

@@ -917,12 +917,20 @@ function sendAuthError(res: Response, error: unknown): void {
   const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
 
   if (message === 'UNAUTHORIZED') {
-    res.status(401).json({ error: 'Não autenticado' });
+    res.status(401).json({ error: 'Não autenticado', code: 'UNAUTHORIZED' });
     return;
   }
 
   if (message === 'EMPRESA_NOT_FOUND') {
-    res.status(403).json({ error: 'Empresa não encontrada para este usuário' });
+    res.status(403).json({ error: 'Empresa não encontrada para este usuário', code: 'EMPRESA_NOT_FOUND' });
+    return;
+  }
+
+  if (message === 'FORBIDDEN') {
+    res.status(403).json({
+      error: 'Você não tem permissão para realizar esta ação.',
+      code: 'FORBIDDEN',
+    });
     return;
   }
 
