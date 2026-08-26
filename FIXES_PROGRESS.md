@@ -5,6 +5,7 @@
 
 ### Clientes CRM — rollout (2026-08-26)
 
+- ✅ CRM-ROLLOUT-044 — `Clientes` permanecia invisível para contas fora dos dois pilotos, apesar de o CRM fazer parte do plano ZeloChat → migration 061 habilita somente o módulo CRM para empresas com assinatura `active`/`trialing`; campanhas, automações e fila de saída continuam desligadas — `supabase/migrations/061_enable_crm_for_active_plans.sql:1`
 - ✅ CRM-DB-042 — advisors identificaram FKs CRM sem cobertura após a ativação gradual → migration 060 adiciona índices owner/person para sessões, relacionamentos, tags, segmentos, campanhas, jobs e automações; o DDL é aditivo/idempotente e o advisor deixou de sinalizar as novas tabelas CRM — `supabase/migrations/060_customer_fk_indexes.sql:1`, `tests/customerRelationshipIndexes.test.ts:1`
 - ✅ CRM-DB-043 — o código CRM e o stream compartilhado ainda estavam apenas nas worktrees de feature → integração local concluída nos branches principais (`zelochat 99535d3`, `zelopdv cb1cc24`); build do ZeloChat, check/suíte/ledger do ZeloPDV passaram, com apenas o EPERM de symlink do adapter Vercel no build do PDV — `CURRENT.md`, `../zelopdv/supabase/migrations/20260826131437_060_customer_crm_fk_indexes.sql`
 - ✅ CRM-REL-041 — a ficha mostrava campanhas e automações sempre como zero e não informava opt-out → leitura agora consulta os ledgers tenant-scoped e a aba Relacionamento exibe a supressão ativa — `server/customers/service.ts:7`, `src/components/customers/CustomerRelationshipTab.tsx:4`, `tests/customerReadApi.test.ts:1`
