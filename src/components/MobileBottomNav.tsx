@@ -9,6 +9,7 @@ interface Props {
   openEscalationCount: number;
   unreadConversationsCount: number;
   isGeneralMode: boolean;
+  moreActiveViews?: ReadonlySet<View>;
   onNavigate: (view: View) => void;
   onToggleMore: () => void;
   onCloseMore: () => void;
@@ -17,6 +18,7 @@ interface Props {
 export function MobileBottomNav({
   primaryNavItems, bottomSheetItems, activeView, moreSheetOpen,
   openEscalationCount, unreadConversationsCount, isGeneralMode,
+  moreActiveViews,
   onNavigate, onToggleMore, onCloseMore,
 }: Props) {
   return (
@@ -31,7 +33,8 @@ export function MobileBottomNav({
             <button
               key={item.id}
               onClick={() => { onNavigate(item.id); onCloseMore(); }}
-              className={`relative flex flex-1 flex-col items-center justify-center gap-1 transition-colors ${
+              aria-current={active ? 'page' : undefined}
+              className={`relative flex min-h-[44px] flex-1 flex-col items-center justify-center gap-1 transition-colors ${
                 active ? 'text-[var(--color-brand)]' : 'text-[var(--color-ink-muted)]'
               }`}
             >
@@ -49,8 +52,10 @@ export function MobileBottomNav({
         })}
         <button
           onClick={onToggleMore}
-          className={`flex flex-1 flex-col items-center justify-center gap-1 transition-colors ${
-            moreSheetOpen ? 'text-[var(--color-brand)]' : 'text-[var(--color-ink-muted)]'
+          aria-expanded={moreSheetOpen}
+          aria-haspopup="dialog"
+          className={`flex min-h-[44px] flex-1 flex-col items-center justify-center gap-1 transition-colors ${
+            moreSheetOpen || (moreActiveViews?.has(activeView) ?? false) ? 'text-[var(--color-brand)]' : 'text-[var(--color-ink-muted)]'
           }`}
         >
           <MoreHorizontal className="h-5 w-5" strokeWidth={moreSheetOpen ? 2.2 : 1.8} />
@@ -71,7 +76,8 @@ export function MobileBottomNav({
                   <button
                     key={item.id}
                     onClick={() => { onNavigate(item.id); onCloseMore(); }}
-                    className={`w-full flex items-center gap-3 rounded-xl px-3 py-3 transition-colors ${
+                    aria-current={active ? 'page' : undefined}
+                    className={`w-full min-h-[44px] flex items-center gap-3 rounded-xl px-3 py-3 transition-colors ${
                       active ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)]'
                     }`}
                   >
