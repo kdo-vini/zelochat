@@ -32,7 +32,7 @@ async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installCrmFixture(page: Page, canViewCustomers = true) {
+async function installCrmFixture(page: Page, canViewCustomers = true, canManageCustomers = false) {
   await page.addInitScript(() => {
     const session = {
       access_token: 'e2e-crm-token', refresh_token: 'e2e-refresh-token', token_type: 'bearer',
@@ -71,7 +71,7 @@ async function installCrmFixture(page: Page, canViewCustomers = true) {
     const path = url.pathname;
     if (path === '/api/access/me') {
       return json(route, {
-        capabilities: { pessoas: { visualizar: canViewCustomers, gerenciar: false }, clientes: { comunicar: false } },
+        capabilities: { pessoas: { visualizar: canViewCustomers, gerenciar: canManageCustomers }, clientes: { comunicar: false } },
         rollout: { crm: true },
       });
     }
@@ -167,5 +167,20 @@ test.describe('Clientes CRM permissões', () => {
     await page.goto('/app');
     await expect(page.getByRole('navigation', { name: 'Navegação principal' }).getByRole('button', { name: 'Clientes' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Clientes', exact: true })).toHaveCount(0);
+  });
+
+  test('oculta criação para leitor e mostra para quem gerencia pessoas', async ({ page }) => {
+    await installCrmFixture(page, true, false);
+    await openCustomers(page);
+    await expect(page.getByRole('button', { name: 'Novo cliente' })).toHaveCount(0);
+
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await installCrmFixture(page, true, true);
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Clientes', exact: true }).first()).toBeVisible();
+    await page.getByRole('button', { name: 'Clientes', exact: true }).first().click();
+    await expect(page.getByRole('button', { name: 'Novo cliente' })).toBeVisible();
+    await page.getByRole('button', { name: 'Novo cliente' }).click();
+    await expect(page.getByRole('dialog', { name: 'Novo cliente' })).toBeVisible();
   });
 });

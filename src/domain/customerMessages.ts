@@ -4,6 +4,12 @@ export interface CustomerMessageSession { id: string; messages: Array<Pick<ChatM
 export interface CustomerMessageItem { sessionId: string; message: CustomerMessageSession['messages'][number]; }
 export interface CustomerMessagePermission { pessoasVisualizar: boolean; clientesComunicar: boolean; }
 
+/** Resolve only a real session id before handing control back to Atendimento. */
+export function resolveCustomerSessionId(sessions: Array<{ id: string }>, messageSessionId: string | null | undefined): string | null {
+  if (!messageSessionId) return null;
+  return sessions.some((session) => session.id === messageSessionId) ? messageSessionId : null;
+}
+
 export function isPrimaryWhatsAppJid(jid: string | null | undefined): boolean {
   return /^\d{10,15}@s\.whatsapp\.net$/u.test(jid?.trim() ?? '') && !/^status\d*/u.test(jid?.trim() ?? '');
 }
