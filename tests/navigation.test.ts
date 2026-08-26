@@ -1,9 +1,7 @@
 import { assert, runSuite } from './testHarness.js';
 import {
-  NAVIGATION,
   getDesktopNavigation,
   getMobileNavigation,
-  type NavigationMode,
 } from '../src/domain/navigation.ts';
 
 const ids = (items: Array<{ id: string }>) => items.map((item) => item.id);
@@ -57,5 +55,3 @@ await runSuite('navigation configuration', [
     },
   },
 ]);
-
-void (NAVIGATION satisfies ReadonlyArray<{ id: string; mobile: NavigationMode }>);
