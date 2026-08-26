@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { isSubscriptionCurrentlyActive } from '../src/domain/subscription.js';
-import { requireActorAccess, resolveActorAccessFromToken } from './accessControl.js';
+import { requireActorAccess, resolveActorAccessFromToken, type ActorAccessContext } from './accessControl.js';
 
 let serviceClient: SupabaseClient | null = null;
 let boundEmpresaId: string | null = null;
@@ -59,7 +59,9 @@ export async function resolveEmpresaAndUserIdFromToken(
   token: string,
 ): Promise<{ empresaId: string; userId: string }> {
   const context = await resolveActorAccessFromToken(token);
-  return { empresaId: context.empresaId, userId: context.actorUserId };
+  // Legacy callers use userId for shared-account effects. Keep it owner-scoped;
+  // actor identity is available from resolveActorAccessFromToken when needed.
+  return { empresaId: context.empresaId, userId: context.ownerUserId };
 }
 
 const empresaUserIdCache = new Map<string, { userId: string; cachedAt: number }>();
@@ -81,15 +83,17 @@ export async function getEmpresaUserId(empresaId: string): Promise<string | null
 }
 
 export async function requireEmpresaId(req: Request): Promise<string> {
-  const context = await requireActorAccess(req);
+  const request = req as Request & { actorAccess?: ActorAccessContext };
+  const context = request.actorAccess ?? await requireActorAccess(req);
   return context.empresaId;
 }
 
 export async function requireEmpresaAndUserId(
   req: Request,
 ): Promise<{ empresaId: string; userId: string }> {
-  const context = await requireActorAccess(req);
-  return { empresaId: context.empresaId, userId: context.actorUserId };
+  const request = req as Request & { actorAccess?: ActorAccessContext };
+  const context = request.actorAccess ?? await requireActorAccess(req);
+  return { empresaId: context.empresaId, userId: context.ownerUserId };
 }
 
 /**
@@ -177,12 +181,8 @@ async function resolveActiveSubscription(userId: string): Promise<boolean> {
  * a recent positive cache is honored — never fail-open to unknown.
  */
 export async function requireActiveZelochatSubscription(req: Request): Promise<void> {
-  const token = extractBearerToken(req);
-  if (!token) {
-    throw new Error('UNAUTHORIZED');
-  }
-
-  const context = await resolveActorAccessFromToken(token);
+  const request = req as Request & { actorAccess?: ActorAccessContext };
+  const context = request.actorAccess ?? await requireActorAccess(req);
   const active = await resolveActiveSubscription(context.ownerUserId);
   if (!active) {
     throw new Error('SUBSCRIPTION_INACTIVE');

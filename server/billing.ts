@@ -23,6 +23,7 @@
 import type { Request, Response } from 'express';
 import Stripe from 'stripe';
 import { extractBearerToken, getServiceSupabase } from './supabase.js';
+import { requireOwnerAccess } from './accessControl.js';
 import { PRICING } from '../src/data/pricing.js';
 import { redactEmail, redactCustomerId } from './redact.js';
 
@@ -152,18 +153,26 @@ interface AuthedUser {
 }
 
 async function authenticate(req: Request): Promise<AuthedUser> {
+  const context = await requireOwnerAccess(req);
   const token = extractBearerToken(req);
   if (!token) throw new Error('UNAUTHORIZED');
   const supabase = getServiceSupabase();
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user) throw new Error('UNAUTHORIZED');
-  return { id: data.user.id, email: data.user.email ?? null };
+  return { id: context.ownerUserId, email: data.user.email ?? null };
 }
 
 function sendBillingError(res: Response, err: unknown): void {
   const message = err instanceof Error ? err.message : 'Unknown error';
   if (message === 'UNAUTHORIZED') {
     res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+    return;
+  }
+  if (message === 'FORBIDDEN') {
+    res.status(403).json({
+      error: 'Apenas o responsável pela conta pode gerenciar a cobrança.',
+      code: 'FORBIDDEN',
+    });
     return;
   }
   if (message === 'STRIPE_NOT_CONFIGURED') {

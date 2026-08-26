@@ -1,9 +1,18 @@
 import { assert, assertEqual, runSuite } from './testHarness.js';
+import { readFileSync } from 'fs';
 type AccessControlModule = {
   AccessControlError: new (code: string) => Error & { code: string };
   actorCan: (context: ActorAccessContext, permission: string) => boolean;
   resolveActorAccess: (actorUserId: string, repository: ActorAccessRepository) => Promise<ActorAccessContext>;
+  requireActorPermission: (req: RequestLike, permission: string, dependencies?: AccessDependencies) => Promise<ActorAccessContext>;
+  requireOwnerAccess: (req: RequestLike, dependencies?: AccessDependencies) => Promise<ActorAccessContext>;
   clearActorAccessCache: () => void;
+};
+
+type RequestLike = { headers: { authorization?: string } };
+type AccessDependencies = {
+  repository?: ActorAccessRepository;
+  resolveUserIdFromToken?: (token: string) => Promise<string | null>;
 };
 
 type ActorAccessContext = {
@@ -31,7 +40,7 @@ type AccessUserRow = {
 function repositoryFor(input: {
   empresas?: Record<string, string>;
   accessUsers?: Record<string, AccessUserRow>;
-  roles?: Record<string, { owner_user_id: string; permissions: Record<string, boolean> }>;
+  roles?: Record<string, { owner_user_id: string; permissions: Record<string, boolean> | null }>;
 }) {
   const calls = { accessUsers: 0, empresas: 0, roles: 0 };
   const repository: ActorAccessRepository = {
@@ -134,12 +143,13 @@ await runSuite('customer access control', [
       });
       assert(accessControl !== null, 'access control module is available');
       if (!accessControl) return;
-      const context = await accessControl.resolveActorAccess('operator-1', repository);
-
-      assert(!accessControl.actorCan(context, 'pessoas.gerenciar'), 'missing permission is denied');
+      const request = { headers: { authorization: 'Bearer operator-token' } };
       let code: string | undefined;
       try {
-        if (!accessControl.actorCan(context, 'pessoas.gerenciar')) throw new accessControl.AccessControlError('FORBIDDEN');
+        await accessControl.requireActorPermission(request, 'pessoas.gerenciar', {
+          repository,
+          resolveUserIdFromToken: async () => 'operator-1',
+        });
       } catch (error) {
         code = (error as Error & { code: string }).code;
       }
@@ -171,7 +181,106 @@ await runSuite('customer access control', [
       assert(!operator.isOwner, 'sub-user context is not promoted to owner');
       assertEqual(ownerAgain.empresaId, 'empresa-1', 'owner cache returns the same tenant');
       assertEqual(calls.empresas, 2, 'each actor has its own empresa cache entry');
-      assertEqual(calls.accessUsers, 2, 'owner and sub-user are cached independently');
+      assertEqual(calls.accessUsers, 3, 'owner cache still rechecks actor membership before using owner metadata');
+    },
+  },
+  {
+    name: 'permission revocation and role changes take effect on the next request',
+    run: async () => {
+      accessControl?.clearActorAccessCache();
+      const role = { owner_user_id: 'owner-1', permissions: { 'clientes.comunicar': true } as Record<string, boolean> | null };
+      const { repository } = repositoryFor({
+        empresas: { 'owner-1': 'empresa-1' },
+        accessUsers: { 'operator-1': { owner_user_id: 'owner-1', role_id: 'role-1', status: 'active' } },
+        roles: { 'role-1': role },
+      });
+      assert(accessControl !== null, 'access control module is available');
+      if (!accessControl) return;
+      const first = await accessControl.resolveActorAccess('operator-1', repository);
+      assert(accessControl.actorCan(first, 'clientes.comunicar'), 'initial role capability is allowed');
+      role.permissions = { 'clientes.visualizar': true };
+      const second = await accessControl.resolveActorAccess('operator-1', repository);
+      assert(!accessControl.actorCan(second, 'clientes.comunicar'), 'revoked capability is denied immediately');
+      assert(accessControl.actorCan(second, 'clientes.visualizar'), 'new role capability is available immediately');
+    },
+  },
+  {
+    name: 'null, missing and false permissions are denied by requireActorPermission',
+    run: async () => {
+      for (const permissions of [null, {}, { 'clientes.comunicar': false }]) {
+        accessControl?.clearActorAccessCache();
+        const { repository } = repositoryFor({
+          empresas: { 'owner-1': 'empresa-1' },
+          accessUsers: { 'operator-1': { owner_user_id: 'owner-1', role_id: 'role-1', status: 'active' } },
+          roles: { 'role-1': { owner_user_id: 'owner-1', permissions } },
+        });
+        assert(accessControl !== null, 'access control module is available');
+        if (!accessControl) return;
+        let code: string | undefined;
+        try {
+          await accessControl.requireActorPermission(
+            { headers: { authorization: 'Bearer operator-token' } },
+            'clientes.comunicar',
+            { repository, resolveUserIdFromToken: async () => 'operator-1' },
+          );
+        } catch (error) {
+          code = (error as Error & { code: string }).code;
+        }
+        assertEqual(code, 'FORBIDDEN', `permission value ${String(permissions)} is forbidden`);
+      }
+    },
+  },
+  {
+    name: 'blocked actor is rejected by the real permission guard',
+    run: async () => {
+      accessControl?.clearActorAccessCache();
+      const { repository } = repositoryFor({
+        accessUsers: { 'operator-1': { owner_user_id: 'owner-1', role_id: null, status: 'blocked' } },
+      });
+      assert(accessControl !== null, 'access control module is available');
+      if (!accessControl) return;
+      let code: string | undefined;
+      try {
+        await accessControl.requireActorPermission(
+          { headers: { authorization: 'Bearer operator-token' } },
+          'qualquer.permissao',
+          { repository, resolveUserIdFromToken: async () => 'operator-1' },
+        );
+      } catch (error) {
+        code = (error as Error & { code: string }).code;
+      }
+      assertEqual(code, 'UNAUTHORIZED', 'blocked actor fails closed before permission lookup');
+    },
+  },
+  {
+    name: 'owner guard rejects sub-users before shared account or billing effects',
+    run: async () => {
+      accessControl?.clearActorAccessCache();
+      const { repository } = repositoryFor({
+        empresas: { 'owner-1': 'empresa-1' },
+        accessUsers: { 'operator-1': { owner_user_id: 'owner-1', role_id: null, status: 'active' } },
+      });
+      assert(accessControl !== null, 'access control module is available');
+      if (!accessControl) return;
+      let code: string | undefined;
+      try {
+        await accessControl.requireOwnerAccess(
+          { headers: { authorization: 'Bearer operator-token' } },
+          { repository, resolveUserIdFromToken: async () => 'operator-1' },
+        );
+      } catch (error) {
+        code = (error as Error & { code: string }).code;
+      }
+      assertEqual(code, 'FORBIDDEN', 'sub-user cannot enter owner-only guard');
+      const routerSource = readFileSync(new URL('../server/router.ts', import.meta.url), 'utf8');
+      const pixSource = readFileSync(new URL('../server/billingPix.ts', import.meta.url), 'utf8');
+      const supabaseSource = readFileSync(new URL('../server/supabase.ts', import.meta.url), 'utf8');
+      const indexSource = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
+      assert(routerSource.includes('requireOwnerAccess(req)'), 'account routes use explicit owner guard');
+      assert(pixSource.includes('requireOwnerAccess(req)'), 'PIX routes use explicit owner guard');
+      assert(supabaseSource.includes('userId: context.ownerUserId'), 'legacy userId remains owner-scoped');
+      assert(indexSource.includes('Ative seu plano para continuar usando o ZeloChat.'), 'paywall exposes a friendly inactive-plan message');
+      assert(!indexSource.includes("json({ error: 'SUBSCRIPTION_INACTIVE' })"), 'paywall does not expose raw internal error text');
     },
   },
 ]);

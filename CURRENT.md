@@ -14,7 +14,7 @@
 
 ## Clientes CRM — fundação de acesso (2026-08-25)
 
-- **Task 3 concluída:** o backend resolve owner e subusuário ativo pelo RBAC compartilhado (`access_users`/`access_roles`), mantém permissões por ator no cache e aplica o contexto também ao paywall; vínculos inativos falham fechado. Cobertura em `tests/customerAccessControl.test.ts`.
+- **Task 3 concluída:** o backend resolve owner e subusuário ativo pelo RBAC compartilhado (`access_users`/`access_roles`), mantém apenas metadados do owner em cache por ator e revalida status/cargo do subusuário a cada request; account deletion, Stripe/PIX e onboarding são owner-only, o paywall usa copy amigável e vínculos inativos falham fechado. Cobertura em `tests/customerAccessControl.test.ts`.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)
 

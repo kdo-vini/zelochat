@@ -111,7 +111,8 @@ import {
   resolveSession,
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
-import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireActorAccess, requireOwnerAccess } from './accessControl.js';
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
 import {
   clearMissingOwnInstanceForEmpresa,
@@ -1623,7 +1624,7 @@ router.get('/api/ai/health', async (req: Request, res: Response) => {
  */
 router.post('/api/ai/manager', express.json({ limit: '128kb' }), async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = validateManagerRequest(req.body);
     if (payload.ok === false) {
       res.status(400).json({ error: payload.error });
@@ -2032,7 +2033,7 @@ router.post('/api/orders/manual', express.json({ limit: '50kb' }), async (req: R
 
 router.delete('/api/orders/:id', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const expectedRevision = Number((req.body as { expectedRevision?: unknown } | undefined)?.expectedRevision);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
       res.status(400).json({ error: 'RevisÃ£o invÃ¡lida.' }); return;
@@ -2079,7 +2080,7 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
 
     const oldStatus = existing.status;
 
-    const { userId } = await requireEmpresaAndUserId(req);
+    const { actorUserId: userId } = await requireActorAccess(req);
     const updated = await transitionCanonicalOrder({
       empresaId,
       orderId,
@@ -2592,7 +2593,7 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
  */
 router.delete('/api/account', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, ownerUserId: userId } = await requireOwnerAccess(req);
     const supabase = getServiceSupabase();
     const { data: deletionState, error: deletionStateError } = await supabase
       .from('empresa_perfil')
@@ -2706,7 +2707,7 @@ router.delete('/api/account', async (req: Request, res: Response) => {
  */
 router.post('/api/account/reactivate', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, ownerUserId: userId } = await requireOwnerAccess(req);
     const supabase = getServiceSupabase();
     const { data: reactivationToken, error: beginError } = await supabase.rpc(
       'begin_account_deletion_reactivation',
@@ -2782,7 +2783,7 @@ router.post('/api/account/reactivate', async (req: Request, res: Response) => {
  */
 router.post('/api/ai/generate-instructions', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = validateGenerateInstructionsPayload(req);
     if (payload.ok === false) {
       if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
@@ -2874,7 +2875,7 @@ Escreva agora as diretrizes operacionais do agente.`;
  */
 router.post('/api/ai/complete', express.json({ limit: '512kb' }), async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = validateAiCompletePayload(req);
     if (payload.ok === false) {
       if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
@@ -2936,7 +2937,7 @@ router.post('/api/ai/complete', express.json({ limit: '512kb' }), async (req: Re
  */
 router.post('/api/ai/simulate', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
 
     const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'complete');
     if (rateLimit.ok === false) {
@@ -3095,7 +3096,7 @@ router.get('/api/zelomenu/cart-sessions/review', async (req: Request, res: Respo
 
 router.post('/api/zelomenu/cart-sessions/:id/accept', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = await acceptWhatsAppCartReviewSession({
       empresaId,
       sessionId: req.params.id,
@@ -3553,8 +3554,8 @@ router.delete('/api/messages/failed/:id', async (req: Request, res: Response) =>
 
 router.post('/api/onboarding/welcome', async (req: Request, res: Response) => {
   try {
-    const { userId } = await requireEmpresaAndUserId(req);
-    const result = await sendWelcomePack(userId);
+    const { ownerUserId } = await requireOwnerAccess(req);
+    const result = await sendWelcomePack(ownerUserId);
     res.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {

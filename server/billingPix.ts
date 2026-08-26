@@ -1,10 +1,10 @@
 import type { Request, Response } from 'express';
 import { timingSafeEqual } from 'crypto';
 import {
-  requireEmpresaAndUserId,
   getServiceSupabase,
   invalidateSubscriptionCache,
 } from './supabase.js';
+import { requireOwnerAccess } from './accessControl.js';
 import { createPixCharge, getChargeStatus, verifyAbacatePaySignature } from './abacatepay.js';
 import { PRICING } from '../src/data/pricing.js';
 
@@ -29,7 +29,7 @@ export function safeEqualStr(a: string, b: string): boolean {
 // POST /api/billing/pix/create
 export async function handleCreatePixCharge(req: Request, res: Response): Promise<void> {
   try {
-    const { userId, empresaId } = await requireEmpresaAndUserId(req);
+    const { ownerUserId: userId, empresaId } = await requireOwnerAccess(req);
     const planTier = (req.body?.planTier ?? 'chat') as string;
 
     if (planTier !== 'chat' && planTier !== 'bundle') {
@@ -100,8 +100,9 @@ export async function handleCreatePixCharge(req: Request, res: Response): Promis
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'UNKNOWN';
-    if (msg === 'UNAUTHORIZED') { res.status(401).json({ error: 'UNAUTHORIZED' }); return; }
-    if (msg === 'EMPRESA_NOT_FOUND') { res.status(404).json({ error: 'EMPRESA_NOT_FOUND' }); return; }
+    if (msg === 'UNAUTHORIZED') { res.status(401).json({ error: 'Sua sessão expirou. Entre novamente.', code: 'UNAUTHORIZED' }); return; }
+    if (msg === 'FORBIDDEN') { res.status(403).json({ error: 'Apenas o responsável pela conta pode gerenciar a cobrança.', code: 'FORBIDDEN' }); return; }
+    if (msg === 'EMPRESA_NOT_FOUND') { res.status(404).json({ error: 'Não encontramos sua empresa. Confira o acesso e tente novamente.', code: 'EMPRESA_NOT_FOUND' }); return; }
     if (msg.endsWith('not configured')) { res.status(503).json({ error: 'PIX_NOT_CONFIGURED' }); return; }
     console.error('[billingPix] createPixCharge error:', err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
@@ -111,7 +112,7 @@ export async function handleCreatePixCharge(req: Request, res: Response): Promis
 // GET /api/billing/pix/status/:paymentId
 export async function handleGetPixStatus(req: Request, res: Response): Promise<void> {
   try {
-    const { userId } = await requireEmpresaAndUserId(req);
+    const { ownerUserId: userId } = await requireOwnerAccess(req);
     const { paymentId } = req.params;
 
     const supabase = getServiceSupabase();
@@ -157,8 +158,9 @@ export async function handleGetPixStatus(req: Request, res: Response): Promise<v
     res.json({ status: row.status, pixCopyPaste: row.pix_copy_paste, expiresAt: row.expires_at });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'UNKNOWN';
-    if (msg === 'UNAUTHORIZED') { res.status(401).json({ error: 'UNAUTHORIZED' }); return; }
-    if (msg === 'EMPRESA_NOT_FOUND') { res.status(404).json({ error: 'EMPRESA_NOT_FOUND' }); return; }
+    if (msg === 'UNAUTHORIZED') { res.status(401).json({ error: 'Sua sessão expirou. Entre novamente.', code: 'UNAUTHORIZED' }); return; }
+    if (msg === 'FORBIDDEN') { res.status(403).json({ error: 'Apenas o responsável pela conta pode consultar a cobrança.', code: 'FORBIDDEN' }); return; }
+    if (msg === 'EMPRESA_NOT_FOUND') { res.status(404).json({ error: 'Não encontramos sua empresa. Confira o acesso e tente novamente.', code: 'EMPRESA_NOT_FOUND' }); return; }
     console.error('[billingPix] getPixStatus error:', err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
   }

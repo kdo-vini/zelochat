@@ -6,6 +6,7 @@
 ### Clientes CRM — fundação de acesso (2026-08-25)
 
 - ✅ CRM-ACCESS-001 — o backend só resolvia `empresa_perfil.user_id` do titular → `requireEmpresaId`/`requireEmpresaAndUserId` agora reutilizam um contexto de ator, dono, empresa e permissões; subusuário ativo usa o cargo compartilhado, vínculos inativos falham fechado, e o cache é indexado pelo ator — `server/accessControl.ts:1`, `server/supabase.ts:83`, `server/router.ts:917`, `tests/customerAccessControl.test.ts:1`
+- ✅ CRM-ACCESS-002 — Round 1: `userId` legado voltou a significar `ownerUserId`; exclusão de conta, reativação, Stripe, PIX e onboarding exigem owner explícito, enquanto efeitos de auditoria/rate-limit preservam `actorUserId`; status/cargo de subusuário são revalidados em toda requisição, com cache limitado somente a metadados de owner e limpeza de expirados — `server/accessControl.ts:95`, `server/supabase.ts:84`, `server/router.ts:2596`, `server/billing.ts:156`, `server/billingPix.ts:32`, `tests/customerAccessControl.test.ts:256`
 
 ### Catálogo — separação PDV/ZeloMenu (2026-08-24)
 

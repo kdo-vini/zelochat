@@ -147,13 +147,13 @@ app.use(async (req, res, next) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'UNKNOWN';
     if (message === 'UNAUTHORIZED') {
-      return res.status(401).json({ error: 'UNAUTHORIZED' });
+      return res.status(401).json({ error: 'Sua sessão expirou. Entre novamente para continuar.', code: 'UNAUTHORIZED' });
     }
     if (message === 'EMPRESA_NOT_FOUND') {
-      return res.status(404).json({ error: 'EMPRESA_NOT_FOUND' });
+      return res.status(404).json({ error: 'Não encontramos sua empresa. Confira o acesso e tente novamente.', code: 'EMPRESA_NOT_FOUND' });
     }
     if (message === 'SUBSCRIPTION_INACTIVE') {
-      return res.status(402).json({ error: 'SUBSCRIPTION_INACTIVE' });
+      return res.status(402).json({ error: 'Ative seu plano para continuar usando o ZeloChat.', code: 'SUBSCRIPTION_INACTIVE' });
     }
     console.error('[paywall] gate error:', err);
     return res.status(503).json({ error: 'PAYWALL_GATE_UNAVAILABLE' });

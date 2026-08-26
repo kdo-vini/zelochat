@@ -32,7 +32,13 @@ export interface ActorAccessRepository {
 }
 
 const ACTOR_ACCESS_CACHE_TTL_MS = 5 * 60 * 1000;
+const ACTOR_ACCESS_CACHE_MAX_ENTRIES = 1024;
 const actorAccessCache = new Map<string, { context: ActorAccessContext; cachedAt: number }>();
+
+export interface ActorAccessDependencies {
+  repository?: ActorAccessRepository;
+  resolveUserIdFromToken?: (token: string) => Promise<string | null>;
+}
 
 const defaultRepository: ActorAccessRepository = {
   async findAccessUserByAuthUserId(actorUserId) {
@@ -72,11 +78,11 @@ function accessErrorCode(error: unknown): AccessErrorCode {
 
 function normalizePermissions(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean');
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, enabled]) => enabled === true)
-      .map(([permission]) => [permission, true]),
-  );
+    entries,
+  ) as Record<string, boolean>;
 }
 
 export function actorCan(context: ActorAccessContext, permission: string): boolean {
@@ -85,6 +91,17 @@ export function actorCan(context: ActorAccessContext, permission: string): boole
 
 export function clearActorAccessCache(): void {
   actorAccessCache.clear();
+}
+
+function pruneActorAccessCache(now: number): void {
+  for (const [actorUserId, cached] of actorAccessCache) {
+    if (now - cached.cachedAt >= ACTOR_ACCESS_CACHE_TTL_MS) actorAccessCache.delete(actorUserId);
+  }
+  while (actorAccessCache.size > ACTOR_ACCESS_CACHE_MAX_ENTRIES) {
+    const oldest = actorAccessCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    actorAccessCache.delete(oldest);
+  }
 }
 
 /**
@@ -98,15 +115,19 @@ export async function resolveActorAccess(
 ): Promise<ActorAccessContext> {
   if (!actorUserId) throw new AccessControlError('UNAUTHORIZED');
 
-  const cached = actorAccessCache.get(actorUserId);
-  if (cached && Date.now() - cached.cachedAt < ACTOR_ACCESS_CACHE_TTL_MS) {
-    return cached.context;
-  }
-
   try {
+    const now = Date.now();
+    pruneActorAccessCache(now);
     const accessUser = await repository.findAccessUserByAuthUserId(actorUserId);
     if (accessUser && accessUser.status !== 'active') {
       throw new AccessControlError('UNAUTHORIZED');
+    }
+
+    // Sub-user status and role are revocable security state. Re-read them on
+    // every request; only owner metadata (which has no role grant) is cached.
+    if (!accessUser) {
+      const cached = actorAccessCache.get(actorUserId);
+      if (cached && now - cached.cachedAt < ACTOR_ACCESS_CACHE_TTL_MS) return cached.context;
     }
 
     const ownerUserId = accessUser?.owner_user_id ?? actorUserId;
@@ -128,7 +149,7 @@ export async function resolveActorAccess(
       isOwner: !accessUser,
       permissions,
     };
-    actorAccessCache.set(actorUserId, { context, cachedAt: Date.now() });
+    if (!accessUser) actorAccessCache.set(actorUserId, { context, cachedAt: now });
     return context;
   } catch (error) {
     const code = accessErrorCode(error);
@@ -138,11 +159,18 @@ export async function resolveActorAccess(
   }
 }
 
-export async function requireActorAccess(req: Request): Promise<ActorAccessContext> {
+export async function requireActorAccess(
+  req: Request,
+  dependencies: ActorAccessDependencies = {},
+): Promise<ActorAccessContext> {
   const token = extractBearerToken(req);
   if (!token) throw new AccessControlError('UNAUTHORIZED');
 
-  const context = await resolveActorAccessFromToken(token);
+  const context = await resolveActorAccessFromToken(
+    token,
+    dependencies.repository,
+    dependencies.resolveUserIdFromToken,
+  );
   const request = req as Request & {
     actorAccess?: ActorAccessContext;
     empresaId?: string;
@@ -156,15 +184,37 @@ export async function requireActorAccess(req: Request): Promise<ActorAccessConte
   return context;
 }
 
-export async function resolveActorAccessFromToken(token: string): Promise<ActorAccessContext> {
-  if (!token) throw new AccessControlError('UNAUTHORIZED');
+async function resolveUserIdFromToken(token: string): Promise<string | null> {
   const { data, error } = await getServiceSupabase().auth.getUser(token);
-  if (error || !data.user) throw new AccessControlError('UNAUTHORIZED');
-  return resolveActorAccess(data.user.id);
+  return error || !data.user ? null : data.user.id;
 }
 
-export async function requireActorPermission(req: Request, permission: string): Promise<ActorAccessContext> {
-  const context = await requireActorAccess(req);
+export async function resolveActorAccessFromToken(
+  token: string,
+  repository: ActorAccessRepository = defaultRepository,
+  resolveUserId: (token: string) => Promise<string | null> = resolveUserIdFromToken,
+): Promise<ActorAccessContext> {
+  if (!token) throw new AccessControlError('UNAUTHORIZED');
+  const userId = await resolveUserId(token);
+  if (!userId) throw new AccessControlError('UNAUTHORIZED');
+  return resolveActorAccess(userId, repository);
+}
+
+export async function requireActorPermission(
+  req: Request,
+  permission: string,
+  dependencies: ActorAccessDependencies = {},
+): Promise<ActorAccessContext> {
+  const context = await requireActorAccess(req, dependencies);
   if (!actorCan(context, permission)) throw new AccessControlError('FORBIDDEN');
+  return context;
+}
+
+export async function requireOwnerAccess(
+  req: Request,
+  dependencies: ActorAccessDependencies = {},
+): Promise<ActorAccessContext> {
+  const context = await requireActorAccess(req, dependencies);
+  if (!context.isOwner) throw new AccessControlError('FORBIDDEN');
   return context;
 }
