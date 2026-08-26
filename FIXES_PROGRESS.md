@@ -5,6 +5,7 @@
 
 ### Clientes CRM — rollout (2026-08-26)
 
+- ✅ CRM-QUEUE-021 — leases terminais de automações ainda tentavam atualizar a FK exclusiva de campanhas após a separação dos jobs → migration 059 recria a recuperação usando `automation_dispatch_id`, mantendo destinatários e dispatches no mesmo estado terminal — `supabase/migrations/059_automation_dispatch_lease_terminal.sql:1`, `tests/customerAutomations.test.ts:1`
 - ✅ CRM-ROLLOUT-020 — não havia controle gradual por empresa nem painel agregado de operação → migration 057 adiciona flags fail-safe para CRM/campanhas/automações, APIs e navegação respeitam o rollout, e métricas/painel registram somente contadores e idade da fila — `server/customers/rollout.ts:1`, `server/customers/metrics.ts:1`, `supabase/migrations/057_customer_crm_rollout.sql:1`
 
 ### Clientes CRM — campanhas (2026-08-26)

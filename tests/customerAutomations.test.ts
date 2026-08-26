@@ -50,4 +50,8 @@ assert.match(migration, /enabled\s+boolean\s+not null\s+default\s+false/i);
 assert.match(hardeningMigration, /daily_limit/i);
 assert.match(hardeningMigration, /release_zelochat_expired_leases/i);
 assert.match(readFileSync(resolve('supabase/migrations/058_automation_dispatch_jobs.sql'), 'utf8'), /automation_dispatch_id.*references.*zelochat_automation_dispatches/i);
+const leaseDispatchMigration = readFileSync(resolve('supabase/migrations/059_automation_dispatch_lease_terminal.sql'), 'utf8');
+assert.match(leaseDispatchMigration, /returning id, recipient_id, automation_dispatch_id, job_type/i);
+assert.match(leaseDispatchMigration, /t\.automation_dispatch_id\s*=\s*d\.id/i);
+assert.doesNotMatch(leaseDispatchMigration, /t\.recipient_id\s*=\s*d\.id/i);
 console.log('customerAutomations: ok');
