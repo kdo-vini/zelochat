@@ -1,0 +1,62 @@
+import { getServiceSupabase } from '../supabase.js';
+import { evaluateAudience, parseSegmentDefinition, type AudiencePerson, type SegmentDefinition } from './filters.js';
+
+export interface CampaignPreview { eligible: AudiencePerson[]; suppressed: Array<AudiencePerson & { suppressionReason: string }>; version: number; }
+
+async function ownerForEmpresa(empresaId: string): Promise<string> {
+  const { data, error } = await getServiceSupabase().from('empresa_perfil').select('user_id').eq('id', empresaId).maybeSingle();
+  if (error || !data?.user_id) throw new Error('EMPRESA_NOT_FOUND');
+  return data.user_id;
+}
+
+export async function listSegments(empresaId: string): Promise<unknown[]> { const { data, error } = await getServiceSupabase().from('zelochat_segments').select('*').eq('empresa_id', empresaId).order('name'); if (error) throw error; return data ?? []; }
+export async function createSegment(empresaId: string, actorId: string, input: { name: string; definition: unknown }): Promise<unknown> {
+  const definition = parseSegmentDefinition(input.definition); const owner = await ownerForEmpresa(empresaId);
+  const { data, error } = await getServiceSupabase().from('zelochat_segments').insert({ empresa_id: empresaId, id_usuario: owner, name: input.name.trim(), definition, created_by: actorId }).select('*').single();
+  if (error) throw error; return data;
+}
+export async function updateSegment(empresaId: string, id: string, input: { name?: string; definition?: unknown }): Promise<unknown> {
+  const values: Record<string, unknown> = { updated_at: new Date().toISOString() }; if (input.name !== undefined) values.name = input.name.trim(); if (input.definition !== undefined) values.definition = parseSegmentDefinition(input.definition);
+  const { data, error } = await getServiceSupabase().from('zelochat_segments').update(values).eq('id', id).eq('empresa_id', empresaId).select('*').single(); if (error) throw error; return data;
+}
+export async function deleteSegment(empresaId: string, id: string): Promise<void> { const { error } = await getServiceSupabase().from('zelochat_segments').delete().eq('id', id).eq('empresa_id', empresaId); if (error) throw error; }
+
+async function loadAudience(empresaId: string, ownerUserId: string, definition: SegmentDefinition): Promise<CampaignPreview> {
+  const db = getServiceSupabase();
+  const [{ data: people, error: peopleError }, { data: blocked }, { data: conflicts }, { data: optouts }, { data: orders }] = await Promise.all([
+    db.from('pessoas').select('id,nome,contato,tipo').eq('id_usuario', ownerUserId),
+    db.from('zelochat_customer_relationships').select('pessoa_id,whatsapp_blocked_at').eq('empresa_id', empresaId).not('whatsapp_blocked_at', 'is', null),
+    db.from('zelochat_person_match_conflicts').select('candidate_person_ids').eq('empresa_id', empresaId).eq('state', 'open'),
+    db.from('zelochat_customer_optouts').select('pessoa_id').eq('empresa_id', empresaId),
+    db.from('zelo_orders').select('pessoa_id,total,status').eq('empresa_id', empresaId).eq('status', 'delivered').not('pessoa_id', 'is', null),
+  ]);
+  if (peopleError) throw peopleError;
+  const count = new Map<string, { count: number; total: number }>(); for (const row of orders ?? []) { const current = count.get(row.pessoa_id) ?? { count: 0, total: 0 }; current.count += 1; current.total += Number(row.total ?? 0); count.set(row.pessoa_id, current); }
+  const blockedIds = new Set((blocked ?? []).map((row) => row.pessoa_id)); const optedOutIds = new Set((optouts ?? []).map((row) => row.pessoa_id)); const conflictIds = new Set<string>();
+  for (const conflict of conflicts ?? []) for (const id of Array.isArray(conflict.candidate_person_ids) ? conflict.candidate_person_ids : []) if (typeof id === 'string') conflictIds.add(id);
+  const audience: AudiencePerson[] = (people ?? []).map((person) => { const stats = count.get(person.id) ?? { count: 0, total: 0 }; return { id: person.id, name: person.nome || 'Cliente', phone: person.contato || null, activityState: stats.count ? 'active' : 'never', orderCount: stats.count, totalValue: stats.total, isEmployee: person.tipo !== 'cliente', hasConflict: conflictIds.has(person.id), blocked: blockedIds.has(person.id), optedOut: optedOutIds.has(person.id) }; });
+  const result = evaluateAudience(audience, definition); return { ...result, version: Date.now() };
+}
+
+export async function previewCampaign(empresaId: string, ownerUserId: string, definition: unknown): Promise<CampaignPreview> { return loadAudience(empresaId, ownerUserId, parseSegmentDefinition(definition)); }
+
+export async function createCampaign(empresaId: string, actorId: string, input: { name: string; message: string; segmentId?: string | null }): Promise<unknown> {
+  const owner = await ownerForEmpresa(empresaId); const message = input.message.trim(); if (!message) throw new Error('CAMPAIGN_MESSAGE_REQUIRED');
+  const { data, error } = await getServiceSupabase().from('zelochat_campaigns').insert({ empresa_id: empresaId, id_usuario: owner, name: input.name.trim(), message, segment_id: input.segmentId ?? null, created_by: actorId }).select('*').single(); if (error) throw error; return data;
+}
+export async function listCampaigns(empresaId: string): Promise<unknown[]> { const { data, error } = await getServiceSupabase().from('zelochat_campaigns').select('*').eq('empresa_id', empresaId).order('created_at', { ascending: false }); if (error) throw error; return data ?? []; }
+export async function updateCampaignDraft(empresaId: string, id: string, input: { name?: string; message?: string; segmentId?: string | null }): Promise<unknown> {
+  const values: Record<string, unknown> = { updated_at: new Date().toISOString() }; if (input.name !== undefined) values.name = input.name.trim(); if (input.message !== undefined) { if (!input.message.trim()) throw new Error('CAMPAIGN_MESSAGE_REQUIRED'); values.message = input.message.trim(); } if (input.segmentId !== undefined) values.segment_id = input.segmentId;
+  const { data, error } = await getServiceSupabase().from('zelochat_campaigns').update(values).eq('empresa_id', empresaId).eq('id', id).eq('status', 'draft').select('*').single(); if (error) throw error; return data;
+}
+
+export async function scheduleCampaign(empresaId: string, ownerUserId: string, id: string, scheduledAt: string | null): Promise<{ campaign: unknown; recipientCount: number }> {
+  const db = getServiceSupabase(); const { data: campaign, error: campaignError } = await db.from('zelochat_campaigns').select('*').eq('empresa_id', empresaId).eq('id', id).eq('status', 'draft').maybeSingle(); if (campaignError) throw campaignError; if (!campaign) throw new Error('CAMPAIGN_NOT_FOUND');
+  const segment = campaign.segment_id ? await db.from('zelochat_segments').select('definition').eq('id', campaign.segment_id).eq('empresa_id', empresaId).maybeSingle() : { data: { definition: {} }, error: null }; if (segment.error) throw segment.error;
+  const preview = await previewCampaign(empresaId, ownerUserId, segment.data?.definition ?? {}); const recipients = [...preview.eligible, ...preview.suppressed].map((person) => ({ campaign_id: id, empresa_id: empresaId, pessoa_id: person.id, phone_snapshot: person.phone, name_snapshot: person.name, status: 'suppressionReason' in person ? 'suppressed' : 'queued', suppression_reason: 'suppressionReason' in person ? person.suppressionReason : null, idempotency_key: `${id}:${person.id}`, queued_at: 'suppressionReason' in person ? null : new Date().toISOString() }));
+  if (recipients.length) { const { error } = await db.from('zelochat_campaign_recipients').upsert(recipients, { onConflict: 'campaign_id,pessoa_id', ignoreDuplicates: true }); if (error) throw error; }
+  const { data: updated, error } = await db.from('zelochat_campaigns').update({ status: scheduledAt ? 'scheduled' : 'running', scheduled_at: scheduledAt, audience_version: preview.version, preview_version: preview.version, updated_at: new Date().toISOString() }).eq('id', id).eq('empresa_id', empresaId).eq('status', 'draft').select('*').single(); if (error) throw error;
+  return { campaign: updated, recipientCount: recipients.length };
+}
+export async function setCampaignStatus(empresaId: string, id: string, status: 'paused' | 'running' | 'cancelled'): Promise<unknown> { const { data, error } = await getServiceSupabase().from('zelochat_campaigns').update({ status, updated_at: new Date().toISOString() }).eq('empresa_id', empresaId).in('status', ['scheduled', 'running', 'paused']).eq('id', id).select('*').single(); if (error) throw error; return data; }
+export async function listRecipients(empresaId: string, campaignId: string, limit = 50): Promise<unknown[]> { const { data, error } = await getServiceSupabase().from('zelochat_campaign_recipients').select('*').eq('empresa_id', empresaId).eq('campaign_id', campaignId).order('created_at').limit(Math.min(limit, 100)); if (error) throw error; return data ?? []; }

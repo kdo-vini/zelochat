@@ -30,6 +30,7 @@ import { startWebhookEventsSweeper } from './webhookEventsSweeper.js';
 import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
 import { redactJid } from './redact.js';
+import { startOutboundWorker } from './outbound/worker.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -475,4 +476,8 @@ httpServer.listen(PORT, () => {
   // (Day 0 fires synchronously via /api/onboarding/welcome). Idempotent: re-run
   // is no-op via UNIQUE(user_id, day) on the log tables.
   startOnboardingFollowupLoop();
+
+  // Campanhas usam uma fila persistente com lease; chamar duas vezes no mesmo
+  // processo retorna o mesmo worker e não abre concorrência adicional.
+  startOutboundWorker();
 });

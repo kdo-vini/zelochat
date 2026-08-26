@@ -14,6 +14,7 @@ import {
   parseStructuredMessage,
   serializeStructuredMessage,
 } from '../src/domain/chat.js';
+import { isOptOutMessage } from '../src/domain/optOut.js';
 
 // P2.18 — Per-session counter for consecutive Whisper transcription failures.
 // After TRANSCRIPTION_FAILURE_THRESHOLD consecutive failures the session is
@@ -2317,6 +2318,19 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // layer); for the same message redelivered, the early-return above prevents
   // re-entry entirely.
   await getServiceSupabase().rpc('zelochat_increment_unread', { p_session_id: sessionRow.id });
+  // Opt-out is deterministic and fail-soft during rollout: the message is
+  // already persisted, while an unavailable CRM table must never block chat.
+  if (sessionRow.pessoa_id && isOptOutMessage(incomingText)) {
+    await getServiceSupabase().from('zelochat_customer_optouts').upsert({
+      empresa_id: resolvedEmpresaId,
+      pessoa_id: sessionRow.pessoa_id,
+      reason: 'opt_out',
+      source: 'whatsapp',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'empresa_id,pessoa_id' }).then(({ error }) => {
+      if (error) console.warn('[CRM] Não foi possível registrar o bloqueio de comunicação:', error.message);
+    });
+  }
   console.log(`[InboundTrace] message_handler_persisted empresa=${resolvedEmpresaId} jid=${redactJid(jid)} dbMessageId=${storedMsg.id} waMessageId=${waMessageId ?? '<missing>'} autoReplyCandidate=${shouldTriggerAutoReply} attachment=${attachment?.type ?? 'none'}`);
 
   const family = await fetchSessionFamily(resolvedEmpresaId, jid);
