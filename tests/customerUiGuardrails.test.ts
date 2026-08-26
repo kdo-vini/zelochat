@@ -10,9 +10,9 @@ await runSuite('customer list behavior', [
   {
     name: 'serializes only active filters for the typed API',
     run: () => {
-      const filters: CustomerFilters = { search: ' Ana ', status: 'active', tags: ['vip'], birthdayMonth: 0, vip: true, birthdayOnly: true };
-      assert(serializeCustomerFilters(filters) === 'q=Ana&status=active&tags=vip&vip=true&birthdayOnly=true', 'empty values are omitted and search is trimmed');
-      assert(countActiveCustomerFilters(filters) === 4, 'status, tags, VIP and birthday count as active filters');
+      const filters: CustomerFilters = { search: ' Ana ', status: 'active', tags: ['vip'], birthdayMonth: 0 };
+      assert(serializeCustomerFilters(filters) === 'q=Ana&status=active&tags=vip', 'empty values are omitted and search is trimmed');
+      assert(countActiveCustomerFilters(filters) === 2, 'search and status count as active filters');
     },
   },
   {

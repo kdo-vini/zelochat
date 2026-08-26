@@ -10,8 +10,6 @@ export interface CustomerFilters {
   birthdayMonth?: number;
   origin?: string;
   hasWhatsApp?: boolean;
-  vip?: boolean;
-  birthdayOnly?: boolean;
 }
 
 export interface CustomerSummary {
@@ -54,8 +52,6 @@ export function countActiveCustomerFilters(filters: CustomerFilters): number {
     filters.birthdayMonth,
     filters.origin?.trim(),
     filters.hasWhatsApp !== undefined,
-    filters.vip === true,
-    filters.birthdayOnly === true,
   ].filter(Boolean).length;
 }
 
@@ -67,8 +63,6 @@ export function serializeCustomerFilters(filters: CustomerFilters): string {
   if (filters.birthdayMonth) params.set('birthdayMonth', String(filters.birthdayMonth));
   if (filters.origin?.trim()) params.set('origin', filters.origin.trim());
   if (filters.hasWhatsApp !== undefined) params.set('hasWhatsApp', String(filters.hasWhatsApp));
-  if (filters.vip === true) params.set('vip', 'true');
-  if (filters.birthdayOnly === true) params.set('birthdayOnly', 'true');
   return params.toString();
 }
 
