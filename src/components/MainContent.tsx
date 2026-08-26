@@ -61,6 +61,8 @@ interface Props {
   pendingOrderFocus: { request: OrderFocusRequest; key: number } | null;
   handleNavigateToKanban: () => void;
   onOpenAtendimento: (sessionId: string) => void;
+  customerPermissions: { pessoasVisualizar: boolean; clientesComunicar: boolean };
+  canManageCustomers: boolean;
   // AI configs
   triggers: any[];
   triggersError: any;
@@ -97,6 +99,8 @@ export function MainContent({
   updateOrderStatus, reprintOrder, canPrint,
   pendingOrderFocus, handleNavigateToKanban,
   onOpenAtendimento,
+  customerPermissions,
+  canManageCustomers,
   triggers, triggersError, createTrigger, updateTriggerRequest, deleteTriggerRequest,
   quickResponses, addQuickResponse, updateQuickResponse, deleteQuickResponse,
   saveAiInstructions,
@@ -143,7 +147,7 @@ export function MainContent({
                   <DashboardView state={dashboardState} setActiveView={setActiveView} token={token} />
                 )}
                 {activeView === 'customers' && (
-                  <CustomersView token={token} onOpenAtendimento={onOpenAtendimento} />
+                  <CustomersView token={token} onOpenAtendimento={onOpenAtendimento} customerPermissions={customerPermissions} canManageCustomers={canManageCustomers} />
                 )}
                 {activeView === 'kanban' && !isGeneralMode && (
                   <DragDropContext onDragEnd={onDragEnd}>

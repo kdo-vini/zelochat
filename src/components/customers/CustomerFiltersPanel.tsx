@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { CustomerFilters } from '../../services/customerApi';
 
 interface Props {
@@ -7,11 +8,20 @@ interface Props {
 }
 
 export function CustomerFiltersPanel({ filters, onChange, onClose }: Props) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    returnFocusRef.current = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => { document.removeEventListener('keydown', handleKeyDown); returnFocusRef.current?.focus(); };
+  }, [onClose]);
   return (
-    <div role="dialog" aria-label="Filtros de clientes" className="w-full rounded-t-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-lg md:absolute md:right-4 md:top-14 md:z-20 md:w-[320px] md:rounded-xl">
+    <div role="dialog" aria-modal="true" aria-labelledby="customer-filters-title" className="w-full rounded-t-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-lg md:absolute md:right-4 md:top-14 md:z-20 md:w-[320px] md:rounded-xl">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold text-[var(--color-ink)]">Filtros</h2>
-        <button type="button" onClick={onClose} className="min-h-[44px] rounded-lg px-3 text-[13px] text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]">Fechar</button>
+        <h2 id="customer-filters-title" className="text-[15px] font-semibold text-[var(--color-ink)]">Filtros</h2>
+        <button ref={closeRef} type="button" onClick={onClose} className="min-h-[44px] rounded-lg px-3 text-[13px] text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]">Fechar</button>
       </div>
       <label className="mb-3 block text-[12px] font-medium text-[var(--color-ink-muted)]">
         Estado

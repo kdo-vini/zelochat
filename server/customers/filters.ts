@@ -1,6 +1,6 @@
 import type { CustomerFilters, CustomerActivityState } from '../../src/types.js';
 
-const allowed = new Set(['q', 'activityState', 'hasPhone', 'tagId', 'birthdayMonth', 'cursor', 'limit']);
+const allowed = new Set(['q', 'activityState', 'hasPhone', 'tagId', 'birthdayMonth', 'cursor', 'limit', 'status', 'hasWhatsApp', 'tags', 'vip', 'birthdayOnly', 'origin']);
 function isCanonicalTimestamp(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
     && new Date(value).toISOString() === value;
@@ -14,9 +14,18 @@ export function parseCustomerFilters(query: Record<string, unknown>): CustomerFi
     filters.q = search;
   }
   if (query.activityState === 'active' || query.activityState === 'inactive') filters.activityState = query.activityState as CustomerActivityState;
+  if (query.status === 'active' || query.status === 'inactive') filters.activityState = query.status as CustomerActivityState;
   if (query.hasPhone === 'true' || query.hasPhone === 'false') filters.hasPhone = query.hasPhone === 'true';
+  if (query.hasWhatsApp === 'true' || query.hasWhatsApp === 'false') filters.hasPhone = query.hasWhatsApp === 'true';
   if (typeof query.tagId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(query.tagId)) filters.tagId = query.tagId;
   else if (query.tagId != null) throw new Error('Tag inválida');
+  if (typeof query.tags === 'string' && query.tags.trim()) {
+    const firstTag = query.tags.split(',').map((tag) => tag.trim()).find((tag) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tag));
+    if (firstTag) filters.tagId = firstTag;
+  }
+  if (query.vip === 'true') filters.vip = true;
+  if (query.birthdayOnly === 'true') filters.birthdayOnly = true;
+  if (typeof query.origin === 'string' && query.origin.trim()) filters.origin = query.origin.trim().slice(0, 80);
   if (query.birthdayMonth != null) { const month = Number(query.birthdayMonth); if (!Number.isInteger(month) || month < 1 || month > 12) throw new Error('Mês de aniversário inválido'); filters.birthdayMonth = month; }
   if (query.cursor != null) { if (typeof query.cursor !== 'string' || query.cursor.length > 200) throw new Error('Cursor inválido'); filters.cursor = query.cursor; }
   if (query.limit != null) { const limit = Number(query.limit); if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Limite inválido'); filters.limit = limit; }

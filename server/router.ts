@@ -160,6 +160,19 @@ const router = Router();
 // the actor/tenant permission check before touching service_role data.
 router.use(customerRouter);
 
+router.get('/api/access/me', async (req: Request, res: Response) => {
+  try {
+    const access = await requireActorAccess(req);
+    res.json({ actorUserId: access.actorUserId, isOwner: access.isOwner, capabilities: {
+      pessoas: { visualizar: access.isOwner || access.permissions?.['pessoas.visualizar'] === true, gerenciar: access.isOwner || access.permissions?.['pessoas.gerenciar'] === true },
+      clientes: { comunicar: access.isOwner || access.permissions?.['clientes.comunicar'] === true },
+    } });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'UNAUTHORIZED';
+    res.status(code === 'FORBIDDEN' ? 403 : 401).json({ code, message: 'Não foi possível validar suas permissões.' });
+  }
+});
+
 const ORDER_NOTIFICATION_COLUMNS = LEGACY_CANONICAL_ORDER_SELECT;
 
 

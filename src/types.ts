@@ -68,7 +68,11 @@ export interface CustomerSummary {
   activityState: CustomerActivityState;
   totalOrders: number;
   totalValue: number;
-  tags: Tag[];
+  tags: Array<Tag | string>;
+  /** Canonical CRM aliases used by the customer API adapter. */
+  whatsapp?: string | null;
+  orderCount?: number;
+  openBalance?: number | null;
 }
 
 export interface CustomerDetail extends CustomerSummary {
@@ -83,6 +87,12 @@ export interface CustomerDetail extends CustomerSummary {
   whatsappBlockReason: string | null;
   lastManualContactAt: string | null;
   sessions: ChatSession[];
+  birthday?: { day: number; month: number; year: number | null } | null;
+  notes?: string | null;
+  automaticSummary?: string | null;
+  relationship?: { blocked: boolean; blockReason: string | null; campaigns: number; automations: number };
+  orders?: Array<{ id: string; createdAt: string; status: string; total: number }>;
+  primaryJid?: string | null;
 }
 
 export interface CustomerFilters {
@@ -91,6 +101,10 @@ export interface CustomerFilters {
   hasPhone?: boolean;
   tagId?: string;
   birthdayMonth?: number;
+  vip?: boolean;
+  birthdayOnly?: boolean;
+  origin?: string;
+  tags?: string[];
   cursor?: string | null;
   limit?: number;
 }

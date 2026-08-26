@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { MoreHorizontal, ShoppingBag } from 'lucide-react';
 import type { View, NavItem } from './Sidebar';
 
@@ -21,9 +22,18 @@ export function MobileBottomNav({
   moreActiveViews,
   onNavigate, onToggleMore, onCloseMore,
 }: Props) {
+  const moreCloseRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!moreSheetOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    moreCloseRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onCloseMore(); };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => { document.removeEventListener('keydown', handleKeyDown); previous?.focus(); };
+  }, [moreSheetOpen, onCloseMore]);
   return (
     <>
-      <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden h-[64px] items-stretch border-t border-[var(--color-line)] bg-[var(--color-surface)]">
+      <nav aria-label="Navegação principal" className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden h-[64px] items-stretch border-t border-[var(--color-line)] bg-[var(--color-surface)]">
         {primaryNavItems.map((item) => {
           const Icon = item.icon;
           const active = activeView === item.id;
@@ -66,9 +76,11 @@ export function MobileBottomNav({
       {moreSheetOpen && (
         <div className="md:hidden fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/40" onClick={onCloseMore} />
-          <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] pb-6">
+          <div role="dialog" aria-modal="true" aria-labelledby="mobile-more-title" className="absolute bottom-0 left-0 right-0 rounded-t-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] pb-6">
             <div className="mx-auto mt-2 mb-2 h-1 w-10 rounded-full bg-[var(--color-line)]" />
+            <h2 id="mobile-more-title" className="sr-only">Mais opções</h2>
             <div className="px-2 py-1">
+              <button ref={moreCloseRef} type="button" onClick={onCloseMore} className="sr-only">Fechar Mais</button>
               {bottomSheetItems.map((item) => {
                 const Icon = item.icon;
                 const active = activeView === item.id;

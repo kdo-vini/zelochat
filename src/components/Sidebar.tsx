@@ -46,6 +46,8 @@ const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badg
   return (
     <button
       onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      aria-label={item.label}
       title={!expanded ? item.label : undefined}
       className={`group relative w-full flex items-center rounded-[10px] transition-all ${
         expanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
@@ -124,6 +126,7 @@ export function Sidebar({
         )}
         <button
           onClick={onToggle}
+          aria-label={expanded ? 'Recolher navegação' : 'Expandir navegação'}
           className="w-7 h-7 flex items-center justify-center rounded-md text-[var(--color-ink-faint)] hover:text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] transition-colors flex-shrink-0"
         >
           {expanded
