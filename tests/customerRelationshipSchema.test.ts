@@ -4,10 +4,14 @@ import { resolve } from 'node:path';
 import { assert, assertEqual, assertIncludes, runSuite } from './testHarness.js';
 
 const migrationPath = resolve('supabase/migrations/048_customer_relationship_foundation.sql');
+const aggregateMigrationPath = resolve('supabase/migrations/050_customer_read_aggregates_and_conflict_dedupe.sql');
 const verificationPath = resolve('supabase/verification/customer_relationship_authz.sql');
 const messageHandlerPath = resolve('server/messageHandler.ts');
 const migration = existsSync(migrationPath)
   ? readFileSync(migrationPath, 'utf8').replace(/\r\n/g, '\n').toLowerCase()
+  : '';
+const aggregateMigration = existsSync(aggregateMigrationPath)
+  ? readFileSync(aggregateMigrationPath, 'utf8').replace(/\r\n/g, '\n').toLowerCase()
   : '';
 const compactMigration = migration.replace(/\s+/g, ' ');
 const types = readFileSync(resolve('src/types.ts'), 'utf8');
@@ -17,6 +21,13 @@ const verification = existsSync(verificationPath)
   : '';
 
 await runSuite('customer relationship schema', [
+  {
+    name: 'casts legacy text conversation timestamps before timestamp aggregation',
+    run: () => {
+      assertIncludes(aggregateMigration, "nullif(trim(s.last_message_time), '')::timestamptz", 'legacy conversation timestamps are cast safely');
+      assertIncludes(aggregateMigration, "nullif(trim(s.last_message_time), '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}t'", 'legacy conversation timestamp cast is guarded');
+    },
+  },
   {
     name: 'adds nullable people links and tenant/activity indexes to sessions',
     run: () => {
@@ -95,7 +106,7 @@ await runSuite('customer relationship schema', [
       assertIncludes(verification, 'grant select, insert, update, delete on table', 'runtime verification grants browser ACLs temporarily to isolate RLS');
       assertIncludes(verification, 'set local role anon', 'runtime verification executes under anon');
       assertIncludes(verification, 'set local role authenticated', 'runtime verification executes under authenticated');
-      assertIncludes(verification, 'crm_assert_browser_crm_denied', 'runtime verification exercises browser CRUD denial');
+      assertIncludes(verification, 'create or replace function pg_temp.crm_assert_browser_crm_denied', 'runtime verification exercises browser CRUD denial');
       assertIncludes(verification, 'reset role', 'runtime verification restores the administrator role');
     },
   },

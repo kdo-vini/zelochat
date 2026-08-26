@@ -89,7 +89,12 @@ with order_agg as (
    where o.empresa_id = p_empresa_id and o.status = 'delivered' and o.pessoa_id is not null
    group by o.pessoa_id
 ), conversation_agg as (
-  select s.pessoa_id, max(s.last_message_time) last_conversation_at
+  select s.pessoa_id,
+         max(case
+           when nullif(trim(s.last_message_time), '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+             then nullif(trim(s.last_message_time), '')::timestamptz
+           else null
+         end) last_conversation_at
     from public.zelochat_sessions s
    where s.empresa_id = p_empresa_id and s.pessoa_id is not null
    group by s.pessoa_id
@@ -141,7 +146,12 @@ with order_agg as (
          max(coalesce(o.closed_at, o.created_at)) last_delivered_at
     from public.zelo_orders o where o.empresa_id = p_empresa_id and o.status = 'delivered' and o.pessoa_id is not null group by o.pessoa_id
 ), conversation_agg as (
-  select s.pessoa_id, max(s.last_message_time) last_conversation_at
+  select s.pessoa_id,
+         max(case
+           when nullif(trim(s.last_message_time), '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+             then nullif(trim(s.last_message_time), '')::timestamptz
+           else null
+         end) last_conversation_at
     from public.zelochat_sessions s where s.empresa_id = p_empresa_id and s.pessoa_id is not null group by s.pessoa_id
 ), enriched as (
   select p.id, p.nome, p.contato, p.updated_at, coalesce(o.total_orders, 0)::bigint total_orders,

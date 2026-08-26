@@ -66,16 +66,16 @@ begin
   end if;
 
   if not exists (
-    select 1 from information_schema.columns
-     where table_schema = 'public' and table_name = 'zelochat_sessions'
-       and column_name = 'pessoa_id' and is_nullable = 'YES'
+    select 1 from information_schema.columns c
+     where c.table_schema = 'public' and c.table_name = 'zelochat_sessions'
+       and c.column_name = 'pessoa_id' and c.is_nullable = 'YES'
   ) then
     raise exception 'pessoa_id is not nullable on sessions';
   end if;
   if not exists (
-    select 1 from information_schema.columns
-     where table_schema = 'public' and table_name = 'zelochat_sessions'
-       and column_name = 'owner_user_id' and is_nullable = 'NO'
+    select 1 from information_schema.columns c
+     where c.table_schema = 'public' and c.table_name = 'zelochat_sessions'
+       and c.column_name = 'owner_user_id' and c.is_nullable = 'NO'
   ) then
     raise exception 'owner_user_id is not required on sessions';
   end if;
@@ -149,7 +149,7 @@ grant select, insert, update, delete on table
   to anon, authenticated;
 grant select on crm_relationship_fixture to anon, authenticated;
 
-create temporary function crm_assert_browser_crm_denied()
+create or replace function pg_temp.crm_assert_browser_crm_denied()
 returns void
 language plpgsql
 set search_path = pg_temp, public
@@ -179,8 +179,8 @@ begin
       execute 'update public.zelochat_customer_relationships set internal_notes = internal_notes where id = $1'
         using target.row_id;
     elsif target.table_name = 'zelochat_person_tags' then
-      execute 'update public.zelochat_person_tags set tag_id = tag_id where id = $1'
-        using target.row_id;
+      execute 'update public.zelochat_person_tags set tag_id = tag_id where empresa_id = $1 and pessoa_id = $2 and tag_id = $3'
+        using f.empresa_a, f.pessoa_a, f.tag_a;
     else
       execute 'update public.zelochat_person_match_conflicts set state = state where id = $1'
         using target.row_id;
@@ -190,8 +190,13 @@ begin
       raise exception '% changed CRM rows through UPDATE', current_user;
     end if;
 
-    execute format('delete from public.%I where id = $1', target.table_name)
-      using target.row_id;
+    if target.table_name = 'zelochat_person_tags' then
+      execute 'delete from public.zelochat_person_tags where empresa_id = $1 and pessoa_id = $2 and tag_id = $3'
+        using f.empresa_a, f.pessoa_a, f.tag_a;
+    else
+      execute format('delete from public.%I where id = $1', target.table_name)
+        using target.row_id;
+    end if;
     get diagnostics affected_rows = row_count;
     if affected_rows <> 0 then
       raise exception '% deleted CRM rows through DELETE', current_user;
@@ -220,8 +225,6 @@ begin
   end;
 end;
 $$;
-grant execute on function crm_assert_browser_crm_denied() to anon, authenticated;
-
 -- A valid session, relationship, person tag and open conflict for tenant A.
 create temporary table session_id_sink (id uuid) on commit drop;
 with f as (select * from crm_relationship_fixture)
@@ -366,10 +369,10 @@ end;
 $$;
 
 set local role anon;
-select crm_assert_browser_crm_denied();
+select pg_temp.crm_assert_browser_crm_denied();
 reset role;
 set local role authenticated;
-select crm_assert_browser_crm_denied();
+select pg_temp.crm_assert_browser_crm_denied();
 reset role;
 
 -- A session is disposable; deleting it must not delete the canonical person.
