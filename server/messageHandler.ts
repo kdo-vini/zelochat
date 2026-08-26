@@ -1,5 +1,6 @@
 import { broadcast } from './ws.js';
-import { getServiceSupabase, uploadReceivedMedia } from './supabase.js';
+import { getEmpresaUserId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
+import { ensureCustomerForSession } from './customers/identity.js';
 import { transcribeAudio } from './transcription.js';
 import { sendTextMessage } from './whatsapp.js';
 import { redactJid } from './redact.js';
@@ -37,8 +38,8 @@ const MESSAGE_ACTIVITY_CONCURRENCY = 4;
 const BULK_SESSION_RESOLUTION_CHUNK_SIZE = 50;
 const BULK_SESSION_RESOLUTION_CONCURRENCY = 4;
 
-const SESSION_COLUMNS_FULL = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
-const SESSION_COLUMNS_LIST = 'id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
+const SESSION_COLUMNS_FULL = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
+const SESSION_COLUMNS_LIST = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
 
 function normalizeSessionRows(
   rows: Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }> | null | undefined,
@@ -310,6 +311,7 @@ export interface SessionListPage {
 interface SessionRow {
   id: string;
   remote_jid: string;
+  pessoa_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   last_message: string | null;
@@ -1025,7 +1027,20 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
     throw new Error(targetError.message);
   }
 
-  // Step 2: build the normalized phone key used to group family rows.
+  const targetPessoaId = (targetData as SessionRow | null)?.pessoa_id ?? null;
+  if (targetPessoaId) {
+    const { data: personRows, error: personError } = await supabase
+      .from('zelochat_sessions')
+      .select(SESSION_COLUMNS_FULL)
+      .eq('empresa_id', empresaId)
+      .eq('pessoa_id', targetPessoaId)
+      .order('updated_at', { ascending: false });
+    if (personError) throw new Error(personError.message);
+    const rows = (personRows as SessionRow[]) ?? [];
+    if (rows.length) return { primary: pickPrimarySessionRow(rows), latest: pickLatestSessionRow(rows), rows };
+  }
+
+  // Step 2: build the normalized phone key only for unresolved sessions.
   const normalizedPhone = phoneFromJid(jid) || jid;
   const targetKey = buildContactKey(normalizedPhone);
 
@@ -1089,6 +1104,21 @@ export async function ensureSession(params: {
   const supabase = getServiceSupabase();
   const family = await fetchSessionFamily(params.empresaId, params.jid);
   const existing = family?.primary ?? null;
+  let pessoaId = existing?.pessoa_id ?? null;
+  const ownerUserId = await getEmpresaUserId(params.empresaId);
+  if (ownerUserId) {
+    // FIX 2026-08-25: identity enrichment is best-effort; failures/conflicts
+    // preserve the session and message with pessoa_id NULL.
+    const identity = await ensureCustomerForSession({
+      empresaId: params.empresaId,
+      ownerUserId,
+      jid: params.jid,
+      phone: params.customerPhone ?? phoneFromJid(params.jid),
+      observedName: params.customerName ?? null,
+      persistPessoaId: async (resolved) => { pessoaId = resolved; },
+    });
+    if (identity.status !== 'linked' && identity.status !== 'created') pessoaId = null;
+  }
   const formattedPhone = params.customerPhone ?? formatPhone(phoneFromJid(params.jid));
   const preferredNameCandidates = [
     params.customerName,
@@ -1103,6 +1133,7 @@ export async function ensureSession(params: {
   const payload = {
     empresa_id: params.empresaId,
     remote_jid: params.jid,
+    pessoa_id: pessoaId,
     customer_name: customerName,
     customer_phone: formattedPhone,
     last_message: params.lastMessage ?? existing?.last_message ?? '',
@@ -1119,7 +1150,7 @@ export async function ensureSession(params: {
       .from('zelochat_sessions')
       .update(payload)
       .eq('id', existing.id)
-      .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile')
+      .select(SESSION_COLUMNS_FULL)
       .single();
 
     if (error) {
@@ -1132,7 +1163,7 @@ export async function ensureSession(params: {
   const { data, error } = await supabase
     .from('zelochat_sessions')
     .insert(payload)
-    .select('id, remote_jid, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile')
+    .select(SESSION_COLUMNS_FULL)
     .single();
 
   if (error) {
