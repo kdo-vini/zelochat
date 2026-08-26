@@ -20,6 +20,7 @@
 
 - **Tasks 5–8 concluídas localmente (2026-08-25):** identidade WhatsApp fail-soft via adaptador RPC único, vínculo pessoa-first em sessões e pedidos sem alterar snapshots, backfill retomável em migration `049_customer_backfill_state.sql` e APIs paginadas de Clientes com `pessoas.visualizar` em todas as leituras. **Gate A de banco não aplicado neste ambiente:** rollout/teste transacional de concorrência, funcionário em conflito e RLS cross-tenant ainda precisam de ambiente Supabase de teste antes da ativação.
 - **Rodada de auditoria Tasks 5–8 corrigida:** consumidores de pedidos fazem preflight/fallback somente para contrato PDV ausente; dry-run não chama RPC mutante; fontes seguem `pdv|whatsapp|zelomenu|manual`; conflitos são deduplicados; vínculos existentes não são apagados em falhas; filtros/cursors/timeline CRM foram endurecidos contra injeção e empates. Commits `85af077` e `ecd2100`. Gate A continua ausente.
+- **Rereview final corrigida:** fallback exige assinatura/coluna exata; migration `050_customer_read_aggregates_and_conflict_dedupe.sql` instala upsert transacional de conflitos, RPC de listagem com atividade/tag antes do keyset e timeline global `(occurred_at, kind, id)`, tudo server-only. Commit `1857d3b`; aplicação/verificação Gate A ainda pendente.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)
 

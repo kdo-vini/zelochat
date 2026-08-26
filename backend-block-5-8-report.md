@@ -33,7 +33,9 @@ Worktree: `clientes-crm`
 
 - `85af077` — fallback estrito quando argumento/coluna do contrato compartilhado ainda não existe; fonte enumerada; dry-run sem RPC mutante; conflitos sempre registrados/deduplicados; vínculo existente preservado; caminho legado de IA integrado.
 - `ecd2100` — filtros PostgREST rejeitam sintaxe reservada; cursores keyset opacos incluem timestamp+id; timeline usa cursor unificado; filtros de tag/atividade ocorrem antes da página; subrotas validam pessoa/owner/tipo.
+- `1857d3b` — fallback agora exige o erro exato da assinatura/coluna conhecida; migration 050 adiciona chave única parcial e RPC transacional de conflito, RPCs server-only de agregação/listagem e timeline global keyset; cursores validam ISO canônico + UUID estrito.
 
 - A migration 049 está versionada com RLS e grants apenas para `service_role`, mas não foi aplicada/verificada contra Supabase neste ambiente; seu cursor agora é `text`, compatível com o cursor opaco `timestamp|id`.
+- A migration 050 é o próximo gate compartilhado: instala deduplicação concorrente e as RPCs agregadas/timeline, com `anon`/`authenticated` revogados e `service_role` explícito.
 - A RPC `ensure_customer_from_whatsapp` e o argumento `p_pessoa_id` pertencem ao contrato compartilhado do ZeloPDV; deploy deve ocorrer somente após a migration/RPC correspondente existir.
 - O backfill não envia mensagens e grava checkpoint apenas fora de `dry-run`; ainda requer teste de concorrência, funcionário correspondente em conflito, isolamento cross-tenant e permissões owner/subusuário (Gate A).
