@@ -57,6 +57,70 @@ export interface ChatSessionsPage {
   hasMore: boolean;
 }
 
+export type CustomerActivityState = 'active' | 'inactive';
+
+export interface CustomerSummary {
+  id: string;
+  name: string;
+  phone: string | null;
+  hasWhatsApp: boolean;
+  lastActivityAt: string | null;
+  activityState: CustomerActivityState;
+  totalOrders: number;
+  totalValue: number;
+  tags: Tag[];
+}
+
+export interface CustomerDetail extends CustomerSummary {
+  aniversario: {
+    day: number;
+    month: number;
+    year: number | null;
+  } | null;
+  internalNotes: string | null;
+  aiSummary: string | null;
+  whatsappBlockedAt: string | null;
+  whatsappBlockReason: string | null;
+  lastManualContactAt: string | null;
+  sessions: ChatSession[];
+}
+
+export interface CustomerFilters {
+  q?: string;
+  activityState?: CustomerActivityState;
+  hasPhone?: boolean;
+  tagId?: string;
+  birthdayMonth?: number;
+  cursor?: string | null;
+  limit?: number;
+}
+
+export type CustomerTimelineEvent =
+  | {
+      kind: 'message';
+      id: string;
+      occurredAt: string;
+      sessionId: string;
+      direction: 'inbound' | 'outbound';
+      preview: string;
+    }
+  | {
+      kind: 'order';
+      id: string;
+      occurredAt: string;
+      status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' | 'cancelled';
+      total: number;
+    }
+  | {
+      kind: 'relationship';
+      id: string;
+      occurredAt: string;
+      action: 'created' | 'updated' | 'blocked' | 'unblocked' | 'tagged' | 'untagged';
+      actorId: string | null;
+    };
+
+export type CustomerTimelineEntry = CustomerTimelineEvent;
+
 export type EscalationReasonCategory =
   | 'frustration'
   | 'complaint'

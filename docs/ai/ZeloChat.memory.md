@@ -14,6 +14,7 @@
 - Backend/API structure: Express server in `server/index.ts` with routes in `server/router.ts`.
 - Database: Supabase Postgres. Chat-owned tables use `empresa_id`; shared PDV tables use `id_usuario` / `empresa_perfil.user_id`.
 - Auth model: Supabase JWT. Backend resolves tenant from the bearer token via `requireEmpresaId()` / `requireEmpresaAndUserId()` in `server/supabase.ts`; `server/accessControl.ts` resolves active sub-users through shared `access_users`/`access_roles`, caches by actor (never owner), and fails closed for inactive links. WebSocket auth is a first message `{ type: 'auth', token }` in `server/ws.ts`.
+- CRM schema boundary (confirmed 2026-08-25): ZeloPDV owns `pessoas`/identities and ZeloChat owns only relationship state. Migration `036_customer_relationship_foundation.sql` links sessions with nullable `pessoa_id`, keeps `customer_profile` as a temporary fallback, and stores relationship/tags/match conflicts in server-only RLS tables. Composite owner/tenant FKs prevent cross-tenant person/tag links; browser roles have no CRM table grants. Runtime metadata probes live in `supabase/verification/customer_relationship_authz.sql`.
 - Realtime/polling/webhook model:
   - WebSocket fan-out for chat events via `/ws`.
   - Whatsmiau inbound webhook at `POST /webhook/:instance`.
