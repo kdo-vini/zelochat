@@ -409,6 +409,15 @@
 - `000_zelochat_schema.sql` now exists as a recovery snapshot, but `014_zelochat_rls_hardening.sql` is still marked draft and the repo baseline remains internally inconsistent.
 - `GET /api/sessions/:jid/messages` exists and is wired into the chat UI on top-scroll.
 
+## Confirmed 2026-08-25: CRM relationship boundary
+- ZeloChat has CRM primitives but no canonical contact aggregate: sessions/JIDs, messages, session tags, orders, ticket statistics and the AI-generated `customer_profile` exist, but there is no persisted customer identity, birthday, internal note, consent/opt-out ledger or campaign recipient ledger.
+- `customer_profile` is already generated in `server/ai.ts`, persisted on `zelochat_sessions` and injected back into the AI prompt. The operator panel in `src/components/views/ChatView.tsx` does not currently render it; older documentation that calls the feature merely planned is stale.
+- A session remains a transport conversation, not a person. Any future CRM should use an immutable tenant-scoped contact id, map JIDs/phones as identities, and keep merge/unmerge auditable. Last-ten-digit matching is a useful heuristic, not a safe master key.
+- Aggregate production snapshot (read-only, no PII) on 2026-08-25: `pessoas` had 84 `cliente` rows across 9 owners (44 with contact) and 26 `funcionario` rows across 7 owners (11 with contact); 2,034 `zelochat_sessions` had phone, but only 7 matched `pessoas` under the same owner by the current last-ten-digit heuristic. `vendas` had 15,454 rows, with 708 linked through `id_cliente` and 2 through `id_pessoa`. Treat these counts as a dated snapshot, not constants.
+- `pessoas` is PDV-owned and mixes relationship types. Do not alter it from ZeloChat or use employees as a default marketing audience. A ZeloChat-owned relationship layer can bridge to `pessoas`; a true shared person identity must be designed and migrated in the ZeloPDV/shared boundary first.
+- Strategic analysis and rollout recommendation live in `docs/CRM_FEASIBILITY_REPORT.md`.
+- CRM rollout status (2026-08-26): ZeloChat migrations `048–060` and the canonical PDV stream through `20260826131437` are applied in the connected Supabase project; migration 060 adds additive FK/search indexes for CRM relationship, audience, campaign, queue and automation tables. The performance advisor no longer reports unindexed FKs for those new CRM tables; remaining notices are legacy/adjacent or expected unused-index notices while the pilot dataset is small. Feature branches are `codex/clientes-crm` at ZeloChat `bd762c0` and ZeloPDV `8e40e4c`; published authenticated visual validation and deploy authorization remain open.
+
 ## Verification Commands
 - Install: `npm install`
 - Frontend dev server: `npm run dev`
