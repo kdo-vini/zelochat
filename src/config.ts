@@ -4,14 +4,19 @@
  * - In container/self-hosted production with VITE_API_URL set: routes there
  * - In dev: explicit hostname:3001
  */
-const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
+// Vite injects `import.meta.env`; unit tests execute modules directly through
+// tsx, where that optional object is absent.
+const envUrl = ((import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_URL)?.replace(/\/$/, '');
+const runtimeWindow = typeof window === 'undefined' ? null : window;
+const runtimeHostname = runtimeWindow?.location.hostname ?? 'localhost';
+const runtimePort = runtimeWindow?.location.port ?? '3000';
 const isLocalDevHost =
-  window.location.hostname === 'localhost' ||
-  window.location.hostname === '127.0.0.1' ||
-  window.location.port === '3000';
+  runtimeHostname === 'localhost' ||
+  runtimeHostname === '127.0.0.1' ||
+  runtimePort === '3000';
 
-const originApiBase = window.location.origin.replace(/\/$/, '');
-const directDevApiBase = `http://${window.location.hostname}:3001`;
+const originApiBase = (runtimeWindow?.location.origin ?? 'http://localhost:3000').replace(/\/$/, '');
+const directDevApiBase = `http://${runtimeHostname}:3001`;
 
 export const API_BASE: string =
   envUrl && envUrl.length > 0
@@ -25,10 +30,10 @@ export const WS_URL: string = (() => {
     return envUrl.replace(/^http/, 'ws') + '/ws';
   }
   if (isLocalDevHost) {
-    return `ws://${window.location.hostname}:3001/ws`;
+    return `ws://${runtimeHostname}:3001/ws`;
   }
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${wsProtocol}//${window.location.host}/ws`;
+  const wsProtocol = runtimeWindow?.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${runtimeWindow?.location.host ?? 'localhost:3000'}/ws`;
 })();
 
 /** Prefixes a relative `/api/...` path with the API base. */
