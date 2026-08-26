@@ -127,6 +127,40 @@ begin
 end
 $$;
 
+-- Keep legacy session writers compatible after owner_user_id becomes required.
+-- The caller-provided owner is deliberately ignored: the session owner always
+-- comes from the empresa's current owner, while the composite FKs below keep
+-- the person link tenant-safe.
+create or replace function public.zelochat_derive_session_owner()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  select ep.user_id
+    into new.owner_user_id
+    from public.empresa_perfil as ep
+   where ep.id = new.empresa_id;
+
+  if not found then
+    raise exception 'SESSION_EMPRESA_NOT_FOUND: empresa_id % does not exist', new.empresa_id
+      using errcode = '23503';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.zelochat_derive_session_owner() from public, anon, authenticated;
+grant execute on function public.zelochat_derive_session_owner() to service_role;
+
+drop trigger if exists trg_zelochat_sessions_derive_owner
+  on public.zelochat_sessions;
+create trigger trg_zelochat_sessions_derive_owner
+before insert or update of empresa_id, owner_user_id
+on public.zelochat_sessions
+for each row execute function public.zelochat_derive_session_owner();
+
 create index if not exists zelochat_sessions_empresa_pessoa_activity_idx
   on public.zelochat_sessions (empresa_id, pessoa_id, updated_at desc);
 

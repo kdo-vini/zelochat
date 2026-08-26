@@ -54,6 +54,7 @@ do $$
 declare
   f crm_relationship_fixture%rowtype;
   table_name text;
+  policy_record record;
 begin
   select * into f from crm_relationship_fixture;
 
@@ -92,6 +93,37 @@ begin
     end if;
   end loop;
 
+  for policy_record in
+    select * from (values
+      ('zelochat_customer_relationships', 'SELECT', 'zelochat_customer_relationships_browser_select_denied'),
+      ('zelochat_customer_relationships', 'INSERT', 'zelochat_customer_relationships_browser_insert_denied'),
+      ('zelochat_customer_relationships', 'UPDATE', 'zelochat_customer_relationships_browser_update_denied'),
+      ('zelochat_customer_relationships', 'DELETE', 'zelochat_customer_relationships_browser_delete_denied'),
+      ('zelochat_person_tags', 'SELECT', 'zelochat_person_tags_browser_select_denied'),
+      ('zelochat_person_tags', 'INSERT', 'zelochat_person_tags_browser_insert_denied'),
+      ('zelochat_person_tags', 'UPDATE', 'zelochat_person_tags_browser_update_denied'),
+      ('zelochat_person_tags', 'DELETE', 'zelochat_person_tags_browser_delete_denied'),
+      ('zelochat_person_match_conflicts', 'SELECT', 'zelochat_person_match_conflicts_browser_select_denied'),
+      ('zelochat_person_match_conflicts', 'INSERT', 'zelochat_person_match_conflicts_browser_insert_denied'),
+      ('zelochat_person_match_conflicts', 'UPDATE', 'zelochat_person_match_conflicts_browser_update_denied'),
+      ('zelochat_person_match_conflicts', 'DELETE', 'zelochat_person_match_conflicts_browser_delete_denied')
+    ) as expected(table_name, command_name, policy_name)
+  loop
+    if not exists (
+      select 1
+        from pg_policies p
+       where p.schemaname = 'public'
+         and p.tablename = policy_record.table_name
+         and p.policyname = policy_record.policy_name
+         and p.cmd = policy_record.command_name
+         and 'anon' = any (p.roles)
+         and 'authenticated' = any (p.roles)
+         and position('false' in lower(coalesce(p.qual, '') || ' ' || coalesce(p.with_check, ''))) > 0
+    ) then
+      raise exception 'missing deny policy %.%', policy_record.table_name, policy_record.command_name;
+    end if;
+  end loop;
+
   if has_table_privilege('anon', 'public.zelochat_customer_relationships', 'SELECT,INSERT,UPDATE,DELETE')
      or has_table_privilege('authenticated', 'public.zelochat_customer_relationships', 'SELECT,INSERT,UPDATE,DELETE')
      or has_table_privilege('anon', 'public.zelochat_person_tags', 'SELECT,INSERT,UPDATE,DELETE')
@@ -108,12 +140,94 @@ begin
 end;
 $$;
 
+-- Grants are intentionally temporary: they isolate the policy behavior from
+-- table ACL behavior, and the enclosing rollback removes them with fixtures.
+grant select, insert, update, delete on table
+  public.zelochat_customer_relationships,
+  public.zelochat_person_tags,
+  public.zelochat_person_match_conflicts
+  to anon, authenticated;
+grant select on crm_relationship_fixture to anon, authenticated;
+
+create temporary function crm_assert_browser_crm_denied()
+returns void
+language plpgsql
+set search_path = pg_temp, public
+as $$
+declare
+  f crm_relationship_fixture%rowtype;
+  target record;
+  visible_rows bigint;
+  affected_rows bigint;
+begin
+  select * into f from crm_relationship_fixture;
+
+  for target in
+    select * from (values
+      ('zelochat_customer_relationships', f.relationship_a),
+      ('zelochat_person_tags', f.tag_a),
+      ('zelochat_person_match_conflicts', f.conflict_a)
+    ) as targets(table_name, row_id)
+  loop
+    execute format('select count(*) from public.%I', target.table_name)
+      into visible_rows;
+    if visible_rows <> 0 then
+      raise exception '% can see CRM rows through SELECT', current_user;
+    end if;
+
+    if target.table_name = 'zelochat_customer_relationships' then
+      execute 'update public.zelochat_customer_relationships set internal_notes = internal_notes where id = $1'
+        using target.row_id;
+    elsif target.table_name = 'zelochat_person_tags' then
+      execute 'update public.zelochat_person_tags set tag_id = tag_id where id = $1'
+        using target.row_id;
+    else
+      execute 'update public.zelochat_person_match_conflicts set state = state where id = $1'
+        using target.row_id;
+    end if;
+    get diagnostics affected_rows = row_count;
+    if affected_rows <> 0 then
+      raise exception '% changed CRM rows through UPDATE', current_user;
+    end if;
+
+    execute format('delete from public.%I where id = $1', target.table_name)
+      using target.row_id;
+    get diagnostics affected_rows = row_count;
+    if affected_rows <> 0 then
+      raise exception '% deleted CRM rows through DELETE', current_user;
+    end if;
+  end loop;
+
+  begin
+    insert into public.zelochat_customer_relationships (empresa_id, id_usuario, pessoa_id)
+    values (f.empresa_a, f.owner_a, f.pessoa_a);
+    raise exception '% inserted a CRM relationship through INSERT', current_user;
+  exception when insufficient_privilege then null;
+  end;
+
+  begin
+    insert into public.zelochat_person_tags (empresa_id, id_usuario, pessoa_id, tag_id)
+    values (f.empresa_a, f.owner_a, f.pessoa_a, f.tag_a);
+    raise exception '% inserted a CRM tag through INSERT', current_user;
+  exception when insufficient_privilege then null;
+  end;
+
+  begin
+    insert into public.zelochat_person_match_conflicts (empresa_id, id_usuario, phone)
+    values (f.empresa_a, f.owner_a, '5511999000009');
+    raise exception '% inserted a CRM conflict through INSERT', current_user;
+  exception when insufficient_privilege then null;
+  end;
+end;
+$$;
+grant execute on function crm_assert_browser_crm_denied() to anon, authenticated;
+
 -- A valid session, relationship, person tag and open conflict for tenant A.
 create temporary table session_id_sink (id uuid) on commit drop;
 with f as (select * from crm_relationship_fixture)
  , inserted as (
-   insert into public.zelochat_sessions (id, empresa_id, owner_user_id, pessoa_id, remote_jid)
-   select gen_random_uuid(), empresa_a, owner_a, pessoa_a, '5511999000001@s.whatsapp.net' from f
+   insert into public.zelochat_sessions (id, empresa_id, pessoa_id, remote_jid)
+   select gen_random_uuid(), empresa_a, pessoa_a, '5511999000001@s.whatsapp.net' from f
    returning id
  )
 insert into session_id_sink select id from inserted;
@@ -160,6 +274,9 @@ begin
      or (select count(*) from public.zelochat_person_match_conflicts where id = f.conflict_a) <> 1 then
     raise exception 'valid tenant A fixture was not persisted';
   end if;
+  if (select owner_user_id from public.zelochat_sessions where id = f.session_a) <> f.owner_a then
+    raise exception 'legacy session insert did not derive owner_user_id';
+  end if;
 
   begin
     insert into public.zelochat_customer_relationships (empresa_id, id_usuario, pessoa_id)
@@ -184,17 +301,24 @@ begin
 
   begin
     insert into public.zelochat_sessions (empresa_id, owner_user_id, pessoa_id, remote_jid)
-    values (f.empresa_a, f.owner_a, f.pessoa_b, '5511999000002@s.whatsapp.net');
+    values (f.empresa_a, f.owner_b, f.pessoa_b, '5511999000002@s.whatsapp.net');
     raise exception 'cross-tenant session was accepted';
   exception when foreign_key_violation then null;
   end;
 
+  update public.zelochat_sessions
+     set owner_user_id = f.owner_b
+   where id = f.session_a;
+  if (select owner_user_id from public.zelochat_sessions where id = f.session_a) <> f.owner_a then
+    raise exception 'session trigger trusted a caller-provided owner';
+  end if;
+
   begin
     update public.zelochat_sessions
-       set owner_user_id = f.owner_b
+       set empresa_id = f.empresa_b
      where id = f.session_a;
-    raise exception 'session owner reassignment was accepted';
-  exception when foreign_key_violation then null;
+    raise exception 'cross-tenant session empresa reassignment was accepted';
+    exception when foreign_key_violation then null;
   end;
 
   begin
@@ -241,6 +365,13 @@ begin
 end;
 $$;
 
+set local role anon;
+select crm_assert_browser_crm_denied();
+reset role;
+set local role authenticated;
+select crm_assert_browser_crm_denied();
+reset role;
+
 -- A session is disposable; deleting it must not delete the canonical person.
 delete from public.zelochat_sessions where id = (select session_a from crm_relationship_fixture);
 do $$
@@ -251,8 +382,8 @@ begin
 end;
 $$;
 
-insert into public.zelochat_sessions (empresa_id, owner_user_id, pessoa_id, remote_jid)
-select empresa_a, owner_a, pessoa_a, '5511999000001@s.whatsapp.net' from crm_relationship_fixture;
+insert into public.zelochat_sessions (empresa_id, pessoa_id, remote_jid)
+select empresa_a, pessoa_a, '5511999000001@s.whatsapp.net' from crm_relationship_fixture;
 update crm_relationship_fixture
    set session_a = (
      select s.id from public.zelochat_sessions s

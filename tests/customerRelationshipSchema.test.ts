@@ -5,11 +5,16 @@ import { assert, assertEqual, assertIncludes, runSuite } from './testHarness.js'
 
 const migrationPath = resolve('supabase/migrations/048_customer_relationship_foundation.sql');
 const verificationPath = resolve('supabase/verification/customer_relationship_authz.sql');
+const messageHandlerPath = resolve('server/messageHandler.ts');
 const migration = existsSync(migrationPath)
   ? readFileSync(migrationPath, 'utf8').replace(/\r\n/g, '\n').toLowerCase()
   : '';
 const compactMigration = migration.replace(/\s+/g, ' ');
 const types = readFileSync(resolve('src/types.ts'), 'utf8');
+const messageHandler = readFileSync(messageHandlerPath, 'utf8');
+const verification = existsSync(verificationPath)
+  ? readFileSync(verificationPath, 'utf8').replace(/\r\n/g, '\n').toLowerCase()
+  : '';
 
 await runSuite('customer relationship schema', [
   {
@@ -23,8 +28,18 @@ await runSuite('customer relationship schema', [
       assertIncludes(compactMigration, 'foreign key (empresa_id, owner_user_id) references public.empresa_perfil(id, user_id)', 'session empresa FK is composite and tenant-safe');
       assertIncludes(compactMigration, 'foreign key (owner_user_id, pessoa_id) references public.pessoas(id_usuario, id)', 'session person FK is composite and tenant-safe');
       assertIncludes(compactMigration, 'on delete cascade', 'session person link cascades with the person');
-      assert(!/create (or replace )?function public\.zelochat_validate_session_person_tenant/.test(migration)
-        && !/create trigger trg_zelochat_sessions_person_tenant/.test(migration), 'session tenant invariant does not depend on a mutable-owner trigger');
+      assertIncludes(migration, 'create or replace function public.zelochat_derive_session_owner()', 'legacy session writers have a compatibility owner trigger');
+      assertIncludes(compactMigration, 'select ep.user_id into new.owner_user_id', 'compatibility trigger derives owner from the empresa');
+      assertIncludes(migration, 'from public.empresa_perfil as ep', 'compatibility trigger uses the qualified empresa table');
+      assertIncludes(migration, 'session_empresa_not_found', 'compatibility trigger fails clearly for an unknown empresa');
+      assertIncludes(compactMigration, 'before insert or update of empresa_id, owner_user_id on public.zelochat_sessions', 'compatibility trigger covers legacy inserts and owner/empresa updates');
+      assertIncludes(migration, 'revoke all on function public.zelochat_derive_session_owner() from public, anon, authenticated', 'compatibility trigger function is not callable by browser roles');
+      assertIncludes(migration, 'grant execute on function public.zelochat_derive_session_owner() to service_role', 'server role can execute the compatibility trigger');
+      const ensureSessionStart = messageHandler.indexOf('export async function ensureSession(');
+      const ensureSessionEnd = messageHandler.indexOf('export async function updateSessionProfilePic', ensureSessionStart);
+      const ensureSessionSource = messageHandler.slice(ensureSessionStart, ensureSessionEnd);
+      assertIncludes(ensureSessionSource, 'empresa_id: params.empresaId', 'legacy ensureSession writer still identifies the empresa');
+      assert(!/owner_user_id\s*:/.test(ensureSessionSource), 'legacy ensureSession writer omits owner_user_id and relies on the compatibility trigger');
       assertIncludes(compactMigration, 'zelochat_sessions_empresa_pessoa_activity_idx on public.zelochat_sessions (empresa_id, pessoa_id, updated_at desc)', 'session listing index is tenant/person/activity ordered');
       assertIncludes(migration, 'zelochat_sessions_empresa_activity_idx', 'session activity listing index exists');
     },
@@ -75,6 +90,13 @@ await runSuite('customer relationship schema', [
       }
       assert(!migration.includes('auth.role()'), 'migration does not use deprecated auth.role()');
       assert(!/grant\s+[^;]*\bto\s+authenticated/i.test(migration), 'migration does not expose CRM grants to authenticated');
+      assertIncludes(verification, 'from pg_policies p', 'runtime verification inspects actual policy catalog rows');
+      assertIncludes(verification, "p.cmd = policy_record.command_name", 'runtime verification checks each policy command');
+      assertIncludes(verification, 'grant select, insert, update, delete on table', 'runtime verification grants browser ACLs temporarily to isolate RLS');
+      assertIncludes(verification, 'set local role anon', 'runtime verification executes under anon');
+      assertIncludes(verification, 'set local role authenticated', 'runtime verification executes under authenticated');
+      assertIncludes(verification, 'crm_assert_browser_crm_denied', 'runtime verification exercises browser CRUD denial');
+      assertIncludes(verification, 'reset role', 'runtime verification restores the administrator role');
     },
   },
   {
