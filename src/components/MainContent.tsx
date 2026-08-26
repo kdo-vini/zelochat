@@ -30,9 +30,6 @@ const DriversView = lazy(() =>
 const NovidadesView = lazy(() =>
   import('./views/NovidadesView').then((m) => ({ default: m.NovidadesView })),
 );
-const CustomersView = lazy(() =>
-  import('./views/CustomersView').then((m) => ({ default: m.CustomersView })),
-);
 
 interface Props {
   activeView: View;
@@ -139,9 +136,6 @@ export function MainContent({
               <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
                 {activeView === 'dashboard' && !isGeneralMode && (
                   <DashboardView state={dashboardState} setActiveView={setActiveView} token={token} />
-                )}
-                {activeView === 'customers' && (
-                  <CustomersView token={token} />
                 )}
                 {activeView === 'kanban' && !isGeneralMode && (
                   <DragDropContext onDragEnd={onDragEnd}>
