@@ -108,7 +108,7 @@ export type CustomerTimelineEvent =
       kind: 'order';
       id: string;
       occurredAt: string;
-      status: 'pending' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' | 'cancelled';
+      status: 'pending_payment' | 'pending_review' | 'accepted' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' | 'rejected' | 'cancelled';
       total: number;
     }
   | {

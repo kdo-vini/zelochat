@@ -148,7 +148,7 @@
 
 **Arquivos:**
 
-- Criar: `supabase/migrations/036_customer_relationship_foundation.sql`
+- Criar: `supabase/migrations/048_customer_relationship_foundation.sql` (next unique version after the current `047`)
 - Criar: `tests/customerRelationshipSchema.test.ts`
 - Modificar: `src/types.ts`
 

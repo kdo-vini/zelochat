@@ -16,7 +16,7 @@
 
 - **Task 3 concluída:** o backend resolve owner e subusuário ativo pelo RBAC compartilhado (`access_users`/`access_roles`), mantém apenas metadados do owner em cache por ator e revalida status/cargo do subusuário a cada request; account deletion, Stripe/PIX e onboarding são owner-only, todos os caminhos de erro owner-only têm copy amigável e vínculos inativos falham fechado. Cobertura em `tests/customerAccessControl.test.ts` e `tests/accessErrorMapping.test.ts`.
 
-- **Task 4 concluída:** migration aditiva `036_customer_relationship_foundation.sql` adiciona `pessoa_id` nullable às sessões, relacionamento pessoa/empresa, tags de pessoa e conflitos de match auditáveis. As novas tabelas têm FKs compostas tenant-safe, RLS/grants server-only e índices de listagem; `customer_profile` permanece como fallback temporário durante o backfill. Tipos discriminados de cliente/timeline e verificação SQL executável estão em `src/types.ts`, `tests/customerRelationshipSchema.test.ts` e `supabase/verification/customer_relationship_authz.sql`.
+- **Task 4 concluída:** migration aditiva `048_customer_relationship_foundation.sql` adiciona `pessoa_id` nullable e `owner_user_id` persistido às sessões, relacionamento pessoa/empresa, tags de pessoa e conflitos de match auditáveis. As novas tabelas têm FKs compostas tenant-safe, RLS/grants server-only e índices de listagem; `customer_profile` permanece como fallback temporário durante o backfill. Tipos discriminados de cliente/timeline e verificação SQL executável estão em `src/types.ts`, `tests/customerRelationshipSchema.test.ts` e `supabase/verification/customer_relationship_authz.sql`.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)
 

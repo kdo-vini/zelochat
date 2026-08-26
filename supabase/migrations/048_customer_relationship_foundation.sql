@@ -10,22 +10,93 @@
 
 begin;
 
--- Composite references need a unique key containing the owner. These keys do
--- not change the meaning of any existing primary key and make a cross-tenant
--- person/tag link impossible at the database layer.
-create unique index if not exists pessoas_id_usuario_id_unique
-  on public.pessoas (id_usuario, id);
-
-create unique index if not exists empresa_perfil_id_user_id_unique
-  on public.empresa_perfil (id, user_id);
-
-create unique index if not exists zelochat_tags_empresa_id_unique
-  on public.zelochat_tags (empresa_id, id);
+-- Composite references need durable unique constraints containing the owner.
+-- Older CRM attempts created indexes with these names; adopt those indexes as
+-- constraints when present so this migration remains idempotent across a
+-- partially rolled-out environment.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.pessoas'::regclass
+       and conname = 'pessoas_id_usuario_id_key'
+  ) then
+    if to_regclass('public.pessoas_id_usuario_id_unique') is not null then
+      alter table public.pessoas
+        add constraint pessoas_id_usuario_id_key
+        unique using index pessoas_id_usuario_id_unique;
+    else
+      alter table public.pessoas
+        add constraint pessoas_id_usuario_id_key unique (id_usuario, id);
+    end if;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.empresa_perfil'::regclass
+       and conname = 'empresa_perfil_id_user_id_key'
+  ) then
+    if to_regclass('public.empresa_perfil_id_user_id_unique') is not null then
+      alter table public.empresa_perfil
+        add constraint empresa_perfil_id_user_id_key
+        unique using index empresa_perfil_id_user_id_unique;
+    else
+      alter table public.empresa_perfil
+        add constraint empresa_perfil_id_user_id_key unique (id, user_id);
+    end if;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.zelochat_tags'::regclass
+       and conname = 'zelochat_tags_empresa_id_key'
+  ) then
+    if to_regclass('public.zelochat_tags_empresa_id_unique') is not null then
+      alter table public.zelochat_tags
+        add constraint zelochat_tags_empresa_id_key
+        unique using index zelochat_tags_empresa_id_unique;
+    else
+      alter table public.zelochat_tags
+        add constraint zelochat_tags_empresa_id_key unique (empresa_id, id);
+    end if;
+  end if;
+end
+$$;
 
 -- Sessions remain compatible with the webhook rollout: unresolved sessions
 -- have NULL pessoa_id and continue to use the existing JID/phone heuristic.
+-- owner_user_id is persisted so parent owner changes cannot silently turn a
+-- valid session into a cross-tenant link.
 alter table public.zelochat_sessions
-  add column if not exists pessoa_id uuid;
+  add column if not exists pessoa_id uuid,
+  add column if not exists owner_user_id uuid;
+
+update public.zelochat_sessions s
+   set owner_user_id = ep.user_id
+  from public.empresa_perfil ep
+ where ep.id = s.empresa_id
+   and s.owner_user_id is null;
+
+do $$
+begin
+  if exists (
+    select 1
+      from public.zelochat_sessions s
+     where s.owner_user_id is null
+        or not exists (
+          select 1 from public.empresa_perfil ep
+           where ep.id = s.empresa_id
+             and ep.user_id = s.owner_user_id
+        )
+  ) then
+    raise exception 'PRECONDITION_FAILED: zelochat_sessions has an owner backfill orphan';
+  end if;
+end
+$$;
+
+alter table public.zelochat_sessions
+  alter column owner_user_id set not null;
+
+alter table public.zelochat_sessions
+  drop constraint if exists zelochat_sessions_pessoa_id_fkey;
 
 do $$
 begin
@@ -33,13 +104,25 @@ begin
     select 1
       from pg_constraint
      where conrelid = 'public.zelochat_sessions'::regclass
-       and conname = 'zelochat_sessions_pessoa_id_fkey'
+       and conname = 'zelochat_sessions_empresa_owner_fk'
   ) then
     alter table public.zelochat_sessions
-      add constraint zelochat_sessions_pessoa_id_fkey
-      foreign key (pessoa_id)
-      references public.pessoas(id)
-      on delete cascade;
+      add constraint zelochat_sessions_empresa_owner_fk
+      foreign key (empresa_id, owner_user_id)
+      references public.empresa_perfil(id, user_id)
+      on update cascade on delete cascade;
+  end if;
+  if not exists (
+    select 1
+      from pg_constraint
+     where conrelid = 'public.zelochat_sessions'::regclass
+       and conname = 'zelochat_sessions_person_owner_fk'
+  ) then
+    alter table public.zelochat_sessions
+      add constraint zelochat_sessions_person_owner_fk
+      foreign key (owner_user_id, pessoa_id)
+      references public.pessoas(id_usuario, id)
+      on update cascade on delete cascade;
   end if;
 end
 $$;
@@ -50,37 +133,16 @@ create index if not exists zelochat_sessions_empresa_pessoa_activity_idx
 create index if not exists zelochat_sessions_empresa_activity_idx
   on public.zelochat_sessions (empresa_id, updated_at desc);
 
--- `pessoas` is keyed by the PDV owner while sessions are keyed by empresa.
--- Keep the existing session shape and enforce the cross-table tenant invariant
--- with a trigger in addition to the person FK.
-create or replace function public.zelochat_validate_session_person_tenant()
-returns trigger
-language plpgsql
-set search_path = public, pg_temp
-as $$
-begin
-  if new.pessoa_id is not null and not exists (
-    select 1
-      from public.empresa_perfil ep
-      join public.pessoas p on p.id_usuario = ep.user_id
-     where ep.id = new.empresa_id
-       and p.id = new.pessoa_id
-  ) then
-    raise exception 'SESSION_PERSON_TENANT_MISMATCH' using errcode = '23514';
-  end if;
-  return new;
-end;
-$$;
+-- Rollout note: these indexes intentionally use regular CREATE INDEX because
+-- this migration is transactional. Apply during a maintenance window and
+-- monitor lock time on active tenants; CONCURRENTLY cannot run in this
+-- transaction/runner convention.
 
+-- Remove the prior trigger-based attempt if it was applied in a disposable
+-- environment; the composite FKs above are the durable invariant.
 drop trigger if exists trg_zelochat_sessions_person_tenant
   on public.zelochat_sessions;
-create trigger trg_zelochat_sessions_person_tenant
-before insert or update of empresa_id, pessoa_id
-on public.zelochat_sessions
-for each row execute function public.zelochat_validate_session_person_tenant();
-
-revoke all on function public.zelochat_validate_session_person_tenant() from public, anon, authenticated;
-grant execute on function public.zelochat_validate_session_person_tenant() to service_role;
+drop function if exists public.zelochat_validate_session_person_tenant();
 
 comment on column public.zelochat_sessions.customer_profile is
   'Fallback temporário: relationship.ai_summary é a fonte preferencial durante o backfill do CRM.';
