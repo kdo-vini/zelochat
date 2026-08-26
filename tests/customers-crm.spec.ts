@@ -25,14 +25,14 @@ const customerDetail = {
   notes: 'Prefere pedidos sem cebola.', automaticSummary: 'Cliente frequente da loja.',
   relationship: { blocked: false, blockReason: null, campaigns: 1, automations: 0 },
   orders: [{ id: 'order-1', createdAt: '2026-08-25T15:00:00.000Z', status: 'delivered', total: 56.5 }],
-  primaryJid: '5511999990001@s.whatsapp.net', sessions: [],
+  primaryJid: '5511999990001@s.whatsapp.net', sessions: [{ id: 'session-1', remoteJid: '5511999990001@s.whatsapp.net', lastMessageTime: '2026-08-25T15:00:00.000Z', status: 'open' }],
 };
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installCrmFixture(page: Page, canViewCustomers = true, canManageCustomers = false) {
+async function installCrmFixture(page: Page, canViewCustomers = true, canManageCustomers = false, canCommunicate = false, includeMessages = false) {
   await page.addInitScript(() => {
     const session = {
       access_token: 'e2e-crm-token', refresh_token: 'e2e-refresh-token', token_type: 'bearer',
@@ -71,15 +71,16 @@ async function installCrmFixture(page: Page, canViewCustomers = true, canManageC
     const path = url.pathname;
     if (path === '/api/access/me') {
       return json(route, {
-        capabilities: { pessoas: { visualizar: canViewCustomers, gerenciar: canManageCustomers }, clientes: { comunicar: false } },
+        capabilities: { pessoas: { visualizar: canViewCustomers, gerenciar: canManageCustomers }, clientes: { comunicar: canCommunicate } },
         rollout: { crm: true },
       });
     }
     if (path === '/api/customers' && route.request().method() === 'GET') {
       return json(route, { customers, total: customers.length, nextCursor: null, hasMore: false });
     }
-    if (path === '/api/customers/person-1' && route.request().method() === 'GET') return json(route, customerDetail);
-    if (path.endsWith('/messages') && route.request().method() === 'GET') return json(route, { items: [], nextCursor: null, hasMore: false });
+    if (path === '/api/customers/person-1') return json(route, customerDetail);
+    if (path.endsWith('/messages') && route.request().method() === 'GET') return json(route, { items: includeMessages ? [{ id: 'message-1', session_id: 'session-1', role: 'user', content: 'Olá, quero fazer um pedido.', sent_at: '2026-08-25T15:00:00.000Z', outbound_status: null, outbound_error: null }] : [], nextCursor: null, hasMore: false });
+    if (path.endsWith('/messages') && route.request().method() === 'POST') return json(route, { ok: true, dbMessageId: 'message-outbound', messageId: 'wa-outbound', status: 'sent' });
     if (path === '/api/sessions') return json(route, { sessions: [], nextCursor: null, hasMore: false });
     if (path === '/api/sessions/tags-map') return json(route, { map: {} });
     if (path === '/api/tags') return json(route, { tags: [] });
@@ -182,5 +183,33 @@ test.describe('Clientes CRM permissões', () => {
     await expect(page.getByRole('button', { name: 'Novo cliente' })).toBeVisible();
     await page.getByRole('button', { name: 'Novo cliente' }).click();
     await expect(page.getByRole('dialog', { name: 'Novo cliente' })).toBeVisible();
+  });
+
+  test('gerenciador edita a ficha e envia mensagem no histórico', async ({ page }) => {
+    const requests: Array<{ method: string; url: string }> = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/customers/person-1')) requests.push({ method: request.method(), url: request.url() });
+    });
+
+    await installCrmFixture(page, true, true, true, true);
+    await openCustomers(page);
+    await page.getByRole('button', { name: /Ana Souza/ }).click();
+    await expect(page.getByRole('heading', { name: 'Ana Souza' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Editar cliente' }).click();
+    const editDialog = page.getByRole('dialog', { name: 'Editar cliente' });
+    await editDialog.getByRole('textbox', { name: 'Nome' }).fill('Ana Souza Atualizada');
+    await editDialog.getByRole('button', { name: 'Salvar' }).click();
+    await expect(editDialog).toBeHidden();
+    await expect.poll(() => requests.some(({ method }) => method === 'PATCH')).toBe(true);
+
+    await page.getByRole('tab', { name: 'Mensagens' }).click();
+    await expect(page.getByText('Olá, quero fazer um pedido.')).toBeVisible();
+    const composer = page.getByRole('textbox', { name: 'Mensagem' });
+    await expect(composer).toBeEnabled();
+    await composer.fill('Mensagem de teste');
+    await page.getByRole('button', { name: 'Enviar mensagem' }).click();
+    await expect.poll(() => requests.some(({ method, url }) => method === 'POST' && url.endsWith('/messages'))).toBe(true);
+    await expect(page.getByRole('button', { name: 'Abrir no Atendimento' })).toBeVisible();
   });
 });
