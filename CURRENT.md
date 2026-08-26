@@ -10,7 +10,7 @@
 ## Rollout CRM (2026-08-26)
 
 - Task 20 local: flags internas por empresa mantêm CRM, campanhas e automações desligados até ativação explícita; navegação e APIs falham fechado quando a flag ou a leitura do rollout não está disponível. Métricas e painel operacional expõem somente contadores agregados, fila, leases e desconexão.
-- Gate B (dry-run) concluído em 2026-08-26: consulta somente leitura reproduziu o preview do backfill nos cinco tenants com sessões (2.035 sessões, 1 vínculo potencial, 0 conflitos e 2.034 sem correspondência de cliente). Nenhuma linha, checkpoint ou flag foi alterada.
+- Gate B (dry-run) concluído em 2026-08-26: consulta somente leitura reproduziu o preview do backfill nos cinco tenants com sessões (2.035 sessões, 1 vínculo potencial, 0 conflitos e 2.034 sem correspondência de cliente). O diagnóstico encontrou 78 cadastros `pessoas.tipo='cliente'`, mas apenas 40 contatos com 10–13 dígitos; 2.033 sessões têm telefone nesse intervalo. Nenhuma linha, checkpoint ou flag foi alterada.
 - Gate C continua pendente: backfill real, métricas do piloto, conferência no Atendimento e ativação gradual ainda precisam ser executados em ambiente controlado.
 - Gate A database concluído em 2026-08-26 no projeto Supabase conectado: migrations PDV de identidade/pedidos e ZeloChat `048–059` aplicadas; probe transacional de RLS/tenant isolation passou e fez rollback dos fixtures. O MCP registrou versões remotas geradas para essas aplicações; a normalização do histórico para os nomes locais ainda depende de `supabase migration repair` via CLI autenticada antes de qualquer `db push`. Não houve backfill nem ativação de flags.
 
