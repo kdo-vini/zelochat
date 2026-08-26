@@ -91,7 +91,7 @@ export interface CustomerDetail extends CustomerSummary {
   birthday?: { day: number; month: number; year: number | null } | null;
   notes?: string | null;
   automaticSummary?: string | null;
-  relationship?: { blocked: boolean; blockReason: string | null; campaigns: number; automations: number };
+  relationship?: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
   orders?: Array<{ id: string; createdAt: string; status: string; total: number }>;
   primaryJid?: string | null;
 }

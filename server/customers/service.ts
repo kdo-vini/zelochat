@@ -4,6 +4,16 @@ import { getServiceSupabase } from '../supabase.js';
 import { parseStructuredMessage } from '../../src/domain/chat.js';
 
 export interface CustomerListResult { customers: CustomerSummary[]; nextCursor: string | null; hasMore: boolean; }
+export interface CustomerRelationshipSummary { blocked: boolean; blockReason: string | null; optedOut: boolean; campaigns: number; automations: number; }
+export function buildCustomerRelationship(input: { blockedAt?: string | null; blockReason?: string | null; optedOut?: boolean; campaigns?: number | null; automations?: number | null }): CustomerRelationshipSummary {
+  return {
+    blocked: Boolean(input.blockedAt),
+    blockReason: input.blockReason ?? null,
+    optedOut: input.optedOut === true,
+    campaigns: Math.max(0, Number(input.campaigns ?? 0)),
+    automations: Math.max(0, Number(input.automations ?? 0)),
+  };
+}
 export interface CustomerReadRepository {
   listPeople(empresaId: string, ownerUserId: string, filters: CustomerFilters, limit: number): Promise<any[]>;
   countOrders(empresaId: string, personIds: string[]): Promise<Record<string, { count: number; total: number; lastDeliveredAt: string | null }> >;
@@ -50,12 +60,15 @@ export async function getCustomerDetail(empresaId: string, ownerUserId: string, 
   const listed = await listCustomers(empresaId, ownerUserId, { limit: 100 }, repository);
   const summary = listed.customers.find((item) => item.id === personId) ?? { id: personId, name: row.nome ?? 'Cliente', phone: row.contato ?? null, whatsapp: row.contato ?? null, hasWhatsApp: Boolean(row.contato), lastActivityAt: null, activityState: 'inactive' as const, totalOrders: 0, orderCount: 0, totalValue: 0, openBalance: null, tags: [] };
   const db = getServiceSupabase();
-  const [{ data: sessionRows, error: sessionError }, { data: relationship, error: relationshipError }, { data: personTags, error: personTagsError }] = await Promise.all([
+  const [{ data: sessionRows, error: sessionError }, { data: relationship, error: relationshipError }, { data: personTags, error: personTagsError }, { count: campaignCount, error: campaignError }, { count: automationCount, error: automationError }, { data: optOut, error: optOutError }] = await Promise.all([
     db.from('zelochat_sessions').select('id,remote_jid,customer_name,customer_phone,last_message,last_message_time,unread_count,status').eq('empresa_id', empresaId).eq('pessoa_id', personId).order('last_message_time', { ascending: false }),
     db.from('zelochat_customer_relationships').select('internal_notes,ai_summary,whatsapp_blocked_at,whatsapp_block_reason,last_manual_contact_at').eq('empresa_id', empresaId).eq('pessoa_id', personId).maybeSingle(),
     db.from('zelochat_person_tags').select('tag_id').eq('empresa_id', empresaId).eq('pessoa_id', personId),
+    db.from('zelochat_campaign_recipients').select('id', { count: 'exact', head: true }).eq('empresa_id', empresaId).eq('pessoa_id', personId).eq('status', 'sent'),
+    db.from('zelochat_automation_dispatches').select('id', { count: 'exact', head: true }).eq('empresa_id', empresaId).eq('pessoa_id', personId).eq('status', 'sent'),
+    db.from('zelochat_customer_optouts').select('id').eq('empresa_id', empresaId).eq('pessoa_id', personId).maybeSingle(),
   ]);
-  if (sessionError || relationshipError || personTagsError) throw sessionError ?? relationshipError ?? personTagsError;
+  if (sessionError || relationshipError || personTagsError || campaignError || automationError || optOutError) throw sessionError ?? relationshipError ?? personTagsError ?? campaignError ?? automationError ?? optOutError;
   const tagIds = (personTags ?? []).map((item) => item.tag_id).filter((id): id is string => typeof id === 'string');
   const { data: tagRows, error: tagsError } = tagIds.length ? await db.from('zelochat_tags').select('id,name').eq('empresa_id', empresaId).in('id', tagIds) : { data: [], error: null };
   if (tagsError) throw tagsError;
@@ -63,7 +76,7 @@ export async function getCustomerDetail(empresaId: string, ownerUserId: string, 
   const sessions = (sessionRows ?? []).map((session) => ({ id: session.id, remoteJid: session.remote_jid, customerName: session.customer_name ?? summary.name, customerPhone: session.customer_phone ?? summary.phone ?? '', lastMessage: session.last_message ?? '', lastMessageTime: session.last_message_time ?? '', unreadCount: Number(session.unread_count ?? 0), messages: [], status: session.status ?? 'active', hasMoreMessages: true }));
   const primaryJid = sessions.find((session) => /^\d{10,15}@s\.whatsapp\.net$/u.test(session.remoteJid))?.remoteJid ?? null;
   const birthday = row.aniversario_mes ? { day: Number(row.aniversario_dia ?? 0), month: Number(row.aniversario_mes), year: row.aniversario_ano ? Number(row.aniversario_ano) : null } : null;
-  const relationshipDto = { blocked: Boolean(relationship?.whatsapp_blocked_at), blockReason: relationship?.whatsapp_block_reason ?? null, campaigns: 0, automations: 0 };
+  const relationshipDto = buildCustomerRelationship({ blockedAt: relationship?.whatsapp_blocked_at, blockReason: relationship?.whatsapp_block_reason, optedOut: Boolean(optOut), campaigns: campaignCount, automations: automationCount });
   const orderPage = await listCustomerOrders(empresaId, personId, null, 30);
   const orders = orderPage.items.map((order) => ({ id: order.id, createdAt: order.created_at, status: order.status, total: Number(order.total ?? 0) }));
   return { ...summary, tags, birthday, aniversario: birthday, notes: relationship?.internal_notes ?? null, internalNotes: relationship?.internal_notes ?? null, automaticSummary: relationship?.ai_summary ?? null, aiSummary: relationship?.ai_summary ?? null, relationship: relationshipDto, whatsappBlockedAt: relationship?.whatsapp_blocked_at ?? null, whatsappBlockReason: relationship?.whatsapp_block_reason ?? null, lastManualContactAt: relationship?.last_manual_contact_at ?? null, orders, sessions, primaryJid };
