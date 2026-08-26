@@ -19,13 +19,13 @@ Worktree: `clientes-crm`
 - Task 5: `9cde309` — `feat(crm): resolve WhatsApp contacts into canonical customers`
 - Task 6: `f489e4a` — `feat(crm): attach canonical customers to orders`
 - Task 7: `e88a0c6` — `feat(crm): add resumable customer backfill`
-- Task 8: será o commit desta documentação e das APIs.
+- Task 8: `302b58c` — `feat(crm): expose paginated customer read APIs`
 
 ## Validação agregada
 
 - Verdes: `customerIdentityResolution`, `customerOrderResolution`, `customerBackfill`, `customerFilters`, `customerReadApi`, `routerWebhookGuardrails` (29/29), `domainChat`.
 - Verdes: `npx tsc --noEmit -p server/tsconfig.json` e `npx tsc --noEmit`.
-- Lint/suíte completa/build: executar uma vez após este commit; não houve aplicação de migration remota.
+- Lint: verde (`npm run lint`). Server TypeScript: verde (`npx tsc --noEmit -p server/tsconfig.json`). Build: verde (`npm run build`, warning conhecido de chunk `index` ~607 kB). A suíte completa foi iniciada uma vez e interrompida por timebox após passar até `tests/messageHandlerMedia.test.ts`; os testes novos e regressões críticas ficaram verdes. Não houve aplicação de migration remota.
 
 ## Riscos e Gate A
 
