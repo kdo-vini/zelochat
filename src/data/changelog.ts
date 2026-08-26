@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-08-25',
+    category: 'big',
+    title: 'Clientes e histórico integrado',
+    description: 'O atendimento agora organiza clientes, conversas e pedidos em um histórico único, com busca rápida e mais segurança para sua equipe.',
+  },
+  {
     date: '2026-07-31',
     category: 'hotfix',
     title: 'PDFs enviados pelo cliente agora aparecem no atendimento',

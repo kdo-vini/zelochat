@@ -18,6 +18,8 @@
 
 - **Task 4 concluída:** migration aditiva `048_customer_relationship_foundation.sql` adiciona `pessoa_id` nullable e `owner_user_id` persistido às sessões, com trigger de compatibilidade que deriva o owner para writers legados, relacionamento pessoa/empresa, tags de pessoa e conflitos de match auditáveis. As novas tabelas têm FKs compostas tenant-safe, RLS/grants server-only e índices de listagem; `customer_profile` permanece como fallback temporário durante o backfill. Tipos discriminados de cliente/timeline e verificação SQL executável estão em `src/types.ts`, `tests/customerRelationshipSchema.test.ts` e `supabase/verification/customer_relationship_authz.sql`.
 
+- **Tasks 5–8 concluídas localmente (2026-08-25):** identidade WhatsApp fail-soft via adaptador RPC único, vínculo pessoa-first em sessões e pedidos sem alterar snapshots, backfill retomável em migration `049_customer_backfill_state.sql` e APIs paginadas de Clientes com `pessoas.visualizar` em todas as leituras. **Gate A de banco não aplicado neste ambiente:** rollout/teste transacional de concorrência, funcionário em conflito e RLS cross-tenant ainda precisam de ambiente Supabase de teste antes da ativação.
+
 ## Contrato de visibilidade do catálogo (2026-08-24)
 
 - `produtos.ocultar_no_pdv` é uma flag interna do ZeloPDV para venda manual;
@@ -81,6 +83,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
+- **Gate A CRM:** aplicar/verificar migration 049 e RPC/migration do PDV em ambiente de teste; manter o fluxo local sem ativação automática até provar concorrência, RLS e permissões owner/subusuário.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
 - `npm run build` — aviso de chunk >500 kB; maior chunk `index-BirF1qk8.js` = 603.87 kB / 171.61 kB gzip
