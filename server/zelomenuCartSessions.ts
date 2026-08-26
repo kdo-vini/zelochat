@@ -44,6 +44,7 @@ import {
   type ZeloMenuPricingSnapshot,
   type ZeloMenuCartState,
 } from '../src/domain/zelomenuCart.js';
+import { resolveCustomerForOrder } from './customers/identity.js';
 
 type SessionRow = {
   id: string;
@@ -1008,6 +1009,22 @@ async function createAcceptedOrderRecord(input: {
   pricing: ZeloMenuPricingSnapshot;
   payment: ZeloMenuPaymentSnapshot;
 }): Promise<{ orderId: string; orderStatus: string; revision: number }> {
+  let pessoaId: string | null = null;
+  const ownerUserId = await getEmpresaUserId(input.empresaId);
+  if (ownerUserId) {
+    try {
+      const identity = await resolveCustomerForOrder({
+        empresaId: input.empresaId,
+        ownerUserId,
+        phone: input.customer.phone,
+        observedName: input.customer.name,
+      });
+      pessoaId = identity.status === 'linked' || identity.status === 'created' ? identity.pessoaId : null;
+    } catch (error) {
+      // Identity is enrichment; confirmation remains valid with its snapshot.
+      console.error('[ZeloMenu] customer identity unavailable; preserving order snapshot:', error);
+    }
+  }
   const { data, error } = await getServiceSupabase().rpc('create_zelo_order', {
     p_session_id: input.sessionId,
     p_expected_revision: input.expectedRevision,
@@ -1022,6 +1039,7 @@ async function createAcceptedOrderRecord(input: {
       cart: input.cart,
       context: input.context,
     },
+    p_pessoa_id: pessoaId,
   });
   if (error) throw error;
   const result = (Array.isArray(data) ? data[0] : data) as { orderId?: string; order_id?: string; orderStatus?: string; revision?: number } | null;

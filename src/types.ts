@@ -224,6 +224,8 @@ export interface BuiltinTriggerInfo {
 
 export interface Order {
   id: string;
+  /** Canonical pessoa link; snapshots below remain authoritative for display. */
+  personId?: string;
   revision?: number;
   customerName: string;
   customerPhone: string;
