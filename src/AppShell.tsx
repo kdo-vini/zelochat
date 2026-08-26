@@ -775,6 +775,13 @@ export default function AppShell() {
     setActiveView('kanban');
   }, []);
 
+  const handleOpenAtendimento = useCallback((sessionId: string) => {
+    // Session selection remains owned by useWhatsAppSessions; CRM only asks
+    // AppShell to select the existing session and switch the view.
+    setActiveSessionId(sessionId);
+    setActiveView('chat');
+  }, [setActiveSessionId]);
+
   const handleOpenOrderFromChat = useCallback((request: OrderFocusRequest) => {
     pendingOrderFocusSeqRef.current += 1;
     setPendingOrderFocus({
@@ -1021,6 +1028,7 @@ export default function AppShell() {
         canPrint={printer.connected}
         pendingOrderFocus={pendingOrderFocus}
         handleNavigateToKanban={handleNavigateToKanban}
+        onOpenAtendimento={handleOpenAtendimento}
         triggers={triggers}
         triggersError={triggersError}
         createTrigger={createTrigger}

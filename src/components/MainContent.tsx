@@ -60,6 +60,7 @@ interface Props {
   canPrint: boolean;
   pendingOrderFocus: { request: OrderFocusRequest; key: number } | null;
   handleNavigateToKanban: () => void;
+  onOpenAtendimento: (sessionId: string) => void;
   // AI configs
   triggers: any[];
   triggersError: any;
@@ -95,6 +96,7 @@ export function MainContent({
   onDragEnd, handleAddOrder, handleEditOrder, handleDeleteOrder,
   updateOrderStatus, reprintOrder, canPrint,
   pendingOrderFocus, handleNavigateToKanban,
+  onOpenAtendimento,
   triggers, triggersError, createTrigger, updateTriggerRequest, deleteTriggerRequest,
   quickResponses, addQuickResponse, updateQuickResponse, deleteQuickResponse,
   saveAiInstructions,
@@ -141,7 +143,7 @@ export function MainContent({
                   <DashboardView state={dashboardState} setActiveView={setActiveView} token={token} />
                 )}
                 {activeView === 'customers' && (
-                  <CustomersView token={token} />
+                  <CustomersView token={token} onOpenAtendimento={onOpenAtendimento} />
                 )}
                 {activeView === 'kanban' && !isGeneralMode && (
                   <DragDropContext onDragEnd={onDragEnd}>

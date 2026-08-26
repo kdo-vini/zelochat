@@ -33,6 +33,12 @@ export interface CustomerPage {
   total: number | null;
 }
 
+export interface CustomerMessagesPage {
+  items: Array<{ id: string; session_id: string; role: string; content: string | null; sent_at: string; outbound_status?: string | null; attachment?: import('../types').ChatAttachment | null }>;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface CustomerDetail extends CustomerSummary {
   birthday: { day: number; month: number; year?: number | null } | null;
   origin: string | null;
@@ -146,4 +152,11 @@ export async function previewCustomerMerge(token: string, sourceId: string, targ
 export async function mergeCustomers(token: string, sourceId: string, targetId: string): Promise<void> {
   const response = await apiFetch(apiUrl('/api/customers/merge'), { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ sourceId, targetId }) });
   await parseCustomerResponse(response);
+}
+
+export async function fetchCustomerMessages(token: string, personId: string, cursor: string | null = null, limit = 30): Promise<CustomerMessagesPage> {
+  const params = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 100)) });
+  if (cursor) params.set('cursor', cursor);
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/messages?${params.toString()}`), { headers: authHeaders(token) });
+  return parseCustomerResponse<CustomerMessagesPage>(response);
 }

@@ -7,9 +7,9 @@ import { CustomerList } from '../customers/CustomerList';
 import { CustomerDetail } from '../customers/CustomerDetail';
 import { CustomerCreateDialog } from '../customers/CustomerCreateDialog';
 
-interface Props { token: string | null; }
+interface Props { token: string | null; onOpenAtendimento?: (sessionId: string) => void; }
 
-export function CustomersView({ token }: Props) {
+export function CustomersView({ token, onOpenAtendimento }: Props) {
   const [filters, setFilters] = useState<CustomerFilters>({});
   const [filterOpen, setFilterOpen] = useState(false);
   const [selected, setSelected] = useState<CustomerSummary | null>(null);
@@ -36,7 +36,7 @@ export function CustomersView({ token }: Props) {
       {error && <div role="alert" className="flex items-center justify-between gap-3 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-[13px] text-[var(--color-alert)]"><span>{error}</span><button type="button" onClick={() => void refresh()} className="min-h-[44px] rounded-lg px-3 font-medium text-[var(--color-brand-deep)]">Tentar novamente</button></div>}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <div className={`${selected ? 'hidden md:flex' : 'flex'} min-h-0 w-full flex-1 flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)] md:max-w-[440px]`}><CustomerList customers={customers} selectedId={selected?.id ?? null} onSelect={setSelected} loading={loading} loadingMore={loadingMore} hasMore={hasMore} onLoadMore={() => void loadMore()} /></div>
-        <aside className={`${selected ? 'flex' : 'hidden md:flex'} min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-canvas)]`}>{selected ? <CustomerDetail token={token} summary={selected} onBack={() => setSelected(null)} /> : <div className="flex flex-1 items-center justify-center p-8 text-center"><p className="text-[13px] text-[var(--color-ink-muted)]">Selecione um cliente para ver a ficha.</p></div>}</aside>
+        <aside className={`${selected ? 'flex' : 'hidden md:flex'} min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-canvas)]`}>{selected ? <CustomerDetail token={token} summary={selected} onBack={() => setSelected(null)} onOpenAtendimento={onOpenAtendimento} /> : <div className="flex flex-1 items-center justify-center p-8 text-center"><p className="text-[13px] text-[var(--color-ink-muted)]">Selecione um cliente para ver a ficha.</p></div>}</aside>
       </div>
       {creating && <CustomerCreateDialog onClose={() => setCreating(false)} onCreate={async (patch) => { if (!token) return; await createCustomer(token, patch); setCreating(false); await refresh(); }} />}
     </section>
