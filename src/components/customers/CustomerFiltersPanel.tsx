@@ -30,6 +30,14 @@ export function CustomerFiltersPanel({ filters, onChange, onClose }: Props) {
         <input type="checkbox" checked={filters.hasWhatsApp === true} onChange={(event) => onChange({ ...filters, hasWhatsApp: event.target.checked ? true : undefined })} className="h-4 w-4" />
         Tem WhatsApp
       </label>
+      <label className="mb-3 flex min-h-[44px] items-center gap-3 text-[13px] text-[var(--color-ink)]">
+        <input type="checkbox" checked={filters.vip === true} onChange={(event) => onChange({ ...filters, vip: event.target.checked ? true : undefined })} className="h-4 w-4" />
+        VIP
+      </label>
+      <label className="mb-3 flex min-h-[44px] items-center gap-3 text-[13px] text-[var(--color-ink)]">
+        <input type="checkbox" checked={filters.birthdayOnly === true} onChange={(event) => onChange({ ...filters, birthdayOnly: event.target.checked ? true : undefined })} className="h-4 w-4" />
+        Aniversariantes
+      </label>
       <button type="button" onClick={() => onChange({})} className="min-h-[44px] rounded-lg px-3 text-[13px] text-[var(--color-brand-deep)] hover:bg-[var(--color-brand-soft)]">Limpar filtros</button>
     </div>
   );
