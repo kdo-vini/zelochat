@@ -1,6 +1,7 @@
 import { getServiceSupabase } from '../supabase.js';
 import { evaluateAutomationCandidate, type AutomationCandidate, type EvaluatedDispatch } from './evaluator.js';
 import { getDefaultAutomationRule, type AutomationKind, type AutomationRule } from './rules.js';
+import { getCrmRolloutFlags } from '../customers/rollout.js';
 
 export type AutomationSweepDependencies = {
   listRules: () => Promise<AutomationRule[]>;
@@ -67,7 +68,7 @@ export function startAutomationSweeper(): void {
   if (sweepHandle) return;
   const tick = () => {
     void runAutomationSweep({
-      listRules: async () => { const { data } = await getServiceSupabase().from('zelochat_automation_rules').select('*').eq('enabled', true).limit(500); return (data ?? []).map((row: any) => ({ ...getDefaultAutomationRule(row.kind), ...row, empresaId: row.empresa_id, sendStart: row.send_start, sendEnd: row.send_end, dailyLimit: row.daily_limit ?? 50 })); },
+      listRules: async () => { const { data } = await getServiceSupabase().from('zelochat_automation_rules').select('*').eq('enabled', true).limit(500); const rules = (data ?? []).map((row: any) => ({ ...getDefaultAutomationRule(row.kind), ...row, empresaId: row.empresa_id, sendStart: row.send_start, sendEnd: row.send_end, dailyLimit: row.daily_limit ?? 50 })); const allowed = await Promise.all(rules.map(async (rule) => (await getCrmRolloutFlags(rule.empresaId)).automations ? rule : null)); return allowed.filter((rule): rule is AutomationRule => rule !== null); },
       listCandidates: listAutomationCandidatesForRule,
       countSentToday: async (rule) => { const start = new Date(); start.setUTCHours(0, 0, 0, 0); const { count } = await getServiceSupabase().from('zelochat_automation_dispatches').select('id', { count: 'exact', head: true }).eq('empresa_id', rule.empresaId).in('status', ['queued', 'sending', 'sent']).gte('created_at', start.toISOString()); return count ?? 0; },
       persist: persistAutomationDispatch,

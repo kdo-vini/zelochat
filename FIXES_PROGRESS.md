@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Clientes CRM — rollout (2026-08-26)
+
+- ✅ CRM-ROLLOUT-020 — não havia controle gradual por empresa nem painel agregado de operação → migration 057 adiciona flags fail-safe para CRM/campanhas/automações, APIs e navegação respeitam o rollout, e métricas/painel registram somente contadores e idade da fila — `server/customers/rollout.ts:1`, `server/customers/metrics.ts:1`, `supabase/migrations/057_customer_crm_rollout.sql:1`
+
 ### Clientes CRM — campanhas (2026-08-26)
 
 - ✅ CRM-CAMPAIGNS-015 — não havia uma jornada guiada para campanhas → Clientes agora oferece Segmentos/Campanhas com wizard público → mensagem → teste → revisão → envio/agendamento, contagem de elegíveis/suprimidos e acompanhamento da fila — `src/components/customers/CampaignWizard.tsx:1`, `src/components/customers/CampaignsTab.tsx:1`, `tests/campaignUiGuardrails.test.ts:1`

@@ -5,10 +5,11 @@ import { getServiceSupabase } from '../supabase.js';
 import { getOwnJid } from '../whatsapp.js';
 import { validateTestPhone } from '../campaigns/service.js';
 import { persistAutomationDispatch } from './sweeper.js';
+import { crmFeatureErrorStatus, requireCrmFeature } from '../customers/rollout.js';
 
 export const automationRouter = Router();
-function error(res: any, cause: unknown): void { const code = cause instanceof AccessControlError ? cause.code : cause instanceof Error ? cause.message : 'AUTOMATION_FAILED'; const status = code === 'FORBIDDEN' ? 403 : code === 'UNAUTHORIZED' ? 401 : 400; res.status(status).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para gerenciar automações.' : 'Não foi possível concluir essa ação.' }); }
-async function communicate(req: any): Promise<any> { return requireActorPermission(req, 'clientes.comunicar'); }
+function error(res: any, cause: unknown): void { const code = cause instanceof AccessControlError ? cause.code : cause instanceof Error ? cause.message : 'AUTOMATION_FAILED'; const status = crmFeatureErrorStatus(cause) !== 400 ? crmFeatureErrorStatus(cause) : (code === 'FORBIDDEN' ? 403 : code === 'UNAUTHORIZED' ? 401 : 400); res.status(status).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para gerenciar automações.' : 'Não foi possível concluir essa ação.' }); }
+async function communicate(req: any): Promise<any> { await requireCrmFeature(req, 'automations'); return requireActorPermission(req, 'clientes.comunicar'); }
 function kind(value: string): AutomationKind { if (!AUTOMATION_KINDS.includes(value as AutomationKind)) throw new Error('AUTOMATION_KIND_INVALID'); return value as AutomationKind; }
 async function listRule(empresaId: string, k: AutomationKind): Promise<any> { const { data, error: dbError } = await getServiceSupabase().from('zelochat_automation_rules').select('*').eq('empresa_id', empresaId).eq('kind', k).maybeSingle(); if (dbError) throw dbError; return data ?? { ...getDefaultAutomationRule(k), empresa_id: empresaId }; }
 

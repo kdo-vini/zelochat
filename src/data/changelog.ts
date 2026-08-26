@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-08-26',
+    category: 'medium',
+    title: 'Clientes chega com ativação gradual',
+    description: 'A nova experiência de Clientes pode ser liberada por empresa com acompanhamento operacional, mantendo campanhas e automações sob controle da equipe.',
+  },
+  {
     date: '2026-08-25',
     category: 'big',
     title: 'Clientes e histórico integrado',

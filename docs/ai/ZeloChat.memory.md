@@ -3,6 +3,10 @@
 > Ver também: [[CLAUDE]] · [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]]
 
 ## Purpose
+
+### CRM rollout (confirmed 2026-08-26)
+- Migration `057_customer_crm_rollout.sql` is additive and stores per-company rollout flags for `crm`, `campaigns`, and `automations`, all defaulting to disabled. `server/customers/rollout.ts` treats absent/error reads as disabled; this is rollout-only and does not change subscription plan inclusion.
+- `server/customers/metrics.ts` records only allowlisted aggregate counters and exposes queue age, stuck leases, and disconnected status; message content, JIDs, and phone values are never persisted in rollout metrics. Gate C and migration application remain pending.
 - ZeloChat is a WhatsApp-native customer service platform for Brazilian small businesses, especially food businesses and lanchonetes.
 - It supports AI and manual attendance, sessions/conversations, contacts, messages, escalation, tags, quick responses, order support, and shared company/profile/product context.
 - It is integrated with Zelo PDV through shared Supabase tables such as `empresa_perfil`, `produtos`, `categorias`, and `subcategorias`.

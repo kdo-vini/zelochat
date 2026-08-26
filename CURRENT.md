@@ -7,6 +7,11 @@
 
 ## Estado do produto (2026-07-24)
 
+## Rollout CRM (2026-08-26)
+
+- Task 20 local: flags internas por empresa mantêm CRM, campanhas e automações desligados até ativação explícita; navegação e APIs falham fechado quando a flag ou a leitura do rollout não está disponível. Métricas e painel operacional expõem somente contadores agregados, fila, leases e desconexão.
+- Gate C continua pendente: migrations, backfill, RLS e piloto real ainda precisam de ambiente Supabase de teste; nenhuma migration foi aplicada.
+
 - **2 cliente pagante:** Casa dos Salgados, Agreste Salgados
 - **1 founder test:** Donutopia
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`

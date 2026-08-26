@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { AccessControlError, requireActorPermission } from '../accessControl.js';
 import { createCampaign, createSegment, deleteSegment, enqueueCampaignTest, listCampaigns, listRecipients, listSegments, previewCampaign, scheduleCampaign, setCampaignStatus, updateCampaignDraft, updateSegment } from './service.js';
+import { crmFeatureErrorStatus, requireCrmFeature } from '../customers/rollout.js';
 
 export const campaignRouter = Router();
-function error(res: any, cause: unknown): void { const code = cause instanceof AccessControlError ? cause.code : cause instanceof Error ? cause.message : 'CAMPAIGN_FAILED'; const status = code === 'FORBIDDEN' ? 403 : code === 'UNAUTHORIZED' ? 401 : code === 'CAMPAIGN_NOT_FOUND' ? 404 : 400; res.status(status).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para gerenciar campanhas.' : 'Não foi possível concluir essa ação.' }); }
-async function read(req: any): Promise<any> { return requireActorPermission(req, 'pessoas.visualizar'); }
-async function communicate(req: any): Promise<any> { return requireActorPermission(req, 'clientes.comunicar'); }
+function error(res: any, cause: unknown): void { const code = cause instanceof AccessControlError ? cause.code : cause instanceof Error ? cause.message : 'CAMPAIGN_FAILED'; const status = crmFeatureErrorStatus(cause) !== 400 ? crmFeatureErrorStatus(cause) : (code === 'FORBIDDEN' ? 403 : code === 'UNAUTHORIZED' ? 401 : code === 'CAMPAIGN_NOT_FOUND' ? 404 : 400); res.status(status).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para gerenciar campanhas.' : 'Não foi possível concluir essa ação.' }); }
+async function read(req: any): Promise<any> { await requireCrmFeature(req, 'campaigns'); return requireActorPermission(req, 'pessoas.visualizar'); }
+async function communicate(req: any): Promise<any> { await requireCrmFeature(req, 'campaigns'); return requireActorPermission(req, 'clientes.comunicar'); }
 
 campaignRouter.get('/api/customer-segments', async (req, res) => { try { const access = await read(req); res.json({ segments: await listSegments(access.empresaId) }); } catch (cause) { error(res, cause); } });
 campaignRouter.post('/api/customer-segments', async (req, res) => { try { const access = await communicate(req); res.status(201).json(await createSegment(access.empresaId, access.actorUserId, { name: String(req.body?.name ?? ''), definition: req.body?.definition ?? {} })); } catch (cause) { error(res, cause); } });

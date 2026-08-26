@@ -141,6 +141,8 @@ import { cancelCanonicalOrder, createManualZeloOrder, getCanonicalOrder, LEGACY_
 import { customerRouter } from './customers/router.js';
 import { campaignRouter } from './campaigns/router.js';
 import { automationRouter } from './automations/router.js';
+import { getCrmRolloutFlags } from './customers/rollout.js';
+import { getCrmOperationsPanel } from './customers/metrics.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -167,7 +169,8 @@ router.use(automationRouter);
 router.get('/api/access/me', async (req: Request, res: Response) => {
   try {
     const access = await requireActorAccess(req);
-    res.json({ actorUserId: access.actorUserId, isOwner: access.isOwner, capabilities: {
+    const rollout = await getCrmRolloutFlags(access.empresaId);
+    res.json({ actorUserId: access.actorUserId, isOwner: access.isOwner, rollout, capabilities: {
       pessoas: { visualizar: access.isOwner || access.permissions?.['pessoas.visualizar'] === true, gerenciar: access.isOwner || access.permissions?.['pessoas.gerenciar'] === true },
       clientes: { comunicar: access.isOwner || access.permissions?.['clientes.comunicar'] === true },
     } });
@@ -175,6 +178,11 @@ router.get('/api/access/me', async (req: Request, res: Response) => {
     const code = error instanceof Error ? error.message : 'UNAUTHORIZED';
     res.status(code === 'FORBIDDEN' ? 403 : 401).json({ code, message: 'Não foi possível validar suas permissões.' });
   }
+});
+
+router.get('/api/customer-rollout/operations', async (req: Request, res: Response) => {
+  try { const access = await requireActorAccess(req); const flags = await getCrmRolloutFlags(access.empresaId); if (!flags.crm) { res.status(404).json({ code: 'CRM_FEATURE_DISABLED', message: 'Clientes ainda não está disponível para esta empresa.' }); return; } res.json(await getCrmOperationsPanel(access.empresaId)); }
+  catch (error) { const code = error instanceof Error ? error.message : 'UNAUTHORIZED'; res.status(code === 'UNAUTHORIZED' ? 401 : 400).json({ code, message: 'Não foi possível carregar o painel operacional.' }); }
 });
 
 const ORDER_NOTIFICATION_COLUMNS = LEGACY_CANONICAL_ORDER_SELECT;

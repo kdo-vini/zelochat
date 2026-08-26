@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { AccessControlError, requireActorPermission, type ActorAccessContext } from '../accessControl.js';
+import { requireCrmFeature } from './rollout.js';
 import { getServiceSupabase, uploadMediaForSend } from '../supabase.js';
 import { sendTextMessage, sendMediaMessage, sendWhatsAppAudio } from '../whatsapp.js';
 import { createAssistantMessageIntent, markAssistantMessageSendFailed, markAssistantMessageSendSucceeded } from '../messageHandler.js';
@@ -8,7 +9,7 @@ import { getCustomerDetail, listCustomerMessages, listCustomerOrders, listCustom
 import { createCustomersRouter, type CustomerMutationAccess, type CustomerWriteStore } from './mutations.js';
 
 export const customerRouter = Router();
-async function actor(req: Request): Promise<ActorAccessContext> { return requireActorPermission(req, 'pessoas.visualizar'); }
+async function actor(req: Request): Promise<ActorAccessContext> { await requireCrmFeature(req, 'crm'); return requireActorPermission(req, 'pessoas.visualizar'); }
 function sendCustomerReadError(res: Response, cause: unknown): void {
   const code = cause instanceof AccessControlError ? cause.code : 'CUSTOMER_READ_FAILED';
   const status = code === 'UNAUTHORIZED' ? 401 : code === 'FORBIDDEN' ? 403 : 400;
@@ -53,11 +54,12 @@ const mutationStore: CustomerWriteStore = {
   async executeMergeTransaction(sourceId, targetId, empresaId) { if (await this.getPersonEmpresaId(sourceId) !== empresaId || await this.getPersonEmpresaId(targetId) !== empresaId) throw new Error('NOT_FOUND'); const { error } = await getServiceSupabase().rpc('merge_zelochat_customers', { p_source_id: sourceId, p_target_id: targetId, p_empresa_id: empresaId }); if (error) throw new Error(error.code ?? 'CUSTOMER_MUTATION_FAILED'); },
 };
 
-const writeRouter = createCustomersRouter({ resolveAccess: (req) => requireActorPermission(req, 'pessoas.gerenciar').then(mutationAccess), store: mutationStore, toCanonical: (access, personId) => getCustomerDetail(access.empresaId, access.ownerUserId ?? '', personId) });
+const writeRouter = createCustomersRouter({ resolveAccess: async (req) => { await requireCrmFeature(req, 'crm'); return requireActorPermission(req, 'pessoas.gerenciar').then(mutationAccess); }, store: mutationStore, toCanonical: (access, personId) => getCustomerDetail(access.empresaId, access.ownerUserId ?? '', personId) });
 customerRouter.use('/api/customers', writeRouter);
 
 customerRouter.post('/api/customers/:personId/messages', async (req, res) => {
   try {
+    await requireCrmFeature(req, 'crm');
     const access = await requireActorPermission(req, 'clientes.comunicar');
     const detail = await getCustomerDetail(access.empresaId, access.ownerUserId, req.params.personId);
     const jid = typeof req.body?.primaryJid === 'string' ? req.body.primaryJid : '';
