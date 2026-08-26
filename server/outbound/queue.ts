@@ -1,8 +1,8 @@
 import { nextRetryAt } from './policy.js';
 
 export type OutboundStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'cancelled';
-export interface OutboundJobInput { id?: string; empresaId: string; instanceKey: string; recipientId?: string; campaignId?: string; jobType?: 'campaign' | 'automation'; idempotencyKey: string; phone?: string | null; text: string; }
-export interface OutboundJob { id: string; empresaId: string; instanceKey: string; recipientId?: string; campaignId?: string; jobType?: 'campaign' | 'automation'; idempotencyKey: string; phone?: string | null; text: string; status: OutboundStatus; attempts: number; leaseExpiresAt?: string | null; }
+export interface OutboundJobInput { id?: string; empresaId: string; instanceKey: string; recipientId?: string; automationDispatchId?: string; campaignId?: string; jobType?: 'campaign' | 'automation'; idempotencyKey: string; phone?: string | null; text: string; }
+export interface OutboundJob { id: string; empresaId: string; instanceKey: string; recipientId?: string; automationDispatchId?: string; campaignId?: string; jobType?: 'campaign' | 'automation'; idempotencyKey: string; phone?: string | null; text: string; status: OutboundStatus; attempts: number; leaseExpiresAt?: string | null; }
 export interface OutboundJobStore {
   insert(job: OutboundJobInput): Promise<OutboundJob>;
   claim(workerId: string, leaseMs: number): Promise<OutboundJob | null>;

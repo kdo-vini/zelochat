@@ -37,7 +37,8 @@ function numberIn(config: Record<string, unknown>, key: string, min: number, max
 
 export function validateAutomationRule(kind: AutomationKind, input: Partial<AutomationRule>): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
-  if (input.dailyLimit !== undefined && (!Number.isInteger(input.dailyLimit) || input.dailyLimit < 1 || input.dailyLimit > 200)) errors.push('dailyLimit');
+  const dailyLimit = input.dailyLimit ?? (input.config?.dailyLimit as number | undefined) ?? 50;
+  if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > 200) errors.push('dailyLimit');
   if (input.timezone !== undefined && input.timezone !== DEFAULT_AUTOMATION_TIMEZONE) errors.push('timezone');
   if (input.enabled && !String(input.message ?? '').trim()) errors.push('message');
   if (input.sendStart !== undefined && !timePattern.test(input.sendStart)) errors.push('sendStart');

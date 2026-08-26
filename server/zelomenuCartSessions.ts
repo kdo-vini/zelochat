@@ -2014,9 +2014,13 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
   const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
   const { count: sentToday, error: countError } = await automationDb.from('zelochat_automation_dispatches')
     .select('id', { count: 'exact', head: true }).eq('empresa_id', sessionRow.empresa_id)
+    .eq('rule_id', automationRule.id)
     .in('status', ['queued', 'sending', 'sent']).gte('created_at', dayStart.toISOString());
   if (countError) throw countError;
   if ((sentToday ?? 0) >= Math.min(Math.max(Number(automationRule.daily_limit ?? 50), 1), 200)) return 'skipped';
+  const ledgerSenderEnabled = process.env.ZELOCHAT_AUTOMATION_LEDGER === '1';
+  const legacySenderEnabled = process.env.ZELOCHAT_ABANDONED_CART_LEGACY === '1';
+  if (!ledgerSenderEnabled && !legacySenderEnabled) return 'skipped';
   const configuredDelayHours = Number((automationRule.config as Record<string, unknown> | null)?.delayHours ?? 2);
   const ageHours = (Date.now() - Date.parse(sessionRow.updated_at)) / 3600000;
   if (!Number.isFinite(ageHours) || ageHours < Math.min(Math.max(configuredDelayHours, 2), 24)) return 'skipped';
@@ -2057,7 +2061,9 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
   // CRM rollout: the existing cart claim remains the only cart sweeper, but
   // the delivery decision moves to the shared automation ledger. The worker
   // will send the queued job; this path never calls WhatsApp directly.
-  if (process.env.ZELOCHAT_AUTOMATION_LEDGER === '1') {
+  // Ledger wins if both explicit rollout flags are set.
+  if (!ledgerSenderEnabled && !legacySenderEnabled) return 'skipped';
+  if (ledgerSenderEnabled) {
     const db = getServiceSupabase();
     const rule = automationRule;
     const eventKey = `abandoned_cart:${claimedRow.id}`;
@@ -2069,7 +2075,7 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
     if (dispatchError) throw dispatchError;
     if (!dispatch) return 'skipped';
     const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({
-      empresa_id: claimedRow.empresa_id, recipient_id: dispatch.id, job_type: 'automation',
+      empresa_id: claimedRow.empresa_id, automation_dispatch_id: dispatch.id, job_type: 'automation',
       idempotency_key: eventKey, phone_snapshot: claimedRow.source_ref, message: rule.message || message,
       status: 'queued', next_attempt_at: new Date().toISOString(),
     }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();

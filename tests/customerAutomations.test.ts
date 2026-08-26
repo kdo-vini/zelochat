@@ -22,6 +22,7 @@ for (const kind of AUTOMATION_KINDS) {
 }
 assert.equal(validateAutomationRule('birthday', { ...getDefaultAutomationRule('birthday'), dailyLimit: 0 }).ok, false);
 assert.equal(validateAutomationRule('birthday', { ...getDefaultAutomationRule('birthday'), dailyLimit: 201 }).ok, false);
+assert.equal(validateAutomationRule('birthday', { ...getDefaultAutomationRule('birthday'), config: { ...getDefaultAutomationRule('birthday').config, dailyLimit: 80 } }).ok, true);
 
 assert.equal(idempotencyKeyFor('birthday', { pessoaId: 'p1', year: 2026 }), 'birthday:p1:2026');
 assert.equal(idempotencyKeyFor('reactivation', { pessoaId: 'p1', cycle: '2026-08' }), 'reactivation:p1:2026-08');
@@ -48,4 +49,5 @@ assert.match(migration, /America\/Sao_Paulo/);
 assert.match(migration, /enabled\s+boolean\s+not null\s+default\s+false/i);
 assert.match(hardeningMigration, /daily_limit/i);
 assert.match(hardeningMigration, /release_zelochat_expired_leases/i);
+assert.match(readFileSync(resolve('supabase/migrations/058_automation_dispatch_jobs.sql'), 'utf8'), /automation_dispatch_id.*references.*zelochat_automation_dispatches/i);
 console.log('customerAutomations: ok');

@@ -35,7 +35,7 @@ export async function persistAutomationDispatch(rule: AutomationRule, dispatch: 
   if (error) throw error;
   if (!data || dispatch.status !== 'eligible' || !dispatch.phone) return;
   const { data: profile } = await db.from('empresa_perfil').select('whatsmiau_instance').eq('id', rule.empresaId).maybeSingle();
-  const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({ empresa_id: rule.empresaId, recipient_id: data.id, pessoa_id: dispatch.pessoaId, job_type: 'automation', idempotency_key: dispatch.eventKey, instance_key: profile?.whatsmiau_instance ?? '', phone_snapshot: dispatch.phone, message: dispatch.message, status: 'queued', next_attempt_at: new Date().toISOString() }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
+  const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({ empresa_id: rule.empresaId, automation_dispatch_id: data.id, pessoa_id: dispatch.pessoaId, job_type: 'automation', idempotency_key: dispatch.eventKey, instance_key: profile?.whatsmiau_instance ?? '', phone_snapshot: dispatch.phone, message: dispatch.message, status: 'queued', next_attempt_at: new Date().toISOString() }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
   if (jobError) throw jobError;
   if (job?.id) await db.from('zelochat_automation_dispatches').update({ status: 'queued', outbound_job_id: job.id, queued_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', data.id);
 }
@@ -70,7 +70,7 @@ export function startAutomationSweeper(): void {
     void runAutomationSweep({
       listRules: async () => { const { data } = await getServiceSupabase().from('zelochat_automation_rules').select('*').eq('enabled', true).limit(500); const rules = (data ?? []).map((row: any) => ({ ...getDefaultAutomationRule(row.kind), ...row, empresaId: row.empresa_id, sendStart: row.send_start, sendEnd: row.send_end, dailyLimit: row.daily_limit ?? 50 })); const allowed = await Promise.all(rules.map(async (rule) => (await getCrmRolloutFlags(rule.empresaId)).automations ? rule : null)); return allowed.filter((rule): rule is AutomationRule => rule !== null); },
       listCandidates: listAutomationCandidatesForRule,
-      countSentToday: async (rule) => { const start = new Date(); start.setUTCHours(0, 0, 0, 0); const { count } = await getServiceSupabase().from('zelochat_automation_dispatches').select('id', { count: 'exact', head: true }).eq('empresa_id', rule.empresaId).in('status', ['queued', 'sending', 'sent']).gte('created_at', start.toISOString()); return count ?? 0; },
+      countSentToday: async (rule) => { const start = new Date(); start.setUTCHours(0, 0, 0, 0); const { count } = await getServiceSupabase().from('zelochat_automation_dispatches').select('id', { count: 'exact', head: true }).eq('empresa_id', rule.empresaId).eq('rule_id', rule.id).in('status', ['queued', 'sending', 'sent']).gte('created_at', start.toISOString()); return count ?? 0; },
       persist: persistAutomationDispatch,
     }).catch((error) => console.error('[automations] tick failed', error));
   };
