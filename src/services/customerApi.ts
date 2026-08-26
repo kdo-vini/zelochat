@@ -33,6 +33,16 @@ export interface CustomerPage {
   total: number | null;
 }
 
+export interface CustomerDetail extends CustomerSummary {
+  birthday: { day: number; month: number; year?: number | null } | null;
+  origin: string | null;
+  tags: string[];
+  notes: string | null;
+  automaticSummary: string | null;
+  relationship: { blocked: boolean; blockReason: string | null; campaigns: number; automations: number };
+  orders: Array<{ id: string; createdAt: string; status: string; total: number }>;
+}
+
 export interface CustomerListQuery extends CustomerFilters {
   cursor?: string | null;
   limit?: number;
@@ -106,7 +116,34 @@ export async function fetchCustomers(token: string, query: CustomerListQuery = {
   };
 }
 
-export async function fetchCustomer(token: string, personId: string): Promise<unknown> {
+export async function fetchCustomer(token: string, personId: string): Promise<CustomerDetail> {
   const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { headers: authHeaders(token) });
+  return parseCustomerResponse<CustomerDetail>(response);
+}
+
+export type CustomerPatch = Partial<Pick<CustomerDetail, 'name' | 'tags' | 'notes' | 'birthday'>> & { phones?: string[]; whatsappBlocked?: boolean };
+
+export async function updateCustomer(token: string, personId: string, patch: CustomerPatch): Promise<CustomerDetail> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { method: 'PATCH', headers: authHeaders(token), body: JSON.stringify(patch) });
+  return parseCustomerResponse<CustomerDetail>(response);
+}
+
+export async function createCustomer(token: string, patch: CustomerPatch): Promise<CustomerDetail> {
+  const response = await apiFetch(apiUrl('/api/customers'), { method: 'POST', headers: authHeaders(token), body: JSON.stringify(patch) });
+  return parseCustomerResponse<CustomerDetail>(response);
+}
+
+export async function deleteCustomer(token: string, personId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { method: 'DELETE', headers: authHeaders(token) });
+  await parseCustomerResponse(response);
+}
+
+export async function previewCustomerMerge(token: string, sourceId: string, targetId: string): Promise<{ source: CustomerSummary; target: CustomerSummary; conversations: number; orders: number }> {
+  const response = await apiFetch(apiUrl('/api/customers/merge/preview'), { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ sourceId, targetId }) });
   return parseCustomerResponse(response);
+}
+
+export async function mergeCustomers(token: string, sourceId: string, targetId: string): Promise<void> {
+  const response = await apiFetch(apiUrl('/api/customers/merge'), { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ sourceId, targetId }) });
+  await parseCustomerResponse(response);
 }
