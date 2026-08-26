@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DropResult } from '@hello-pangea/dnd';
-import { Sparkles, Settings, User as UserIcon } from 'lucide-react';
 import { useDrivers } from './hooks/useDrivers';
 import { useTriggers } from './hooks/useTriggers';
 import { useOrders } from './hooks/useOrders';
@@ -24,8 +23,9 @@ import { loadInitialState, saveInitialState } from './services/statePersistence'
 import type { Order, ZeloState } from './types';
 import { normalizeZeloChatMode } from './domain/zelochatMode';
 import type { OrderFocusRequest } from './domain/orderFocus';
-import { Sidebar, NAV_PRIMARY, NAV_SECONDARY, RESTAURANT_ONLY_VIEWS, GENERAL_ALLOWED_VIEWS } from './components/Sidebar';
-import type { View } from './components/Sidebar';
+import { Sidebar, GENERAL_ALLOWED_VIEWS } from './components/Sidebar';
+import type { View } from './domain/navigation';
+import { getDesktopNavigation, getMobileNavigation } from './domain/navigation';
 import { MainContent } from './components/MainContent';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { ChatView } from './components/views/ChatView';
@@ -78,6 +78,7 @@ export default function AppShell() {
   const [profilePics, setProfilePics] = useState<Record<string, string>>({});
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [deferredDataReady, setDeferredDataReady] = useState(false);
+  const [actorCapabilities, setActorCapabilities] = useState<{ pessoasVisualizar: boolean; pessoasGerenciar: boolean; clientesComunicar: boolean; crmEnabled: boolean; campaignsEnabled: boolean; automationsEnabled: boolean } | null>(null);
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOrderFocusSeqRef = useRef(0);
@@ -114,6 +115,16 @@ export default function AppShell() {
   const [reactivatingAccount, setReactivatingAccount] = useState(false);
   const zelochatMode = normalizeZeloChatMode(empresa?.zelochat_mode);
   const isGeneralMode = zelochatMode === 'general';
+  useEffect(() => {
+    if (!token) { setActorCapabilities(null); return; }
+    let cancelled = false;
+    void fetch(apiUrl('/api/access/me'), { headers: { Authorization: `Bearer ${token}` } }).then(async (response) => {
+      if (!response.ok) throw new Error('PERMISSIONS_UNAVAILABLE');
+      const body = await response.json() as { capabilities?: { pessoas?: { visualizar?: boolean; gerenciar?: boolean }; clientes?: { comunicar?: boolean } }; rollout?: { crm?: boolean; campaigns?: boolean; automations?: boolean } };
+      if (!cancelled) setActorCapabilities({ pessoasVisualizar: body.capabilities?.pessoas?.visualizar === true, pessoasGerenciar: body.capabilities?.pessoas?.gerenciar === true, clientesComunicar: body.capabilities?.clientes?.comunicar === true, crmEnabled: body.rollout?.crm === true, campaignsEnabled: body.rollout?.campaigns === true, automationsEnabled: body.rollout?.automations === true });
+    }).catch(() => { if (!cancelled) setActorCapabilities(null); });
+    return () => { cancelled = true; };
+  }, [token]);
   const shouldLoadCatalog = !!session && !isGeneralMode && (
     deferredDataReady ||
     activeView === 'ai-configs'
@@ -137,23 +148,14 @@ export default function AppShell() {
     activeView === 'settings' ||
     activeView === 'profile'
   );
-  const primaryNavItems = useMemo(
-    () => NAV_PRIMARY.filter((item) => !isGeneralMode || !RESTAURANT_ONLY_VIEWS.has(item.id)),
-    [isGeneralMode],
-  );
-  const secondaryNavItems = useMemo(
-    () => NAV_SECONDARY.filter((item) => !isGeneralMode || !RESTAURANT_ONLY_VIEWS.has(item.id)),
-    [isGeneralMode],
-  );
-  const bottomSheetItems = useMemo(
-    () => [
-      ...secondaryNavItems,
-      { id: 'novidades' as View, icon: Sparkles, label: 'Novidades', description: 'O que mudou no sistema' },
-      { id: 'settings' as View, icon: Settings, label: 'Configurações', description: 'Empresa e integrações' },
-      { id: 'profile' as View, icon: UserIcon, label: 'Perfil', description: 'Sua conta' },
-    ],
-    [isGeneralMode, secondaryNavItems],
-  );
+  const navigationMode = isGeneralMode ? 'general' : 'restaurant';
+  const navigationPermissions = useMemo(() => ({ pessoas: { visualizar: actorCapabilities?.pessoasVisualizar === true }, rollout: { crm: actorCapabilities?.crmEnabled === true } }), [actorCapabilities]);
+  const desktopNavigation = useMemo(() => getDesktopNavigation(navigationMode, navigationPermissions), [navigationMode, navigationPermissions]);
+  const mobileNavigation = useMemo(() => getMobileNavigation(navigationMode, navigationPermissions), [navigationMode, navigationPermissions]);
+  const primaryNavItems = desktopNavigation.primary;
+  const secondaryNavItems = desktopNavigation.secondary;
+  const mobilePrimaryNavItems = mobileNavigation.primary;
+  const bottomSheetItems = mobileNavigation.more;
   const {
     sessions,
     loading: chatLoading,
@@ -282,7 +284,11 @@ export default function AppShell() {
       setActiveView('chat');
       setMoreSheetOpen(false);
     }
-  }, [activeView, isGeneralMode]);
+    if (activeView === 'customers' && (actorCapabilities?.pessoasVisualizar !== true || actorCapabilities?.crmEnabled !== true)) {
+      setActiveView('chat');
+      setMoreSheetOpen(false);
+    }
+  }, [activeView, actorCapabilities, isGeneralMode]);
 
   // Stripe Checkout return: when the browser comes back with ?billing=success
   // we force a sync from Stripe (in case the webhook is still racing) and
@@ -785,6 +791,13 @@ export default function AppShell() {
     setActiveView('kanban');
   }, []);
 
+  const handleOpenAtendimento = useCallback((sessionId: string) => {
+    // Session selection remains owned by useWhatsAppSessions; CRM only asks
+    // AppShell to select the existing session and switch the view.
+    setActiveSessionId(sessionId);
+    setActiveView('chat');
+  }, [setActiveSessionId]);
+
   const handleOpenOrderFromChat = useCallback((request: OrderFocusRequest) => {
     pendingOrderFocusSeqRef.current += 1;
     setPendingOrderFocus({
@@ -1031,6 +1044,9 @@ export default function AppShell() {
         canPrint={printer.connected}
         pendingOrderFocus={pendingOrderFocus}
         handleNavigateToKanban={handleNavigateToKanban}
+        onOpenAtendimento={handleOpenAtendimento}
+        customerPermissions={{ pessoasVisualizar: actorCapabilities?.pessoasVisualizar === true, clientesComunicar: actorCapabilities?.clientesComunicar === true, campaignsEnabled: actorCapabilities?.campaignsEnabled === true, automationsEnabled: actorCapabilities?.automationsEnabled === true }}
+        canManageCustomers={actorCapabilities?.pessoasGerenciar === true}
         triggers={triggers}
         triggersError={triggersError}
         createTrigger={createTrigger}
@@ -1056,8 +1072,9 @@ export default function AppShell() {
 
       <MobileBottomNav
         activeView={activeView}
-        primaryNavItems={primaryNavItems}
+        primaryNavItems={mobilePrimaryNavItems}
         bottomSheetItems={bottomSheetItems}
+        moreActiveViews={mobileNavigation.moreActiveViews}
         moreSheetOpen={moreSheetOpen}
         openEscalationCount={openEscalationCount}
         unreadConversationsCount={unreadConversationsCount}

@@ -23,6 +23,7 @@ export interface Tag {
 
 export interface ChatSession {
   id: string;
+  remoteJid?: string;
   customerName: string;
   customerPhone: string;
   lastMessage: string;
@@ -56,6 +57,85 @@ export interface ChatSessionsPage {
   nextCursor: string | null;
   hasMore: boolean;
 }
+
+export type CustomerActivityState = 'active' | 'inactive' | 'never';
+
+export interface CustomerSummary {
+  id: string;
+  name: string;
+  phone: string | null;
+  hasWhatsApp: boolean;
+  lastActivityAt: string | null;
+  activityState: CustomerActivityState;
+  totalOrders: number;
+  totalValue: number;
+  tags: Array<Tag | string>;
+  /** Canonical CRM aliases used by the customer API adapter. */
+  whatsapp?: string | null;
+  orderCount?: number;
+  openBalance?: number | null;
+}
+
+export interface CustomerDetail extends CustomerSummary {
+  aniversario: {
+    day: number;
+    month: number;
+    year: number | null;
+  } | null;
+  internalNotes: string | null;
+  aiSummary: string | null;
+  whatsappBlockedAt: string | null;
+  whatsappBlockReason: string | null;
+  lastManualContactAt: string | null;
+  sessions: ChatSession[];
+  birthday?: { day: number; month: number; year: number | null } | null;
+  notes?: string | null;
+  automaticSummary?: string | null;
+  relationship?: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
+  orders?: Array<{ id: string; createdAt: string; status: string; total: number }>;
+  primaryJid?: string | null;
+}
+
+export interface CustomerFilters {
+  q?: string;
+  activityState?: CustomerActivityState;
+  hasPhone?: boolean;
+  tagId?: string;
+  tagIds?: string[];
+  birthdayMonth?: number;
+  vip?: boolean;
+  birthdayOnly?: boolean;
+  origin?: string;
+  tags?: string[];
+  cursor?: string | null;
+  limit?: number;
+}
+
+export type CustomerTimelineEvent =
+  | {
+      kind: 'message';
+      id: string;
+      occurredAt: string;
+      sessionId: string;
+      direction: 'inbound' | 'outbound';
+      preview: string;
+    }
+  | {
+      kind: 'order';
+      id: string;
+      occurredAt: string;
+      status: 'pending_payment' | 'pending_review' | 'accepted' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' | 'rejected' | 'cancelled';
+      total: number;
+    }
+  | {
+      kind: 'relationship';
+      id: string;
+      occurredAt: string;
+      action: 'created' | 'updated' | 'blocked' | 'unblocked' | 'tagged' | 'untagged';
+      actorId: string | null;
+    };
+
+export type CustomerTimelineEntry = CustomerTimelineEvent;
 
 export type EscalationReasonCategory =
   | 'frustration'
@@ -160,6 +240,8 @@ export interface BuiltinTriggerInfo {
 
 export interface Order {
   id: string;
+  /** Canonical pessoa link; snapshots below remain authoritative for display. */
+  personId?: string;
   revision?: number;
   customerName: string;
   customerPhone: string;

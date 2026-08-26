@@ -111,7 +111,9 @@ import {
   resolveSession,
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
-import { requireEmpresaId, requireEmpresaAndUserId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireActorAccess, requireActorPermission, requireOwnerAccess } from './accessControl.js';
+import { sendAuthError } from './authErrors.js';
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
 import {
   clearMissingOwnInstanceForEmpresa,
@@ -136,6 +138,11 @@ import {
   updateZeloMenuStoreSettings,
 } from './zelomenuCartSessions.js';
 import { cancelCanonicalOrder, createManualZeloOrder, getCanonicalOrder, LEGACY_CANONICAL_ORDER_SELECT, transitionCanonicalOrder } from './canonicalOrders.js';
+import { customerRouter } from './customers/router.js';
+import { campaignRouter } from './campaigns/router.js';
+import { automationRouter } from './automations/router.js';
+import { getCrmRolloutFlags } from './customers/rollout.js';
+import { getCrmOperationsPanel } from './customers/metrics.js';
 
 // Self-service account deletion grace period (must match the deletion sweeper).
 const ACCOUNT_DELETION_GRACE_DAYS = 14;
@@ -153,6 +160,30 @@ import {
 } from '../src/domain/aiSchedule.js';
 
 const router = Router();
+// CRM read API is server-aggregated; every route in customerRouter performs
+// the actor/tenant permission check before touching service_role data.
+router.use(customerRouter);
+router.use(campaignRouter);
+router.use(automationRouter);
+
+router.get('/api/access/me', async (req: Request, res: Response) => {
+  try {
+    const access = await requireActorAccess(req);
+    const rollout = await getCrmRolloutFlags(access.empresaId);
+    res.json({ actorUserId: access.actorUserId, isOwner: access.isOwner, rollout, capabilities: {
+      pessoas: { visualizar: access.isOwner || access.permissions?.['pessoas.visualizar'] === true, gerenciar: access.isOwner || access.permissions?.['pessoas.gerenciar'] === true },
+      clientes: { comunicar: access.isOwner || access.permissions?.['clientes.comunicar'] === true },
+    } });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'UNAUTHORIZED';
+    res.status(code === 'FORBIDDEN' ? 403 : 401).json({ code, message: 'Não foi possível validar suas permissões.' });
+  }
+});
+
+router.get('/api/customer-rollout/operations', async (req: Request, res: Response) => {
+  try { const access = await requireActorAccess(req); const flags = await getCrmRolloutFlags(access.empresaId); if (!flags.crm) { res.status(404).json({ code: 'CRM_FEATURE_DISABLED', message: 'Clientes ainda não está disponível para esta empresa.' }); return; } res.json(await getCrmOperationsPanel(access.empresaId)); }
+  catch (error) { const code = error instanceof Error ? error.message : 'UNAUTHORIZED'; res.status(code === 'UNAUTHORIZED' ? 401 : 400).json({ code, message: 'Não foi possível carregar o painel operacional.' }); }
+});
 
 const ORDER_NOTIFICATION_COLUMNS = LEGACY_CANONICAL_ORDER_SELECT;
 
@@ -913,30 +944,6 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
 });
 
 
-function sendAuthError(res: Response, error: unknown): void {
-  const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
-
-  if (message === 'UNAUTHORIZED') {
-    res.status(401).json({ error: 'Não autenticado' });
-    return;
-  }
-
-  if (message === 'EMPRESA_NOT_FOUND') {
-    res.status(403).json({ error: 'Empresa não encontrada para este usuário' });
-    return;
-  }
-
-  if (message === 'SUBSCRIPTION_INACTIVE') {
-    res.status(402).json({
-      error: 'Ative seu plano ZeloChat para conectar o WhatsApp.',
-      code: 'SUBSCRIPTION_INACTIVE',
-    });
-    return;
-  }
-
-  res.status(500).json({ error: message });
-}
-
 function sendDriverError(res: Response, error: unknown): void {
   const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
 
@@ -1453,7 +1460,7 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
   }
 
   try {
-    const empresaId = await requireEmpresaId(req);
+    const empresaId = (await requireActorPermission(req, 'clientes.comunicar')).empresaId;
     const trimmedMessage = message?.trim() ?? '';
     const validQuoted = quoted?.waMessageId ? quoted : null;
     let waMessageId: string | undefined;
@@ -1509,7 +1516,7 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
       });
     }
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
@@ -1615,7 +1622,7 @@ router.get('/api/ai/health', async (req: Request, res: Response) => {
  */
 router.post('/api/ai/manager', express.json({ limit: '128kb' }), async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = validateManagerRequest(req.body);
     if (payload.ok === false) {
       res.status(400).json({ error: payload.error });
@@ -2024,7 +2031,7 @@ router.post('/api/orders/manual', express.json({ limit: '50kb' }), async (req: R
 
 router.delete('/api/orders/:id', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const expectedRevision = Number((req.body as { expectedRevision?: unknown } | undefined)?.expectedRevision);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
       res.status(400).json({ error: 'RevisÃ£o invÃ¡lida.' }); return;
@@ -2071,7 +2078,7 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
 
     const oldStatus = existing.status;
 
-    const { userId } = await requireEmpresaAndUserId(req);
+    const { actorUserId: userId } = await requireActorAccess(req);
     const updated = await transitionCanonicalOrder({
       empresaId,
       orderId,
@@ -2584,7 +2591,7 @@ router.delete('/api/sessions/:jid', async (req: Request, res: Response) => {
  */
 router.delete('/api/account', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, ownerUserId: userId } = await requireOwnerAccess(req);
     const supabase = getServiceSupabase();
     const { data: deletionState, error: deletionStateError } = await supabase
       .from('empresa_perfil')
@@ -2698,7 +2705,7 @@ router.delete('/api/account', async (req: Request, res: Response) => {
  */
 router.post('/api/account/reactivate', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, ownerUserId: userId } = await requireOwnerAccess(req);
     const supabase = getServiceSupabase();
     const { data: reactivationToken, error: beginError } = await supabase.rpc(
       'begin_account_deletion_reactivation',
@@ -2774,7 +2781,7 @@ router.post('/api/account/reactivate', async (req: Request, res: Response) => {
  */
 router.post('/api/ai/generate-instructions', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = validateGenerateInstructionsPayload(req);
     if (payload.ok === false) {
       if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
@@ -2866,7 +2873,7 @@ Escreva agora as diretrizes operacionais do agente.`;
  */
 router.post('/api/ai/complete', express.json({ limit: '512kb' }), async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = validateAiCompletePayload(req);
     if (payload.ok === false) {
       if (payload.retryAfterSeconds) res.set('Retry-After', String(payload.retryAfterSeconds));
@@ -2928,7 +2935,7 @@ router.post('/api/ai/complete', express.json({ limit: '512kb' }), async (req: Re
  */
 router.post('/api/ai/simulate', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
 
     const rateLimit = checkAiRouteRateLimit(empresaId, userId, 'complete');
     if (rateLimit.ok === false) {
@@ -3087,7 +3094,7 @@ router.get('/api/zelomenu/cart-sessions/review', async (req: Request, res: Respo
 
 router.post('/api/zelomenu/cart-sessions/:id/accept', async (req: Request, res: Response) => {
   try {
-    const { empresaId, userId } = await requireEmpresaAndUserId(req);
+    const { empresaId, actorUserId: userId } = await requireActorAccess(req);
     const payload = await acceptWhatsAppCartReviewSession({
       empresaId,
       sessionId: req.params.id,
@@ -3437,7 +3444,7 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
 // the persisted intent, always scoped to the authenticated empresa.
 router.post('/api/messages/:id/retry', async (req: Request, res: Response) => {
   try {
-    const empresaId = await requireEmpresaId(req);
+    const empresaId = (await requireActorPermission(req, 'clientes.comunicar')).empresaId;
     const supabase = getServiceSupabase();
     const { data: message, error: messageError } = await supabase
       .from('zelochat_messages')
@@ -3545,11 +3552,11 @@ router.delete('/api/messages/failed/:id', async (req: Request, res: Response) =>
 
 router.post('/api/onboarding/welcome', async (req: Request, res: Response) => {
   try {
-    const { userId } = await requireEmpresaAndUserId(req);
-    const result = await sendWelcomePack(userId);
+    const { ownerUserId } = await requireOwnerAccess(req);
+    const result = await sendWelcomePack(ownerUserId);
     res.json({ ok: true, ...result });
   } catch (error) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }

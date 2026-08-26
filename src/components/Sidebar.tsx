@@ -1,5 +1,4 @@
 import React, { memo } from 'react';
-import type { LucideIcon } from 'lucide-react';
 import {
   Coffee,
   PanelLeftClose,
@@ -17,39 +16,20 @@ import {
 import { PrinterButton } from './PrinterButton';
 import type { Order } from '../types';
 import type { UsePrinterReturn } from '../hooks/usePrinter';
+import {
+  GENERAL_ALLOWED_VIEWS,
+  RESTAURANT_ONLY_VIEWS,
+  type NavItem,
+  type View,
+} from '../domain/navigation';
+export { GENERAL_ALLOWED_VIEWS, RESTAURANT_ONLY_VIEWS } from '../domain/navigation';
+export type { NavItem, View } from '../domain/navigation';
 
-export type View =
-  | 'dashboard'
-  | 'chat'
-  | 'kanban'
-  | 'calendar'
-  | 'ai-configs'
-  | 'settings'
-  | 'profile'
-  | 'drivers'
-  | 'novidades';
-
-export interface NavItem {
-  id: View;
-  icon: LucideIcon;
-  label: string;
-  description: string;
-}
-
-export const NAV_PRIMARY: NavItem[] = [
-  { id: 'dashboard', icon: LayoutDashboard, label: 'Visão geral',  description: 'Métricas e alertas do dia' },
-  { id: 'chat',      icon: MessageCircle,   label: 'Atendimento',  description: 'Conversas no WhatsApp' },
-  { id: 'kanban',    icon: Kanban,          label: 'Produção',     description: 'Fila de pedidos' },
-  { id: 'drivers',   icon: Bike,            label: 'Motoboys',     description: 'Entregadores' },
-];
-
-export const NAV_SECONDARY: NavItem[] = [
-  { id: 'calendar',   icon: CalendarIcon, label: 'Agenda',     description: 'Pedidos por data' },
-  { id: 'ai-configs', icon: Bot,          label: 'Cérebro IA', description: 'Configurar assistente' },
-];
-
-export const GENERAL_ALLOWED_VIEWS = new Set<View>(['chat', 'ai-configs', 'settings', 'profile', 'novidades']);
-export const RESTAURANT_ONLY_VIEWS = new Set<View>(['dashboard', 'kanban', 'calendar', 'drivers']);
+// Kept as compatibility aliases for callers outside AppShell. The definition
+// and ordering itself lives in domain/navigation.ts.
+import { getDesktopNavigation } from '../domain/navigation';
+export const NAV_PRIMARY: NavItem[] = getDesktopNavigation('restaurant').primary;
+export const NAV_SECONDARY: NavItem[] = getDesktopNavigation('restaurant').secondary;
 
 /* ─── NavButton ───────────────────────────────────────────────── */
 interface NavButtonProps {
@@ -66,6 +46,8 @@ const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badg
   return (
     <button
       onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      aria-label={item.label}
       title={!expanded ? item.label : undefined}
       className={`group relative w-full flex items-center rounded-[10px] transition-all ${
         expanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5'
@@ -144,6 +126,7 @@ export function Sidebar({
         )}
         <button
           onClick={onToggle}
+          aria-label={expanded ? 'Recolher navegação' : 'Expandir navegação'}
           className="w-7 h-7 flex items-center justify-center rounded-md text-[var(--color-ink-faint)] hover:text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] transition-colors flex-shrink-0"
         >
           {expanded

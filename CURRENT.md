@@ -7,10 +7,29 @@
 
 ## Estado do produto (2026-07-24)
 
+## Rollout CRM (2026-08-26)
+
+- Task 20 local: flags internas por empresa mantêm CRM, campanhas e automações desligados até ativação explícita; navegação e APIs falham fechado quando a flag ou a leitura do rollout não está disponível. Métricas e painel operacional expõem somente contadores agregados, fila, leases e desconexão.
+- Gate B (dry-run) concluído em 2026-08-26: consulta somente leitura reproduziu o preview do backfill nos cinco tenants com sessões (2.035 sessões, 1 vínculo potencial, 0 conflitos e 2.034 sem correspondência de cliente). O diagnóstico encontrou 78 cadastros `pessoas.tipo='cliente'`, mas apenas 40 contatos com 10–13 dígitos; 2.033 sessões têm telefone nesse intervalo. Nenhuma linha, checkpoint ou flag foi alterada.
+- Gate C piloto executado em 2026-08-26 no Donutopia: backfill real processou 9 sessões, gravou checkpoint terminal (`cursor=null`, `linked=0`, `created=0`, `incomplete=9`, `conflict=0`, `failed=0`) e não alterou vínculos. `crm_enabled=true` foi ativado somente nesse tenant; campanhas, automações e fila de saída permanecem desligadas. Métricas iniciais registradas: 2 clientes, 2 com telefone, 0 conflitos e 0 jobs de saída.
+- Gate C de dados concluído nos dois pilotos: Casa dos Salgados (plano ativo) processou 1.716 sessões, vinculou 1 e deixou 1.715 incompletas, sem conflitos/falhas; Donutopia processou 9 sessões, todas incompletas, também sem conflitos/falhas. `crm_enabled=true` somente nos dois; Agreste não foi ativada porque o banco reporta `trial_expired`; campanhas, automações e outbound seguem desligados globalmente.
+- Conferência autenticada local concluída em `tests/customers-crm.spec.ts` nos viewports 360/390/768/1440, cobrindo navegação, filtro, ficha, tabs, permissões e ausência de overflow. A conferência em ambiente publicado continua pendente porque não há sessão de teste autenticada disponível e nenhum deploy foi autorizado.
+- Gate A database concluído em 2026-08-26 no projeto Supabase conectado: migrations PDV de identidade/pedidos e ZeloChat `048–060` aplicadas; probe transacional de RLS/tenant isolation passou e fez rollback dos fixtures. A migration 060 adiciona índices FK/search para o CRM e o advisor não sinaliza mais as novas tabelas CRM. O stream canônico foi reconciliado no worktree do ZeloPDV no commit `8e40e4c`, com os timestamps remotos `20260826110656`–`20260826131437`; não houve `migration repair`, `db push` ou reescrita manual do ledger remoto.
+
 - **2 cliente pagante:** Casa dos Salgados, Agreste Salgados
 - **1 founder test:** Donutopia
 - **Infra:** Dokploy em VPS, deploy automático no push para `main`
 - **Audit:** P0 100% ✅ · P1 100% ✅ (acionáveis, 3 deferred p/ multi-replica) · P2 63% · P3 21%
+
+## Clientes CRM — fundação de acesso (2026-08-25)
+
+- **Task 3 concluída:** o backend resolve owner e subusuário ativo pelo RBAC compartilhado (`access_users`/`access_roles`), mantém apenas metadados do owner em cache por ator e revalida status/cargo do subusuário a cada request; account deletion, Stripe/PIX e onboarding são owner-only, todos os caminhos de erro owner-only têm copy amigável e vínculos inativos falham fechado. Cobertura em `tests/customerAccessControl.test.ts` e `tests/accessErrorMapping.test.ts`.
+
+- **Task 4 concluída:** migration aditiva `048_customer_relationship_foundation.sql` adiciona `pessoa_id` nullable e `owner_user_id` persistido às sessões, com trigger de compatibilidade que deriva o owner para writers legados, relacionamento pessoa/empresa, tags de pessoa e conflitos de match auditáveis. As novas tabelas têm FKs compostas tenant-safe, RLS/grants server-only e índices de listagem; `customer_profile` permanece como fallback temporário durante o backfill. Tipos discriminados de cliente/timeline e verificação SQL executável estão em `src/types.ts`, `tests/customerRelationshipSchema.test.ts` e `supabase/verification/customer_relationship_authz.sql`.
+
+- **Tasks 5–8 concluídas (2026-08-25; Gate A verificado 2026-08-26):** identidade WhatsApp fail-soft via adaptador RPC único, vínculo pessoa-first em sessões e pedidos sem alterar snapshots, backfill retomável em migration `049_customer_backfill_state.sql` e APIs paginadas de Clientes com `pessoas.visualizar` em todas as leituras. O probe transacional de concorrência, funcionário em conflito e RLS cross-tenant passou no Supabase conectado; backfill dos dois pilotos foi concluído sem conflitos/falhas e sem ativação automática nos demais tenants.
+- **Rodada de auditoria Tasks 5–8 corrigida:** consumidores de pedidos fazem preflight/fallback somente para contrato PDV ausente; dry-run não chama RPC mutante; fontes seguem `pdv|whatsapp|zelomenu|manual`; conflitos são deduplicados; vínculos existentes não são apagados em falhas; filtros/cursors/timeline CRM foram endurecidos contra injeção e empates. Commits `85af077` e `ecd2100`. Gate B/C de dados concluídos; resta validação visual publicada e decisão de expansão.
+- **Rereview final corrigida:** fallback exige assinatura/coluna exata; migration `050_customer_read_aggregates_and_conflict_dedupe.sql` instala upsert transacional de conflitos, RPC de listagem com atividade/tag antes do keyset e timeline global `(occurred_at, kind, id)`, tudo server-only. Commit `1857d3b`; aplicação/verificação Gate A e pilotos Gate B/C concluídas.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)
 
@@ -75,6 +94,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
+- **CRM pós-piloto:** obter uma sessão autenticada de teste em ambiente publicado, validar Atendimento visualmente após deploy autorizado e só então decidir a expansão gradual para outros tenants. Campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
 - `npm run build` — aviso de chunk >500 kB; maior chunk `index-BirF1qk8.js` = 603.87 kB / 171.61 kB gzip

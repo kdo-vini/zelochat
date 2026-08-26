@@ -1,0 +1,187 @@
+import { apiFetch, apiUrl } from '../config';
+
+export type CustomerActivityState = 'active' | 'inactive' | 'never';
+export type CustomerStatusFilter = 'all' | CustomerActivityState;
+
+export interface CustomerFilters {
+  search?: string;
+  status?: CustomerStatusFilter;
+  tags?: string[];
+  birthdayMonth?: number;
+  origin?: string;
+  hasWhatsApp?: boolean;
+  vip?: boolean;
+  birthdayOnly?: boolean;
+}
+
+export interface CustomerSummary {
+  id: string;
+  name: string;
+  phone: string | null;
+  whatsapp: string | null;
+  lastActivityAt: string | null;
+  activityState: CustomerActivityState;
+  orderCount: number;
+  totalValue: number;
+  openBalance: number | null;
+  tags: string[];
+}
+
+export interface CustomerPage {
+  customers: CustomerSummary[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  total: number | null;
+}
+
+export interface CustomerMessagesPage {
+  items: Array<{ id: string; session_id: string; role: string; content: string | null; sent_at: string; outbound_status?: string | null; outbound_error?: string | null; attachment?: import('../types').ChatAttachment | null }>;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface CustomerDetail extends CustomerSummary {
+  birthday: { day: number; month: number; year?: number | null } | null;
+  origin: string | null;
+  tags: string[];
+  notes: string | null;
+  automaticSummary: string | null;
+  relationship: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
+  orders: Array<{ id: string; createdAt: string; status: string; total: number }>;
+  primaryJid: string | null;
+  sessions: Array<{ id: string; remoteJid: string; lastMessageTime: string; status: string }>;
+}
+
+export interface CustomerListQuery extends CustomerFilters {
+  cursor?: string | null;
+  limit?: number;
+}
+
+export class CustomerApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status = 0, code: string | null = null) {
+    super(message);
+    this.name = 'CustomerApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function countActiveCustomerFilters(filters: CustomerFilters): number {
+  return [
+    filters.status && filters.status !== 'all',
+    filters.tags && filters.tags.length > 0,
+    filters.birthdayMonth,
+    filters.origin?.trim(),
+    filters.hasWhatsApp !== undefined,
+    filters.vip === true,
+    filters.birthdayOnly === true,
+  ].filter(Boolean).length;
+}
+
+export function serializeCustomerFilters(filters: CustomerFilters): string {
+  const params = new URLSearchParams();
+  if (filters.search?.trim()) params.set('q', filters.search.trim());
+  if (filters.status && filters.status !== 'all') params.set('status', filters.status);
+  if (filters.tags?.length) params.set('tags', filters.tags.slice().sort().join(','));
+  if (filters.birthdayMonth) params.set('birthdayMonth', String(filters.birthdayMonth));
+  if (filters.origin?.trim()) params.set('origin', filters.origin.trim());
+  if (filters.hasWhatsApp !== undefined) params.set('hasWhatsApp', String(filters.hasWhatsApp));
+  if (filters.vip === true) params.set('vip', 'true');
+  if (filters.birthdayOnly === true) params.set('birthdayOnly', 'true');
+  return params.toString();
+}
+
+export function shouldResetCustomerCursor(previous: CustomerFilters, next: CustomerFilters): boolean {
+  return serializeCustomerFilters(previous) !== serializeCustomerFilters(next);
+}
+
+function normalizeCustomerSummary(value: Partial<CustomerSummary> & Record<string, unknown>): CustomerSummary {
+  const hasWhatsApp = typeof value.hasWhatsApp === 'boolean' ? value.hasWhatsApp : Boolean(value.whatsapp ?? value.phone);
+  return { id: String(value.id ?? ''), name: String(value.name ?? 'Cliente'), phone: (value.phone as string | null | undefined) ?? null, whatsapp: (value.whatsapp as string | null | undefined) ?? (hasWhatsApp ? (value.phone as string | null | undefined) ?? null : null), lastActivityAt: (value.lastActivityAt as string | null | undefined) ?? null, activityState: value.activityState === 'active' ? 'active' : value.activityState === 'never' ? 'never' : 'inactive', orderCount: Number(value.orderCount ?? value.totalOrders ?? 0), totalValue: Number(value.totalValue ?? 0), openBalance: (value.openBalance as number | null | undefined) ?? null, tags: Array.isArray(value.tags) ? value.tags as string[] : [] };
+}
+
+function authHeaders(token: string): HeadersInit {
+  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+async function parseCustomerResponse<T>(response: Response): Promise<T> {
+  let body: unknown = null;
+  try { body = await response.json(); } catch { /* friendly fallback below */ }
+  if (!response.ok) {
+    const message = typeof body === 'object' && body !== null && 'message' in body && typeof body.message === 'string'
+      ? body.message
+      : typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+        ? body.error
+      : response.status === 403 ? 'Você não tem permissão para consultar clientes.' : 'Não foi possível carregar os clientes.';
+    const code = typeof body === 'object' && body !== null && 'code' in body && typeof body.code === 'string' ? body.code : null;
+    throw new CustomerApiError(message, response.status, code);
+  }
+  return body as T;
+}
+
+export async function fetchCustomers(token: string, query: CustomerListQuery = {}): Promise<CustomerPage> {
+  const params = new URLSearchParams(serializeCustomerFilters(query));
+  params.set('limit', String(Math.min(Math.max(query.limit ?? 30, 1), 100)));
+  if (query.cursor) params.set('cursor', query.cursor);
+  const response = await apiFetch(apiUrl(`/api/customers?${params.toString()}`), { headers: authHeaders(token) });
+  const body = await parseCustomerResponse<Partial<CustomerPage> & { data?: CustomerSummary[] }>(response);
+  return {
+    customers: (body.customers ?? body.data ?? []).map((customer) => normalizeCustomerSummary(customer as Partial<CustomerSummary> & Record<string, unknown>)),
+    nextCursor: body.nextCursor ?? null,
+    hasMore: body.hasMore ?? Boolean(body.nextCursor),
+    total: body.total ?? null,
+  };
+}
+
+export async function fetchCustomer(token: string, personId: string): Promise<CustomerDetail> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { headers: authHeaders(token) });
+  const body = await parseCustomerResponse<Partial<CustomerDetail> & Record<string, unknown>>(response);
+  const summary = normalizeCustomerSummary(body);
+  return { ...summary, birthday: (body.birthday ?? body.aniversario ?? null) as CustomerDetail['birthday'], origin: (body.origin as string | null | undefined) ?? null, notes: (body.notes ?? body.internalNotes ?? null) as string | null, automaticSummary: (body.automaticSummary ?? body.aiSummary ?? null) as string | null, relationship: (body.relationship ?? { blocked: Boolean(body.whatsappBlockedAt), blockReason: body.whatsappBlockReason ?? null, campaigns: 0, automations: 0 }) as CustomerDetail['relationship'], orders: Array.isArray(body.orders) ? body.orders as CustomerDetail['orders'] : [], primaryJid: (body.primaryJid as string | null | undefined) ?? null, sessions: Array.isArray(body.sessions) ? body.sessions as CustomerDetail['sessions'] : [] };
+}
+
+export type CustomerPatch = Partial<Pick<CustomerDetail, 'name' | 'tags' | 'notes'>> & { birthday?: CustomerDetail['birthday']; phones?: string[]; whatsappBlocked?: boolean };
+
+export async function updateCustomer(token: string, personId: string, patch: CustomerPatch): Promise<CustomerDetail> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { method: 'PATCH', headers: authHeaders(token), body: JSON.stringify(patch) });
+  return parseCustomerResponse<CustomerDetail>(response);
+}
+
+export async function createCustomer(token: string, patch: CustomerPatch): Promise<CustomerDetail> {
+  const response = await apiFetch(apiUrl('/api/customers'), { method: 'POST', headers: authHeaders(token), body: JSON.stringify(patch) });
+  return parseCustomerResponse<CustomerDetail>(response);
+}
+
+export async function deleteCustomer(token: string, personId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { method: 'DELETE', headers: authHeaders(token) });
+  await parseCustomerResponse(response);
+}
+
+export async function previewCustomerMerge(token: string, sourceId: string, targetId: string): Promise<{ source: CustomerSummary; target: CustomerSummary; conversations: number; orders: number }> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(sourceId)}/merge`), { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ targetId, preview: true }) });
+  return parseCustomerResponse(response);
+}
+
+export async function mergeCustomers(token: string, sourceId: string, targetId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(sourceId)}/merge`), { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ targetId, execute: true }) });
+  await parseCustomerResponse(response);
+}
+
+export async function fetchCustomerMessages(token: string, personId: string, cursor: string | null = null, limit = 30): Promise<CustomerMessagesPage> {
+  const params = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 100)) });
+  if (cursor) params.set('cursor', cursor);
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/messages?${params.toString()}`), { headers: authHeaders(token) });
+  return parseCustomerResponse<CustomerMessagesPage>(response);
+}
+
+export async function sendCustomerMessage(token: string, personId: string, primaryJid: string, payload: { message?: string; attachment?: import('../types').ChatAttachment }): Promise<{ dbMessageId: string; messageId: string | null; status: 'sent' | 'failed' }> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/messages`), { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ primaryJid, ...payload }) });
+  return parseCustomerResponse(response);
+}
+
+export async function retryCustomerMessage(token: string, dbMessageId: string): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(dbMessageId)}/retry`), { method: 'POST', headers: authHeaders(token) });
+  await parseCustomerResponse(response);
+}

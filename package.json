@@ -17,6 +17,7 @@
     "test:unit": "tsx tests/run-unit-tests.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
+    ,"backfill:customers": "tsx scripts/backfill-customers.ts"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",

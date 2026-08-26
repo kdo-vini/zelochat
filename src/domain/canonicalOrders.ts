@@ -14,6 +14,7 @@ export const CANONICAL_ORDER_SELECT = [
   'total',
   'created_at',
   'closed_at',
+  'pessoa_id',
   'zelo_order_items(id, name, quantity, unit_price, subtotal, position, modifiers)',
 ].join(', ');
 
@@ -96,6 +97,7 @@ export function canonicalRowToOrder(row: CanonicalOrderRow): Order {
 
   return {
     id: row.id,
+    ...(typeof row.pessoa_id === 'string' ? { personId: row.pessoa_id } : {}),
     revision: Number(row.revision ?? 0),
     customerName: String(customer.name ?? 'Cliente'),
     customerPhone: String(customer.phone ?? ''),

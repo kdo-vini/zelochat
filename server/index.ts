@@ -25,11 +25,13 @@ import { startSubscriptionSweepLoop } from './subscriptionSweeper.js';
 import { startPendingOrderSweeper } from './pendingOrderSweeper.js';
 import { startAccountDeletionSweepLoop } from './accountDeletionSweeper.js';
 import { startAbandonedCartRecoverySweeper } from './abandonedCartSweeper.js';
+import { startAutomationSweeper } from './automations/sweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { startWebhookEventsSweeper } from './webhookEventsSweeper.js';
 import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
 import { redactJid } from './redact.js';
+import { startOutboundWorker } from './outbound/worker.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -147,13 +149,13 @@ app.use(async (req, res, next) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'UNKNOWN';
     if (message === 'UNAUTHORIZED') {
-      return res.status(401).json({ error: 'UNAUTHORIZED' });
+      return res.status(401).json({ error: 'Sua sessão expirou. Entre novamente para continuar.', code: 'UNAUTHORIZED' });
     }
     if (message === 'EMPRESA_NOT_FOUND') {
-      return res.status(404).json({ error: 'EMPRESA_NOT_FOUND' });
+      return res.status(404).json({ error: 'Não encontramos sua empresa. Confira o acesso e tente novamente.', code: 'EMPRESA_NOT_FOUND' });
     }
     if (message === 'SUBSCRIPTION_INACTIVE') {
-      return res.status(402).json({ error: 'SUBSCRIPTION_INACTIVE' });
+      return res.status(402).json({ error: 'Ative seu plano para continuar usando o ZeloChat.', code: 'SUBSCRIPTION_INACTIVE' });
     }
     console.error('[paywall] gate error:', err);
     return res.status(503).json({ error: 'PAYWALL_GATE_UNAVAILABLE' });
@@ -466,6 +468,7 @@ httpServer.listen(PORT, () => {
   // cart left open 2–24h. Runs 3 min after startup, then every 15 min. Respects
   // the global AI gate; one-shot guaranteed by a race-safe metadata claim.
   startAbandonedCartRecoverySweeper();
+  startAutomationSweeper();
 
   // Webhook events raw retention — deletes processed rows >30d and stuck rows
   // >37d. Prevents unbounded table growth (hit 1.38 GB before this was added).
@@ -475,4 +478,8 @@ httpServer.listen(PORT, () => {
   // (Day 0 fires synchronously via /api/onboarding/welcome). Idempotent: re-run
   // is no-op via UNIQUE(user_id, day) on the log tables.
   startOnboardingFollowupLoop();
+
+  // Campanhas usam uma fila persistente com lease; chamar duas vezes no mesmo
+  // processo retorna o mesmo worker e não abre concorrência adicional.
+  startOutboundWorker();
 });

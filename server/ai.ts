@@ -69,6 +69,8 @@ import {
   type WeeklyHours,
 } from '../src/domain/businessHours.js';
 import { autoAcceptCanonicalOrderIfConfigured, LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
+import { resolveCustomerForOrder } from './customers/identity.js';
+import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -2288,7 +2290,13 @@ async function createOrderInDb(
 ): Promise<string> {
   console.log('[AI] Creating order in DB for empresa:', empresaId, 'args:', JSON.stringify(args));
   const supabase = getServiceSupabase();
-  const { data, error } = await supabase.rpc('create_zelo_order', {
+  let pessoaId: string | null = null;
+  const ownerUserId = await getEmpresaUserId(empresaId);
+  if (ownerUserId) {
+    const identity = await resolveCustomerForOrder({ empresaId, ownerUserId, phone: args.customerPhone, observedName: args.customerName, source: 'whatsapp' });
+    if (identity.status === 'linked' || identity.status === 'created') pessoaId = identity.pessoaId;
+  }
+  const { data, error } = await createCanonicalOrderWithOptionalPerson(supabase, {
     p_session_id: null,
     p_expected_revision: 0,
     p_idempotency_key: `legacy-whatsapp-${crypto.randomUUID()}`,
@@ -2312,6 +2320,7 @@ async function createOrderInDb(
         }),
       },
     },
+    p_pessoa_id: pessoaId,
   });
 
   if (error) {

@@ -5,6 +5,7 @@ import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zel
 import { addAssistantMessage } from './messageHandler.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
+import { getCrmRolloutFlags } from './customers/rollout.js';
 import { sendTextMessage } from './whatsapp.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
@@ -44,6 +45,8 @@ import {
   type ZeloMenuPricingSnapshot,
   type ZeloMenuCartState,
 } from '../src/domain/zelomenuCart.js';
+import { resolveCustomerForOrder } from './customers/identity.js';
+import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
 
 type SessionRow = {
   id: string;
@@ -1008,7 +1011,24 @@ async function createAcceptedOrderRecord(input: {
   pricing: ZeloMenuPricingSnapshot;
   payment: ZeloMenuPaymentSnapshot;
 }): Promise<{ orderId: string; orderStatus: string; revision: number }> {
-  const { data, error } = await getServiceSupabase().rpc('create_zelo_order', {
+  let pessoaId: string | null = null;
+  const ownerUserId = await getEmpresaUserId(input.empresaId);
+  if (ownerUserId) {
+    try {
+      const identity = await resolveCustomerForOrder({
+        empresaId: input.empresaId,
+        ownerUserId,
+        phone: input.customer.phone,
+        observedName: input.customer.name,
+        source: 'zelomenu',
+      });
+      pessoaId = identity.status === 'linked' || identity.status === 'created' ? identity.pessoaId : null;
+    } catch (error) {
+      // Identity is enrichment; confirmation remains valid with its snapshot.
+      console.error('[ZeloMenu] customer identity unavailable; preserving order snapshot:', error);
+    }
+  }
+  const { data, error } = await createCanonicalOrderWithOptionalPerson(getServiceSupabase(), {
     p_session_id: input.sessionId,
     p_expected_revision: input.expectedRevision,
     p_idempotency_key: `zelomenu-${input.sessionId}`,
@@ -1022,6 +1042,7 @@ async function createAcceptedOrderRecord(input: {
       cart: input.cart,
       context: input.context,
     },
+    p_pessoa_id: pessoaId,
   });
   if (error) throw error;
   const result = (Array.isArray(data) ? data[0] : data) as { orderId?: string; order_id?: string; orderStatus?: string; revision?: number } | null;
@@ -1973,6 +1994,7 @@ export async function listAbandonedCartCandidates(params: {
  */
 export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sent' | 'skipped' | 'failed'> {
   if (sessionRow.context !== 'whatsapp_order') return 'skipped';
+  if (!(await getCrmRolloutFlags(sessionRow.empresa_id)).automations) return 'skipped';
 
   const metadata = parseMetadata(sessionRow.metadata);
   if (!isCartEligibleForAbandonedRecovery({
@@ -1983,6 +2005,27 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
   })) {
     return 'skipped';
   }
+
+  // The legacy rollout path is still governed by the same editable rule.
+  // Disabled means no recovery at all, regardless of the feature flag.
+  const automationDb = getServiceSupabase();
+  const { data: automationRule, error: automationRuleError } = await automationDb.from('zelochat_automation_rules')
+    .select('id, enabled, message, config, daily_limit').eq('empresa_id', sessionRow.empresa_id).eq('kind', 'abandoned_cart').maybeSingle();
+  if (automationRuleError) throw automationRuleError;
+  if (!automationRule?.enabled) return 'skipped';
+  const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+  const { count: sentToday, error: countError } = await automationDb.from('zelochat_automation_dispatches')
+    .select('id', { count: 'exact', head: true }).eq('empresa_id', sessionRow.empresa_id)
+    .eq('rule_id', automationRule.id)
+    .in('status', ['queued', 'sending', 'sent']).gte('created_at', dayStart.toISOString());
+  if (countError) throw countError;
+  if ((sentToday ?? 0) >= Math.min(Math.max(Number(automationRule.daily_limit ?? 50), 1), 200)) return 'skipped';
+  const ledgerSenderEnabled = process.env.ZELOCHAT_AUTOMATION_LEDGER === '1';
+  const legacySenderEnabled = process.env.ZELOCHAT_ABANDONED_CART_LEGACY === '1';
+  if (!ledgerSenderEnabled && !legacySenderEnabled) return 'skipped';
+  const configuredDelayHours = Number((automationRule.config as Record<string, unknown> | null)?.delayHours ?? 2);
+  const ageHours = (Date.now() - Date.parse(sessionRow.updated_at)) / 3600000;
+  if (!Number.isFinite(ageHours) || ageHours < Math.min(Math.max(configuredDelayHours, 2), 24)) return 'skipped';
 
   // Respeita o operador: sem nudge automático com a IA desligada ou fora da
   // janela. Checamos ANTES de marcar a flag para que um carrinho abandonado em
@@ -2017,17 +2060,44 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
     publicUrl,
   });
 
+  // CRM rollout: the existing cart claim remains the only cart sweeper, but
+  // the delivery decision moves to the shared automation ledger. The worker
+  // will send the queued job; this path never calls WhatsApp directly.
+  // Ledger wins if both explicit rollout flags are set.
+  if (!ledgerSenderEnabled && !legacySenderEnabled) return 'skipped';
+  if (ledgerSenderEnabled) {
+    const db = getServiceSupabase();
+    const rule = automationRule;
+    const eventKey = `abandoned_cart:${claimedRow.id}`;
+    const { data: dispatch, error: dispatchError } = await db.from('zelochat_automation_dispatches').upsert({
+      empresa_id: claimedRow.empresa_id, rule_id: rule.id, pessoa_id: null, cart_id: claimedRow.id,
+      event_key: eventKey, status: 'eligible', message: rule.message || message,
+      phone_snapshot: claimedRow.source_ref,
+    }, { onConflict: 'rule_id,event_key', ignoreDuplicates: true }).select('id').maybeSingle();
+    if (dispatchError) throw dispatchError;
+    if (!dispatch) return 'skipped';
+    const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({
+      empresa_id: claimedRow.empresa_id, automation_dispatch_id: dispatch.id, job_type: 'automation',
+      idempotency_key: eventKey, phone_snapshot: claimedRow.source_ref, message: rule.message || message,
+      status: 'queued', next_attempt_at: new Date().toISOString(),
+    }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
+    if (jobError) throw jobError;
+    if (job?.id) await db.from('zelochat_automation_dispatches').update({ status: 'queued', outbound_job_id: job.id, queued_at: now, updated_at: now }).eq('id', dispatch.id);
+    await addAssistantMessage(claimedRow.source_ref, rule.message || message, undefined, claimedRow.empresa_id, undefined);
+    return 'sent';
+  }
+
   let waMessageId: string | undefined;
   let sendOk = true;
   try {
-    waMessageId = await sendTextMessage(claimedRow.source_ref, message, claimedRow.empresa_id);
+    waMessageId = await sendTextMessage(claimedRow.source_ref, automationRule.message || message, claimedRow.empresa_id);
   } catch (sendErr) {
     sendOk = false;
     console.error('[ZeloMenu] recoverAbandonedCart: recovery message failed:', sendErr);
   }
   await addAssistantMessage(
     claimedRow.source_ref,
-    sendOk ? message : `[FALHA NO ENVIO — reenviar manualmente]\n${message}`,
+    sendOk ? (automationRule.message || message) : `[FALHA NO ENVIO — reenviar manualmente]\n${automationRule.message || message}`,
     undefined,
     claimedRow.empresa_id,
     undefined,

@@ -30,6 +30,9 @@ const DriversView = lazy(() =>
 const NovidadesView = lazy(() =>
   import('./views/NovidadesView').then((m) => ({ default: m.NovidadesView })),
 );
+const CustomersView = lazy(() =>
+  import('./views/CustomersView').then((m) => ({ default: m.CustomersView })),
+);
 
 interface Props {
   activeView: View;
@@ -57,6 +60,9 @@ interface Props {
   canPrint: boolean;
   pendingOrderFocus: { request: OrderFocusRequest; key: number } | null;
   handleNavigateToKanban: () => void;
+  onOpenAtendimento: (sessionId: string) => void;
+  customerPermissions: { pessoasVisualizar: boolean; clientesComunicar: boolean; campaignsEnabled: boolean; automationsEnabled: boolean };
+  canManageCustomers: boolean;
   // AI configs
   triggers: any[];
   triggersError: any;
@@ -92,6 +98,9 @@ export function MainContent({
   onDragEnd, handleAddOrder, handleEditOrder, handleDeleteOrder,
   updateOrderStatus, reprintOrder, canPrint,
   pendingOrderFocus, handleNavigateToKanban,
+  onOpenAtendimento,
+  customerPermissions,
+  canManageCustomers,
   triggers, triggersError, createTrigger, updateTriggerRequest, deleteTriggerRequest,
   quickResponses, addQuickResponse, updateQuickResponse, deleteQuickResponse,
   saveAiInstructions,
@@ -136,6 +145,9 @@ export function MainContent({
               <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-canvas)]">
                 {activeView === 'dashboard' && !isGeneralMode && (
                   <DashboardView state={dashboardState} setActiveView={setActiveView} token={token} />
+                )}
+                {activeView === 'customers' && (
+                  <CustomersView token={token} onOpenAtendimento={onOpenAtendimento} customerPermissions={customerPermissions} canManageCustomers={canManageCustomers} />
                 )}
                 {activeView === 'kanban' && !isGeneralMode && (
                   <DragDropContext onDragEnd={onDragEnd}>

@@ -42,6 +42,9 @@ export async function sweepAbandonedCarts(): Promise<void> {
   let failed = 0;
   for (const candidate of candidates) {
     try {
+      // The existing cart sweeper remains the only candidate scanner. When
+      // ZELOCHAT_AUTOMATION_LEDGER=1, recoverAbandonedCart queues the shared
+      // ledger job instead of sending directly, so both paths cannot duplicate.
       const result = await recoverAbandonedCart(candidate);
       if (result === 'sent') sent++;
       else if (result === 'failed') failed++;
