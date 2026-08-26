@@ -5,6 +5,7 @@
 
 ### Clientes CRM — rollout (2026-08-26)
 
+- ✅ CRM-DOC-040 — especificação temporária da feature permanecia no repositório após a implementação → removida; código, testes e migrations versionadas passam a ser a fonte da verdade — `docs/superpowers/specs/2026-08-25-clientes-crm-design.md`
 - ✅ CRM-DB-024 — agregação de atividade assumia que `zelochat_sessions.last_message_time` era timestamp, mas o banco compartilhado mantém essa coluna como texto ISO → cast protegido por formato antes do `max`, evitando falha da migration 050 e preservando datas válidas — `supabase/migrations/050_customer_read_aggregates_and_conflict_dedupe.sql:58`, `tests/customerRelationshipSchema.test.ts:23`
 - ✅ CRM-DB-025 — probe transacional de RLS usava sintaxe inexistente `create temporary function` → função de fixture agora é criada em `pg_temp` e continua descartável via rollback — `supabase/verification/customer_relationship_authz.sql:152`, `tests/customerRelationshipSchema.test.ts:109`
 - ✅ CRM-DB-026 — probe de RLS tinha variável PL/pgSQL `table_name` colidindo com `information_schema.columns.table_name` → colunas do catálogo agora são qualificadas e o fixture pode executar no Postgres real — `supabase/verification/customer_relationship_authz.sql:43`
