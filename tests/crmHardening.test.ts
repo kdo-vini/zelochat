@@ -6,6 +6,7 @@ import { evaluateAutomationCandidate } from '../server/automations/evaluator.js'
 import { getDefaultAutomationRule } from '../server/automations/rules.js';
 
 const migration = readFileSync('supabase/migrations/055_campaign_queue_hardening.sql', 'utf8');
+assert.match(readFileSync('server/whatsapp.ts', 'utf8'), /sentDedupCleanupTimer\.unref\?\.\(\)/);
 assert.doesNotMatch(readFileSync('server/campaigns/service.ts', 'utf8'), /getOwnJid/);
 assert.doesNotMatch(readFileSync('server/automations/router.ts', 'utf8'), /getOwnJid/);
 assert.match(migration, /campaign.*status.*running/i);

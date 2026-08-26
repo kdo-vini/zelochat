@@ -50,12 +50,13 @@ const API_KEY = process.env.WHATSMIAU_API_KEY || '';
 // no DB layer — fica pra próximo sprint.
 const SENT_DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const recentSentIds = new Map<string, number>();
-setInterval(() => {
+const sentDedupCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - SENT_DEDUP_TTL_MS;
   for (const [id, ts] of recentSentIds) {
     if (ts < cutoff) recentSentIds.delete(id);
   }
 }, 60_000);
+sentDedupCleanupTimer.unref?.();
 
 function trackSent(id: string | undefined): void {
   if (id) recentSentIds.set(id, Date.now());

@@ -5,6 +5,7 @@
 
 ### Clientes CRM — rollout (2026-08-26)
 
+- ✅ CRM-TEST-023 — timer de limpeza de deduplicação mantinha processos consumidores vivos após o trabalho terminar → o timer agora usa `unref`, preservando a limpeza sem bloquear shutdown e a suíte completa — `server/whatsapp.ts:53`, `tests/crmHardening.test.ts:9`
 - ✅ CRM-TEST-022 — endpoints de teste importavam o cliente global de conexão apenas para inferir um telefone, prendendo o processo de testes e podendo usar um número fora do tenant → testes agora exigem o número explícito já coletado pela UI e não carregam o lifecycle global — `server/campaigns/service.ts:1`, `server/automations/router.ts:1`, `tests/crmHardening.test.ts:1`
 - ✅ CRM-QUEUE-021 — leases terminais de automações ainda tentavam atualizar a FK exclusiva de campanhas após a separação dos jobs → migration 059 recria a recuperação usando `automation_dispatch_id`, mantendo destinatários e dispatches no mesmo estado terminal — `supabase/migrations/059_automation_dispatch_lease_terminal.sql:1`, `tests/customerAutomations.test.ts:1`
 - ✅ CRM-ROLLOUT-020 — não havia controle gradual por empresa nem painel agregado de operação → migration 057 adiciona flags fail-safe para CRM/campanhas/automações, APIs e navegação respeitam o rollout, e métricas/painel registram somente contadores e idade da fila — `server/customers/rollout.ts:1`, `server/customers/metrics.ts:1`, `supabase/migrations/057_customer_crm_rollout.sql:1`
