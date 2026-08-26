@@ -113,6 +113,7 @@ import {
 import { extractBearerToken } from './supabase.js';
 import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
 import { requireActorAccess, requireOwnerAccess } from './accessControl.js';
+import { sendAuthError } from './authErrors.js';
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
 import {
   clearMissingOwnInstanceForEmpresa,
@@ -913,38 +914,6 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   await markWebhookEventProcessed(rawEventId, processingError);
 });
 
-
-function sendAuthError(res: Response, error: unknown): void {
-  const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
-
-  if (message === 'UNAUTHORIZED') {
-    res.status(401).json({ error: 'Não autenticado', code: 'UNAUTHORIZED' });
-    return;
-  }
-
-  if (message === 'EMPRESA_NOT_FOUND') {
-    res.status(403).json({ error: 'Empresa não encontrada para este usuário', code: 'EMPRESA_NOT_FOUND' });
-    return;
-  }
-
-  if (message === 'FORBIDDEN') {
-    res.status(403).json({
-      error: 'Você não tem permissão para realizar esta ação.',
-      code: 'FORBIDDEN',
-    });
-    return;
-  }
-
-  if (message === 'SUBSCRIPTION_INACTIVE') {
-    res.status(402).json({
-      error: 'Ative seu plano ZeloChat para conectar o WhatsApp.',
-      code: 'SUBSCRIPTION_INACTIVE',
-    });
-    return;
-  }
-
-  res.status(500).json({ error: message });
-}
 
 function sendDriverError(res: Response, error: unknown): void {
   const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
@@ -3558,7 +3527,7 @@ router.post('/api/onboarding/welcome', async (req: Request, res: Response) => {
     const result = await sendWelcomePack(ownerUserId);
     res.json({ ok: true, ...result });
   } catch (error) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }

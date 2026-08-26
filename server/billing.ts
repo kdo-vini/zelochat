@@ -162,10 +162,17 @@ async function authenticate(req: Request): Promise<AuthedUser> {
   return { id: context.ownerUserId, email: data.user.email ?? null };
 }
 
-function sendBillingError(res: Response, err: unknown): void {
+export function sendBillingError(res: Response, err: unknown): void {
   const message = err instanceof Error ? err.message : 'Unknown error';
   if (message === 'UNAUTHORIZED') {
     res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+    return;
+  }
+  if (message === 'EMPRESA_NOT_FOUND') {
+    res.status(404).json({
+      error: 'Não encontramos sua empresa. Confira o acesso e tente novamente.',
+      code: 'EMPRESA_NOT_FOUND',
+    });
     return;
   }
   if (message === 'FORBIDDEN') {
