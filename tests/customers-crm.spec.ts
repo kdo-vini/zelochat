@@ -115,7 +115,7 @@ for (const viewport of VIEWPORTS) {
         await expect(more).toBeHidden();
         await expect(nav.getByRole('button', { name: 'Mais' })).toBeFocused();
       } else {
-        await expect(page.getByRole('complementary')).toBeVisible();
+        await expect(page.getByRole('complementary').first()).toBeVisible();
         await expect(page.getByRole('button', { name: 'Clientes', exact: true }).first()).toBeVisible();
       }
 

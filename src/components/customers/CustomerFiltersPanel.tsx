@@ -18,7 +18,7 @@ export function CustomerFiltersPanel({ filters, onChange, onClose }: Props) {
     return () => { document.removeEventListener('keydown', handleKeyDown); returnFocusRef.current?.focus(); };
   }, [onClose]);
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="customer-filters-title" className="w-full rounded-t-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-lg md:absolute md:right-4 md:top-14 md:z-20 md:w-[320px] md:rounded-xl">
+    <div role="dialog" aria-modal="true" aria-labelledby="customer-filters-title" className="fixed inset-x-0 bottom-16 z-20 max-h-[calc(100dvh-4rem)] w-full overflow-y-auto rounded-t-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-lg md:absolute md:bottom-auto md:left-auto md:right-4 md:top-14 md:w-[320px] md:rounded-xl">
       <div className="mb-4 flex items-center justify-between">
         <h2 id="customer-filters-title" className="text-[15px] font-semibold text-[var(--color-ink)]">Filtros</h2>
         <button ref={closeRef} type="button" onClick={onClose} className="min-h-[44px] rounded-lg px-3 text-[13px] text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]">Fechar</button>
