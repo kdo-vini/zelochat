@@ -36,20 +36,18 @@ export interface NavItem {
   restaurant: MobilePlacement;
   general: MobilePlacement;
   permission?: 'pessoas.visualizar';
-  rollout?: 'crm';
   restaurantOnly?: boolean;
 }
 
 export interface NavigationPermissions {
   pessoas?: { visualizar?: boolean };
-  rollout?: { crm?: boolean };
 }
 
 /** Fonte única: desktop and mobile placements live beside each destination. */
 export const NAVIGATION: readonly NavItem[] = [
   { id: 'dashboard', icon: LayoutDashboard, label: 'Métricas', description: 'Métricas e alertas do dia', section: 'primary', restaurant: 'more', general: 'hidden', restaurantOnly: true },
   { id: 'chat', icon: MessageCircle, label: 'Atendimento', description: 'Conversas no WhatsApp', section: 'primary', restaurant: 'primary', general: 'primary' },
-  { id: 'customers', icon: User, label: 'Clientes', description: 'Cadastro e relacionamento', section: 'primary', restaurant: 'primary', general: 'primary', permission: 'pessoas.visualizar', rollout: 'crm' },
+  { id: 'customers', icon: User, label: 'Clientes', description: 'Cadastro e relacionamento', section: 'primary', restaurant: 'primary', general: 'primary', permission: 'pessoas.visualizar' },
   { id: 'kanban', icon: Kanban, label: 'Produção', description: 'Fila de pedidos', section: 'primary', restaurant: 'primary', general: 'hidden', restaurantOnly: true },
   { id: 'drivers', icon: Bike, label: 'Motoboys', description: 'Entregadores', section: 'primary', restaurant: 'more', general: 'hidden', restaurantOnly: true },
   { id: 'calendar', icon: CalendarIcon, label: 'Agenda', description: 'Pedidos por data', section: 'secondary', restaurant: 'more', general: 'hidden', restaurantOnly: true },
@@ -61,7 +59,6 @@ export const NAVIGATION: readonly NavItem[] = [
 
 function allowed(item: NavItem, permissions?: NavigationPermissions): boolean {
   if (!item.permission) return true;
-  if (item.rollout === 'crm' && permissions?.rollout?.crm !== true) return false;
   return permissions?.pessoas?.visualizar === true;
 }
 

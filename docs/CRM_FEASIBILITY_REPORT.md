@@ -46,7 +46,7 @@ O plano deixou de ser apenas uma hipótese e já tem uma primeira entrega técni
 - **Advisors Supabase:** as tabelas CRM estão com RLS e sem grants para `anon`/`authenticated` por desenho server-only; o advisor lista isso como `INFO`, não como exposição. Depois da 060, as novas tabelas CRM não aparecem mais no aviso de FK sem índice. Permanecem avisos de índices ainda não usados (esperados com os dois pilotos), FKs de módulos legados/adjacentes e um índice duplicado pré-existente em sessões; isso não bloqueia o fluxo atual.
 - **Builds pós-integração:** ZeloChat `npm run build` passou. ZeloPDV `npm run check` e `npm test` passaram (723 testes, 2 skips); o build compila até a geração do output, mas falha ao criar symlink no adapter Vercel por `EPERM` do Windows, limitação do ambiente local.
 
-O único gate ainda aberto é a validação visual/autenticada no ambiente publicado e, depois dela, a decisão de ampliar o rollout. Como a integração atual não usa a API oficial, campanhas e automações continuam desligadas até existir uma política de opt-in/opt-out e um limite operacional aprovado.
+O único gate ainda aberto é a validação visual/autenticada no ambiente publicado. O módulo Clientes não usa rollout por empresa: segue a assinatura válida e as permissões do ator. Como a integração atual não usa a API oficial, campanhas e automações continuam desligadas até existir uma política de opt-in/opt-out e um limite operacional aprovado.
 
 ## 2. O que o pedido da cliente realmente revela
 
@@ -392,7 +392,7 @@ receita líquida
 | Duplicar disparos | Alto | Fila persistente e idempotência por destinatário |
 | Bloqueio da conta WhatsApp | Crítico | Piloto pequeno, validação do provedor e canal oficial para escala |
 | Perfil de IA tratado como fato | Médio/alto | Separar inferência de dado confirmado |
-| CRM quebrar atendimento crítico | Crítico | Integração fail-soft e rollout por feature flag |
+| CRM quebrar atendimento crítico | Crítico | Integração fail-soft; campanhas/automações permanecem isoladas por flags |
 | Atribuição de venda incorreta | Alto | Links/códigos rastreáveis e grupo comparável |
 | Margem negativa em alto volume | Alto | Métricas por tenant, fair use, franquia e tier superior |
 

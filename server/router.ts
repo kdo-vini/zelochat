@@ -181,7 +181,7 @@ router.get('/api/access/me', async (req: Request, res: Response) => {
 });
 
 router.get('/api/customer-rollout/operations', async (req: Request, res: Response) => {
-  try { const access = await requireActorAccess(req); const flags = await getCrmRolloutFlags(access.empresaId); if (!flags.crm) { res.status(404).json({ code: 'CRM_FEATURE_DISABLED', message: 'Clientes ainda não está disponível para esta empresa.' }); return; } res.json(await getCrmOperationsPanel(access.empresaId)); }
+  try { const access = await requireActorAccess(req); res.json(await getCrmOperationsPanel(access.empresaId)); }
   catch (error) { const code = error instanceof Error ? error.message : 'UNAUTHORIZED'; res.status(code === 'UNAUTHORIZED' ? 401 : 400).json({ code, message: 'Não foi possível carregar o painel operacional.' }); }
 });
 

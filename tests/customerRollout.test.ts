@@ -21,18 +21,20 @@ import { OutboundQueue, type OutboundJobStore } from '../server/outbound/queue.j
 
 const migration = readFileSync(resolve('supabase/migrations/057_customer_crm_rollout.sql'), 'utf8');
 
-assert.deepEqual(DEFAULT_CRM_ROLLOUT_FLAGS, { crm: false, campaigns: false, automations: false });
+assert.deepEqual(DEFAULT_CRM_ROLLOUT_FLAGS, { crm: true, campaigns: false, automations: false });
 assert.deepEqual(CRM_FEATURES, ['crm', 'campaigns', 'automations']);
-assert.equal(isCrmFeatureEnabled(DEFAULT_CRM_ROLLOUT_FLAGS, 'crm'), false);
+assert.equal(isCrmFeatureEnabled(DEFAULT_CRM_ROLLOUT_FLAGS, 'crm'), true);
 assert.equal(isCrmFeatureEnabled({ crm: true, campaigns: false, automations: false }, 'crm'), true);
 assert.equal(isCrmFeatureEnabled({ crm: true, campaigns: false, automations: false }, 'campaigns'), false);
-assert.deepEqual(normalizeCrmRolloutFlags({ crm_enabled: true, campaigns_enabled: 1 }), { crm: true, campaigns: false, automations: false });
+assert.deepEqual(normalizeCrmRolloutFlags({ crm_enabled: false, campaigns_enabled: 1 }), { crm: true, campaigns: false, automations: false });
+assert.equal(isCrmFeatureEnabled({ crm: false, campaigns: false, automations: false }, 'crm'), true);
 assert.equal(new CrmFeatureDisabledError('campaigns').code, 'CRM_FEATURE_DISABLED');
 assert.equal(requiredOutboundFeature({ jobType: 'campaign' }), 'campaigns');
 assert.equal(requiredOutboundFeature({ jobType: 'automation' }), 'automations');
 assert.equal(isOutboundJobAllowed({ crm: true, campaigns: true, automations: false }, { jobType: 'campaign' }), true);
 assert.equal(isOutboundJobAllowed({ crm: true, campaigns: false, automations: true }, { jobType: 'campaign' }), false);
-assert.equal(isOutboundJobAllowed({ crm: false, campaigns: true, automations: true }, { jobType: 'automation' }), false);
+assert.equal(isOutboundJobAllowed({ crm: false, campaigns: true, automations: true }, { jobType: 'automation' }), true);
+assert.equal(isOutboundJobAllowed({ crm: true, campaigns: true, automations: true }, {}), false);
 
 let deferred = 0; let sent = 0;
 const workerStore: OutboundJobStore = {

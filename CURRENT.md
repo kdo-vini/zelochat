@@ -9,7 +9,7 @@
 
 ## Rollout CRM (2026-08-26)
 
-- Task 20 local: flags internas por empresa mantêm CRM, campanhas e automações desligados até ativação explícita; navegação e APIs falham fechado quando a flag ou a leitura do rollout não está disponível. Métricas e painel operacional expõem somente contadores agregados, fila, leases e desconexão.
+- Task 20 local: flags internas por empresa continuam controlando somente campanhas e automações; CRM é capacidade central do plano e não depende de rollout. Métricas e painel operacional expõem somente contadores agregados, fila, leases e desconexão.
 - Gate B (dry-run) concluído em 2026-08-26: consulta somente leitura reproduziu o preview do backfill nos cinco tenants com sessões (2.035 sessões, 1 vínculo potencial, 0 conflitos e 2.034 sem correspondência de cliente). O diagnóstico encontrou 78 cadastros `pessoas.tipo='cliente'`, mas apenas 40 contatos com 10–13 dígitos; 2.033 sessões têm telefone nesse intervalo. Nenhuma linha, checkpoint ou flag foi alterada.
 - Gate C piloto executado em 2026-08-26 no Donutopia: backfill real processou 9 sessões, gravou checkpoint terminal (`cursor=null`, `linked=0`, `created=0`, `incomplete=9`, `conflict=0`, `failed=0`) e não alterou vínculos. `crm_enabled=true` foi ativado somente nesse tenant; campanhas, automações e fila de saída permanecem desligadas. Métricas iniciais registradas: 2 clientes, 2 com telefone, 0 conflitos e 0 jobs de saída.
 - Gate C de dados concluído nos dois pilotos: Casa dos Salgados (plano ativo) processou 1.716 sessões, vinculou 1 e deixou 1.715 incompletas, sem conflitos/falhas; Donutopia processou 9 sessões, todas incompletas, também sem conflitos/falhas. `crm_enabled=true` somente nos dois; Agreste não foi ativada porque o banco reporta `trial_expired`; campanhas, automações e outbound seguem desligados globalmente.
@@ -17,6 +17,7 @@
 - Gate A database concluído em 2026-08-26 no projeto Supabase conectado: migrations PDV de identidade/pedidos e ZeloChat `048–060` aplicadas; probe transacional de RLS/tenant isolation passou e fez rollback dos fixtures. A migration 060 adiciona índices FK/search para o CRM e o advisor não sinaliza mais as novas tabelas CRM. O stream canônico foi reconciliado no worktree do ZeloPDV no commit `8e40e4c`, com os timestamps remotos `20260826110656`–`20260826131437`; não houve `migration repair`, `db push` ou reescrita manual do ledger remoto.
 - Integração local concluída (2026-08-26): a implementação CRM entrou no `main` do ZeloChat (`99535d3`) e o stream compartilhado entrou no `main` do ZeloPDV (`cb1cc24`). ZeloChat `npm run build` passou; ZeloPDV `npm run check`, suíte (723 testes, 2 skips) e ledger passaram. O build do ZeloPDV compilou o app, mas o adapter Vercel continua bloqueado pelo `EPERM` conhecido de symlink do Windows.
 - Rollout de produto concluído (2026-08-26): migration `061_enable_crm_for_active_plans.sql` aplicada no Supabase; `crm_enabled=true` agora cobre contas `active`/`trialing`, enquanto campanhas, automações e jobs de saída permanecem `false`/vazios. O print com apenas Atendimento/Mais era compatível com o rollout anterior ou com bundle/cache anterior.
+- Rollout de CRM removido (2026-08-26): migration `062_retire_crm_rollout_gate.sql` normaliza o legado `crm_enabled=true`, e código/navegação/API deixam de consultar essa flag para Clientes. O controle por flag permanece apenas para campanhas e automações.
 
 - **2 cliente pagante:** Casa dos Salgados, Agreste Salgados
 - **1 founder test:** Donutopia
@@ -96,7 +97,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
-- **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes já está habilitado para contas `active`/`trialing`; campanhas, automações e outbound continuam desligados.
+- **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
 - `npm run build` — aviso de chunk >500 kB; maior chunk `index-BirF1qk8.js` = 603.87 kB / 171.61 kB gzip

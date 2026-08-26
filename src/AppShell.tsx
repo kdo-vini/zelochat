@@ -78,7 +78,7 @@ export default function AppShell() {
   const [profilePics, setProfilePics] = useState<Record<string, string>>({});
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [deferredDataReady, setDeferredDataReady] = useState(false);
-  const [actorCapabilities, setActorCapabilities] = useState<{ pessoasVisualizar: boolean; pessoasGerenciar: boolean; clientesComunicar: boolean; crmEnabled: boolean; campaignsEnabled: boolean; automationsEnabled: boolean } | null>(null);
+  const [actorCapabilities, setActorCapabilities] = useState<{ pessoasVisualizar: boolean; pessoasGerenciar: boolean; clientesComunicar: boolean; campaignsEnabled: boolean; automationsEnabled: boolean } | null>(null);
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOrderFocusSeqRef = useRef(0);
@@ -121,7 +121,7 @@ export default function AppShell() {
     void fetch(apiUrl('/api/access/me'), { headers: { Authorization: `Bearer ${token}` } }).then(async (response) => {
       if (!response.ok) throw new Error('PERMISSIONS_UNAVAILABLE');
       const body = await response.json() as { capabilities?: { pessoas?: { visualizar?: boolean; gerenciar?: boolean }; clientes?: { comunicar?: boolean } }; rollout?: { crm?: boolean; campaigns?: boolean; automations?: boolean } };
-      if (!cancelled) setActorCapabilities({ pessoasVisualizar: body.capabilities?.pessoas?.visualizar === true, pessoasGerenciar: body.capabilities?.pessoas?.gerenciar === true, clientesComunicar: body.capabilities?.clientes?.comunicar === true, crmEnabled: body.rollout?.crm === true, campaignsEnabled: body.rollout?.campaigns === true, automationsEnabled: body.rollout?.automations === true });
+      if (!cancelled) setActorCapabilities({ pessoasVisualizar: body.capabilities?.pessoas?.visualizar === true, pessoasGerenciar: body.capabilities?.pessoas?.gerenciar === true, clientesComunicar: body.capabilities?.clientes?.comunicar === true, campaignsEnabled: body.rollout?.campaigns === true, automationsEnabled: body.rollout?.automations === true });
     }).catch(() => { if (!cancelled) setActorCapabilities(null); });
     return () => { cancelled = true; };
   }, [token]);
@@ -149,7 +149,7 @@ export default function AppShell() {
     activeView === 'profile'
   );
   const navigationMode = isGeneralMode ? 'general' : 'restaurant';
-  const navigationPermissions = useMemo(() => ({ pessoas: { visualizar: actorCapabilities?.pessoasVisualizar === true }, rollout: { crm: actorCapabilities?.crmEnabled === true } }), [actorCapabilities]);
+  const navigationPermissions = useMemo(() => ({ pessoas: { visualizar: actorCapabilities?.pessoasVisualizar === true } }), [actorCapabilities]);
   const desktopNavigation = useMemo(() => getDesktopNavigation(navigationMode, navigationPermissions), [navigationMode, navigationPermissions]);
   const mobileNavigation = useMemo(() => getMobileNavigation(navigationMode, navigationPermissions), [navigationMode, navigationPermissions]);
   const primaryNavItems = desktopNavigation.primary;
@@ -284,7 +284,7 @@ export default function AppShell() {
       setActiveView('chat');
       setMoreSheetOpen(false);
     }
-    if (activeView === 'customers' && (actorCapabilities?.pessoasVisualizar !== true || actorCapabilities?.crmEnabled !== true)) {
+    if (activeView === 'customers' && actorCapabilities?.pessoasVisualizar !== true) {
       setActiveView('chat');
       setMoreSheetOpen(false);
     }
