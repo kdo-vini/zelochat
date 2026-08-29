@@ -7,6 +7,14 @@
 
 ## Estado do produto (2026-07-24)
 
+## Próximo foco — engine de tomada humana e outbound (2026-08-29)
+
+- Revisão concluída: envios humanos pelo ZeloChat e pelo WhatsApp nativo não pausam a IA automaticamente; debounce, resposta em voo, eco `fromMe` e caminhos especiais deixam corridas P1/P2 abertas.
+- Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
+- Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
+- Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
+- Nenhum fix foi aplicado ainda. Execução começa pelas Tasks 1–5 e não pode ativar `enforce` antes dos gates de banco, corrida cross-replica e `fromMe`.
+
 ## Rollout CRM (2026-08-26)
 
 - Task 20 local: flags internas por empresa continuam controlando somente campanhas e automações; CRM é capacidade central do plano e não depende de rollout. Métricas e painel operacional expõem somente contadores agregados, fila, leases e desconexão.
