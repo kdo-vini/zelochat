@@ -4,6 +4,7 @@ import {
   validateOutboundPayload,
   type OutboundOrigin,
   type OutboundPayload,
+  type PersistedOutboundPayload,
 } from '../src/domain/outbound.js';
 
 const takeover: OutboundOrigin[] = ['human_zelochat', 'human_native_whatsapp'];
@@ -27,3 +28,39 @@ assert.equal(validateOutboundPayload({
   attachment: { type: 'image', fileName: 'foto.jpg', mimeType: '', sizeBytes: 1, dataUrl: 'data:image/jpeg;base64,AA==' },
 }), 'OUTBOUND_ATTACHMENT_MIME_MISSING');
 
+const quote = { waMessageId: 'wa-1', fromMe: false, remoteJid: '5511999999999@s.whatsapp.net' };
+const persistedMedia: PersistedOutboundPayload = {
+  kind: 'media', storagePath: 'outbound/media-1', mimeType: 'image/jpeg', fileName: 'foto.jpg',
+  sizeBytes: 10, checksum: 'abc', quoted: quote,
+};
+const persistedAudio: PersistedOutboundPayload = {
+  kind: 'audio', storagePath: 'outbound/audio-1', mimeType: 'audio/ogg', fileName: 'audio.ogg',
+  sizeBytes: 10, checksum: 'def', ptt: true, quoted: quote,
+};
+const persistedSticker: PersistedOutboundPayload = {
+  kind: 'sticker', storagePath: 'outbound/sticker-1', mimeType: 'image/webp', fileName: 'sticker.webp',
+  sizeBytes: 10, checksum: 'ghi', quoted: quote,
+};
+assert.deepEqual(persistedMedia.quoted, quote);
+assert.deepEqual(persistedAudio.quoted, quote);
+assert.deepEqual(persistedSticker.quoted, quote);
+
+const malformedPayloads = [
+  null,
+  undefined,
+  {},
+  { kind: 'text' },
+  { kind: 'audio', attachment: { mimeType: 'audio/ogg' } },
+  { kind: 'media', attachment: { mimeType: 'image/jpeg', type: 'image' } },
+  { kind: 'sticker', attachment: { mimeType: 'image/webp', fileName: 'x.webp' } },
+  { kind: 'buttons', text: 'oi' },
+  { kind: 'contact', displayName: 'Ana' },
+  { kind: 'list', body: 'menu', buttonText: 'Ver' },
+  { kind: 'location', latitude: '0', longitude: 0 },
+  { kind: 'reaction', targetMessageId: 'wa-1', emoji: '👍' },
+  { kind: 'poll', name: 'Escolha', options: ['A'] },
+] as unknown as OutboundPayload[];
+for (const malformed of malformedPayloads) {
+  assert.doesNotThrow(() => validateOutboundPayload(malformed));
+  assert.notEqual(validateOutboundPayload(malformed), null);
+}

@@ -34,7 +34,7 @@ export type OutboundPayload =
   | { kind: 'text'; text: string; quoted?: QuotedContext | null }
   | { kind: 'media'; attachment: ChatAttachment; caption?: string; quoted?: QuotedContext | null }
   | { kind: 'audio'; attachment: ChatAttachment; ptt: boolean; quoted?: QuotedContext | null }
-  | { kind: 'sticker'; attachment: ChatAttachment }
+  | { kind: 'sticker'; attachment: ChatAttachment; quoted?: QuotedContext | null }
   | { kind: 'buttons'; text: string; buttons: Array<{ id: string; label: string }> }
   | { kind: 'contact'; displayName: string; vcard: string }
   | { kind: 'list'; body: string; buttonText: string; sections: unknown[] }
@@ -53,6 +53,7 @@ export type PersistedOutboundPayload =
       checksum: string;
       ptt?: boolean;
       caption?: string;
+      quoted?: QuotedContext | null;
     };
 
 export const policyForOrigin = (origin: OutboundOrigin): TakeoverPolicy =>
@@ -61,41 +62,55 @@ export const policyForOrigin = (origin: OutboundOrigin): TakeoverPolicy =>
     : 'preserve_ai';
 
 /** Returns a stable internal code; null means the payload is valid. */
-export function validateOutboundPayload(payload: OutboundPayload): string | null {
-  if (!payload || typeof payload !== 'object' || typeof payload.kind !== 'string') {
+export function validateOutboundPayload(payload: unknown): string | null {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value);
+  const nonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+
+  if (!isRecord(payload) || typeof payload.kind !== 'string') {
     return 'OUTBOUND_PAYLOAD_INVALID';
   }
 
   switch (payload.kind) {
     case 'text':
-      return payload.text.trim() ? null : 'OUTBOUND_TEXT_EMPTY';
+      return nonEmptyString(payload.text) ? null : 'OUTBOUND_TEXT_EMPTY';
     case 'media':
     case 'audio':
     case 'sticker':
-      return payload.attachment?.mimeType?.trim()
-        ? null
-        : 'OUTBOUND_ATTACHMENT_MIME_MISSING';
+      if (!isRecord(payload.attachment) || !nonEmptyString(payload.attachment.mimeType)) {
+        return 'OUTBOUND_ATTACHMENT_MIME_MISSING';
+      }
+      if (!nonEmptyString(payload.attachment.fileName)
+        || !['image', 'document', 'audio', 'video', 'sticker'].includes(String(payload.attachment.type))) {
+        return 'OUTBOUND_ATTACHMENT_INVALID';
+      }
+      if (payload.kind === 'audio' && typeof payload.ptt !== 'boolean') {
+        return 'OUTBOUND_AUDIO_PTT_INVALID';
+      }
+      return null;
     case 'buttons':
-      return payload.text.trim() && payload.buttons.length > 0 && payload.buttons.every((button) => button.id.trim() && button.label.trim())
-        ? null
-        : 'OUTBOUND_BUTTONS_INVALID';
+      return nonEmptyString(payload.text) && Array.isArray(payload.buttons) && payload.buttons.length > 0
+        && payload.buttons.every((button) => isRecord(button) && nonEmptyString(button.id) && nonEmptyString(button.label))
+        ? null : 'OUTBOUND_BUTTONS_INVALID';
     case 'contact':
-      return payload.displayName.trim() && payload.vcard.trim() ? null : 'OUTBOUND_CONTACT_INVALID';
+      return nonEmptyString(payload.displayName) && nonEmptyString(payload.vcard) ? null : 'OUTBOUND_CONTACT_INVALID';
     case 'list':
-      return payload.body.trim() && payload.buttonText.trim() && payload.sections.length > 0
-        ? null
-        : 'OUTBOUND_LIST_INVALID';
+      return nonEmptyString(payload.body) && nonEmptyString(payload.buttonText) && Array.isArray(payload.sections) && payload.sections.length > 0
+        ? null : 'OUTBOUND_LIST_INVALID';
     case 'location':
-      return Number.isFinite(payload.latitude) && Number.isFinite(payload.longitude)
+      return typeof payload.latitude === 'number' && typeof payload.longitude === 'number'
+        && Number.isFinite(payload.latitude) && Number.isFinite(payload.longitude)
         && payload.latitude >= -90 && payload.latitude <= 90
         && payload.longitude >= -180 && payload.longitude <= 180
         ? null
         : 'OUTBOUND_LOCATION_INVALID';
     case 'reaction':
-      return payload.targetMessageId.trim() ? null : 'OUTBOUND_REACTION_TARGET_MISSING';
+      if (!nonEmptyString(payload.targetMessageId)) return 'OUTBOUND_REACTION_TARGET_MISSING';
+      return typeof payload.emoji === 'string' && payload.emoji.trim().length > 0 && typeof payload.targetFromMe === 'boolean'
+        ? null : 'OUTBOUND_REACTION_INVALID';
     case 'poll':
-      return payload.name.trim() && payload.options.length > 0 && payload.options.every((option) => option.trim())
-        && Number.isInteger(payload.selectableCount) && payload.selectableCount > 0
+      return nonEmptyString(payload.name) && Array.isArray(payload.options) && payload.options.length > 0 && payload.options.every((option) => nonEmptyString(option))
+        && typeof payload.selectableCount === 'number' && Number.isInteger(payload.selectableCount) && payload.selectableCount > 0
         && payload.selectableCount <= payload.options.length
         ? null
         : 'OUTBOUND_POLL_EMPTY';
