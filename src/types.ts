@@ -396,6 +396,10 @@ export interface ChatMessage {
   kind: 'text' | ChatAttachmentType;
   attachment?: ChatAttachment;
   status?: MessageStatus;
+  /** Durable outbound classification, when this message was sent by the server. */
+  outboundOrigin?: import('./domain/outbound.js').OutboundOrigin;
+  /** Detailed outbound lifecycle; kept separate from the legacy UI status. */
+  outboundState?: import('./domain/outbound.js').OutboundState;
   tool_calls?: any[];
   tool_call_id?: string;
   audio_transcript?: string | null;
