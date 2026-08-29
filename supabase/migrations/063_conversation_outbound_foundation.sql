@@ -264,14 +264,11 @@ begin
 end
 $$;
 
-alter table public.zelochat_sessions
-  alter column conversation_control_id set not null;
-
 create index if not exists zelochat_sessions_conversation_control_idx
   on public.zelochat_sessions (conversation_control_id);
 
 comment on column public.zelochat_sessions.conversation_control_id is
-  'Canonical conversation family id. auto_reply remains the compatibility projection for legacy runtime paths.';
+  'Canonical conversation family id. Backfilled for existing rows in migration 063, but left nullable for rolling deploy because legacy ensureSession writers do not set it until Task 3 / migration 064. auto_reply remains the compatibility projection.';
 
 alter table public.zelochat_outbound_jobs
   add column if not exists conversation_control_id uuid,

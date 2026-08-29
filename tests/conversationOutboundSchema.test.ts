@@ -27,5 +27,6 @@ assert.match(sql, /add column if not exists conversation_control_id uuid/i);
 assert.match(sql, /where status in \('sending','dispatch_started'\)/i);
 assert.match(sql, /grant all on table .* to service_role/i);
 assert.doesNotMatch(sql, /grant .* to (anon|authenticated)/i);
+assert.doesNotMatch(sql, /alter column conversation_control_id set not null/i);
 
 assert.equal(versions.get('063')?.length ?? 0, 1, 'migration version 063 must be unique');
