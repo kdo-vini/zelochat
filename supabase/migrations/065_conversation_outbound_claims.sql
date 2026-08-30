@@ -442,7 +442,49 @@ $$;
 revoke all on function public.begin_zelochat_human_outbound(uuid, text, uuid, text, text, jsonb, text, text) from public, anon, authenticated;
 grant execute on function public.begin_zelochat_human_outbound(uuid, text, uuid, text, text, jsonb, text, text) to service_role;
 
-drop function if exists public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer);
+create or replace function public.claim_zelochat_outbound_media_preparation(
+  p_id uuid,
+  p_empresa_id uuid,
+  p_owner text,
+  p_lease_seconds integer default 120
+)
+returns setof public.zelochat_outbound_jobs
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_job public.zelochat_outbound_jobs%rowtype;
+  v_now timestamptz := now();
+begin
+  perform public.zelochat_conversation_control_rollout_gate();
+  if nullif(trim(p_owner), '') is null then raise exception 'INVALID_MEDIA_PREPARATION_OWNER'; end if;
+  update public.zelochat_outbound_jobs j
+     set media_preparation_owner = p_owner,
+         media_preparation_expires_at = v_now + make_interval(secs => greatest(p_lease_seconds, 15)),
+         updated_at = v_now
+   where j.id = p_id
+     and j.empresa_id = p_empresa_id
+     and j.status = 'preparing'
+     and (j.intent_payload_fingerprint is null or j.intent_payload_fingerprint = j.payload_fingerprint)
+     and j.payload_fingerprint is not null
+     and nullif(trim(j.payload_fingerprint), '') is not null
+     and j.payload->>'kind' in ('media','audio','sticker')
+     and j.payload->>'checksum' = repeat('0', 64)
+     and j.payload->>'storagePath' = 'preparing/' || repeat('0', 64)
+     and jsonb_typeof(j.payload->'mimeType') = 'string'
+     and nullif(j.payload->>'mimeType', '') is not null
+     and jsonb_typeof(j.payload->'fileName') = 'string'
+     and nullif(j.payload->>'fileName', '') is not null
+     and (
+       j.media_preparation_owner is null
+       or j.media_preparation_owner = p_owner
+       or j.media_preparation_expires_at < v_now
+     )
+   returning j.* into v_job;
+  if found then return next v_job; end if;
+end;
+$$;
 
 create or replace function public.claim_zelochat_outbound_media_preparation(
   p_id uuid,
@@ -466,11 +508,26 @@ begin
   update public.zelochat_outbound_jobs j
      set media_preparation_owner = p_owner,
          media_preparation_expires_at = v_now + make_interval(secs => greatest(p_lease_seconds, 15)),
+         intent_payload_fingerprint = coalesce(j.intent_payload_fingerprint, p_intent_payload_fingerprint),
          updated_at = v_now
    where j.id = p_id
      and j.empresa_id = p_empresa_id
      and j.status = 'preparing'
-     and coalesce(j.intent_payload_fingerprint, j.payload_fingerprint) = p_intent_payload_fingerprint
+     and (
+       j.intent_payload_fingerprint = p_intent_payload_fingerprint
+       or (
+         j.intent_payload_fingerprint is null
+         and j.payload_fingerprint is not null
+         and nullif(trim(j.payload_fingerprint), '') is not null
+         and j.payload->>'kind' in ('media','audio','sticker')
+         and j.payload->>'checksum' = repeat('0', 64)
+         and j.payload->>'storagePath' = 'preparing/' || repeat('0', 64)
+         and jsonb_typeof(j.payload->'mimeType') = 'string'
+         and nullif(j.payload->>'mimeType', '') is not null
+         and jsonb_typeof(j.payload->'fileName') = 'string'
+         and nullif(j.payload->>'fileName', '') is not null
+       )
+     )
      and (
        j.media_preparation_owner is null
        or j.media_preparation_owner = p_owner
@@ -558,9 +615,11 @@ begin
 end;
 $$;
 
+revoke all on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer) from public, anon, authenticated;
 revoke all on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, text, integer) from public, anon, authenticated;
 revoke all on function public.complete_zelochat_outbound_media_preparation(uuid, uuid, text, jsonb, text) from public, anon, authenticated;
 revoke all on function public.fail_zelochat_outbound_media_preparation(uuid, uuid, text, text) from public, anon, authenticated;
+grant execute on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer) to service_role;
 grant execute on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, text, integer) to service_role;
 grant execute on function public.complete_zelochat_outbound_media_preparation(uuid, uuid, text, jsonb, text) to service_role;
 grant execute on function public.fail_zelochat_outbound_media_preparation(uuid, uuid, text, text) to service_role;
@@ -604,10 +663,28 @@ begin
        and v_existing.conversation_control_id = p_conversation_control_id
        and v_existing.control_epoch = p_control_epoch
        and v_existing.outbound_origin = p_origin
-       and coalesce(v_existing.intent_payload_fingerprint, v_existing.payload_fingerprint) = p_payload_fingerprint
        and (
-         (p_payload->>'kind' in ('media','audio','sticker') and v_existing.payload->>'kind' = p_payload->>'kind')
-         or (p_payload->>'kind' not in ('media','audio','sticker') and v_existing.payload = p_payload)
+         (
+           coalesce(v_existing.intent_payload_fingerprint, v_existing.payload_fingerprint) = p_payload_fingerprint
+           and (
+             (p_payload->>'kind' in ('media','audio','sticker') and v_existing.payload->>'kind' = p_payload->>'kind')
+             or (p_payload->>'kind' not in ('media','audio','sticker') and v_existing.payload = p_payload)
+           )
+         )
+         or (
+           v_existing.intent_payload_fingerprint is null
+           and v_existing.status = 'preparing'
+           and p_payload->>'kind' in ('media','audio','sticker')
+           and v_existing.payload_fingerprint is not null
+           and nullif(trim(v_existing.payload_fingerprint), '') is not null
+           and v_existing.payload = p_payload
+           and v_existing.payload->>'checksum' = repeat('0', 64)
+           and v_existing.payload->>'storagePath' = 'preparing/' || repeat('0', 64)
+           and jsonb_typeof(v_existing.payload->'mimeType') = 'string'
+           and nullif(v_existing.payload->>'mimeType', '') is not null
+           and jsonb_typeof(v_existing.payload->'fileName') = 'string'
+           and nullif(v_existing.payload->>'fileName', '') is not null
+         )
        ) then
       return next v_existing;
     end if;

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import type { AiTurnPermit } from '../server/conversationControl.js';
 import { createConversationOutboundDispatcher } from '../server/conversationOutbound.js';
@@ -19,7 +20,7 @@ type StoredJob = {
   status: JobStatus;
   payload: PersistedOutboundPayload;
   payloadFingerprint: string;
-  intentPayloadFingerprint?: string;
+  intentPayloadFingerprint?: string | null;
   providerMessageId?: string | null;
   suppressionReason?: 'paused' | 'stale_epoch' | null;
   takeoverApplied?: boolean;
@@ -27,6 +28,7 @@ type StoredJob = {
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const ZERO_CHECKSUM = '0'.repeat(64);
 
 class FakeRepo {
   readonly calls: string[] = [];
@@ -112,6 +114,7 @@ class FakeRepo {
     if (job.status !== 'preparing') return null;
     if (intentPayloadFingerprint && job.intentPayloadFingerprint && job.intentPayloadFingerprint !== intentPayloadFingerprint) return null;
     if (job.preparationOwner && job.preparationOwner !== owner) return null;
+    if (intentPayloadFingerprint && !job.intentPayloadFingerprint) job.intentPayloadFingerprint = intentPayloadFingerprint;
     job.preparationOwner = owner;
     return job;
   }
@@ -151,6 +154,48 @@ class FakeRepo {
 }
 
 const textPayload = { kind: 'text', text: 'Olá' } satisfies OutboundPayload;
+function legacyMediaFingerprint(payload: Extract<OutboundPayload, { kind: 'media' | 'audio' | 'sticker' }>): string {
+  return createHash('sha256').update(JSON.stringify({
+    kind: payload.kind,
+    fileName: payload.attachment.fileName,
+    mimeType: payload.attachment.mimeType,
+  })).digest('hex');
+}
+
+function legacyPreparingMediaPayload(payload: Extract<OutboundPayload, { kind: 'media' | 'audio' | 'sticker' }>): PersistedOutboundPayload {
+  return {
+    kind: payload.kind,
+    storagePath: `preparing/${ZERO_CHECKSUM}`,
+    mimeType: payload.attachment.mimeType,
+    fileName: payload.attachment.fileName,
+    sizeBytes: 1,
+    checksum: ZERO_CHECKSUM,
+    ...(payload.kind === 'audio' ? { ptt: payload.ptt } : {}),
+    ...(payload.kind === 'media' && payload.caption ? { caption: payload.caption } : {}),
+    ...('quoted' in payload && payload.quoted ? { quoted: payload.quoted } : {}),
+  } as PersistedOutboundPayload;
+}
+
+function addPreR2AiMediaJob(repo: FakeRepo, payload: Extract<OutboundPayload, { kind: 'media' | 'audio' | 'sticker' }>): StoredJob {
+  const job: StoredJob = {
+    id: 'job-pre-r2',
+    messageId: 'message-pre-r2',
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    idempotencyKey: 'ai-media-pre-r2',
+    origin: 'ai_auto',
+    conversationControlId: 'control-1',
+    controlEpoch: '7',
+    status: 'preparing',
+    payload: legacyPreparingMediaPayload(payload),
+    payloadFingerprint: legacyMediaFingerprint(payload),
+    intentPayloadFingerprint: null,
+    preparationOwner: null,
+  };
+  repo.jobs.set(job.id, job);
+  return job;
+}
+
 const aiPermit = (overrides: Partial<AiTurnPermit> = {}): AiTurnPermit => ({
   empresaId: 'e1',
   conversationControlId: 'control-1',
@@ -530,6 +575,95 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
   assert.deepEqual(divergent, { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' });
   assert.equal(repo.uploadCount, 0, 'payload divergente não prepara nem chama upload/provider');
   assert.equal(job.status, 'preparing');
+  assert.equal(job.preparationOwner, null);
+}
+
+{
+  const repo = new FakeRepo();
+  const mediaPayload: Extract<OutboundPayload, { kind: 'media' }> = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=' },
+    caption: 'Foto legada',
+  };
+  const job = addPreR2AiMediaJob(repo, mediaPayload);
+  const result = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-media-pre-r2',
+    payload: mediaPayload,
+    aiPermit: aiPermit(),
+  });
+  assert.equal(result.state, 'queued', 'retry exato de mídia pre-R2 não deve ser suprimido');
+  assert.equal(repo.uploadCount, 1);
+  assert.equal(job.status, 'queued');
+  assert.notEqual(job.intentPayloadFingerprint, null, 'claim novo adota fingerprint de intenção uma vez');
+}
+
+{
+  const repo = new FakeRepo();
+  const mediaPayload: Extract<OutboundPayload, { kind: 'media' }> = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=' },
+    caption: 'Foto legada',
+  };
+  const job = addPreR2AiMediaJob(repo, mediaPayload);
+  const dispatch = dispatcher(repo, 1);
+  const first = dispatch.dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-media-pre-r2',
+    payload: mediaPayload,
+    aiPermit: aiPermit(),
+  });
+  const second = dispatch.dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-media-pre-r2',
+    payload: mediaPayload,
+    aiPermit: aiPermit(),
+  });
+  await Promise.all([first, second]);
+  assert.equal(repo.uploadCount, 1, 'adoção concorrente não duplica upload/preparação');
+  assert.equal(job.status, 'queued');
+  assert.notEqual(job.intentPayloadFingerprint, null);
+}
+
+{
+  const repo = new FakeRepo();
+  const originalMedia: Extract<OutboundPayload, { kind: 'media' }> = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=' },
+    caption: 'Foto legada',
+  };
+  const changedMedia: Extract<OutboundPayload, { kind: 'media' }> = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3V0cmE=' },
+    caption: 'Foto divergente',
+  };
+  const job = addPreR2AiMediaJob(repo, originalMedia);
+  const divergent = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-media-pre-r2',
+    payload: changedMedia,
+    aiPermit: aiPermit(),
+  });
+  assert.deepEqual(divergent, { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' });
+  assert.equal(repo.uploadCount, 0);
+  assert.equal(job.status, 'preparing');
+  assert.equal(job.intentPayloadFingerprint, null);
   assert.equal(job.preparationOwner, null);
 }
 

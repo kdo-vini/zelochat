@@ -147,6 +147,14 @@ function internalHash(value: unknown): string {
   return createHash('sha256').update(stableStringify(value)).digest('hex');
 }
 
+function legacyMediaIntentFingerprint(payload: Extract<OutboundPayload, { kind: 'media' | 'audio' | 'sticker' }>): string {
+  return createHash('sha256').update(JSON.stringify({
+    kind: payload.kind,
+    fileName: payload.attachment.fileName,
+    mimeType: payload.attachment.mimeType,
+  })).digest('hex');
+}
+
 function messagePreview(payload: OutboundPayload): string {
   switch (payload.kind) {
     case 'text':
@@ -219,6 +227,7 @@ function isExpectedAiJob(
   request: ConversationOutboundRequest & { origin: 'ai_auto' | 'ai_followup'; aiPermit: AiTurnPermit },
   expectedPayload: PersistedOutboundPayload,
   expectedIntentFingerprint: string,
+  expectedLegacyMediaFingerprint?: string | null,
 ): boolean {
   if (job.empresaId !== request.empresaId) return false;
   if (job.remoteJid !== request.remoteJid) return false;
@@ -226,9 +235,20 @@ function isExpectedAiJob(
   if (job.conversationControlId !== request.aiPermit.conversationControlId) return false;
   if (job.controlEpoch !== String(request.aiPermit.epoch)) return false;
 
-  const storedIntentFingerprint = job.intentPayloadFingerprint ?? job.payloadFingerprint;
-  if (storedIntentFingerprint !== expectedIntentFingerprint) return false;
-
+  if (job.intentPayloadFingerprint === expectedIntentFingerprint) {
+    if (MEDIA_KINDS.has(expectedPayload.kind)) return job.payload?.kind === expectedPayload.kind;
+    return stableStringify(job.payload) === stableStringify(expectedPayload);
+  }
+  if (
+    MEDIA_KINDS.has(expectedPayload.kind)
+    && job.status === 'preparing'
+    && !job.intentPayloadFingerprint
+    && expectedLegacyMediaFingerprint
+    && job.payloadFingerprint === expectedLegacyMediaFingerprint
+  ) {
+    return stableStringify(job.payload) === stableStringify(expectedPayload);
+  }
+  if ((job.intentPayloadFingerprint ?? job.payloadFingerprint) !== expectedIntentFingerprint) return false;
   if (MEDIA_KINDS.has(expectedPayload.kind)) return job.payload?.kind === expectedPayload.kind;
   return stableStringify(job.payload) === stableStringify(expectedPayload);
 }
@@ -457,6 +477,9 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
       const initialFingerprint = isMediaPayload(request.payload)
         ? internalHash({ kind: 'outbound-media-intent-v1', payload: request.payload })
         : await deps.fingerprintPayload(initialPayload);
+      const legacyMediaFingerprint = isMediaPayload(request.payload)
+        ? legacyMediaIntentFingerprint(request.payload)
+        : null;
 
       if (request.origin === 'ai_auto' || request.origin === 'ai_followup') {
         if (!request.aiPermit) {
@@ -478,7 +501,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
         if (!job) {
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
-        if (!isExpectedAiJob(job, request as ConversationOutboundRequest & { origin: 'ai_auto' | 'ai_followup'; aiPermit: AiTurnPermit }, initialPayload, initialFingerprint)) {
+        if (!isExpectedAiJob(job, request as ConversationOutboundRequest & { origin: 'ai_auto' | 'ai_followup'; aiPermit: AiTurnPermit }, initialPayload, initialFingerprint, legacyMediaFingerprint)) {
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
         job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);

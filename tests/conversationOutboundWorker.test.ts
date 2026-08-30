@@ -370,6 +370,12 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert(sql.includes('create or replace function public.claim_zelochat_outbound_media_preparation'));
   assert(sql.includes('create or replace function public.complete_zelochat_outbound_media_preparation'));
   assert(sql.includes('intent_payload_fingerprint'));
+  assert(sql.includes('create or replace function public.claim_zelochat_outbound_media_preparation(\n  p_id uuid,\n  p_empresa_id uuid,\n  p_owner text,\n  p_lease_seconds integer default 120\n)'));
+  assert(sql.includes('grant execute on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer) to service_role'));
+  assert(sql.includes('grant execute on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, text, integer) to service_role'));
+  const legacyMediaClaim = sql.slice(sql.indexOf('create or replace function public.claim_zelochat_outbound_media_preparation(\n  p_id uuid,\n  p_empresa_id uuid,\n  p_owner text,\n  p_lease_seconds integer default 120\n)'), sql.indexOf('create or replace function public.claim_zelochat_outbound_media_preparation(\n  p_id uuid,\n  p_empresa_id uuid,\n  p_owner text,\n  p_intent_payload_fingerprint text'));
+  assert(legacyMediaClaim.includes('j.intent_payload_fingerprint is null or j.intent_payload_fingerprint = j.payload_fingerprint'));
+  assert(legacyMediaClaim.includes("j.payload->>'storagePath' = 'preparing/' || repeat('0', 64)"));
   const aiEnqueue = sql.slice(sql.indexOf('create or replace function public.enqueue_zelochat_ai_outbound'), sql.indexOf('create or replace function public.start_zelochat_outbound_transport'));
   assert(aiEnqueue.includes('where s.empresa_id = p_empresa_id'));
   assert(aiEnqueue.includes('s.remote_jid = p_remote_jid'));
@@ -383,9 +389,12 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert(aiEnqueue.includes('coalesce(v_existing.intent_payload_fingerprint, v_existing.payload_fingerprint) = p_payload_fingerprint'));
   assert(aiEnqueue.includes('for update'));
   assert(aiEnqueue.indexOf('insert into public.zelochat_messages') < aiEnqueue.indexOf('insert into public.zelochat_outbound_jobs'));
-  const mediaClaim = sql.slice(sql.indexOf('create or replace function public.claim_zelochat_outbound_media_preparation'), sql.indexOf('create or replace function public.complete_zelochat_outbound_media_preparation'));
+  const mediaClaim = sql.slice(sql.indexOf('p_intent_payload_fingerprint text'), sql.indexOf('create or replace function public.complete_zelochat_outbound_media_preparation'));
   assert(mediaClaim.includes('p_intent_payload_fingerprint text'));
-  assert(mediaClaim.includes('coalesce(j.intent_payload_fingerprint, j.payload_fingerprint) = p_intent_payload_fingerprint'));
+  assert(mediaClaim.includes('j.intent_payload_fingerprint = p_intent_payload_fingerprint'));
+  assert(mediaClaim.includes('j.intent_payload_fingerprint is null'));
+  assert(mediaClaim.includes("j.payload->>'storagePath' = 'preparing/' || repeat('0', 64)"));
+  assert(mediaClaim.includes('coalesce(j.intent_payload_fingerprint, p_intent_payload_fingerprint)'));
   assert(sql.includes("j.lease_owner = p_lease_owner"));
   assert(sql.includes('zelochat_outbound_jobs_payload_no_data_url'));
   assert(sql.includes('zelochat_outbound_jobs_conversation_shape_check'));

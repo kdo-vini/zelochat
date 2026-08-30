@@ -51,6 +51,8 @@ Data: 2026-08-30
 - GREEN confirmado:
   - `npx tsx tests/conversationOutbound.test.ts`
   - `npx tsx tests/conversationOutboundWorker.test.ts`
+  - `npx tsx tests/auditFixGuardrails.test.ts`
+  - `npm run lint`
   - `npx tsx tests/customerMessages.test.ts`
   - `npx tsx tests/auditFixGuardrails.test.ts`
   - `npx tsx tests/retryFailedMessage.test.ts`
@@ -73,3 +75,18 @@ Data: 2026-08-30
   - `npx tsx tests/conversationOutboundWorker.test.ts`
   - `npx tsx tests/auditFixGuardrails.test.ts`
   - `npm run lint`
+
+## Fix Round 3 — P1 rolling deploy
+
+- Preservado o overload legado `claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer)` para réplicas antigas. Ele só claima mídia `preparing` no envelope legado esperado (`preparing/<zero-checksum>`, metadata mínima e intent nula ou igual ao fingerprint legado), enquanto o overload novo de 5 args continua autoritativo para adoção de fingerprint de intenção.
+- Retry exato de mídia `preparing` criada antes do Round 2, com `intent_payload_fingerprint=null`, não é mais suprimido: o dispatcher aceita o envelope pre-R2 quando destino/controle/epoch/origem/payload legado batem, e o claim novo adota `intent_payload_fingerprint` atomicamente com `coalesce`.
+- Depois da adoção, retries com payload de mídia divergente falham fechado e não sobrescrevem a intenção adotada, não adquirem ownership e não chamam upload/provider.
+
+## RED/GREEN — Fix Round 3
+
+- RED confirmado:
+  - `npx tsx tests/conversationOutbound.test.ts` falhou porque retry exato de mídia pre-R2 voltou `suppressed` em vez de `queued`.
+  - `npx tsx tests/conversationOutboundWorker.test.ts` falhou porque o overload legado de 4 args não estava presente/garantido.
+- GREEN confirmado:
+  - `npx tsx tests/conversationOutbound.test.ts`
+  - `npx tsx tests/conversationOutboundWorker.test.ts`
