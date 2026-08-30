@@ -97,3 +97,32 @@ Revisão final realizada nos eixos de padrões do repositório e aderência ao b
 - A UI foi validada por renderização SSR e contrato de classes/ARIA, não por sessão autenticada em navegador publicado.
 - O aviso de tamanho do bundle é dívida já registrada em `CURRENT.md` e não foi ampliado para uma refatoração fora de escopo.
 - A Task 5 expõe o contexto; o consumo conversacional pela IA e a revalidação do pedido pertencem à Task 6. Nenhum pedido foi criado, copiado ou alterado aqui.
+
+## Review round 1/5 — correções
+
+Commit: `eeeee79` (`fix: endurece hábitos de pedido concorrentes`)
+
+### RED
+
+- Dois `patchOverrides` simultâneos, um para pagamento e outro para horário, foram sincronizados sobre a mesma leitura antiga; o teste observou somente `{ habitualTime: '20:15' }`, perdendo `paymentMethod`.
+- A UI ainda ligava `disabled` apenas ao card em gravação; o guardrail encontrou zero ocorrências do bloqueio global esperado nos quatro cards.
+- A mediana linear de `23:50` e `00:10` retornou `{ minutes: 720, label: '12:00' }`.
+- O último pedido retornou `customer: undefined` e descartou campos não projetados dos snapshots de fulfillment/payment.
+
+### GREEN
+
+- O store expõe somente `patchOrderingOverridesAtomically`; o adapter chama o RPC service-role `patch_zelochat_customer_ordering_overrides(p_empresa_id, p_owner_user_id, p_pessoa_id, p_patch)`. Não há mais read/merge/upsert do JSON no ZeloChat nem lock local. O RPC, pertencente ao stream compartilhado do ZeloPDV, é a dependência explícita para validação tenant-safe e merge atômico com remoção por `null`.
+- Todos os cards recebem `saving={saving !== null}`, impedindo um segundo PATCH enquanto qualquer ação está em andamento.
+- O horário usa corte determinístico no maior arco vazio e mediana sobre os minutos desembrulhados; `23:50` + `00:10` agora produz `00:00` sem alterar a mediana diurna existente.
+- O SELECT inclui `customer`; `lastOrder` preserva esse snapshot e espalha todos os campos originais de fulfillment/payment, mantendo também as projeções normalizadas e `asap` explícito.
+
+### Verificação do round 1
+
+- Seis testes focados do contexto: GREEN.
+- `npm run lint`: GREEN.
+- `npx tsc --noEmit -p server/tsconfig.json`: GREEN.
+- `npm run build`: GREEN, apenas com o aviso conhecido de chunk principal acima de 600 kB.
+- `git diff --check` e `git diff --cached --check`: GREEN, apenas avisos LF→CRLF do ambiente.
+- A suíte completa não foi repetida por instrução de prioridade; a execução imediatamente anterior desta Task 5 já havia passado integralmente antes do round, e as reproduções alteradas foram reexecutadas nos focados.
+
+Risco de rollout: publicar/aplicar primeiro a migration do RPC no repositório ZeloPDV, dono do schema compartilhado, e somente depois este backend. Sem esse RPC, o PATCH falha de forma segura e não grava preferências.
