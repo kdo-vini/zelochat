@@ -343,6 +343,8 @@ console.log('\nTest 9: migration 064 exposes service-role-only canonical RPCs an
   const sql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');
   const router = readFileSync('server/router.ts', 'utf8');
   assert.match(sql, /create or replace function public\.ensure_zelochat_conversation_control/i);
+  assert.match(sql, /create or replace function public\.zelochat_conversation_control_rollout_gate/i);
+  assert.match(sql, /create trigger trg_zelochat_conversation_control_session_statement_gate/i);
   assert.match(sql, /create or replace function public\.zelochat_lock_conversation_session_family/i);
   assert.match(sql, /pg_advisory_xact_lock/i);
   assert.match(sql, /for v_identity_key in\s+select unnest\(v_identity_keys\) order by 1/is);
@@ -369,39 +371,86 @@ console.log('\nTest 9: migration 064 exposes service-role-only canonical RPCs an
   assert.match(router, /const access = await requireActorAccess\(req\);[\s\S]*setAutoReply\(req\.params\.jid, !!enabled, access\.empresaId, access\.actorUserId\)/i);
 }
 
-console.log('\nTest 10: migration 064 keeps rolling-deploy lock order session-first');
+console.log('\nTest 10: migration 064 gates rolling-deploy writes before row locks');
 {
   const sql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');
 
-  const ensureStart = sql.indexOf('create or replace function public.ensure_zelochat_conversation_control');
-  const ensureEnd = sql.indexOf('revoke all on function public.ensure_zelochat_conversation_control', ensureStart);
-  assert.notEqual(ensureStart, -1);
-  assert.notEqual(ensureEnd, -1);
-  const ensureBody = sql.slice(ensureStart, ensureEnd);
+  const functionBody = (name: string) => {
+    const start = sql.indexOf(`create or replace function public.${name}`);
+    const end = sql.indexOf(`revoke all on function public.${name}`, start);
+    assert.notEqual(start, -1, `${name} function must exist`);
+    assert.notEqual(end, -1, `${name} function revoke must exist`);
+    return sql.slice(start, end);
+  };
 
+  const rolloutGateBody = functionBody('zelochat_conversation_control_rollout_gate');
+  const rolloutGateKey = 'zelochat:conversation_control:rollout_gate:v1';
+  assert.match(
+    rolloutGateBody,
+    /pg_advisory_xact_lock\(\s*hashtextextended\('zelochat:conversation_control:rollout_gate:v1', 0\)\s*\)/is,
+  );
+  assert.equal(sql.match(new RegExp(rolloutGateKey, 'g'))?.length, 1);
+
+  const statementGateBody = functionBody('zelochat_conversation_control_session_statement_gate');
+  assert.ok(
+    statementGateBody.indexOf('zelochat_conversation_control_rollout_gate') < statementGateBody.indexOf('return null'),
+    'BEFORE STATEMENT trigger function must acquire the rollout gate before returning',
+  );
+  assert.match(
+    sql,
+    /create trigger trg_zelochat_conversation_control_session_statement_gate\s+before insert or update of auto_reply, pessoa_id, customer_phone, remote_jid, conversation_control_id\s+on public\.zelochat_sessions\s+for each statement\s+execute function public\.zelochat_conversation_control_session_statement_gate\(\)/is,
+  );
+  assert.ok(
+    sql.indexOf('create trigger trg_zelochat_conversation_control_session_statement_gate')
+      < sql.indexOf('create trigger trg_zelochat_conversation_control_session_bridge'),
+    'statement-level rollout gate must be installed before the AFTER ROW bridge',
+  );
+
+  const ensureBody = functionBody('ensure_zelochat_conversation_control');
+
+  const ensureGate = ensureBody.indexOf('zelochat_conversation_control_rollout_gate');
   const sessionFamilyLock = ensureBody.indexOf('zelochat_lock_conversation_session_family');
   const advisoryLock = ensureBody.indexOf('pg_advisory_xact_lock');
   const controlRowLock = ensureBody.indexOf('LOCK ORDER STEP 3: control rows are locked last');
-  assert.ok(sessionFamilyLock >= 0, 'ensure must lock the session family first');
+  const firstEnsureForUpdate = ensureBody.toLowerCase().indexOf('for update');
+  assert.ok(ensureGate >= 0, 'ensure must acquire the rollout gate');
+  assert.ok(sessionFamilyLock > ensureGate, 'ensure must gate before locking the session family');
   assert.ok(advisoryLock > sessionFamilyLock, 'ensure must take advisory locks after session locks');
   assert.ok(controlRowLock > advisoryLock, 'ensure must lock control rows after advisory locks');
+  assert.ok(firstEnsureForUpdate > ensureGate, 'ensure must acquire the rollout gate before row locks');
 
-  const bridgeStart = sql.indexOf('create or replace function public.zelochat_conversation_control_session_bridge');
-  const bridgeEnd = sql.indexOf('revoke all on function public.zelochat_conversation_control_session_bridge', bridgeStart);
-  assert.notEqual(bridgeStart, -1);
-  assert.notEqual(bridgeEnd, -1);
-  const bridgeBody = sql.slice(bridgeStart, bridgeEnd);
+  for (const rpcName of [
+    'advance_zelochat_ai_epoch_for_inbound',
+    'pause_zelochat_ai_for_human',
+    'resume_zelochat_ai',
+    'check_zelochat_ai_epoch',
+  ]) {
+    const body = functionBody(rpcName);
+    const gate = body.indexOf('zelochat_conversation_control_rollout_gate');
+    const ensureCall = body.indexOf('ensure_zelochat_conversation_control');
+    const firstForUpdate = body.toLowerCase().indexOf('for update');
+    assert.ok(gate >= 0, `${rpcName} must acquire the rollout gate`);
+    assert.ok(ensureCall > gate, `${rpcName} must gate before calling ensure`);
+    assert.ok(firstForUpdate === -1 || firstForUpdate > gate, `${rpcName} must gate before row locks`);
+  }
 
+  const bridgeBody = functionBody('zelochat_conversation_control_session_bridge');
   const bridgeSessionLock = bridgeBody.indexOf('LOCK ORDER: bridge already holds NEW');
   const bridgeControlLock = bridgeBody.indexOf('from public.zelochat_conversation_ai_control c');
   assert.ok(bridgeSessionLock >= 0, 'legacy bridge must document the pre-held session row lock');
   assert.ok(bridgeControlLock > bridgeSessionLock, 'legacy bridge must lock session family before control rows');
 
-  const lockHelperStart = sql.indexOf('create or replace function public.zelochat_lock_conversation_session_family');
-  const lockHelperEnd = sql.indexOf('revoke all on function public.zelochat_lock_conversation_session_family', lockHelperStart);
-  assert.notEqual(lockHelperStart, -1);
-  assert.notEqual(lockHelperEnd, -1);
-  const lockHelperBody = sql.slice(lockHelperStart, lockHelperEnd);
+  const projectBody = functionBody('zelochat_project_conversation_control');
+  assert.ok(
+    projectBody.indexOf('zelochat_conversation_control_rollout_gate') < projectBody.indexOf('update public.zelochat_sessions'),
+    'projection helper must gate before writing session rows',
+  );
+
+  const lockHelperBody = functionBody('zelochat_lock_conversation_session_family');
+  assert.ok(
+    lockHelperBody.indexOf('zelochat_conversation_control_rollout_gate') < lockHelperBody.toLowerCase().indexOf('for update'),
+    'session-family helper must gate before taking row locks',
+  );
   assert.match(lockHelperBody, /order by s\.id\s+for update/is);
   assert.match(lockHelperBody, /s\.conversation_control_id = p_conversation_control_id/i);
 }

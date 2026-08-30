@@ -155,3 +155,52 @@ Remaining concerns:
 
 - The lock-order regression is covered by source-level guardrails, not by a live PostgreSQL deadlock simulation.
 - Future dispatcher/fromMe callers remain intentionally unmigrated for later tasks.
+
+## Fix Round 3/5 — Gate before first session row lock
+
+Date: 2026-08-30
+
+Status: DONE
+
+Review finding addressed:
+
+- The round 2 session-family ordering still allowed a deadlock because the legacy `AFTER ROW` bridge necessarily starts after PostgreSQL has already locked an arbitrary `zelochat_sessions` row. Migration 064 now adds `zelochat_conversation_control_rollout_gate()`, a temporary global transaction advisory lock, and a `BEFORE STATEMENT` trigger on the same `zelochat_sessions` INSERT/UPDATE columns handled by the bridge. That statement trigger acquires the gate before PostgreSQL visits/locks individual session rows. The public control RPCs and `ensure_zelochat_conversation_control` acquire the same gate at the start, before any session/control row lock. The projection and session-family helpers also acquire the same gate before writing/locking session rows.
+
+Trade-off documented:
+
+- The rollout gate intentionally serializes relevant session INSERT/UPDATE statements and conversation-control RPCs globally while legacy `auto_reply` writers and the compatibility bridge coexist. This is a temporary rolling-deploy cost chosen to prove no path enters with an arbitrary row lock before joining the shared lock order. After old direct writers are gone, a future cleanup can remove the compatibility bridge/gate and restore finer-grained concurrency.
+
+Guardrail updated:
+
+- `tests/conversationControl.test.ts` `Test 10` now verifies the structural gate, not only comments/order inside the `AFTER ROW` trigger:
+  - the advisory key is declared once in `zelochat_conversation_control_rollout_gate`;
+  - `trg_zelochat_conversation_control_session_statement_gate` is a `BEFORE STATEMENT` trigger for the relevant session writes;
+  - the statement gate trigger is installed before the `AFTER ROW` bridge;
+  - `ensure`, `advance`, `pause`, `resume`, and `check` acquire the rollout gate before `ensure` calls or row locks;
+  - projection/session-family helpers acquire the same gate before session writes/`for update`.
+
+Commands run:
+
+```powershell
+npx tsx tests/conversationControl.test.ts
+npx tsx tests/auditFixGuardrails.test.ts
+npx tsx tests/conversationOutboundSchema.test.ts
+npm run lint
+```
+
+Observed outputs:
+
+- `tests/conversationControl.test.ts`: `Conversation control tests passed`
+- `tests/auditFixGuardrails.test.ts`: `28 pass, 0 fail`
+- `tests/conversationOutboundSchema.test.ts`: exited with code 0
+- `npm run lint`: exited with code 0 (`tsc --noEmit`)
+
+Not rerun:
+
+- Full `npm test`, per review-round instruction to avoid the previously hanging complete suite.
+
+Remaining concerns:
+
+- The deadlock regression is still covered by source-level guardrails rather than a live PostgreSQL concurrent transaction simulation.
+- The global advisory gate is intentionally conservative and may reduce concurrency for relevant session writes during the rolling-deploy compatibility window.
+- Future dispatcher/fromMe callers remain intentionally unmigrated for later tasks.

@@ -70,6 +70,26 @@ $$;
 revoke all on function public.zelochat_actor_belongs_to_empresa(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.zelochat_actor_belongs_to_empresa(uuid, uuid) to service_role;
 
+create or replace function public.zelochat_conversation_control_rollout_gate()
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  -- ROLLING DEPLOY GATE: this transaction-level advisory lock is deliberately
+  -- global while legacy auto_reply writers and the compatibility bridge coexist.
+  -- It serializes conversation-control RPCs with relevant zelochat_sessions
+  -- INSERT/UPDATE statements before PostgreSQL takes arbitrary row locks.
+  perform pg_advisory_xact_lock(
+    hashtextextended('zelochat:conversation_control:rollout_gate:v1', 0)
+  );
+end;
+$$;
+
+revoke all on function public.zelochat_conversation_control_rollout_gate() from public, anon, authenticated;
+grant execute on function public.zelochat_conversation_control_rollout_gate() to service_role;
+
 create or replace function public.zelochat_project_conversation_control(
   p_empresa_id uuid,
   p_conversation_control_id uuid,
@@ -84,6 +104,7 @@ as $$
 declare
   v_previous text := current_setting('zelochat.projecting_control', true);
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
   perform set_config('zelochat.projecting_control', '1', true);
 
   update public.zelochat_sessions s
@@ -114,10 +135,13 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
+
   -- LOCK ORDER STEP 1: session rows are the first durable locks for every
   -- conversation-control path. The legacy AFTER UPDATE bridge already starts
-  -- with the touched session row locked by PostgreSQL, so RPC callers also take
-  -- the family session locks before advisory identity locks or control rows.
+  -- with the touched session row locked by PostgreSQL; the statement-level
+  -- rollout gate above is what prevents competing paths from entering with an
+  -- arbitrary row lock before this deterministic family lock.
   perform 1
   from (
     select s.id
@@ -183,6 +207,8 @@ declare
   v_next_epoch bigint := 0;
   v_now timestamptz := now();
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
+
   if p_empresa_id is null or nullif(trim(coalesce(p_remote_jid, '')), '') is null then
     raise exception 'INVALID_CONVERSATION_CONTROL_ARGUMENTS';
   end if;
@@ -491,6 +517,8 @@ declare
   v_control public.zelochat_conversation_ai_control%rowtype;
   v_now timestamptz := now();
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
+
   if p_message_id is null then
     raise exception 'INVALID_AI_TURN_MESSAGE_ID';
   end if;
@@ -586,6 +614,8 @@ declare
   v_now timestamptz := now();
   v_increment boolean := false;
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
+
   if p_source not in ('zelochat_operator','native_whatsapp','explicit_manual_toggle','escalation') then
     raise exception 'INVALID_TAKEOVER_SOURCE';
   end if;
@@ -692,6 +722,8 @@ declare
   v_control public.zelochat_conversation_ai_control%rowtype;
   v_now timestamptz := now();
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
+
   if p_actor_user_id is null then
     raise exception 'INVALID_RESUME_ACTOR';
   end if;
@@ -771,6 +803,8 @@ declare
   v_snapshot record;
   v_control public.zelochat_conversation_ai_control%rowtype;
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
+
   if p_expected_epoch is null then
     return false;
   end if;
@@ -795,6 +829,24 @@ $$;
 
 revoke all on function public.check_zelochat_ai_epoch(uuid, text, bigint) from public, anon, authenticated;
 grant execute on function public.check_zelochat_ai_epoch(uuid, text, bigint) to service_role;
+
+create or replace function public.zelochat_conversation_control_session_statement_gate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  -- ROLLING DEPLOY GATE: BEFORE STATEMENT fires before PostgreSQL visits and
+  -- locks arbitrary session rows, so legacy direct writes join the same
+  -- serialization point as the RPCs before the AFTER ROW bridge runs.
+  perform public.zelochat_conversation_control_rollout_gate();
+  return null;
+end;
+$$;
+
+revoke all on function public.zelochat_conversation_control_session_statement_gate() from public, anon, authenticated;
+grant execute on function public.zelochat_conversation_control_session_statement_gate() to service_role;
 
 create or replace function public.zelochat_conversation_control_session_bridge()
 returns trigger
@@ -936,6 +988,15 @@ $$;
 revoke all on function public.zelochat_conversation_control_session_bridge() from public, anon, authenticated;
 grant execute on function public.zelochat_conversation_control_session_bridge() to service_role;
 
+drop trigger if exists trg_zelochat_conversation_control_session_statement_gate
+  on public.zelochat_sessions;
+
+create trigger trg_zelochat_conversation_control_session_statement_gate
+before insert or update of auto_reply, pessoa_id, customer_phone, remote_jid, conversation_control_id
+on public.zelochat_sessions
+for each statement
+execute function public.zelochat_conversation_control_session_statement_gate();
+
 drop trigger if exists trg_zelochat_conversation_control_session_bridge
   on public.zelochat_sessions;
 
@@ -947,6 +1008,10 @@ execute function public.zelochat_conversation_control_session_bridge();
 
 comment on function public.ensure_zelochat_conversation_control(uuid, text) is
   'Resolves/locks the canonical conversation control for one tenant JID, merging duplicates with human mode winning.';
+comment on function public.zelochat_conversation_control_rollout_gate() is
+  'Temporary rolling-deploy serialization gate. Uses one global transaction advisory lock so RPCs and legacy session writes cannot acquire arbitrary row locks before joining the conversation-control lock order.';
+comment on function public.zelochat_conversation_control_session_statement_gate() is
+  'BEFORE STATEMENT trigger gate for legacy session INSERT/UPDATE writes; intentionally serializes relevant session writes while the auto_reply compatibility bridge exists.';
 comment on function public.pause_zelochat_ai_for_human(uuid, text, uuid, text, uuid) is
   'Atomically switches the canonical conversation to human mode and cancels queued AI jobs for that control.';
 comment on function public.resume_zelochat_ai(uuid, text, uuid) is
