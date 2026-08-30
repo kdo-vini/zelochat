@@ -56,3 +56,20 @@ Data: 2026-08-30
   - `npx tsx tests/retryFailedMessage.test.ts`
   - `npx tsx tests/outboundQueue.test.ts`
   - `npm run lint`
+
+## Fix Round 2 — P1
+
+- `enqueue_zelochat_ai_outbound` agora valida o caminho de idempotência existente antes de retornar: mesma `empresa_id`, `conversation_jid`, `conversation_control_id`, `control_epoch`, `outbound_origin` e fingerprint/payload esperados. Reuso divergente retorna vazio para o dispatcher suprimir, sem devolver job de outra conversa.
+- Mídia passa a persistir `intent_payload_fingerprint` antes do upload; `payload_fingerprint` pode virar fingerprint de transporte após materialização, mas retries continuam comparando a intenção original.
+- `claim_zelochat_outbound_media_preparation` exige a fingerprint de intenção, então payload de mídia divergente não adquire ownership de preparação nem chama upload/provider sobre job original.
+- O dispatcher mantém validação defensiva local do job retornado pela RPC antes de preparar mídia, cobrindo rolling deploy e doubles de teste que retornem idempotência ampla demais.
+
+## RED/GREEN — Fix Round 2
+
+- RED confirmado:
+  - `npx tsx tests/conversationOutbound.test.ts` falhou porque um retry AI com mesma idempotency key e JID/control divergente voltou como `queued` em vez de `suppressed`.
+- GREEN confirmado:
+  - `npx tsx tests/conversationOutbound.test.ts`
+  - `npx tsx tests/conversationOutboundWorker.test.ts`
+  - `npx tsx tests/auditFixGuardrails.test.ts`
+  - `npm run lint`

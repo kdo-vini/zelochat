@@ -14,9 +14,12 @@ type StoredJob = {
   remoteJid: string;
   idempotencyKey: string;
   origin: string;
+  conversationControlId?: string;
+  controlEpoch?: string;
   status: JobStatus;
   payload: PersistedOutboundPayload;
   payloadFingerprint: string;
+  intentPayloadFingerprint?: string;
   providerMessageId?: string | null;
   suppressionReason?: 'paused' | 'stale_epoch' | null;
   takeoverApplied?: boolean;
@@ -91,19 +94,23 @@ class FakeRepo {
       remoteJid: params.remoteJid,
       idempotencyKey: params.idempotencyKey,
       origin: 'ai_auto',
+      conversationControlId: params.aiPermit.conversationControlId,
+      controlEpoch: params.aiPermit.epoch,
       status: params.payload.kind === 'media' || params.payload.kind === 'audio' || params.payload.kind === 'sticker' ? 'preparing' : 'queued',
       payload: params.payload,
       payloadFingerprint: params.payloadFingerprint,
+      intentPayloadFingerprint: params.payloadFingerprint,
     };
     this.jobs.set(job.id, job);
     return job;
   }
 
-  async claimMediaPreparation(jobId: string, _empresaId: string, owner: string): Promise<StoredJob | null> {
+  async claimMediaPreparation(jobId: string, _empresaId: string, owner: string, intentPayloadFingerprint?: string): Promise<StoredJob | null> {
     this.calls.push('claim-media-preparation');
     const job = this.jobs.get(jobId);
     assert(job);
     if (job.status !== 'preparing') return null;
+    if (intentPayloadFingerprint && job.intentPayloadFingerprint && job.intentPayloadFingerprint !== intentPayloadFingerprint) return null;
     if (job.preparationOwner && job.preparationOwner !== owner) return null;
     job.preparationOwner = owner;
     return job;
@@ -144,6 +151,14 @@ class FakeRepo {
 }
 
 const textPayload = { kind: 'text', text: 'Olá' } satisfies OutboundPayload;
+const aiPermit = (overrides: Partial<AiTurnPermit> = {}): AiTurnPermit => ({
+  empresaId: 'e1',
+  conversationControlId: 'control-1',
+  remoteJid: 'j1',
+  epoch: '7',
+  triggerMessageId: 'inbound-1',
+  ...overrides,
+});
 
 function dispatcher(repo: FakeRepo, waitMs = 30) {
   return createConversationOutboundDispatcher({
@@ -347,13 +362,7 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
 
 {
   const repo = new FakeRepo();
-  const permit: AiTurnPermit = {
-    empresaId: 'e1',
-    conversationControlId: 'control-1',
-    remoteJid: 'other-jid',
-    epoch: '7',
-    triggerMessageId: 'inbound-1',
-  };
+  const permit = aiPermit({ remoteJid: 'other-jid' });
   const result = await dispatcher(repo).dispatchConversationOutbound({
     empresaId: 'e1',
     remoteJid: 'j1',
@@ -372,13 +381,161 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
 
 {
   const repo = new FakeRepo();
-  const permit: AiTurnPermit = {
+  const permit = aiPermit();
+  const first = await dispatcher(repo, 1).dispatchConversationOutbound({
     empresaId: 'e1',
-    conversationControlId: 'control-1',
     remoteJid: 'j1',
-    epoch: '7',
-    triggerMessageId: 'inbound-1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-same-key',
+    payload: textPayload,
+    aiPermit: permit,
+  });
+  const retry = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-same-key',
+    payload: textPayload,
+    aiPermit: permit,
+  });
+  assert.equal(first.state, 'queued');
+  assert.deepEqual(retry, first);
+  assert.equal(repo.jobs.size, 1);
+}
+
+{
+  const repo = new FakeRepo();
+  await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-divergent-key',
+    payload: textPayload,
+    aiPermit: aiPermit(),
+  });
+  const divergent = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j2',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-divergent-key',
+    payload: textPayload,
+    aiPermit: aiPermit({ remoteJid: 'j2', conversationControlId: 'control-2' }),
+  });
+  assert.deepEqual(divergent, { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' });
+  assert.equal(repo.jobs.size, 1);
+  assert.equal([...repo.jobs.values()][0].remoteJid, 'j1');
+  assert.equal(repo.uploadCount, 0);
+}
+
+{
+  const repo = new FakeRepo();
+  await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-control-key',
+    payload: textPayload,
+    aiPermit: aiPermit(),
+  });
+  const divergent = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-control-key',
+    payload: textPayload,
+    aiPermit: aiPermit({ conversationControlId: 'control-2' }),
+  });
+  assert.deepEqual(divergent, { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' });
+  assert.equal(repo.jobs.size, 1);
+  assert.equal([...repo.jobs.values()][0].conversationControlId, 'control-1');
+  assert.equal(repo.uploadCount, 0);
+}
+
+{
+  const repo = new FakeRepo();
+  await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-epoch-key',
+    payload: textPayload,
+    aiPermit: aiPermit(),
+  });
+  const divergent = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-epoch-key',
+    payload: textPayload,
+    aiPermit: aiPermit({ epoch: '8' }),
+  });
+  assert.deepEqual(divergent, { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' });
+  assert.equal(repo.jobs.size, 1);
+  assert.equal([...repo.jobs.values()][0].controlEpoch, '7');
+}
+
+{
+  const repo = new FakeRepo();
+  const originalMedia: OutboundPayload = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=' },
+    caption: 'Foto A',
   };
+  const changedMedia: OutboundPayload = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3V0cmE=' },
+    caption: 'Foto B',
+  };
+  await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-media-divergent',
+    payload: originalMedia,
+    aiPermit: aiPermit(),
+  });
+  const [job] = repo.jobs.values();
+  job.status = 'preparing';
+  job.preparationOwner = null;
+  repo.uploadCount = 0;
+  repo.mediaPersisted.length = 0;
+  const divergent = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-media-divergent',
+    payload: changedMedia,
+    aiPermit: aiPermit(),
+  });
+  assert.deepEqual(divergent, { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' });
+  assert.equal(repo.uploadCount, 0, 'payload divergente não prepara nem chama upload/provider');
+  assert.equal(job.status, 'preparing');
+  assert.equal(job.preparationOwner, null);
+}
+
+{
+  const repo = new FakeRepo();
+  const permit = aiPermit();
   const mediaPayload: OutboundPayload = {
     kind: 'media',
     attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,aGVsbG8=' },

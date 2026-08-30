@@ -54,6 +54,9 @@ export interface ConversationOutboundJobSnapshot {
   status: JobState;
   payload: PersistedOutboundPayload;
   payloadFingerprint: string;
+  intentPayloadFingerprint?: string | null;
+  conversationControlId?: string | null;
+  controlEpoch?: string | null;
   providerMessageId?: string | null;
   suppressionReason?: 'paused' | 'stale_epoch' | string | null;
   takeoverApplied?: boolean;
@@ -88,6 +91,7 @@ export interface ConversationOutboundDependencies {
     jobId: string,
     empresaId: string,
     owner: string,
+    intentPayloadFingerprint: string,
   ) => Promise<ConversationOutboundJobSnapshot | null>;
   markPrepared?: (
     jobId: string,
@@ -125,8 +129,22 @@ function isMediaPayload(payload: OutboundPayload): payload is Extract<OutboundPa
   return payload.kind === 'media' || payload.kind === 'audio' || payload.kind === 'sticker';
 }
 
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => stableJsonValue(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, stableJsonValue(item)]),
+  );
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
 function internalHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  return createHash('sha256').update(stableStringify(value)).digest('hex');
 }
 
 function messagePreview(payload: OutboundPayload): string {
@@ -187,10 +205,32 @@ function mapRow(row: Record<string, any>): ConversationOutboundJobSnapshot {
     status: source.status,
     payload: source.payload,
     payloadFingerprint: source.payload_fingerprint ?? source.payloadFingerprint ?? '',
+    intentPayloadFingerprint: source.intent_payload_fingerprint ?? source.intentPayloadFingerprint ?? null,
+    conversationControlId: source.conversation_control_id ?? source.conversationControlId ?? null,
+    controlEpoch: source.control_epoch != null ? String(source.control_epoch) : source.controlEpoch != null ? String(source.controlEpoch) : null,
     providerMessageId: source.provider_message_id ?? source.providerMessageId ?? null,
     suppressionReason: source.suppression_reason ?? source.suppressionReason ?? null,
     takeoverApplied: row.takeover_applied ?? row.takeoverApplied ?? source.takeover_applied ?? source.takeoverApplied ?? false,
   };
+}
+
+function isExpectedAiJob(
+  job: ConversationOutboundJobSnapshot,
+  request: ConversationOutboundRequest & { origin: 'ai_auto' | 'ai_followup'; aiPermit: AiTurnPermit },
+  expectedPayload: PersistedOutboundPayload,
+  expectedIntentFingerprint: string,
+): boolean {
+  if (job.empresaId !== request.empresaId) return false;
+  if (job.remoteJid !== request.remoteJid) return false;
+  if (job.origin !== request.origin) return false;
+  if (job.conversationControlId !== request.aiPermit.conversationControlId) return false;
+  if (job.controlEpoch !== String(request.aiPermit.epoch)) return false;
+
+  const storedIntentFingerprint = job.intentPayloadFingerprint ?? job.payloadFingerprint;
+  if (storedIntentFingerprint !== expectedIntentFingerprint) return false;
+
+  if (MEDIA_KINDS.has(expectedPayload.kind)) return job.payload?.kind === expectedPayload.kind;
+  return stableStringify(job.payload) === stableStringify(expectedPayload);
 }
 
 function resultFromJob(job: ConversationOutboundJobSnapshot): DispatchResult {
@@ -289,7 +329,7 @@ async function defaultEnqueueAiOutbound(params: Parameters<EnqueueAiOutbound>[0]
 async function defaultReadJob(jobId: string, empresaId: string): Promise<ConversationOutboundJobSnapshot | null> {
   const { data, error } = await getServiceSupabase()
     .from('zelochat_outbound_jobs')
-    .select('id,empresa_id,conversation_jid,idempotency_key,outbound_origin,status,payload,payload_fingerprint,message_id,provider_message_id,suppression_reason')
+    .select('id,empresa_id,conversation_jid,idempotency_key,outbound_origin,status,payload,payload_fingerprint,intent_payload_fingerprint,conversation_control_id,control_epoch,message_id,provider_message_id,suppression_reason')
     .eq('empresa_id', empresaId)
     .eq('id', jobId)
     .maybeSingle();
@@ -301,11 +341,13 @@ async function defaultClaimMediaPreparation(
   jobId: string,
   empresaId: string,
   owner: string,
+  intentPayloadFingerprint: string,
 ): Promise<ConversationOutboundJobSnapshot | null> {
   const { data, error } = await getServiceSupabase().rpc('claim_zelochat_outbound_media_preparation', {
     p_id: jobId,
     p_empresa_id: empresaId,
     p_owner: owner,
+    p_intent_payload_fingerprint: intentPayloadFingerprint,
     p_lease_seconds: 120,
   });
   if (error) throw new Error(error.message);
@@ -381,11 +423,12 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
   const prepareMediaIfNeeded = async (
     current: ConversationOutboundJobSnapshot,
     payload: OutboundPayload,
+    intentPayloadFingerprint: string,
   ): Promise<ConversationOutboundJobSnapshot> => {
     if (!isMediaPayload(payload)) return current;
 
     const owner = `media-preparation:${process.pid}:${randomUUID()}`;
-    let job = await deps.claimMediaPreparation(current.id, current.empresaId, owner);
+    let job = await deps.claimMediaPreparation(current.id, current.empresaId, owner, intentPayloadFingerprint);
     if (!job) return await deps.readJob(current.id, current.empresaId) ?? current;
 
     try {
@@ -412,7 +455,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
       assertDispatchInput(request);
       const initialPayload = asPersistablePayload(request.payload);
       const initialFingerprint = isMediaPayload(request.payload)
-        ? internalHash({ kind: request.payload.kind, fileName: request.payload.attachment.fileName, mimeType: request.payload.attachment.mimeType })
+        ? internalHash({ kind: 'outbound-media-intent-v1', payload: request.payload })
         : await deps.fingerprintPayload(initialPayload);
 
       if (request.origin === 'ai_auto' || request.origin === 'ai_followup') {
@@ -435,7 +478,10 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
         if (!job) {
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
-        job = await prepareMediaIfNeeded(job, request.payload);
+        if (!isExpectedAiJob(job, request as ConversationOutboundRequest & { origin: 'ai_auto' | 'ai_followup'; aiPermit: AiTurnPermit }, initialPayload, initialFingerprint)) {
+          return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
+        }
+        job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);
         return waitForTerminal(job, deps, deps.sendWaitMs);
       }
 
@@ -462,7 +508,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
         await deps.cancelPendingReply(request.empresaId, request.remoteJid);
       }
 
-      job = await prepareMediaIfNeeded(job, request.payload);
+      job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);
 
       return waitForTerminal(job, deps, deps.sendWaitMs);
     },

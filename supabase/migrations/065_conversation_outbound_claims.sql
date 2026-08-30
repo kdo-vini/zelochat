@@ -9,6 +9,7 @@ alter table public.zelochat_outbound_jobs
 alter table public.zelochat_outbound_jobs add column if not exists media_cleaned_at timestamptz;
 alter table public.zelochat_outbound_jobs add column if not exists media_preparation_owner text;
 alter table public.zelochat_outbound_jobs add column if not exists media_preparation_expires_at timestamptz;
+alter table public.zelochat_outbound_jobs add column if not exists intent_payload_fingerprint text;
 alter table public.zelochat_outbound_jobs
   add constraint zelochat_outbound_jobs_payload_no_data_url
   check (
@@ -417,12 +418,12 @@ begin
   insert into public.zelochat_outbound_jobs (
     empresa_id, job_type, idempotency_key, phone_snapshot, message, status, next_attempt_at,
     conversation_control_id, conversation_jid, message_id, outbound_origin, takeover_policy,
-    payload, payload_fingerprint, control_epoch
+    payload, payload_fingerprint, intent_payload_fingerprint, control_epoch
   ) values (
     p_empresa_id, 'conversation', p_idempotency_key, split_part(p_remote_jid, '@', 1),
     coalesce(nullif(p_message_text, ''), '[' || coalesce(p_payload->>'kind', 'mensagem') || ']'),
     v_initial_status, v_now, v_control.id, p_remote_jid, v_message_id, 'human_zelochat', 'take_over',
-    p_payload, p_payload_fingerprint, v_control.epoch
+    p_payload, p_payload_fingerprint, p_payload_fingerprint, v_control.epoch
   ) returning * into v_job;
 
   update public.zelochat_messages set outbound_job_id = v_job.id where id = v_message_id and empresa_id = p_empresa_id;
@@ -441,10 +442,13 @@ $$;
 revoke all on function public.begin_zelochat_human_outbound(uuid, text, uuid, text, text, jsonb, text, text) from public, anon, authenticated;
 grant execute on function public.begin_zelochat_human_outbound(uuid, text, uuid, text, text, jsonb, text, text) to service_role;
 
+drop function if exists public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer);
+
 create or replace function public.claim_zelochat_outbound_media_preparation(
   p_id uuid,
   p_empresa_id uuid,
   p_owner text,
+  p_intent_payload_fingerprint text,
   p_lease_seconds integer default 120
 )
 returns setof public.zelochat_outbound_jobs
@@ -458,6 +462,7 @@ declare
 begin
   perform public.zelochat_conversation_control_rollout_gate();
   if nullif(trim(p_owner), '') is null then raise exception 'INVALID_MEDIA_PREPARATION_OWNER'; end if;
+  if nullif(trim(p_intent_payload_fingerprint), '') is null then raise exception 'INVALID_PAYLOAD_FINGERPRINT'; end if;
   update public.zelochat_outbound_jobs j
      set media_preparation_owner = p_owner,
          media_preparation_expires_at = v_now + make_interval(secs => greatest(p_lease_seconds, 15)),
@@ -465,6 +470,7 @@ begin
    where j.id = p_id
      and j.empresa_id = p_empresa_id
      and j.status = 'preparing'
+     and coalesce(j.intent_payload_fingerprint, j.payload_fingerprint) = p_intent_payload_fingerprint
      and (
        j.media_preparation_owner is null
        or j.media_preparation_owner = p_owner
@@ -552,10 +558,10 @@ begin
 end;
 $$;
 
-revoke all on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer) from public, anon, authenticated;
+revoke all on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, text, integer) from public, anon, authenticated;
 revoke all on function public.complete_zelochat_outbound_media_preparation(uuid, uuid, text, jsonb, text) from public, anon, authenticated;
 revoke all on function public.fail_zelochat_outbound_media_preparation(uuid, uuid, text, text) from public, anon, authenticated;
-grant execute on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, integer) to service_role;
+grant execute on function public.claim_zelochat_outbound_media_preparation(uuid, uuid, text, text, integer) to service_role;
 grant execute on function public.complete_zelochat_outbound_media_preparation(uuid, uuid, text, jsonb, text) to service_role;
 grant execute on function public.fail_zelochat_outbound_media_preparation(uuid, uuid, text, text) to service_role;
 
@@ -592,7 +598,21 @@ begin
 
   perform pg_advisory_xact_lock(hashtextextended(p_empresa_id::text || ':' || p_idempotency_key, 0));
   select * into v_existing from public.zelochat_outbound_jobs j where j.empresa_id = p_empresa_id and j.idempotency_key = p_idempotency_key;
-  if found then return next v_existing; return; end if;
+  if found then
+    if v_existing.job_type = 'conversation'
+       and v_existing.conversation_jid = p_remote_jid
+       and v_existing.conversation_control_id = p_conversation_control_id
+       and v_existing.control_epoch = p_control_epoch
+       and v_existing.outbound_origin = p_origin
+       and coalesce(v_existing.intent_payload_fingerprint, v_existing.payload_fingerprint) = p_payload_fingerprint
+       and (
+         (p_payload->>'kind' in ('media','audio','sticker') and v_existing.payload->>'kind' = p_payload->>'kind')
+         or (p_payload->>'kind' not in ('media','audio','sticker') and v_existing.payload = p_payload)
+       ) then
+      return next v_existing;
+    end if;
+    return;
+  end if;
 
   select s.id into v_session_id
     from public.zelochat_sessions s
@@ -622,12 +642,12 @@ begin
   insert into public.zelochat_outbound_jobs (
     empresa_id, job_type, idempotency_key, phone_snapshot, message, status, next_attempt_at,
     conversation_control_id, conversation_jid, message_id, outbound_origin, takeover_policy,
-    payload, payload_fingerprint, control_epoch
+    payload, payload_fingerprint, intent_payload_fingerprint, control_epoch
   ) values (
     p_empresa_id, 'conversation', p_idempotency_key, split_part(p_remote_jid, '@', 1),
     coalesce(nullif(p_message_text, ''), '[' || coalesce(p_payload->>'kind', 'mensagem') || ']'),
     v_initial_status, v_now, p_conversation_control_id, p_remote_jid, v_message_id, p_origin, 'preserve_ai',
-    p_payload, p_payload_fingerprint, p_control_epoch
+    p_payload, p_payload_fingerprint, p_payload_fingerprint, p_control_epoch
   ) returning * into v_job;
 
   update public.zelochat_messages set outbound_job_id = v_job.id where id = v_message_id and empresa_id = p_empresa_id;
