@@ -71,7 +71,7 @@ import {
 } from './ai.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
-import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton, getAiWhatsAppOrderingMode } from '../src/domain/aiWhatsAppOrdering.js';
+import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton } from '../src/domain/aiWhatsAppOrdering.js';
 import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
@@ -1632,18 +1632,16 @@ router.get('/api/ai-enabled', async (req: Request, res: Response) => {
 /**
  * GET /api/ai-ordering-status — authenticated product status for the operator UI.
  *
- * The rollout mode itself is intentionally not exposed. `shadow` is an
- * internal observation state and is presented as unavailable until the live
- * flow is active.
+ * The ordering flow is permanently available whenever its private ZeloMenu
+ * integration is configured.
  */
 router.get('/api/ai-ordering-status', async (req: Request, res: Response) => {
   try {
     await requireEmpresaId(req);
-    const modeIsActive = getAiWhatsAppOrderingMode() === 'active';
     // Match the runtime's fail-closed configuration check so the UI never
     // promises autonomous ordering while every request would be transferred
     // to a human because the private ZeloMenu client is not configured.
-    res.json({ enabled: modeIsActive && ZeloMenuInternalClient.fromEnv() !== null });
+    res.json({ enabled: ZeloMenuInternalClient.fromEnv() !== null });
   } catch (error) {
     sendAuthError(res, error);
   }

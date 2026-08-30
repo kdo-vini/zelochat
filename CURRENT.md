@@ -43,8 +43,8 @@
 ## Pedido canônico por WhatsApp — tracer Task 6 (2026-08-30)
 
 - Fluxo isolado para buscar o cardápio e montar/consultar o carrinho canônico do ZeloMenu sem enviar link. Confirmação e cancelamento são determinísticos; o modelo recebe somente `buscar_cardapio`, `alterar_carrinho` e `consultar_carrinho`.
-- Ativação global fail-closed: o kill switch precisa ser explicitamente liberado; `shadow` continua disponível somente como diagnóstico interno. O fluxo legado de `zelochat_pending_orders` continua prioritário e isolado.
-- **Operação pendente:** configurar URL/chave internas, concluir a verificação do banco e então usar `KILL_SWITCH=0 + ACTIVE=1`. O primeiro tenant será acompanhado manualmente, sem rollout por empresa.
+- Fluxo permanente: não há rollout, modo de teste ou kill switch. Com URL/chave internas configuradas, a IA usa o carrinho canônico em todos os atendimentos do ZeloChat; o fluxo legado de `zelochat_pending_orders` continua prioritário e isolado.
+- **Operação pendente:** configurar URL/chave internas e concluir a verificação do banco. Se a integração privada ficar indisponível, o atendimento chama um humano e nunca cria pedido sem revalidação.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)
 

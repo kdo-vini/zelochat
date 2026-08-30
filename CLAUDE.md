@@ -211,7 +211,7 @@ These functions are CRITICAL for product correctness. Each one has caused (or ha
 | Function | Location | Why it's critical |
 |---|---|---|
 | `generateAndSendReply` | `server/ai.ts` | The AI dispatch entry point. Bad changes here = duplicate orders, wrong-confirms, prompt-injection. The 3-layer trap from §"Order confirmation flow" lives here. |
-| `tryHandleAiWhatsAppOrdering` / `tryHandleAiWhatsAppOrderingButton` | `server/aiWhatsAppOrdering.ts` | Tracer canônico: shadow não escreve; confirmação é determinística e orderingId/revision sempre voltam ao ZeloMenu. |
+| `tryHandleAiWhatsAppOrdering` / `tryHandleAiWhatsAppOrderingButton` | `server/aiWhatsAppOrdering.ts` | Fluxo canônico permanente: confirmação é determinística e orderingId/revision sempre voltam ao ZeloMenu. |
 | `confirmPendingOrder` / `cancelPendingOrder` / `clearPendingOrder` | `server/ai.ts` | The pending-order lifecycle. The order between insert/clear/send is load-bearing — see "FIX H1" comment in `confirmPendingOrder`. |
 | `dispatchIncomingMessage` and the hard-button short-circuit | `server/router.ts` | Layer 3 of the order-flow trap. Every customer reply path passes through here. |
 | `processWebhookEvent` and `/webhook/:instance` | `server/router.ts` | Auth boundary for inbound WhatsApp. Currently relies on instance name as secret (P0.1) — rotation/dedup decisions land here. |
@@ -239,9 +239,6 @@ VITE_SUPABASE_URL   # Supabase project URL (frontend)
 VITE_SUPABASE_ANON_KEY  # Supabase anon key (frontend)
 SUPABASE_URL        # Supabase project URL (server)
 SUPABASE_SERVICE_KEY    # Supabase service role key (server)
-ZELOCHAT_AI_ORDERING_KILL_SWITCH # fail-closed; só "0" permite shadow/active
-ZELOCHAT_AI_ORDERING_SHADOW      # busca/classifica sem alterar resposta ou carrinho
-ZELOCHAT_AI_ORDERING_ACTIVE      # ativação global separada do shadow
 ZELOMENU_INTERNAL_BASE_URL       # URL privada do ZeloMenu (default local http://127.0.0.1:3101)
 ZELO_INTERNAL_API_KEY            # segredo compartilhado, nunca expor em log/copy
 ZELOMENU_INTERNAL_TIMEOUT_MS     # timeout do client interno (default 4000)

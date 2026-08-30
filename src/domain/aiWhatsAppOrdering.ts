@@ -1,17 +1,6 @@
-export type AiWhatsAppOrderingMode = 'off' | 'shadow' | 'active';
-
 export const AI_ORDER_CONFIRM_PREFIX = 'ZOC:';
 export const AI_ORDER_ALTER_BUTTON = 'ZOA';
 export const AI_ORDER_STATE_PREFIX = 'ZELO_AI_ORDERING_STATE:';
-
-type Env = Record<string, string | undefined>;
-
-export function getAiWhatsAppOrderingMode(env: Env = process.env): AiWhatsAppOrderingMode {
-  if (env.ZELOCHAT_AI_ORDERING_KILL_SWITCH !== '0') return 'off';
-  if (env.ZELOCHAT_AI_ORDERING_ACTIVE === '1') return 'active';
-  if (env.ZELOCHAT_AI_ORDERING_SHADOW === '1') return 'shadow';
-  return 'off';
-}
 
 export type OrderingTurn =
   | { kind: 'confirm' }

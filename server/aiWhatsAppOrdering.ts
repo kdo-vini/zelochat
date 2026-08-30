@@ -12,7 +12,6 @@ import {
   classifyOrderingTurn,
   findPriorOrderingQuery,
   findLatestOrderingState,
-  getAiWhatsAppOrderingMode,
   isOrderingFollowUp,
   parseOrderingButton,
   renderCatalogReply,
@@ -37,9 +36,9 @@ export interface AiOrderingHandleResult {
   response?: string;
 }
 
-function metric(event: string, mode: string, outcome: string, startedAt = Date.now()): void {
+function metric(event: string, outcome: string, startedAt = Date.now()): void {
   // Strict allowlist: never include JID, message text, names, addresses, token or cart.
-  console.info('[AiOrderingMetric]', JSON.stringify({ event, mode, outcome, durationMs: Date.now() - startedAt }));
+  console.info('[AiOrderingMetric]', JSON.stringify({ event, outcome, durationMs: Date.now() - startedAt }));
 }
 
 async function sendText(jid: string, empresaId: string, text: string): Promise<void> {
@@ -262,8 +261,6 @@ export async function tryHandleAiWhatsAppOrdering(
   session: StoredSession,
 ): Promise<AiOrderingHandleResult> {
   const startedAt = Date.now();
-  const mode = getAiWhatsAppOrderingMode();
-  if (mode === 'off') return { handled: false };
   const text = lastUserText(session);
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(findLatestOrderingState(session.messages));
@@ -272,8 +269,7 @@ export async function tryHandleAiWhatsAppOrdering(
   if (initialTurn.kind === 'none' && !followUp) return { handled: false };
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
-    metric('ordering_turn', mode, 'configuration_missing', startedAt);
-    if (mode === 'shadow') return { handled: false };
+    metric('ordering_turn', 'configuration_missing', startedAt);
     const response = await transferOnFailure(jid, empresaId);
     return { handled: true, response };
   }
@@ -282,14 +278,6 @@ export async function tryHandleAiWhatsAppOrdering(
     const current = canonical && (canonical.state === 'cart_open' || canonical.requiresReview) ? canonical : null;
     const turn = classifyOrderingTurn(text, Boolean(current) || hasPointer);
     if (turn.kind === 'none' && !followUp) return { handled: false };
-
-    if (mode === 'shadow') {
-      if (turn.kind === 'catalog_or_order' || followUp) {
-        await client.searchCatalog({ empresaId, query: findPriorOrderingQuery(session.messages, text), limit: 12 });
-      }
-      metric('ordering_turn', mode, 'shadow_observed', startedAt);
-      return { handled: false };
-    }
 
     if (!current && canonical && (turn.kind === 'confirm' || turn.kind === 'ask_change' || turn.kind === 'cancel')) {
       const response = canonical.order || canonical.state.startsWith('confirmed') || canonical.state === 'accepted'
@@ -302,14 +290,14 @@ export async function tryHandleAiWhatsAppOrdering(
     if (current && turn.kind === 'confirm') {
       const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId);
       const response = await completeConfirmation(jid, empresaId, outcome);
-      metric('ordering_confirm', mode, 'handled', startedAt);
+      metric('ordering_confirm', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && turn.kind === 'cancel') {
       await client.cancelDraft({ empresaId, remoteJid: jid, messageId, orderingId: current.orderingId, expectedRevision: current.revision });
       const response = 'Pedido cancelado. Se quiser começar outro, é só me dizer.';
       await sendText(jid, empresaId, response);
-      metric('ordering_cancel', mode, 'handled', startedAt);
+      metric('ordering_cancel', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && (turn.kind === 'ask_change' || (turn.kind === 'alter' && !turn.instruction.trim()))) {
@@ -328,7 +316,7 @@ export async function tryHandleAiWhatsAppOrdering(
     if (!draft) {
       const response = renderCatalogReply(catalog, query);
       await sendText(jid, empresaId, response);
-      metric('catalog_search', mode, 'answered', startedAt);
+      metric('catalog_search', 'answered', startedAt);
       return { handled: true, response };
     }
     draft = applyOrderingDefaults(draft, context);
@@ -344,11 +332,10 @@ export async function tryHandleAiWhatsAppOrdering(
       orderingId: current?.orderingId, expectedRevision: current?.revision, draft,
     });
     const response = await sendSummary(jid, empresaId, updated);
-    metric('ordering_update', mode, 'summary_sent', startedAt);
+    metric('ordering_update', 'summary_sent', startedAt);
     return { handled: true, response };
   } catch {
-    metric('ordering_turn', mode, 'failed_closed', startedAt);
-    if (mode === 'shadow') return { handled: false };
+    metric('ordering_turn', 'failed_closed', startedAt);
     const response = await transferOnFailure(jid, empresaId);
     return { handled: true, response };
   }
@@ -362,8 +349,6 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
 }): Promise<CanonicalButtonHandling> {
   const action = parseOrderingButton(input.buttonId);
   if (!action) return { handled: false };
-  const mode = getAiWhatsAppOrderingMode();
-  if (mode !== 'active') return { handled: true }; // fail closed and never leak a stale Task 6 button to legacy AI
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
     return { handled: true, complete: async () => { await transferOnFailure(input.jid, input.empresaId); } };

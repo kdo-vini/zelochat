@@ -7,7 +7,6 @@ import {
   classifyOrderingTurn,
   canonicalButtonMessageKey,
   findPriorOrderingQuery,
-  getAiWhatsAppOrderingMode,
   handleCanonicalButtonOnce,
   isOrderingFollowUp,
   parseOrderingButton,
@@ -66,11 +65,10 @@ function snapshot(overrides: Partial<OrderingSnapshot> = {}): OrderingSnapshot {
   };
 }
 
-// Fail closed, with independent global shadow and active switches.
-assert.equal(getAiWhatsAppOrderingMode({}), 'off');
-assert.equal(getAiWhatsAppOrderingMode({ ZELOCHAT_AI_ORDERING_SHADOW: '1' }), 'off');
-assert.equal(getAiWhatsAppOrderingMode({ ZELOCHAT_AI_ORDERING_KILL_SWITCH: '0', ZELOCHAT_AI_ORDERING_SHADOW: '1' }), 'shadow');
-assert.equal(getAiWhatsAppOrderingMode({ ZELOCHAT_AI_ORDERING_KILL_SWITCH: '0', ZELOCHAT_AI_ORDERING_ACTIVE: '1' }), 'active');
+// The permanent product flow has no rollout flags. Availability depends only
+// on the private ZeloMenu client configuration.
+const orderingDomainSource = readFileSync(new URL('../src/domain/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
+assert.doesNotMatch(orderingDomainSource, /ZELOCHAT_AI_ORDERING_/);
 
 // Confirmation/correction/cancellation are deterministic and conservative.
 assert.deepEqual(classifyOrderingTurn('sim', true), { kind: 'confirm' });

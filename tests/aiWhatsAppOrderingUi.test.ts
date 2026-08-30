@@ -3,7 +3,7 @@ import { describeAiWhatsAppOrdering } from '../src/domain/aiWhatsAppOrderingUi.j
 
 const active = describeAiWhatsAppOrdering(true);
 assert.equal(active.title, 'IA monta pedidos pelo WhatsApp');
-assert.equal(active.badge, 'Ativo globalmente');
+assert.equal(active.badge, 'Ativo');
 assert.match(active.description, /própria conversa/);
 
 const inactive = describeAiWhatsAppOrdering(false);

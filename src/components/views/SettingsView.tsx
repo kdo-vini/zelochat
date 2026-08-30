@@ -478,8 +478,7 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
 
 /**
  * Product-facing status for the canonical WhatsApp ordering flow.
- * Activation is intentionally global (server configuration), so this card is
- * informational and must not reuse the general AI toggle above.
+ * It is informational and must not reuse the general AI toggle above.
  */
 const AiWhatsAppOrderingCard = ({ token }: { token: string | null }) => {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -522,8 +521,8 @@ const AiWhatsAppOrderingCard = ({ token }: { token: string | null }) => {
         </div>
         <p className="text-[11.5px] text-[var(--color-ink-faint)]">
           {enabled === true
-            ? 'Essa função é ativada para todos os atendimentos do ZeloChat. O cliente confirma o pedido sem precisar abrir um link.'
-            : 'A ativação é global para os atendimentos do ZeloChat. Quando ligada, o cliente confirma o pedido na própria conversa.'}
+            ? 'O cliente confirma o pedido sem precisar abrir um link.'
+            : 'Quando a integração estiver pronta, o cliente confirma o pedido na própria conversa.'}
         </p>
       </div>
     </SectionCard>

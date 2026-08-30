@@ -1,9 +1,8 @@
 /**
  * Copy shown to the operator for the global WhatsApp ordering capability.
  *
- * The server deliberately exposes only whether the capability is live. The
- * rollout states (`shadow` and `active`) are operational details and must not
- * leak into the product UI.
+ * The server exposes only whether the private ZeloMenu integration is ready;
+ * backend wiring must not leak into the product UI.
  */
 export interface AiWhatsAppOrderingUiState {
   enabled: boolean;
@@ -18,7 +17,7 @@ export function describeAiWhatsAppOrdering(enabled: boolean): AiWhatsAppOrdering
       enabled: true,
       title: 'IA monta pedidos pelo WhatsApp',
       description: 'A IA consulta o cardápio, monta o carrinho e pede a confirmação do cliente na própria conversa.',
-      badge: 'Ativo globalmente',
+      badge: 'Ativo',
     };
   }
 
