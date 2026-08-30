@@ -343,6 +343,7 @@ console.log('\nTest 9: migration 064 exposes service-role-only canonical RPCs an
   const sql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');
   const router = readFileSync('server/router.ts', 'utf8');
   assert.match(sql, /create or replace function public\.ensure_zelochat_conversation_control/i);
+  assert.match(sql, /create or replace function public\.zelochat_lock_conversation_session_family/i);
   assert.match(sql, /pg_advisory_xact_lock/i);
   assert.match(sql, /for v_identity_key in\s+select unnest\(v_identity_keys\) order by 1/is);
   assert.match(sql, /controls_merged/i);
@@ -366,6 +367,43 @@ console.log('\nTest 9: migration 064 exposes service-role-only canonical RPCs an
   assert.doesNotMatch(sql, /grant execute on function .* to (anon|authenticated)/i);
   assert.match(sql, /grant execute on function .* to service_role/i);
   assert.match(router, /const access = await requireActorAccess\(req\);[\s\S]*setAutoReply\(req\.params\.jid, !!enabled, access\.empresaId, access\.actorUserId\)/i);
+}
+
+console.log('\nTest 10: migration 064 keeps rolling-deploy lock order session-first');
+{
+  const sql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');
+
+  const ensureStart = sql.indexOf('create or replace function public.ensure_zelochat_conversation_control');
+  const ensureEnd = sql.indexOf('revoke all on function public.ensure_zelochat_conversation_control', ensureStart);
+  assert.notEqual(ensureStart, -1);
+  assert.notEqual(ensureEnd, -1);
+  const ensureBody = sql.slice(ensureStart, ensureEnd);
+
+  const sessionFamilyLock = ensureBody.indexOf('zelochat_lock_conversation_session_family');
+  const advisoryLock = ensureBody.indexOf('pg_advisory_xact_lock');
+  const controlRowLock = ensureBody.indexOf('LOCK ORDER STEP 3: control rows are locked last');
+  assert.ok(sessionFamilyLock >= 0, 'ensure must lock the session family first');
+  assert.ok(advisoryLock > sessionFamilyLock, 'ensure must take advisory locks after session locks');
+  assert.ok(controlRowLock > advisoryLock, 'ensure must lock control rows after advisory locks');
+
+  const bridgeStart = sql.indexOf('create or replace function public.zelochat_conversation_control_session_bridge');
+  const bridgeEnd = sql.indexOf('revoke all on function public.zelochat_conversation_control_session_bridge', bridgeStart);
+  assert.notEqual(bridgeStart, -1);
+  assert.notEqual(bridgeEnd, -1);
+  const bridgeBody = sql.slice(bridgeStart, bridgeEnd);
+
+  const bridgeSessionLock = bridgeBody.indexOf('LOCK ORDER: bridge already holds NEW');
+  const bridgeControlLock = bridgeBody.indexOf('from public.zelochat_conversation_ai_control c');
+  assert.ok(bridgeSessionLock >= 0, 'legacy bridge must document the pre-held session row lock');
+  assert.ok(bridgeControlLock > bridgeSessionLock, 'legacy bridge must lock session family before control rows');
+
+  const lockHelperStart = sql.indexOf('create or replace function public.zelochat_lock_conversation_session_family');
+  const lockHelperEnd = sql.indexOf('revoke all on function public.zelochat_lock_conversation_session_family', lockHelperStart);
+  assert.notEqual(lockHelperStart, -1);
+  assert.notEqual(lockHelperEnd, -1);
+  const lockHelperBody = sql.slice(lockHelperStart, lockHelperEnd);
+  assert.match(lockHelperBody, /order by s\.id\s+for update/is);
+  assert.match(lockHelperBody, /s\.conversation_control_id = p_conversation_control_id/i);
 }
 
 console.log('\nConversation control tests passed');

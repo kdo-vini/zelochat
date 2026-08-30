@@ -100,6 +100,59 @@ $$;
 revoke all on function public.zelochat_project_conversation_control(uuid, uuid, boolean, timestamptz) from public, anon, authenticated;
 grant execute on function public.zelochat_project_conversation_control(uuid, uuid, boolean, timestamptz) to service_role;
 
+create or replace function public.zelochat_lock_conversation_session_family(
+  p_empresa_id uuid,
+  p_remote_jid text,
+  p_canonical_pessoa_id uuid,
+  p_contact_key text,
+  p_conversation_control_id uuid default null,
+  p_identity_keys text[] default array[]::text[]
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  -- LOCK ORDER STEP 1: session rows are the first durable locks for every
+  -- conversation-control path. The legacy AFTER UPDATE bridge already starts
+  -- with the touched session row locked by PostgreSQL, so RPC callers also take
+  -- the family session locks before advisory identity locks or control rows.
+  perform 1
+  from (
+    select s.id
+    from public.zelochat_sessions s
+    where s.empresa_id = p_empresa_id
+      and (
+        s.remote_jid = p_remote_jid
+        or (p_canonical_pessoa_id is not null and s.pessoa_id = p_canonical_pessoa_id)
+        or (
+          p_contact_key is not null
+          and public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = p_contact_key
+        )
+        or (
+          p_conversation_control_id is not null
+          and s.conversation_control_id = p_conversation_control_id
+        )
+        or (
+          coalesce(array_length(p_identity_keys, 1), 0) > 0
+          and s.conversation_control_id in (
+            select c.id
+            from public.zelochat_conversation_ai_control c
+            where c.empresa_id = p_empresa_id
+              and c.identity_key = any(p_identity_keys)
+          )
+        )
+      )
+    order by s.id
+    for update
+  ) locked_sessions;
+end;
+$$;
+
+revoke all on function public.zelochat_lock_conversation_session_family(uuid, text, uuid, text, uuid, text[]) from public, anon, authenticated;
+grant execute on function public.zelochat_lock_conversation_session_family(uuid, text, uuid, text, uuid, text[]) to service_role;
+
 create or replace function public.ensure_zelochat_conversation_control(
   p_empresa_id uuid,
   p_remote_jid text
@@ -117,6 +170,7 @@ set search_path = public, pg_temp
 as $$
 declare
   v_target_pessoa_id uuid;
+  v_target_control_id uuid;
   v_canonical_pessoa_id uuid;
   v_target_contact_key text;
   v_identity_key text;
@@ -135,8 +189,9 @@ begin
 
   select
     s.pessoa_id,
+    s.conversation_control_id,
     public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid)
-    into v_target_pessoa_id, v_target_contact_key
+    into v_target_pessoa_id, v_target_control_id, v_target_contact_key
   from public.zelochat_sessions s
   where s.empresa_id = p_empresa_id
     and s.remote_jid = p_remote_jid
@@ -191,6 +246,18 @@ begin
   ) identities
   where identity_key is not null;
 
+  -- LOCK ORDER: sessions -> identity advisory -> controls.
+  perform public.zelochat_lock_conversation_session_family(
+    p_empresa_id,
+    p_remote_jid,
+    v_canonical_pessoa_id,
+    v_target_contact_key,
+    v_target_control_id,
+    v_identity_keys
+  );
+
+  -- LOCK ORDER STEP 2: identity advisory locks are taken only after the
+  -- canonical family sessions have been locked, and always in sorted order.
   for v_identity_key in
     select unnest(v_identity_keys) order by 1
   loop
@@ -265,7 +332,8 @@ begin
     into v_duplicate_count
   from unnest(v_duplicate_control_ids) as ids(id);
 
-  -- Lock every control in deterministic order before choosing the winner.
+  -- LOCK ORDER STEP 3: control rows are locked last, in deterministic order,
+  -- before choosing the winner.
   perform 1
   from public.zelochat_conversation_ai_control c
   where c.empresa_id = p_empresa_id
@@ -756,6 +824,18 @@ begin
   end if;
 
   if TG_OP = 'UPDATE' and NEW.auto_reply is distinct from OLD.auto_reply then
+    -- LOCK ORDER: bridge already holds NEW's session row from the triggering
+    -- UPDATE; lock the rest of the projected family before reading/updating the
+    -- canonical control so rolling deploy paths all move session -> control.
+    perform public.zelochat_lock_conversation_session_family(
+      NEW.empresa_id,
+      NEW.remote_jid,
+      NEW.pessoa_id,
+      public.zelochat_conversation_identity_key(null, NEW.customer_phone, NEW.remote_jid),
+      NEW.conversation_control_id,
+      array[]::text[]
+    );
+
     select *
       into v_control
     from public.zelochat_conversation_ai_control c

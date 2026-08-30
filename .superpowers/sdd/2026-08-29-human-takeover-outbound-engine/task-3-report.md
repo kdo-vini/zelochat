@@ -116,3 +116,42 @@ Remaining concerns:
 
 - The SQL migration has guardrail coverage in unit tests but was not applied to a live Postgres instance in this round.
 - Future dispatcher/fromMe callers remain intentionally unmigrated for later tasks.
+
+## Fix Round 2/5 — Lock-order rereview
+
+Date: 2026-08-30
+
+Status: DONE
+
+Review finding addressed:
+
+- P1/P2 rolling-deploy deadlock: migration 064 now uses a single lock direction for conversation control paths: session rows first, identity advisory locks second, control rows last. The new internal helper `zelochat_lock_conversation_session_family` locks the canonical session family deterministically by `zelochat_sessions.id`. `ensure_zelochat_conversation_control` calls it before advisory locks and before any control row lock. The legacy `zelochat_conversation_control_session_bridge` documents that PostgreSQL already holds the triggering session row, then locks the remaining projected family before reading/updating the canonical control. This preserves the atomic compatibility bridge while removing the new-path control→session inversion that caused the rereview finding.
+
+Guardrail added:
+
+- `tests/conversationControl.test.ts` now has `Test 10`, a source-level lock-order guardrail. A live concurrent-transaction DB harness is not present in this task suite, so the guardrail freezes the migration structure directly: `ensure` must call the session-family lock before `pg_advisory_xact_lock`, control locks must come after advisory locks, the bridge must lock the session family before selecting the control row, and the helper must lock rows using `order by s.id for update`.
+
+Commands run:
+
+```powershell
+npx tsx tests/conversationControl.test.ts
+npx tsx tests/auditFixGuardrails.test.ts
+npx tsx tests/conversationOutboundSchema.test.ts
+npm run lint
+```
+
+Observed outputs:
+
+- `tests/conversationControl.test.ts`: `Conversation control tests passed`
+- `tests/auditFixGuardrails.test.ts`: `28 pass, 0 fail`
+- `tests/conversationOutboundSchema.test.ts`: exited with code 0
+- `npm run lint`: exited with code 0 (`tsc --noEmit`)
+
+Not rerun:
+
+- Full `npm test`, per review-round instruction to avoid the previously hanging complete suite.
+
+Remaining concerns:
+
+- The lock-order regression is covered by source-level guardrails, not by a live PostgreSQL deadlock simulation.
+- Future dispatcher/fromMe callers remain intentionally unmigrated for later tasks.
