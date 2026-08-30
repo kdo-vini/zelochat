@@ -558,6 +558,67 @@ export async function sendContactMessage(
   return id;
 }
 
+export type PreparedWhatsAppHttpRequest = Readonly<{
+  url: string;
+  body: string;
+  headers: Readonly<Record<string, string>>;
+}>;
+
+export type WhatsAppOutboundRequestInput =
+  | { kind: 'text'; jid: string; instance: string; text: string; quoted?: QuotedContext | null }
+  | { kind: 'media'; jid: string; instance: string; mediaType: 'image' | 'document' | 'video'; mimeType: string; mediaUrl: string; caption?: string; fileName?: string; quoted?: QuotedContext | null }
+  | { kind: 'audio'; jid: string; instance: string; audioUrl: string; quoted?: QuotedContext | null }
+  | { kind: 'sticker'; jid: string; instance: string; stickerUrl: string; quoted?: QuotedContext | null }
+  | { kind: 'buttons'; jid: string; instance: string; text: string; buttons: ButtonDef[] }
+  | { kind: 'contact'; jid: string; instance: string; contact: { fullName: string; phoneNumber: string; organization?: string } }
+  | { kind: 'list'; jid: string; instance: string; description: string; buttonText: string; sections: unknown[] }
+  | { kind: 'location'; jid: string; instance: string; latitude: number; longitude: number; name?: string; address?: string }
+  | { kind: 'reaction'; jid: string; instance: string; targetMessageId: string; emoji: string; targetFromMe: boolean }
+  | { kind: 'poll'; jid: string; instance: string; name: string; options: string[]; selectableCount: number };
+
+export function prepareWhatsAppHttpRequest(input: WhatsAppOutboundRequestInput): PreparedWhatsAppHttpRequest {
+  const instance = input.instance.trim();
+  if (!instance) throw new Error('OUTBOUND_INSTANCE_MISSING');
+  const number = toWhatsmiauNumber(input.jid);
+  const quoted = 'quoted' in input && input.quoted ? { quoted: buildQuotedPayload(input.quoted) } : {};
+  let endpoint: string;
+  let body: Record<string, unknown>;
+  switch (input.kind) {
+    case 'text': endpoint = 'sendText'; body = { number, text: normalizeWhatsAppTextFormatting(input.text), ...quoted }; break;
+    case 'media': endpoint = 'sendMedia'; body = { number, mediatype: input.mediaType, mimetype: input.mimeType, media: input.mediaUrl, caption: input.caption ? normalizeWhatsAppTextFormatting(input.caption) : undefined, fileName: input.fileName, ...quoted }; break;
+    case 'audio': endpoint = 'sendWhatsAppAudio'; body = { number, audio: input.audioUrl, encoding: true, ...quoted }; break;
+    case 'sticker': endpoint = 'sendSticker'; body = { number, sticker: input.stickerUrl, ...quoted }; break;
+    case 'buttons': endpoint = 'sendButtons'; body = { number, title: '', description: normalizeWhatsAppTextFormatting(input.text), footer: '', buttons: input.buttons.map((button) => ({ type: 'reply', displayText: button.displayText, id: button.id })) }; break;
+    case 'contact': {
+      if (!input.contact.fullName.trim() || !input.contact.phoneNumber.trim()) throw new Error('OUTBOUND_CONTACT_INVALID');
+      endpoint = 'sendContact'; body = { number, contact: [{ fullName: input.contact.fullName, phoneNumber: input.contact.phoneNumber, ...(input.contact.organization ? { organization: input.contact.organization } : {}) }] }; break;
+    }
+    case 'list':
+      if (!input.description.trim() || !input.buttonText.trim() || input.sections.length === 0) throw new Error('OUTBOUND_LIST_INVALID');
+      endpoint = 'sendList'; body = { number, description: input.description, buttonText: input.buttonText, sections: input.sections }; break;
+    case 'location':
+      if (!Number.isFinite(input.latitude) || !Number.isFinite(input.longitude) || input.latitude < -90 || input.latitude > 90 || input.longitude < -180 || input.longitude > 180) throw new Error('OUTBOUND_LOCATION_INVALID');
+      endpoint = 'sendLocation'; body = { number, latitude: input.latitude, longitude: input.longitude, name: input.name, address: input.address }; break;
+    case 'reaction':
+      if (!input.targetMessageId.trim() || !input.emoji.trim()) throw new Error('OUTBOUND_REACTION_INVALID');
+      endpoint = 'sendReaction'; body = { reaction: input.emoji, key: { remoteJid: `${number}@s.whatsapp.net`, id: input.targetMessageId, fromMe: input.targetFromMe } }; break;
+    case 'poll':
+      if (!input.name.trim() || input.options.length === 0 || input.options.some((option) => !option.trim()) || input.selectableCount < 1 || input.selectableCount > input.options.length) throw new Error('OUTBOUND_POLL_EMPTY');
+      endpoint = 'sendPoll'; body = { number, name: input.name, values: input.options, selectableCount: input.selectableCount }; break;
+    default: return assertNeverOutboundRequest(input);
+  }
+  return Object.freeze({ url: `${BASE_URL}/message/${endpoint}/${instance}`, body: JSON.stringify(body), headers: Object.freeze({ ...apiHeaders(), 'Content-Type': 'application/json' }) });
+}
+
+function assertNeverOutboundRequest(input: never): never { throw new Error(`OUTBOUND_REQUEST_UNSUPPORTED:${String((input as { kind?: unknown }).kind)}`); }
+
+export async function sendPreparedWhatsAppHttpRequest(request: PreparedWhatsAppHttpRequest): Promise<string | null> {
+  const response = await axios.post(request.url, request.body, { headers: request.headers });
+  const id = extractWhatsmiauMessageId(response.data) ?? null;
+  trackSent(id ?? undefined);
+  return id;
+}
+
 export async function sendStickerMessage(
   jid: string,
   sticker: string,

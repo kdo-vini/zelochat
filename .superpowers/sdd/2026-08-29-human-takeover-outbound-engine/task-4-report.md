@@ -121,6 +121,62 @@ git diff --check
 exit 0
 ```
 
+## Fix round 2/5
+
+Os nove achados restantes/novos foram corrigidos sem antecipar o dispatcher ou callers da Task 5:
+
+- `start_zelochat_outbound_transport` adquire o gate e o controle canônico, relê o job com lease sob lock e revalida hold, modo e epoch imediatamente antes de `dispatch_started`. Takeover humano ou epoch de IA obsoleto durante o preflight cancela/projeta o job e impede o POST.
+- O CHECK de shape agora é fail-closed para `job_type`, `outbound_origin`, objeto/payload kind e campos obrigatórios da conversa. Uma bridge temporária deriva origin/payload somente para inserts legados de campanha/automação durante rolling deploy; conversa nunca recebe defaults. O mapper não converte origem nula de conversa em `internal_system`; a união TypeScript aceita somente `PersistedOutboundPayload` para conversa e o runtime rejeita mídia com `attachment`/`dataUrl`.
+- O merge da migration 064 preserva primeiro o hold existente do vencedor, depois holds dos perdedores e por fim o job incerto mais antigo. Antes de apagar controles perdedores, projeta `delivery_uncertain` nas mensagens. `release_zelochat_outbound_hold` seleciona deterministicamente a próxima ambiguidade, sem liberar a conversa enquanto outra entrega incerta existir.
+- Storage path é ligado exatamente a `outbound/<empresa_id>/<job_id>/<checksum>` no CHECK SQL, no preflight e no cleanup. O sweeper consulta somente `media|audio|sticker`, estados terminais após grace e `media_cleaned_at is null`, com marcação CAS idempotente.
+- Normalização/validação do JID, formatação, validação por kind e serialização do body ocorrem em `prepareWhatsAppHttpRequest`. Depois do fence, `sendPreparedWhatsAppHttpRequest` executa o request já preparado e interpreta o ID real; JID inválido falha antes do dispatch.
+- Job sem `phone_snapshot` e sem `conversation_jid` terminaliza explicitamente como `failed_before_dispatch`, sem permanecer `queued`/`sending` com zero tentativas.
+- Contact/list/location/reaction/poll retornam erro PT-BR amigável e sem nome/status/resposta técnica; logs guardam somente código/status redigidos.
+- O teste Postgres opt-in usa sessões `psql`, markers e `pg_stat_activity.wait_event_type='Lock'`: cobre claim bloqueado entre candidate/control, takeover entre claim/start e a ordem oposta em que o starter lineariza primeiro. Não usa sleep como sincronização e encerra sessões abertas no cleanup.
+
+### Testes e saídas
+
+Comando focado:
+
+```powershell
+$tests = @(
+  'tests/conversationOutboundWorker.test.ts',
+  'tests/outboundQueue.test.ts',
+  'tests/auditFixGuardrails.test.ts',
+  'tests/crmHardening.test.ts',
+  'tests/customerRollout.test.ts',
+  'tests/conversationControl.test.ts',
+  'tests/conversationOutboundRpc.integration.test.ts'
+)
+foreach ($test in $tests) {
+  npx tsx $test
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+```
+
+Saída:
+
+```text
+conversationOutboundWorker: ok
+outboundQueue: ok
+Audit fix guardrails: 34 pass, 0 fail
+crmHardening: ok
+customerRollout: ok
+Conversation control tests passed
+conversationOutboundRpc integration: SKIP (LOCAL_OUTBOUND_TEST_DATABASE_URL ausente)
+exit 0
+```
+
+Typecheck/lint:
+
+```text
+npm run lint
+> tsc --noEmit
+exit 0
+```
+
+O teste RPC real permaneceu em skip explícito porque não havia credencial Postgres local. Nenhuma migration foi aplicada, e nenhum provider, deploy ou ambiente de produção foi chamado.
+
 ## Concerns
 
 - No `LOCAL_OUTBOUND_TEST_DATABASE_URL` or local `psql` was available, so migration 065 was not applied and the opt-in real-Postgres interleaving test skipped explicitly. Structural lock-order/RPC guardrails are green, but rollout still requires that local transaction test before migration application.

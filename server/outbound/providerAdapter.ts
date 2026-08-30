@@ -3,7 +3,7 @@ import { validateOutboundPayload, type OutboundPayload, type PersistedOutboundPa
 import { normalizeWhatsAppTextFormatting } from '../../src/domain/whatsappFormatting.js';
 import type { OutboundJob } from './queue.js';
 import { createOutboundMediaStore, type PreparedOutboundMedia } from './mediaStore.js';
-import { sendButtonMessage, sendContactMessage, sendListMessage, sendLocationMessage, sendMediaMessage, sendPollMessage, sendReaction, sendStickerMessage, sendTextMessage, sendWhatsAppAudio } from '../whatsapp.js';
+import { prepareWhatsAppHttpRequest, sendPreparedWhatsAppHttpRequest, type PreparedWhatsAppHttpRequest, type WhatsAppOutboundRequestInput } from '../whatsapp.js';
 
 type Payload = OutboundPayload | PersistedOutboundPayload;
 type PersistedMedia = Extract<PersistedOutboundPayload, { storagePath: string }>;
@@ -13,30 +13,12 @@ type MaybeId = Promise<string | null | undefined>;
 interface Contact { fullName: string; phoneNumber: string; organization?: string }
 
 export type ProviderDispatchResult = { state: 'sent'; providerMessageId: string } | { state: 'delivery_uncertain'; reason: 'PROVIDER_MESSAGE_ID_MISSING' };
-export type PreparedProviderDispatch =
-  | { kind: 'text'; job: OutboundJob; payload: Extract<Payload, { kind: 'text' }> }
-  | { kind: 'media'; job: OutboundJob; payload: MediaPayload<'media'>; media: TransportMedia }
-  | { kind: 'audio'; job: OutboundJob; payload: MediaPayload<'audio'>; media: TransportMedia }
-  | { kind: 'sticker'; job: OutboundJob; payload: MediaPayload<'sticker'>; media: TransportMedia }
-  | { kind: 'buttons'; job: OutboundJob; payload: Extract<Payload, { kind: 'buttons' }> }
-  | { kind: 'contact'; job: OutboundJob; payload: Extract<Payload, { kind: 'contact' }>; contact: Contact }
-  | { kind: 'list'; job: OutboundJob; payload: Extract<Payload, { kind: 'list' }> }
-  | { kind: 'location'; job: OutboundJob; payload: Extract<Payload, { kind: 'location' }> }
-  | { kind: 'reaction'; job: OutboundJob; payload: Extract<Payload, { kind: 'reaction' }> }
-  | { kind: 'poll'; job: OutboundJob; payload: Extract<Payload, { kind: 'poll' }> };
+export interface PreparedProviderDispatch { job: OutboundJob; request: PreparedWhatsAppHttpRequest }
 
 export interface ProviderAdapterDependencies {
-  text(job: OutboundJob, payload: Extract<Payload, { kind: 'text' }>): MaybeId;
-  media(job: OutboundJob, payload: MediaPayload<'media'>, media: TransportMedia): MaybeId;
-  audio(job: OutboundJob, payload: MediaPayload<'audio'>, media: TransportMedia): MaybeId;
-  sticker(job: OutboundJob, payload: MediaPayload<'sticker'>, media: TransportMedia): MaybeId;
-  buttons(job: OutboundJob, payload: Extract<Payload, { kind: 'buttons' }>): MaybeId;
-  contact(job: OutboundJob, payload: Extract<Payload, { kind: 'contact' }>, contact: Contact): MaybeId;
-  list(job: OutboundJob, payload: Extract<Payload, { kind: 'list' }>): MaybeId;
-  location(job: OutboundJob, payload: Extract<Payload, { kind: 'location' }>): MaybeId;
-  reaction(job: OutboundJob, payload: Extract<Payload, { kind: 'reaction' }>): MaybeId;
-  poll(job: OutboundJob, payload: Extract<Payload, { kind: 'poll' }>): MaybeId;
-  prepareMedia(payload: PersistedMedia): Promise<PreparedOutboundMedia>;
+  prepareRequest(input: WhatsAppOutboundRequestInput): PreparedWhatsAppHttpRequest;
+  sendPrepared(request: PreparedWhatsAppHttpRequest): MaybeId;
+  prepareMedia(job: OutboundJob, payload: PersistedMedia): Promise<PreparedOutboundMedia>;
 }
 
 function stable(value: unknown): unknown {
@@ -74,20 +56,29 @@ function contactFromVcard(payload: Extract<Payload, { kind: 'contact' }>): Conta
 }
 
 function defaultDependencies(): ProviderAdapterDependencies {
-  const mediaStore = createOutboundMediaStore(); const jid = (job: OutboundJob) => job.conversationJid ?? job.phone ?? '';
+  const mediaStore = createOutboundMediaStore();
   return {
-    text: (job, payload) => sendTextMessage(jid(job), payload.text, job.empresaId, payload.quoted, job.instanceKey),
-    media: (job, payload, media) => sendMediaMessage(jid(job), { mediatype: payload.mimeType.startsWith('image/') ? 'image' : payload.mimeType.startsWith('video/') ? 'video' : 'document', mimetype: payload.mimeType, media: media.transportUrl, caption: payload.caption, fileName: payload.fileName }, job.empresaId, payload.quoted, job.instanceKey),
-    audio: (job, payload, media) => sendWhatsAppAudio(jid(job), media.transportUrl, job.empresaId, payload.quoted, job.instanceKey),
-    sticker: (job, payload, media) => sendStickerMessage(jid(job), media.transportUrl, job.empresaId, payload.quoted, job.instanceKey),
-    buttons: (job, payload) => sendButtonMessage(jid(job), '', payload.text, '', payload.buttons.map((button) => ({ id: button.id, displayText: button.label })), job.empresaId, job.instanceKey),
-    contact: (job, _payload, contact) => sendContactMessage(jid(job), contact, job.empresaId, job.instanceKey),
-    list: (job, payload) => sendListMessage(jid(job), { description: payload.body, buttonText: payload.buttonText, sections: payload.sections as never[] }, job.empresaId, job.instanceKey),
-    location: (job, payload) => sendLocationMessage(jid(job), payload, job.empresaId, job.instanceKey),
-    reaction: (job, payload) => sendReaction(jid(job), payload.targetMessageId, payload.emoji, payload.targetFromMe, job.empresaId, job.instanceKey),
-    poll: (job, payload) => sendPollMessage(jid(job), { name: payload.name, values: payload.options, selectableCount: payload.selectableCount }, job.empresaId, job.instanceKey),
-    prepareMedia: (payload) => mediaStore.prepare(payload),
+    prepareRequest: prepareWhatsAppHttpRequest,
+    sendPrepared: sendPreparedWhatsAppHttpRequest,
+    prepareMedia: (job, payload) => mediaStore.prepare(payload, { empresaId: job.empresaId, jobId: job.id }),
   };
+}
+
+function requestFor(job: OutboundJob, payload: Payload, media?: TransportMedia, contact?: Contact): WhatsAppOutboundRequestInput {
+  const common = { jid: job.conversationJid ?? job.phone ?? '', instance: job.instanceKey };
+  switch (payload.kind) {
+    case 'text': return { ...common, kind: 'text', text: payload.text, quoted: payload.quoted };
+    case 'media': if (!media || !('storagePath' in payload)) throw new Error('OUTBOUND_MEDIA_NOT_PREPARED'); return { ...common, kind: 'media', mediaType: payload.mimeType.startsWith('image/') ? 'image' : payload.mimeType.startsWith('video/') ? 'video' : 'document', mimeType: payload.mimeType, mediaUrl: media.transportUrl, caption: payload.caption, fileName: payload.fileName, quoted: payload.quoted };
+    case 'audio': if (!media || !('storagePath' in payload)) throw new Error('OUTBOUND_MEDIA_NOT_PREPARED'); return { ...common, kind: 'audio', audioUrl: media.transportUrl, quoted: payload.quoted };
+    case 'sticker': if (!media || !('storagePath' in payload)) throw new Error('OUTBOUND_MEDIA_NOT_PREPARED'); return { ...common, kind: 'sticker', stickerUrl: media.transportUrl, quoted: payload.quoted };
+    case 'buttons': return { ...common, kind: 'buttons', text: payload.text, buttons: payload.buttons.map((button) => ({ id: button.id, displayText: button.label })) };
+    case 'contact': if (!contact) throw new Error('OUTBOUND_CONTACT_INVALID'); return { ...common, kind: 'contact', contact };
+    case 'list': return { ...common, kind: 'list', description: payload.body, buttonText: payload.buttonText, sections: payload.sections };
+    case 'location': return { ...common, kind: 'location', latitude: payload.latitude, longitude: payload.longitude, name: payload.name, address: payload.address };
+    case 'reaction': return { ...common, kind: 'reaction', targetMessageId: payload.targetMessageId, emoji: payload.emoji, targetFromMe: payload.targetFromMe };
+    case 'poll': return { ...common, kind: 'poll', name: payload.name, options: payload.options, selectableCount: payload.selectableCount };
+    default: return assertNever(payload);
+  }
 }
 
 export function createProviderAdapter(dependencies: ProviderAdapterDependencies = defaultDependencies()) {
@@ -99,34 +90,21 @@ export function createProviderAdapter(dependencies: ProviderAdapterDependencies 
         if (!('storagePath' in payload)) throw new Error('OUTBOUND_MEDIA_NOT_PERSISTED');
         if (payload.kind === 'audio' && typeof payload.ptt !== 'boolean') throw new Error('OUTBOUND_AUDIO_PTT_INVALID');
         if (payload.kind === 'media' && payload.caption != null && typeof payload.caption !== 'string') throw new Error('OUTBOUND_MEDIA_CAPTION_INVALID');
-        const preparedMedia = await dependencies.prepareMedia(payload);
+        const preparedMedia = await dependencies.prepareMedia(job, payload);
         const fingerprint = await fingerprintOutboundPayload(payload, preparedMedia);
         if (job.payloadFingerprint && job.payloadFingerprint !== fingerprint) throw new Error('OUTBOUND_PAYLOAD_FINGERPRINT_MISMATCH');
         const media: TransportMedia = { mimeType: preparedMedia.mimeType, transportUrl: preparedMedia.transportUrl };
-        return { kind: payload.kind, job, payload, media } as PreparedProviderDispatch;
+        return { job, request: dependencies.prepareRequest(requestFor(job, payload, media)) };
       }
       const validationError = validateOutboundPayload(payload);
       if (validationError) throw new Error(validationError);
       const fingerprint = await fingerprintOutboundPayload(payload);
       if (job.payloadFingerprint && job.payloadFingerprint !== fingerprint) throw new Error('OUTBOUND_PAYLOAD_FINGERPRINT_MISMATCH');
-      if (payload.kind === 'contact') return { kind: 'contact', job, payload, contact: contactFromVcard(payload) };
-      return { kind: payload.kind, job, payload } as PreparedProviderDispatch;
+      const contact = payload.kind === 'contact' ? contactFromVcard(payload) : undefined;
+      return { job, request: dependencies.prepareRequest(requestFor(job, payload, undefined, contact)) };
     },
     async send(prepared: PreparedProviderDispatch): Promise<ProviderDispatchResult> {
-      let id: string | null | undefined;
-      switch (prepared.kind) {
-        case 'text': id = await dependencies.text(prepared.job, prepared.payload); break;
-        case 'media': id = await dependencies.media(prepared.job, prepared.payload, prepared.media); break;
-        case 'audio': id = await dependencies.audio(prepared.job, prepared.payload, prepared.media); break;
-        case 'sticker': id = await dependencies.sticker(prepared.job, prepared.payload, prepared.media); break;
-        case 'buttons': id = await dependencies.buttons(prepared.job, prepared.payload); break;
-        case 'contact': id = await dependencies.contact(prepared.job, prepared.payload, prepared.contact); break;
-        case 'list': id = await dependencies.list(prepared.job, prepared.payload); break;
-        case 'location': id = await dependencies.location(prepared.job, prepared.payload); break;
-        case 'reaction': id = await dependencies.reaction(prepared.job, prepared.payload); break;
-        case 'poll': id = await dependencies.poll(prepared.job, prepared.payload); break;
-        default: return assertNever(prepared);
-      }
+      const id = await dependencies.sendPrepared(prepared.request);
       return id?.trim() ? { state: 'sent', providerMessageId: id } : { state: 'delivery_uncertain', reason: 'PROVIDER_MESSAGE_ID_MISSING' };
     },
   };

@@ -7,8 +7,12 @@ import { getCrmRolloutFlags, isOutboundJobAllowed } from '../customers/rollout.j
 import { createProviderAdapter, type ProviderAdapter, type ProviderDispatchResult } from './providerAdapter.js';
 import { cleanupTerminalOutboundMedia } from './mediaStore.js';
 
-const originFor = (jobType: OutboundJob['jobType'], value?: string | null): OutboundOrigin =>
-  (value ?? (jobType === 'automation' ? 'automation' : jobType === 'campaign' ? 'campaign' : 'internal_system')) as OutboundOrigin;
+const originFor = (jobType: OutboundJob['jobType'], value?: string | null): OutboundOrigin => {
+  if (value) return value as OutboundOrigin;
+  if (jobType === 'automation') return 'automation';
+  if (jobType === 'campaign') return 'campaign';
+  throw new Error('OUTBOUND_ORIGIN_MISSING');
+};
 
 function mapRow(row: Record<string, any>): OutboundJob {
   const jobType = (row.job_type ?? 'campaign') as OutboundJob['jobType'];
@@ -50,6 +54,7 @@ export function createSupabaseOutboundJobStore(): OutboundJobStore {
       assertQueueablePayload(payload);
       if (/"data:[^"\\]*,/i.test(JSON.stringify(payload))) throw new Error('OUTBOUND_PAYLOAD_DATA_URL_FORBIDDEN');
       const { data, error } = await db.from('zelochat_outbound_jobs').upsert({
+        ...(input.id ? { id: input.id } : {}),
         empresa_id: input.empresaId,
         campaign_id: input.campaignId ?? null,
         recipient_id: isAutomation ? null : input.recipientId ?? null,
@@ -146,7 +151,7 @@ export class OutboundWorker {
 
   constructor(private readonly deps: OutboundWorkerDependencies) {
     this.transport = deps.transport ?? (deps.send
-      ? { prepare: async (job) => ({ kind: 'text' as const, job, payload: { kind: 'text' as const, text: job.text } }), send: async (prepared): Promise<ProviderDispatchResult> => {
+      ? { prepare: async (job) => ({ job, request: { url: 'test://legacy-send', body: '{}', headers: {} } }), send: async (prepared): Promise<ProviderDispatchResult> => {
           const job = prepared.job;
           const id = await deps.send!(job.conversationJid ?? job.phone ?? '', job.text, job.empresaId);
           return id ? { state: 'sent', providerMessageId: id } : { state: 'delivery_uncertain', reason: 'PROVIDER_MESSAGE_ID_MISSING' };
@@ -157,7 +162,11 @@ export class OutboundWorker {
   async runOnce(workerId = `outbound-worker-${process.pid}`): Promise<boolean> {
     await this.deps.queue.releaseExpired();
     const job = await this.deps.queue.claim(workerId);
-    if (!job || (!job.phone && !job.conversationJid)) return false;
+    if (!job) return false;
+    if (!job.phone && !job.conversationJid) {
+      await this.deps.queue.failBeforeDispatch(job, 'Destinatário ausente para envio.');
+      return false;
+    }
 
     if (job.jobType !== 'conversation') {
       try {

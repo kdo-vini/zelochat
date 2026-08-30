@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import axios from 'axios';
 import { readFileSync } from 'node:fs';
 import type { PersistedOutboundPayload } from '../src/domain/outbound.js';
-import { OutboundQueue, type OutboundJob, type OutboundJobInput, type OutboundJobStore } from '../server/outbound/queue.js';
+import { OutboundQueue, assertOutboundJobShape, type OutboundJob, type OutboundJobInput, type OutboundJobStore } from '../server/outbound/queue.js';
 import { OutboundWorker, canUseAutomationPhoneSnapshot } from '../server/outbound/worker.js';
 import { createProviderAdapter, fingerprintOutboundPayload, type ProviderDispatchResult } from '../server/outbound/providerAdapter.js';
 import { createOutboundMediaStore, type OutboundMediaStorage } from '../server/outbound/mediaStore.js';
+import { prepareWhatsAppHttpRequest } from '../server/whatsapp.js';
 
 process.on('uncaughtException', (error) => { console.error(error); process.exit(1); });
 process.on('unhandledRejection', (error) => { console.error(error); process.exit(1); });
@@ -23,6 +24,7 @@ const conversationJob = (overrides: Partial<OutboundJob> = {}): OutboundJob => (
 } as OutboundJob);
 
 assert.equal(canUseAutomationPhoneSnapshot({ ...conversationJob(), jobType: 'automation', origin: 'automation', phone: '5511999999999' } as OutboundJob, null), true);
+assert.throws(() => assertOutboundJobShape(conversationJob({ payload: { kind: 'media', attachment: { type: 'image', mimeType: 'image/png', fileName: 'raw.png', dataUrl: 'data:image/png;base64,eA==' } } } as Partial<OutboundJob>)), /OUTBOUND_CONVERSATION_PAYLOAD_NOT_PERSISTED|OUTBOUND_MEDIA_NOT_QUEUEABLE/);
 
 class SharedLeaseStore implements OutboundJobStore {
   readonly rows = new Map<string, OutboundJob>();
@@ -64,6 +66,12 @@ class SharedLeaseStore implements OutboundJobStore {
   }
   async startTransport(id: string, empresaId: string, leaseOwner: string): Promise<boolean> {
     const row = this.rows.get(id); if (!row || row.empresaId !== empresaId || row.leaseOwner !== leaseOwner || row.status !== 'sending') return false;
+    if (row.conversationControlId) {
+      const control = this.controls.get(row.conversationControlId);
+      const held = Boolean(control?.holdJobId);
+      const staleAi = (row.origin === 'ai_auto' || row.origin === 'ai_followup') && (!control || control.mode !== 'ai' || control.epoch !== row.controlEpoch);
+      if (held || staleAi) { Object.assign(row, { status: 'cancelled', suppressionReason: held ? 'delivery_uncertain_hold' : control?.mode !== 'ai' ? 'paused' : 'stale_epoch', leaseOwner: null, leaseExpiresAt: null }); return false; }
+    }
     row.status = 'dispatch_started'; row.attempts += 1; this.observeActive(row.conversationControlId); return true;
   }
   async markSent(id: string, providerMessageId: string, empresaId?: string, leaseOwner?: string): Promise<boolean> {
@@ -102,7 +110,7 @@ class RecordingTransport {
   block(id: string): void { this.blockers.set(id, new Promise((resolve) => this.releases.set(id, resolve))); }
   release(id: string): void { this.releases.get(id)?.(); }
   callsFor(key: string): number { return this.calls.filter((call) => call === key).length; }
-  async prepare(job: OutboundJob) { return { kind: 'text' as const, job, payload: { kind: 'text' as const, text: job.text } }; }
+  async prepare(job: OutboundJob) { return { job, request: { url: 'https://provider.test/send', body: JSON.stringify({ text: job.text }), headers: {} } }; }
   async send(prepared: { job: OutboundJob }): Promise<ProviderDispatchResult> {
     const job = prepared.job;
     this.calls.push(`${job.empresaId}:${job.id}`); await this.blockers.get(job.id); return { state: 'sent', providerMessageId: `provider-${job.id}` };
@@ -159,6 +167,36 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) });
   assert.equal(await outboundWorker.runOnce('preflight'), false);
   assert.equal(store.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(store.rows.get('j1')?.attempts, 0);
+}
+
+// A takeover committed while deterministic preflight runs is revalidated by startTransport.
+{
+  phase = 'takeover during preflight';
+  const store = new SharedLeaseStore([conversationJob({ origin: 'ai_auto', controlEpoch: '7' })], { 'control-1': { mode: 'ai', epoch: '7', holdJobId: null } });
+  let posts = 0;
+  const transport = {
+    async prepare(job: OutboundJob) { store.controls.set('control-1', { mode: 'human', epoch: '8', holdJobId: null }); return { job, request: { url: 'https://provider.test/send', body: '{}', headers: {} } }; },
+    async send(): Promise<ProviderDispatchResult> { posts++; return { state: 'sent', providerMessageId: 'must-not-send' }; },
+  };
+  const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) });
+  assert.equal(await outboundWorker.runOnce('takeover'), false); assert.equal(posts, 0);
+  assert.equal(store.rows.get('j1')?.status, 'cancelled'); assert.equal(store.rows.get('j1')?.suppressionReason, 'paused');
+}
+
+// JID/body validation is part of prepare and missing recipients cannot remain queued forever.
+{
+  phase = 'preflight recipient validation';
+  let posts = 0;
+  const textFingerprint = await fingerprintOutboundPayload({ kind: 'text', text: 'Olá' });
+  const invalidStore = new SharedLeaseStore([conversationJob({ conversationJid: 'invalid-jid', payloadFingerprint: textFingerprint })], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null } });
+  const adapter = createProviderAdapter({ prepareRequest: prepareWhatsAppHttpRequest, sendPrepared: async () => { posts++; return 'unexpected'; }, prepareMedia: async () => { throw new Error('unexpected media'); } });
+  assert.equal(await new OutboundWorker({ queue: new OutboundQueue(invalidStore), transport: adapter, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) }).runOnce('invalid-jid'), false);
+  assert.equal(invalidStore.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(posts, 0);
+
+  const missing = { ...conversationJob(), jobType: 'campaign', origin: 'campaign', conversationControlId: undefined, conversationJid: undefined, phone: null } as OutboundJob;
+  const missingStore = new SharedLeaseStore([missing]);
+  assert.equal(await worker(missingStore, new RecordingTransport()).runOnce('missing-recipient'), false);
+  assert.equal(missingStore.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(missingStore.rows.get('j1')?.attempts, 0);
 }
 
 // Only pre-transport expiry retries; post-linearization becomes uncertain without a second POST.
@@ -233,16 +271,20 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   const persisted = await mediaStore.persistPayload({ empresaId: 'e1', jobId: 'j-media', payload: { kind: 'media', attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,aGVsbG8=' } } });
   assert.equal(JSON.stringify(persisted).includes('data:'), false);
   assert.match((persisted as PersistedMediaPayload).storagePath, /^outbound\/e1\/j-media\/[a-f0-9]{64}$/);
-  const materialized = await mediaStore.prepare(persisted as PersistedMediaPayload); assert.equal(Buffer.from(materialized.bytes).toString(), 'hello'); assert.match(materialized.transportUrl, /^https:\/\//);
-  assert.equal(await mediaStore.cleanupTerminal(persisted as PersistedMediaPayload, { terminalAtMs: 1_000, graceMs: 5_000, nowMs: 5_999 }), false);
-  assert.equal(await mediaStore.cleanupTerminal(persisted as PersistedMediaPayload, { terminalAtMs: 1_000, graceMs: 5_000, nowMs: 6_000 }), true); assert.equal(removed.length, 1);
+  const binding = { empresaId: 'e1', jobId: 'j-media' };
+  const materialized = await mediaStore.prepare(persisted as PersistedMediaPayload, binding); assert.equal(Buffer.from(materialized.bytes).toString(), 'hello'); assert.match(materialized.transportUrl, /^https:\/\//);
+  await assert.rejects(mediaStore.prepare(persisted as PersistedMediaPayload, { empresaId: 'other', jobId: 'j-media' }), /OUTBOUND_MEDIA_STORAGE_PATH_INVALID/);
+  assert.equal(await mediaStore.cleanupTerminal(persisted as PersistedMediaPayload, binding, { terminalAtMs: 1_000, graceMs: 5_000, nowMs: 5_999 }), false);
+  assert.equal(await mediaStore.cleanupTerminal(persisted as PersistedMediaPayload, binding, { terminalAtMs: 1_000, graceMs: 5_000, nowMs: 6_000 }), true); assert.equal(removed.length, 1);
 }
 
 // Fingerprints normalize text, and 2xx/void/missing ID is delivery_uncertain.
 {
   phase = 'fingerprints';
   assert.equal(await fingerprintOutboundPayload({ kind: 'text', text: 'Olá\r\n' }), await fingerprintOutboundPayload({ kind: 'text', text: 'Olá\n' }));
-  const adapter = createProviderAdapter({ text: async () => undefined, media: async () => undefined, audio: async () => undefined, sticker: async () => undefined, buttons: async () => undefined, contact: async () => undefined, list: async () => undefined, location: async () => undefined, reaction: async () => undefined, poll: async () => undefined, prepareMedia: async () => ({ bytes: new Uint8Array(), transportUrl: 'https://media.example.test/a', mimeType: 'application/octet-stream' }) });
+  const preparedRequest = prepareWhatsAppHttpRequest({ kind: 'text', jid: '5511999999999@s.whatsapp.net', instance: 'instance-1', text: '**Olá**' });
+  assert.equal(JSON.parse(preparedRequest.body).text, '*Olá*');
+  const adapter = createProviderAdapter({ prepareRequest: prepareWhatsAppHttpRequest, sendPrepared: async () => undefined, prepareMedia: async () => ({ bytes: new Uint8Array(), transportUrl: 'https://media.example.test/a', mimeType: 'application/octet-stream' }) });
   assert.deepEqual(await adapter.send(await adapter.prepare(conversationJob({ payloadFingerprint: '' }))), { state: 'delivery_uncertain', reason: 'PROVIDER_MESSAGE_ID_MISSING' });
 }
 
@@ -261,6 +303,14 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert(sql.includes('zelochat_outbound_jobs_payload_no_data_url'));
   assert(sql.includes('zelochat_outbound_jobs_conversation_shape_check'));
   assert(sql.includes('zelochat_outbound_jobs_media_shape_check'));
+  const rollingBridge = sql.slice(sql.indexOf('create or replace function public.zelochat_outbound_job_rolling_bridge'), sql.indexOf('alter table public.zelochat_outbound_jobs drop constraint if exists zelochat_outbound_jobs_conversation_shape_check'));
+  assert(rollingBridge.includes("new.job_type in ('campaign', 'automation')"));
+  assert(!rollingBridge.includes("new.job_type = 'conversation'"));
+  assert(rollingBridge.includes("jsonb_build_object('kind', 'text', 'text', coalesce(new.message, ''))"));
+  assert(sql.includes("payload->>'storagePath' = 'outbound/' || empresa_id::text || '/' || id::text"));
+  assert(sql.includes('create or replace function public.release_zelochat_outbound_hold'));
+  const releaseHold = sql.slice(sql.indexOf('create or replace function public.release_zelochat_outbound_hold'), sql.indexOf('create or replace function public.suppress_zelochat_outbound_job'));
+  assert(releaseHold.includes("j.status = 'delivery_uncertain'")); assert(releaseHold.includes('order by j.transport_started_at nulls last, j.created_at, j.id'));
   assert(sql.includes("set outbound_status = 'cancelled', outbound_error = null"));
   assert(sql.indexOf('attempts = j.attempts + 1') > sql.indexOf('create or replace function public.start_zelochat_outbound_transport'));
   for (const name of ['start_zelochat_outbound_transport', 'complete_zelochat_outbound_job', 'fail_zelochat_outbound_job', 'suppress_zelochat_outbound_job']) {
@@ -270,6 +320,16 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   }
   const mergeSql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');
   assert(mergeSql.includes("hold_reason = 'delivery_uncertain', hold_job_id = v_uncertain_hold_job_id"));
+  assert(mergeSql.includes('v_winner_hold_job_id'));
+  assert(mergeSql.includes("set outbound_status = 'delivery_uncertain', outbound_error = 'Não foi possível confirmar a entrega.'"));
+  const start = sql.slice(sql.indexOf('create or replace function public.start_zelochat_outbound_transport'), sql.indexOf('create or replace function public.complete_zelochat_outbound_job'));
+  assert(start.includes('v_control.hold_job_id is not null'));
+  assert(start.includes("v_control.mode <> 'ai' or v_job.control_epoch is distinct from v_control.epoch"));
+  const mediaSource = readFileSync('server/outbound/mediaStore.ts', 'utf8');
+  assert(mediaSource.includes(".in('payload->>kind', ['media','audio','sticker'])"));
+  const integrationSource = readFileSync('tests/conversationOutboundRpc.integration.test.ts', 'utf8');
+  assert(!integrationSource.includes('pg_sleep')); assert(!integrationSource.includes('setTimeout'));
+  assert(integrationSource.includes("wait_event_type='Lock'"));
 }
 
 console.log('conversationOutboundWorker: ok');

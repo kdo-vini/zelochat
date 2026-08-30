@@ -29,6 +29,9 @@ assert(router.includes('createAssistantMessageIntent'), 'manual sends persist an
 assert(router.includes('markAssistantMessageSendFailed'), 'manual send failures are persisted');
 assert(router.includes('serializeManualSendError'), 'manual send provider failures return a controlled API error');
 assert(!router.includes('...(payload.providerStatus ? { providerStatus: payload.providerStatus } : {})'), 'manual send errors do not expose provider status to the frontend');
+for (const routeContext of ['send contact failed','send list failed','send location failed','send reaction failed','send poll failed']) {
+  assert(router.includes(`sendFriendlyOutboundRouteError(res, '${routeContext}', error)`), `${routeContext} returns a friendly redacted error`);
+}
 assert(router.includes('WhatsApp sent, but failed to mark DB message as sent'), 'manual sends do not turn post-send DB status failures into 500s');
 
 const whatsapp = read('server/whatsapp.ts');

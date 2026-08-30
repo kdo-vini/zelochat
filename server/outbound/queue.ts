@@ -23,8 +23,8 @@ interface OutboundJobInputBase {
   controlEpoch?: string;
 }
 export type OutboundJobInput =
-  | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: 'ai_auto' | 'ai_followup'; payload: OutboundPayload | PersistedOutboundPayload; payloadFingerprint: string; controlEpoch: string })
-  | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: Exclude<OutboundOrigin, 'campaign' | 'automation' | 'ai_auto' | 'ai_followup'>; payload: OutboundPayload | PersistedOutboundPayload; payloadFingerprint: string; controlEpoch?: string })
+  | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: 'ai_auto' | 'ai_followup'; payload: PersistedOutboundPayload; payloadFingerprint: string; controlEpoch: string })
+  | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: Exclude<OutboundOrigin, 'campaign' | 'automation' | 'ai_auto' | 'ai_followup'>; payload: PersistedOutboundPayload; payloadFingerprint: string; controlEpoch?: string })
   | (OutboundJobInputBase & { jobType?: 'campaign'; origin?: 'campaign' | 'internal_system' })
   | (OutboundJobInputBase & { jobType: 'automation'; origin?: 'automation' | 'internal_system' });
 
@@ -59,6 +59,7 @@ type ConversationJobBase = StoredOutboundJobBase & {
   conversationJid: string;
   origin: Exclude<OutboundOrigin, 'campaign' | 'automation'>;
   payloadFingerprint: string;
+  payload: PersistedOutboundPayload;
 };
 export type ConversationOutboundJob =
   | (ConversationJobBase & { origin: 'ai_auto' | 'ai_followup'; controlEpoch: string })
@@ -101,6 +102,8 @@ export function assertOutboundJobShape(job: OutboundJob): void {
     if (!job.conversationControlId || !job.conversationJid || !job.origin || !job.payloadFingerprint) throw new Error('OUTBOUND_CONVERSATION_SHAPE_INVALID');
     if (['campaign','automation'].includes(job.origin as string)) throw new Error('OUTBOUND_CONVERSATION_ORIGIN_INVALID');
     if ((job.origin === 'ai_auto' || job.origin === 'ai_followup') && !job.controlEpoch) throw new Error('OUTBOUND_CONVERSATION_EPOCH_REQUIRED');
+    const payload = job.payload as unknown as Record<string, unknown>;
+    if (['media','audio','sticker'].includes(String(payload.kind)) && ('attachment' in payload || 'dataUrl' in payload)) throw new Error('OUTBOUND_CONVERSATION_PAYLOAD_NOT_PERSISTED');
   }
   if (job.jobType === 'campaign' && !['campaign','internal_system'].includes(job.origin)) throw new Error('OUTBOUND_CAMPAIGN_ORIGIN_INVALID');
   if (job.jobType === 'automation' && !['automation','internal_system'].includes(job.origin)) throw new Error('OUTBOUND_AUTOMATION_ORIGIN_INVALID');

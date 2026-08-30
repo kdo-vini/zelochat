@@ -299,6 +299,14 @@ function serializeManualSendError(error: unknown): {
   };
 }
 
+function sendFriendlyOutboundRouteError(res: Response, context: string, error: unknown): void {
+  const safeLog = axios.isAxiosError(error)
+    ? { code: error.code ?? 'HTTP_ERROR', status: error.response?.status ?? null }
+    : { code: error instanceof Error ? error.name : 'UNKNOWN_ERROR' };
+  console.error(`[Router] ${context}:`, safeLog);
+  res.status(502).json({ error: 'Não foi possível enviar essa mensagem agora. Tente novamente em alguns instantes.' });
+}
+
 async function resolveTechneEmpresaProfile(): Promise<{ id: string; internalKeyHash: string | null }> {
   const fromEnv = (process.env.TECHNE_EMPRESA_ID || '').trim();
   if (fromEnv) {
@@ -1551,8 +1559,7 @@ router.post('/api/send-contact', express.json({ limit: '50kb' }), async (req: Re
       sendAuthError(res, error);
       return;
     }
-    console.error('[Router] Send contact error:', error);
-    res.status(500).json({ error: error.message });
+    sendFriendlyOutboundRouteError(res, 'send contact failed', error);
   }
 });
 
@@ -3345,7 +3352,7 @@ router.post('/api/send/list', async (req: Request, res: Response) => {
       sendAuthError(res, error);
       return;
     }
-    res.status(500).json({ error: error.message });
+    sendFriendlyOutboundRouteError(res, 'send list failed', error);
   }
 });
 
@@ -3366,7 +3373,7 @@ router.post('/api/send/location', async (req: Request, res: Response) => {
       sendAuthError(res, error);
       return;
     }
-    res.status(500).json({ error: error.message });
+    sendFriendlyOutboundRouteError(res, 'send location failed', error);
   }
 });
 
@@ -3387,7 +3394,7 @@ router.post('/api/send/reaction', async (req: Request, res: Response) => {
       sendAuthError(res, error);
       return;
     }
-    res.status(500).json({ error: error.message });
+    sendFriendlyOutboundRouteError(res, 'send reaction failed', error);
   }
 });
 
@@ -3408,7 +3415,7 @@ router.post('/api/send/poll', async (req: Request, res: Response) => {
       sendAuthError(res, error);
       return;
     }
-    res.status(500).json({ error: error.message });
+    sendFriendlyOutboundRouteError(res, 'send poll failed', error);
   }
 });
 

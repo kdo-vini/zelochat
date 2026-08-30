@@ -205,6 +205,7 @@ declare
   v_duplicate_count integer := 0;
   v_any_human boolean := false;
   v_next_epoch bigint := 0;
+  v_winner_hold_job_id uuid;
   v_uncertain_hold_job_id uuid;
   v_now timestamptz := now();
 begin
@@ -369,6 +370,9 @@ begin
   for update;
 
   v_winner_control_id := coalesce(v_existing_control_id, v_duplicate_control_ids[1]);
+  select c.hold_job_id into v_winner_hold_job_id
+    from public.zelochat_conversation_ai_control c
+   where c.empresa_id = p_empresa_id and c.id = v_winner_control_id;
 
   select
     bool_or(c.mode = 'human'),
@@ -406,6 +410,25 @@ begin
        and j.status in ('sending','dispatch_started')
        returning j.id
     ) select id into v_uncertain_hold_job_id from uncertain order by id limit 1;
+
+    update public.zelochat_messages m
+       set outbound_status = 'delivery_uncertain', outbound_error = 'Não foi possível confirmar a entrega.'
+      from public.zelochat_outbound_jobs j
+     where j.empresa_id = p_empresa_id
+       and j.conversation_control_id = any(v_duplicate_control_ids)
+       and j.status = 'delivery_uncertain'
+       and j.message_id = m.id and m.empresa_id = p_empresa_id;
+
+    select coalesce(
+      v_winner_hold_job_id,
+      (select c.hold_job_id from public.zelochat_conversation_ai_control c
+        where c.empresa_id = p_empresa_id and c.id = any(v_duplicate_control_ids)
+          and c.id <> v_winner_control_id and c.hold_job_id is not null order by c.id limit 1),
+      (select j.id from public.zelochat_outbound_jobs j
+        where j.empresa_id = p_empresa_id and j.conversation_control_id = any(v_duplicate_control_ids)
+          and j.status = 'delivery_uncertain'
+        order by j.transport_started_at nulls last, j.created_at, j.id limit 1)
+    ) into v_uncertain_hold_job_id;
 
     update public.zelochat_sessions s
        set conversation_control_id = v_winner_control_id
