@@ -3,6 +3,12 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Clientes CRM — hábitos de pedido (2026-08-30)
+
+- ✅ CRM-ORDER-CONTEXT-005 — a ficha não reunia preferências recorrentes de atendimento e exigia releitura manual do histórico → contexto determinístico consulta somente os 20 pedidos canônicos comprometidos mais recentes por empresa/pessoa, informa a origem de cada campo e aplica padrões explícitos sem preencher itens automaticamente — `server/customers/orderingContext.ts:1`, `server/customers/orderingContextAdapter.ts:1`
+- ✅ CRM-ORDER-OVERRIDES-005 — não havia edição segura de padrões do cliente → PATCH allowlisted permite fixar ou remover tipo, endereço, pagamento e horário, exige `pessoas.gerenciar` e confirma empresa, owner e pessoa antes de persistir — `server/customers/orderingContextRouter.ts:1`, `src/services/customerApi.ts:1`
+- ✅ CRM-ORDER-UI-005 — hábitos e sua procedência não apareciam na ficha → seção responsiva e acessível “Hábitos de pedido” distingue Fixado, Último pedido e Calculado, com ações de fixar/remover apenas para quem pode gerenciar — `src/components/customers/CustomerSummaryTab.tsx:1`, `src/components/customers/CustomerDetail.tsx:1`
+
 ### Clientes CRM — rollout (2026-08-26)
 
 - ✅ CRM-ROLLOUT-045 — CRM ainda passava por flag de rollout, contrariando sua inclusão no plano → `Clientes`, APIs, painel operacional e fallback de acesso agora tratam CRM como capacidade sempre disponível para assinaturas válidas; a tabela de flags fica restrita a campanhas/automações — `server/customers/rollout.ts:9`, `src/domain/navigation.ts:50`, `src/AppShell.tsx:152`, `supabase/migrations/062_retire_crm_rollout_gate.sql:1`

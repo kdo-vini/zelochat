@@ -121,6 +121,13 @@ server/
   drivers.ts      # Driver CRUD against Supabase
 ```
 
+### CustomerOrderingContext — contexto de pedido do cliente
+
+- `server/customers/orderingContext.ts` é o módulo profundo e determinístico; seu adapter de produção fica em `orderingContextAdapter.ts`. A leitura do histórico usa exclusivamente `zelo_orders` com `zelo_order_items` aninhados, sempre filtrada por `empresa_id` + `pessoa_id`, limitada aos 20 pedidos mais recentes nos estados comprometidos `accepted|preparing|ready|out_for_delivery|delivered`.
+- Nunca inclua `pending_payment`, `pending_review`, `rejected` ou `cancelled` nos hábitos, nunca leia nem copie de `zelochat_orders` e nunca materialize um novo pedido para formar contexto.
+- Tipo de atendimento, endereço e pagamento seguem a precedência `override fixado > último pedido > ausente`. Horário habitual e recorrência são medianas determinísticas; itens frequentes são calculados por `product_id` canônico, servem só como sugestão e **nunca** viram itens padrão automaticamente.
+- Overrides vivem em `zelochat_customer_relationships.ordering_overrides`. O PATCH aceita somente `fulfillmentType`, `deliveryAddress`, `paymentMethod` e `habitualTime`, permite `null` para remover um campo e exige `pessoas.gerenciar` mais validação de empresa/owner/pessoa.
+
 ## Stack
 
 - **Frontend**: React + Vite + TypeScript + Tailwind + Motion (framer)

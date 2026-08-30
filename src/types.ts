@@ -76,6 +76,105 @@ export interface CustomerSummary {
   openBalance?: number | null;
 }
 
+export type CustomerOrderingContextSource = 'fixed' | 'last_order' | 'derived' | 'none';
+
+export interface CustomerOrderingContextField<T> {
+  value: T | null;
+  source: CustomerOrderingContextSource;
+}
+
+export interface CustomerOrderingAddress {
+  address: string;
+  neighborhood: string | null;
+  complement: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  reference: string | null;
+  display: string;
+}
+
+export interface CustomerOrderingHabitualTime {
+  minutes: number;
+  label: string;
+}
+
+export interface CustomerOrderingFrequentItem {
+  productId: string;
+  name: string;
+  orderFrequency: number;
+  totalQuantity: number;
+}
+
+export interface CustomerOrderingModifierOption {
+  id: string;
+  name: string;
+  priceDelta: number;
+  quantity: number;
+}
+
+export interface CustomerOrderingModifierGroup {
+  id: string;
+  name: string;
+  kind: 'adicional' | 'variacao';
+  options: CustomerOrderingModifierOption[];
+}
+
+export interface CustomerOrderingLastOrderItem {
+  id: string;
+  productId: string | null;
+  name: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  position: number;
+  modifiers: CustomerOrderingModifierGroup[];
+}
+
+export interface CustomerOrderingLastOrder {
+  id: string;
+  status: 'accepted' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered';
+  createdAt: string;
+  closedAt: string | null;
+  fulfillment: {
+    type: 'delivery' | 'pickup' | null;
+    pickupDate: string | null;
+    pickupTime: string | null;
+    address: CustomerOrderingAddress | null;
+  };
+  payment: {
+    declaredMethod: string | null;
+    pixReceiptRequired: boolean;
+    pixReceiptApproved: boolean;
+  };
+  totals: {
+    subtotal: number;
+    deliveryFee: number;
+    discount: number;
+    total: number;
+  };
+  observations: string | null;
+  items: CustomerOrderingLastOrderItem[];
+}
+
+export interface CustomerOrderingOverrides {
+  fulfillmentType?: 'delivery' | 'pickup';
+  deliveryAddress?: Pick<CustomerOrderingAddress, 'address'> & Partial<Omit<CustomerOrderingAddress, 'address' | 'display'>>;
+  paymentMethod?: string;
+  habitualTime?: string;
+}
+
+export interface CustomerOrderingContextSnapshot {
+  fulfillmentType: CustomerOrderingContextField<'delivery' | 'pickup'>;
+  deliveryAddress: CustomerOrderingContextField<CustomerOrderingAddress>;
+  paymentMethod: CustomerOrderingContextField<string>;
+  habitualTime: CustomerOrderingContextField<CustomerOrderingHabitualTime>;
+  medianRecurrenceDays: CustomerOrderingContextField<number>;
+  frequentItems: CustomerOrderingContextField<CustomerOrderingFrequentItem[]>;
+  lastOrder: CustomerOrderingContextField<CustomerOrderingLastOrder>;
+  overrides: CustomerOrderingOverrides;
+}
+
 export interface CustomerDetail extends CustomerSummary {
   aniversario: {
     day: number;
@@ -94,6 +193,7 @@ export interface CustomerDetail extends CustomerSummary {
   relationship?: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
   orders?: Array<{ id: string; createdAt: string; status: string; total: number }>;
   primaryJid?: string | null;
+  orderingContext?: CustomerOrderingContextSnapshot;
 }
 
 export interface CustomerFilters {

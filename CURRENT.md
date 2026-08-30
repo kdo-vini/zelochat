@@ -34,6 +34,11 @@
 - **Rodada de auditoria Tasks 5–8 corrigida:** consumidores de pedidos fazem preflight/fallback somente para contrato PDV ausente; dry-run não chama RPC mutante; fontes seguem `pdv|whatsapp|zelomenu|manual`; conflitos são deduplicados; vínculos existentes não são apagados em falhas; filtros/cursors/timeline CRM foram endurecidos contra injeção e empates. Commits `85af077` e `ecd2100`. Gate B/C de dados concluídos; resta validação visual publicada e decisão de expansão.
 - **Rereview final corrigida:** fallback exige assinatura/coluna exata; migration `050_customer_read_aggregates_and_conflict_dedupe.sql` instala upsert transacional de conflitos, RPC de listagem com atividade/tag antes do keyset e timeline global `(occurred_at, kind, id)`, tudo server-only. Commit `1857d3b`; aplicação/verificação Gate A e pilotos Gate B/C concluídas.
 
+## Clientes CRM — hábitos de pedido (2026-08-30)
+
+- **Task 5 concluída:** a ficha do cliente ganhou `CustomerOrderingContext`, derivado deterministicamente dos 20 pedidos canônicos comprometidos mais recentes (`accepted`, `preparing`, `ready`, `out_for_delivery`, `delivered`) por empresa e pessoa. Tipo, endereço e pagamento respeitam `fixado > último pedido > ausente`; horário e recorrência usam mediana; itens frequentes são apenas apoio visual e nunca entram automaticamente em um pedido.
+- Overrides parciais ficam no relacionamento do cliente, aceitam somente tipo, endereço, pagamento e horário, podem ser removidos campo a campo e exigem `pessoas.gerenciar` com isolamento de tenant. A implementação não copia pedidos, não lê `zelochat_orders` e mantém `zelo_orders`/`zelo_order_items` como fonte canônica.
+
 ## Contrato de visibilidade do catálogo (2026-08-24)
 
 - `produtos.ocultar_no_pdv` é uma flag interna do ZeloPDV para venda manual;

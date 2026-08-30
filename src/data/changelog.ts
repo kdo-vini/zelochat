@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-08-30',
+    category: 'medium',
+    title: 'Hábitos de pedido na ficha do cliente',
+    description: 'A ficha agora reúne tipo de atendimento, endereço, pagamento, horário e itens frequentes, mostrando o que foi fixado e o que veio do histórico. A equipe pode ajustar os padrões sem adicionar itens automaticamente.',
+  },
+  {
     date: '2026-08-26',
     category: 'medium',
     title: 'Clientes chega com ativação gradual',
