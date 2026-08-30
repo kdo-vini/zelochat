@@ -71,6 +71,7 @@ import {
 import { autoAcceptCanonicalOrderIfConfigured, LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
 import { resolveCustomerForOrder } from './customers/identity.js';
 import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
+import { tryHandleAiWhatsAppOrdering } from './aiWhatsAppOrdering.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -3541,6 +3542,12 @@ export async function generateAndSendReply(
       return 'receipt_required';
     }
   }
+
+  // Task 6 tracer: the canonical WhatsApp ordering flow is isolated from the
+  // dormant `zelochat_pending_orders` path above. Shadow mode only observes;
+  // active mode short-circuits before the legacy model can send a menu link.
+  const canonicalOrdering = await tryHandleAiWhatsAppOrdering(jid, resolvedEmpresaId, session);
+  if (canonicalOrdering.handled) return canonicalOrdering.response ?? 'ordering_handled';
 
   // ──────────────────────────────────────────────────────────────────────────
   // STATE GUARD — receipt drop while an order is already confirmed (P0).

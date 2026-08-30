@@ -79,6 +79,7 @@ import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } 
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
 import { recordAiUsage } from './aiUsage.js';
 import { buildAiHealthReport } from './aiHealth.js';
+import { tryHandleAiWhatsAppOrderingButton } from './aiWhatsAppOrdering.js';
 import { runManagerAssistant, validateManagerRequest } from './managerAssistant.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
@@ -575,6 +576,27 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       buttonDisplayText ??
       interactiveText ?? ''
     ).trim();
+
+    // Task 6 buttons carry an opaque confirmation token and must be consumed
+    // before the legacy Confirmar/Cancelar safety net below. ZeloMenu owns the
+    // atomic message-id/revision dedupe; this local window avoids duplicate
+    // acknowledgements without nesting the message-handler's persistence queue.
+    if (buttonId) {
+      const handledKey = `${empresaId}:${remoteJid}`;
+      const prevHandledAt = recentlyHandled.get(handledKey);
+      const isRetry = !!prevHandledAt && Date.now() - prevHandledAt < 5000;
+      const canonicalButtonHandled = isRetry || await tryHandleAiWhatsAppOrderingButton({
+        jid: remoteJid,
+        empresaId,
+        buttonId,
+        messageId: data.key?.id ?? `button-${Date.now()}`,
+      });
+      if (canonicalButtonHandled) {
+        recentlyHandled.set(handledKey, Date.now());
+        cancelPendingReply(empresaId, remoteJid);
+        return;
+      }
+    }
 
     // "Hard" button click: an explicit button-id from Whatsmiau OR plain text that
     // matches a button label we sent. These MUST short-circuit the AI even

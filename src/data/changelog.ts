@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-08-30',
+    category: 'big',
+    title: 'Pedido completo direto na conversa',
+    description: 'O atendimento ganhou uma forma segura de consultar o cardápio, montar e revisar o pedido pelo WhatsApp, com resumo e confirmação antes de enviar para a loja. A liberação será gradual e acompanhada pela equipe.',
+  },
+  {
+    date: '2026-08-30',
     category: 'medium',
     title: 'Hábitos de pedido na ficha do cliente',
     description: 'A ficha agora reúne tipo de atendimento, endereço, pagamento, horário e itens frequentes, mostrando o que foi fixado e o que veio do histórico. A equipe pode ajustar os padrões sem adicionar itens automaticamente.',

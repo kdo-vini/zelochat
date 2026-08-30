@@ -278,6 +278,7 @@ export type SessionStatus = 'active' | 'escalated' | 'resolved' | 'archived';
 
 export interface StoredSession {
   id: string;
+  personId?: string | null;
   customerName: string;
   customerPhone: string;
   lastMessage: string;
@@ -924,6 +925,7 @@ function mapSession(
 
   return {
     id: canonicalRow.remote_jid,
+    personId: family.primary.pessoa_id ?? family.latest.pessoa_id ?? null,
     customerName,
     customerPhone,
     lastMessage,

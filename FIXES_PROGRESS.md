@@ -3,6 +3,12 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Pedido canônico por WhatsApp — Task 6 (2026-08-30)
+
+- ✅ AI-WA-ORDERING-006 — a IA só podia enviar o link do cardápio → tracer isolado usa catálogo/ordering internos autenticados, confirmação determinística com token opaco, revisão otimista, resumo curto e botões Confirmar/Alterar; kill switch fail-closed, shadow sem efeitos e métricas sem PII protegem o rollout — `server/aiWhatsAppOrdering.ts:1`, `server/zeloMenuInternalClient.ts:1`, `src/domain/aiWhatsAppOrdering.ts:1`
+- ✅ AI-WA-LEGACY-006 — botões/textos novos podiam cair na rede dormente de pendências → botões opacos são interceptados antes do hard-button legado, enquanto `generateAndSendReply` mantém `zelochat_pending_orders` primeiro — `server/router.ts:574`, `server/ai.ts:3558`
+- ✅ AI-WA-TEST-006 — regressões cobrem flags, classificação conservadora, token opaco, mistura, ambiguidade/limite, defaults sem itens automáticos, tools e autenticação/redação — `tests/aiWhatsAppOrdering.test.ts:1`
+
 ### Clientes CRM — hábitos de pedido (2026-08-30)
 
 - ✅ CRM-ORDER-CONTEXT-005 — a ficha não reunia preferências recorrentes de atendimento e exigia releitura manual do histórico → contexto determinístico consulta somente os 20 pedidos canônicos comprometidos mais recentes por empresa/pessoa, informa a origem de cada campo e aplica padrões explícitos sem preencher itens automaticamente — `server/customers/orderingContext.ts:1`, `server/customers/orderingContextAdapter.ts:1`
