@@ -38,6 +38,7 @@
 
 - **Task 5 concluída:** a ficha do cliente ganhou `CustomerOrderingContext`, derivado deterministicamente dos 20 pedidos canônicos comprometidos mais recentes (`accepted`, `preparing`, `ready`, `out_for_delivery`, `delivered`) por empresa e pessoa. Tipo, endereço e pagamento respeitam `fixado > último pedido > ausente`; horário e recorrência usam mediana; itens frequentes são apenas apoio visual e nunca entram automaticamente em um pedido.
 - Overrides parciais ficam no relacionamento do cliente, aceitam somente tipo, endereço, pagamento e horário, podem ser removidos campo a campo e exigem `pessoas.gerenciar` com isolamento de tenant. A implementação não copia pedidos, não lê `zelochat_orders` e mantém `zelo_orders`/`zelo_order_items` como fonte canônica.
+- **Review round 1 corrigida:** patches concorrentes passam pelo RPC compartilhado `patch_zelochat_customer_ordering_overrides`, que valida tenant e faz merge atômico no banco; a UI bloqueia todas as ações durante a gravação. Horários próximos à meia-noite usam mediana circular, e o último pedido preserva customer e snapshots completos de fulfillment/payment, incluindo `asap`.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)
 

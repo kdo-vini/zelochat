@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CustomerSummaryTab } from '../src/components/customers/CustomerSummaryTab.js';
@@ -52,5 +53,9 @@ assert.match(editable, /grid-cols-1/u);
 
 const readOnly = renderToStaticMarkup(createElement(Component, { customer, canManage: false }));
 assert.doesNotMatch(readOnly, /Fixar como padrão|Remover padrão/u);
+
+const source = readFileSync(new URL('../src/components/customers/CustomerSummaryTab.tsx', import.meta.url), 'utf8');
+assert.equal(source.match(/saving=\{saving !== null\}/gu)?.length, 4, 'all override cards must lock while any save is running');
+assert.doesNotMatch(source, /saving=\{saving ===/u);
 
 console.log('customerOrderingContextUi: ok');

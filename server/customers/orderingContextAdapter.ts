@@ -20,6 +20,7 @@ export const CUSTOMER_ORDERING_CONTEXT_SELECT = [
   'discount',
   'total',
   'observations',
+  'customer',
   'zelo_order_items(id,product_id,name,unit_price,quantity,subtotal,modifiers,position)',
 ].join(',');
 
@@ -59,28 +60,15 @@ export function createSupabaseCustomerOrderingContextAdapter(
       return data?.ordering_overrides ?? {};
     },
 
-    async customerBelongsToTenant(input) {
-      const { data, error } = await getClient()
-        .from('pessoas')
-        .select('id')
-        .eq('id', input.pessoaId)
-        .eq('id_usuario', input.ownerUserId)
-        .eq('tipo', 'cliente')
-        .maybeSingle();
+    async patchOrderingOverridesAtomically(input) {
+      const { data, error } = await getClient().rpc('patch_zelochat_customer_ordering_overrides', {
+        p_empresa_id: input.empresaId,
+        p_owner_user_id: input.ownerUserId,
+        p_pessoa_id: input.pessoaId,
+        p_patch: input.patch,
+      });
       if (error) throw error;
-      return Boolean(data?.id);
-    },
-
-    async saveOrderingOverrides(input) {
-      const { error } = await getClient()
-        .from('zelochat_customer_relationships')
-        .upsert({
-          empresa_id: input.empresaId,
-          id_usuario: input.ownerUserId,
-          pessoa_id: input.pessoaId,
-          ordering_overrides: input.overrides,
-        }, { onConflict: 'empresa_id,pessoa_id' });
-      if (error) throw error;
+      return data;
     },
   };
 }

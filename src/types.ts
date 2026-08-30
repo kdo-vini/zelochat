@@ -136,13 +136,15 @@ export interface CustomerOrderingLastOrder {
   status: 'accepted' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered';
   createdAt: string;
   closedAt: string | null;
-  fulfillment: {
+  customer: Record<string, unknown>;
+  fulfillment: Record<string, unknown> & {
     type: 'delivery' | 'pickup' | null;
+    asap: boolean | null;
     pickupDate: string | null;
     pickupTime: string | null;
     address: CustomerOrderingAddress | null;
   };
-  payment: {
+  payment: Record<string, unknown> & {
     declaredMethod: string | null;
     pixReceiptRequired: boolean;
     pixReceiptApproved: boolean;

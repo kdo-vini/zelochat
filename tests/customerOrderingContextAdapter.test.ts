@@ -23,6 +23,7 @@ class RecordingQuery implements PromiseLike<{ data: unknown; error: null }> {
 }
 
 const queries: Array<{ table: string; query: RecordingQuery }> = [];
+const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 const responses: Record<string, unknown> = {
   zelo_orders: [],
   zelochat_customer_relationships: { ordering_overrides: { paymentMethod: 'Pix' } },
@@ -34,13 +35,19 @@ const db = {
     queries.push({ table, query });
     return query;
   },
+  async rpc(name: string, args: Record<string, unknown>) {
+    rpcCalls.push({ name, args });
+    return { data: { paymentMethod: 'Pix', habitualTime: '20:15' }, error: null };
+  },
 };
 const adapter = createSupabaseCustomerOrderingContextAdapter(() => db as never);
 
 await adapter.listCommittedOrders({ empresaId: 'empresa-1', pessoaId: 'person-1', limit: 20, statuses: COMMITTED_ORDER_STATUSES });
 const orderQuery = queries[0];
 assert.equal(orderQuery.table, 'zelo_orders');
-assert.match(String(orderQuery.query.calls.find((call) => call.method === 'select')?.args[0]), /zelo_order_items\(id,product_id,name,unit_price,quantity,subtotal,modifiers,position\)/u);
+const orderSelect = String(orderQuery.query.calls.find((call) => call.method === 'select')?.args[0]);
+assert.match(orderSelect, /(^|,)customer(,|$)/u);
+assert.match(orderSelect, /zelo_order_items\(id,product_id,name,unit_price,quantity,subtotal,modifiers,position\)/u);
 assert.deepEqual(orderQuery.query.calls.filter((call) => call.method === 'eq').map((call) => call.args), [
   ['empresa_id', 'empresa-1'],
   ['pessoa_id', 'person-1'],
@@ -60,31 +67,21 @@ assert.deepEqual(overridesQuery.query.calls.filter((call) => call.method === 'eq
   ['pessoa_id', 'person-1'],
 ]);
 
-assert.equal(await adapter.customerBelongsToTenant({ empresaId: 'empresa-1', pessoaId: 'person-1', ownerUserId: 'owner-1' }), true);
-const personQuery = queries[2];
-assert.equal(personQuery.table, 'pessoas');
-assert.deepEqual(personQuery.query.calls.filter((call) => call.method === 'eq').map((call) => call.args), [
-  ['id', 'person-1'],
-  ['id_usuario', 'owner-1'],
-  ['tipo', 'cliente'],
-]);
-
-await adapter.saveOrderingOverrides({
+assert.deepEqual(await adapter.patchOrderingOverridesAtomically({
   empresaId: 'empresa-1',
   pessoaId: 'person-1',
   ownerUserId: 'owner-1',
-  overrides: { fulfillmentType: 'pickup' },
-});
-const saveQuery = queries[3];
-assert.equal(saveQuery.table, 'zelochat_customer_relationships');
-assert.deepEqual(saveQuery.query.calls.find((call) => call.method === 'upsert')?.args, [
-  {
-    empresa_id: 'empresa-1',
-    id_usuario: 'owner-1',
-    pessoa_id: 'person-1',
-    ordering_overrides: { fulfillmentType: 'pickup' },
+  patch: { paymentMethod: 'Pix', habitualTime: '20:15' },
+}), { paymentMethod: 'Pix', habitualTime: '20:15' });
+assert.deepEqual(rpcCalls, [{
+  name: 'patch_zelochat_customer_ordering_overrides',
+  args: {
+    p_empresa_id: 'empresa-1',
+    p_owner_user_id: 'owner-1',
+    p_pessoa_id: 'person-1',
+    p_patch: { paymentMethod: 'Pix', habitualTime: '20:15' },
   },
-  { onConflict: 'empresa_id,pessoa_id' },
-]);
+}]);
+assert.equal(queries.some(({ table }) => table === 'pessoas'), false, 'tenant validation belongs inside the atomic RPC');
 
 console.log('customerOrderingContextAdapter: ok');

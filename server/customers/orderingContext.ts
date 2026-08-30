@@ -44,6 +44,7 @@ export interface CustomerOrderingOrderRow {
   discount: string | number | null;
   total: string | number | null;
   observations: string | null;
+  customer: unknown;
   zelo_order_items: CustomerOrderingOrderItemRow[] | null;
 }
 
@@ -55,13 +56,12 @@ export interface CustomerOrderingContextAdapter {
     statuses: readonly string[];
   }): Promise<CustomerOrderingOrderRow[]>;
   getOrderingOverrides(input: { empresaId: string; pessoaId: string }): Promise<unknown>;
-  customerBelongsToTenant(input: { empresaId: string; pessoaId: string; ownerUserId: string }): Promise<boolean>;
-  saveOrderingOverrides(input: {
+  patchOrderingOverridesAtomically(input: {
     empresaId: string;
     pessoaId: string;
     ownerUserId: string;
-    overrides: CustomerOrderingOverrides;
-  }): Promise<void>;
+    patch: CustomerOrderingOverridesPatch;
+  }): Promise<unknown>;
 }
 
 export type CustomerOrderingOverridesPatch = Partial<Record<keyof CustomerOrderingOverrides, unknown>>;
@@ -170,12 +170,34 @@ function median(values: number[]): number | null {
   return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+function circularMedianMinutes(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = values.map((value) => ((value % 1440) + 1440) % 1440).sort((left, right) => left - right);
+  let largestGap = -1;
+  let cutIndex = 0;
+  for (let index = 0; index < sorted.length; index += 1) {
+    const nextIndex = (index + 1) % sorted.length;
+    const next = sorted[nextIndex] + (nextIndex === 0 ? 1440 : 0);
+    const gap = next - sorted[index];
+    if (gap > largestGap) {
+      largestGap = gap;
+      cutIndex = nextIndex;
+    }
+  }
+  const unwrapped = Array.from({ length: sorted.length }, (_, offset) => {
+    const index = (cutIndex + offset) % sorted.length;
+    return sorted[index] + (index < cutIndex ? 1440 : 0);
+  });
+  const value = median(unwrapped);
+  return value == null ? null : ((Math.round(value) % 1440) + 1440) % 1440;
+}
+
 function derivedHabitualTime(orders: CustomerOrderingOrderRow[]): CustomerOrderingHabitualTime | null {
   const samples = orders
     .map((item) => parseTime(record(item.fulfillment).pickupTime ?? record(item.fulfillment).pickup_time))
     .filter((value): value is CustomerOrderingHabitualTime => Boolean(value));
   if (samples.length < 2) return null;
-  const minutes = Math.round(median(samples.map((sample) => sample.minutes)) ?? 0);
+  const minutes = circularMedianMinutes(samples.map((sample) => sample.minutes)) ?? 0;
   const hour = Math.floor(minutes / 60) % 24;
   const minute = minutes % 60;
   return { minutes, label: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
@@ -234,13 +256,17 @@ function normalizeLastOrder(order: CustomerOrderingOrderRow): CustomerOrderingLa
     status: order.status as CommittedOrderStatus,
     createdAt: order.created_at,
     closedAt: order.closed_at ?? null,
+    customer: record(order.customer),
     fulfillment: {
+      ...fulfillment,
       type: normalizeFulfillmentType(fulfillment.type),
+      asap: typeof fulfillment.asap === 'boolean' ? fulfillment.asap : null,
       pickupDate: cleanText(fulfillment.pickupDate ?? fulfillment.pickup_date, 10),
       pickupTime: parseTime(fulfillment.pickupTime ?? fulfillment.pickup_time)?.label ?? null,
       address: addressFromFulfillment(fulfillment),
     },
     payment: {
+      ...payment,
       declaredMethod: cleanText(payment.declaredMethod ?? payment.method, 80),
       pixReceiptRequired: payment.pixReceiptRequired === true,
       pixReceiptApproved: payment.pixReceiptApproved === true,
@@ -341,15 +367,6 @@ function validateOverridesPatch(value: unknown): CustomerOrderingOverridesPatch 
   return normalized;
 }
 
-function applyPatch(current: CustomerOrderingOverrides, patch: CustomerOrderingOverridesPatch): CustomerOrderingOverrides {
-  const next: CustomerOrderingOverrides = { ...current };
-  for (const [key, value] of Object.entries(patch) as Array<[keyof CustomerOrderingOverrides, unknown]>) {
-    if (value === null) delete next[key];
-    else Object.assign(next, { [key]: value });
-  }
-  return next;
-}
-
 function sortAndBoundOrders(rows: CustomerOrderingOrderRow[], empresaId: string, pessoaId: string): CustomerOrderingOrderRow[] {
   const committed = new Set<string>(COMMITTED_ORDER_STATUSES);
   return rows
@@ -409,10 +426,7 @@ export function createCustomerOrderingContext(adapter: CustomerOrderingContextAd
     patch: unknown;
   }): Promise<CustomerOrderingContextSnapshot> => {
     const patch = validateOverridesPatch(input.patch);
-    if (!await adapter.customerBelongsToTenant(input)) throw new Error('CUSTOMER_NOT_FOUND');
-    const current = normalizeStoredOverrides(await adapter.getOrderingOverrides(input));
-    const overrides = applyPatch(current, patch);
-    await adapter.saveOrderingOverrides({ ...input, overrides });
+    await adapter.patchOrderingOverridesAtomically({ ...input, patch });
     return get(input);
   };
 

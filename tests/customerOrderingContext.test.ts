@@ -37,6 +37,7 @@ function order(
     discount: 0,
     total: 25,
     observations: null,
+    customer: {},
     zelo_order_items: [{
       id: `item-${id}`,
       product_id: 10,
@@ -65,11 +66,31 @@ class MemoryAdapter implements CustomerOrderingContextAdapter {
 
   async getOrderingOverrides() { return this.overrides; }
 
-  async customerBelongsToTenant() { return this.belongs; }
+  async patchOrderingOverridesAtomically(input: { patch: Record<string, unknown> }) {
+    if (!this.belongs) throw new Error('CUSTOMER_NOT_FOUND');
+    const next = { ...this.overrides } as Record<string, unknown>;
+    for (const [key, value] of Object.entries(input.patch)) {
+      if (value === null) delete next[key];
+      else next[key] = value;
+    }
+    this.overrides = next as CustomerOrderingOverrides;
+    this.saved.push(this.overrides);
+    return this.overrides;
+  }
+}
 
-  async saveOrderingOverrides(input: { overrides: CustomerOrderingOverrides }) {
-    this.overrides = input.overrides;
-    this.saved.push(input.overrides);
+class ConcurrentReadAdapter extends MemoryAdapter {
+  private concurrentReads = 0;
+  private releaseReads!: () => void;
+  private readonly readsReleased = new Promise<void>((resolve) => { this.releaseReads = resolve; });
+
+  override async getOrderingOverrides() {
+    if (this.concurrentReads >= 2) return this.overrides;
+    const staleSnapshot = { ...this.overrides };
+    this.concurrentReads += 1;
+    if (this.concurrentReads === 2) this.releaseReads();
+    await this.readsReleased;
+    return staleSnapshot;
   }
 }
 
@@ -95,8 +116,25 @@ class MemoryAdapter implements CustomerOrderingContextAdapter {
 }
 
 {
+  const adapter = new ConcurrentReadAdapter();
+  const context = createCustomerOrderingContext(adapter);
+  await Promise.all([
+    context.patchOverrides({ empresaId: EMPRESA_ID, pessoaId: PESSOA_ID, ownerUserId: OWNER_USER_ID, patch: { paymentMethod: 'Pix' } }),
+    context.patchOverrides({ empresaId: EMPRESA_ID, pessoaId: PESSOA_ID, ownerUserId: OWNER_USER_ID, patch: { habitualTime: '20:15' } }),
+  ]);
+  const snapshot = await context.get({ empresaId: EMPRESA_ID, pessoaId: PESSOA_ID });
+  assert.deepEqual(snapshot.overrides, { paymentMethod: 'Pix', habitualTime: '20:15' }, 'concurrent partial patches must preserve both fields');
+}
+
+{
   const adapter = new MemoryAdapter();
   adapter.orders = [order('latest', '2026-08-20T21:30:00.000Z', {
+    customer: { name: 'Ana', phone: '5511999999999', loyalty: { tier: 'ouro' } },
+    fulfillment: {
+      type: 'delivery', pickupDate: '2026-08-20', pickupTime: '18:30', asap: true,
+      deliveryAddress: 'Rua das Flores, 10', deliveryNeighborhood: 'Centro', deliveryInstructions: 'Portão azul',
+    },
+    payment: { declaredMethod: 'Pix', pixReceiptRequired: true, pixReceiptApproved: true, reconciliation: { attempt: 2 } },
     zelo_order_items: [{
       id: 'item-latest', product_id: 10, name: 'X-Burger especial', unit_price: 20,
       quantity: 2, subtotal: 40, position: 0,
@@ -115,6 +153,10 @@ class MemoryAdapter implements CustomerOrderingContextAdapter {
   assert.deepEqual(snapshot.frequentItems.value[0], { productId: '10', name: 'X-Burger especial', orderFrequency: 1, totalQuantity: 2 });
   assert.equal(snapshot.lastOrder.source, 'last_order');
   assert.equal(snapshot.lastOrder.value?.items[0].modifiers[0].options[0].name, 'Bacon');
+  assert.deepEqual(snapshot.lastOrder.value?.customer, { name: 'Ana', phone: '5511999999999', loyalty: { tier: 'ouro' } });
+  assert.equal(snapshot.lastOrder.value?.fulfillment.asap, true);
+  assert.equal(snapshot.lastOrder.value?.fulfillment.deliveryInstructions, 'Portão azul');
+  assert.deepEqual(snapshot.lastOrder.value?.payment.reconciliation, { attempt: 2 });
   assert.deepEqual((snapshot as unknown as Record<string, unknown>).defaultItems, undefined, 'frequent items are context, never automatic defaults');
 }
 
@@ -188,6 +230,16 @@ class MemoryAdapter implements CustomerOrderingContextAdapter {
 
 {
   const adapter = new MemoryAdapter();
+  adapter.orders = [
+    order('before-midnight', '2026-08-02T23:50:00.000Z', { fulfillment: { type: 'pickup', pickupTime: '23:50' } }),
+    order('after-midnight', '2026-08-01T00:10:00.000Z', { fulfillment: { type: 'pickup', pickupTime: '00:10' } }),
+  ];
+  const snapshot = await createCustomerOrderingContext(adapter).get({ empresaId: EMPRESA_ID, pessoaId: PESSOA_ID });
+  assert.deepEqual(snapshot.habitualTime, { value: { minutes: 0, label: '00:00' }, source: 'derived' }, 'habitual time must use a circular median across midnight');
+}
+
+{
+  const adapter = new MemoryAdapter();
   adapter.orders = [order('latest', '2026-08-20T12:00:00.000Z')];
   adapter.overrides = {
     fulfillmentType: 'pickup',
@@ -211,8 +263,7 @@ class MemoryAdapter implements CustomerOrderingContextAdapter {
   });
   assert.deepEqual(adapter.saved[0], {
     deliveryAddress: {
-      address: 'Av. Brasil, 100', neighborhood: 'Centro', complement: null,
-      city: null, state: null, postalCode: null, reference: null,
+      address: 'Av. Brasil, 100', neighborhood: 'Centro',
     },
     paymentMethod: 'Cartão',
     habitualTime: '20:15',
