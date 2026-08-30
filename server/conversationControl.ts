@@ -79,8 +79,19 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown, field: string): string {
   if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'bigint') return value.toString();
+  if (typeof value === 'bigint') return value.toString();
   throw new Error(`Invalid conversation control RPC response: ${field}`);
+}
+
+function redactRemoteJidForLog(remoteJid: string): string {
+  const [rawUser, suffix] = remoteJid.split('@', 2);
+  const digits = rawUser.replace(/\D/g, '');
+  const redactedUser = digits.length > 4
+    ? `${digits.slice(0, 2)}***${digits.slice(-2)}`
+    : rawUser
+      ? '***'
+      : '<empty>';
+  return suffix ? `${redactedUser}@${suffix}` : redactedUser;
 }
 
 function normalizeSnapshot(data: unknown): ConversationControlSnapshot {
@@ -150,7 +161,7 @@ async function cancelFamilyPendingReplies(
     } catch (error) {
       console.warn('[conversation-control] failed to cancel pending reply', {
         empresaId,
-        remoteJid,
+        remoteJid: redactRemoteJidForLog(remoteJid),
         error: error instanceof Error ? error.message : 'unknown',
       });
     }
@@ -185,7 +196,7 @@ export function createConversationControl(
       } catch (error) {
         console.warn('[conversation-control] AI turn not permitted', {
           empresaId: params.empresaId,
-          remoteJid: params.remoteJid,
+          remoteJid: redactRemoteJidForLog(params.remoteJid),
           error: error instanceof Error ? error.message : 'unknown',
         });
         return null;
@@ -248,7 +259,7 @@ export function createConversationControl(
       } catch (error) {
         console.warn('[conversation-control] AI permit check failed closed', {
           empresaId: permit.empresaId,
-          remoteJid: permit.remoteJid,
+          remoteJid: redactRemoteJidForLog(permit.remoteJid),
           error: error instanceof Error ? error.message : 'unknown',
         });
         return false;

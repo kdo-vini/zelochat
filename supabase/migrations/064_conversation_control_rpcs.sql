@@ -40,6 +40,66 @@ $$;
 revoke all on function public.zelochat_conversation_control_snapshot(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.zelochat_conversation_control_snapshot(uuid, uuid) to service_role;
 
+create or replace function public.zelochat_actor_belongs_to_empresa(
+  p_empresa_id uuid,
+  p_actor_user_id uuid
+)
+returns boolean
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  select p_actor_user_id is null
+    or exists (
+      select 1
+      from public.empresa_perfil ep
+      where ep.id = p_empresa_id
+        and ep.user_id = p_actor_user_id
+    )
+    or exists (
+      select 1
+      from public.empresa_perfil ep
+      join public.access_users au
+        on au.owner_user_id = ep.user_id
+       and au.auth_user_id = p_actor_user_id
+       and au.status = 'active'
+      where ep.id = p_empresa_id
+    )
+$$;
+
+revoke all on function public.zelochat_actor_belongs_to_empresa(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.zelochat_actor_belongs_to_empresa(uuid, uuid) to service_role;
+
+create or replace function public.zelochat_project_conversation_control(
+  p_empresa_id uuid,
+  p_conversation_control_id uuid,
+  p_auto_reply boolean,
+  p_changed_at timestamptz default now()
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_previous text := current_setting('zelochat.projecting_control', true);
+begin
+  perform set_config('zelochat.projecting_control', '1', true);
+
+  update public.zelochat_sessions s
+     set auto_reply = p_auto_reply,
+         updated_at = p_changed_at
+   where s.empresa_id = p_empresa_id
+     and s.conversation_control_id = p_conversation_control_id
+     and s.auto_reply is distinct from p_auto_reply;
+
+  perform set_config('zelochat.projecting_control', coalesce(v_previous, ''), true);
+end;
+$$;
+
+revoke all on function public.zelochat_project_conversation_control(uuid, uuid, boolean, timestamptz) from public, anon, authenticated;
+grant execute on function public.zelochat_project_conversation_control(uuid, uuid, boolean, timestamptz) to service_role;
+
 create or replace function public.ensure_zelochat_conversation_control(
   p_empresa_id uuid,
   p_remote_jid text
@@ -56,7 +116,11 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
+  v_target_pessoa_id uuid;
+  v_canonical_pessoa_id uuid;
+  v_target_contact_key text;
   v_identity_key text;
+  v_identity_keys text[] := array[]::text[];
   v_existing_control_id uuid;
   v_winner_control_id uuid;
   v_duplicate_control_ids uuid[] := array[]::uuid[];
@@ -69,61 +133,121 @@ begin
     raise exception 'INVALID_CONVERSATION_CONTROL_ARGUMENTS';
   end if;
 
-  select public.zelochat_conversation_identity_key(s.pessoa_id, s.customer_phone, s.remote_jid)
-    into v_identity_key
+  select
+    s.pessoa_id,
+    public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid)
+    into v_target_pessoa_id, v_target_contact_key
   from public.zelochat_sessions s
   where s.empresa_id = p_empresa_id
     and s.remote_jid = p_remote_jid
   order by s.updated_at desc
   limit 1;
 
-  v_identity_key := coalesce(
-    v_identity_key,
+  v_target_contact_key := coalesce(
+    v_target_contact_key,
     public.zelochat_conversation_identity_key(null, null, p_remote_jid)
   );
 
-  perform pg_advisory_xact_lock(hashtextextended(p_empresa_id::text || ':' || v_identity_key, 0));
+  select coalesce(v_target_pessoa_id, (
+    select s.pessoa_id
+    from public.zelochat_sessions s
+    where s.empresa_id = p_empresa_id
+      and s.pessoa_id is not null
+      and public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = v_target_contact_key
+    order by s.updated_at desc
+    limit 1
+  ))
+    into v_canonical_pessoa_id;
+
+  v_identity_key := case
+    when v_canonical_pessoa_id is not null then 'person:' || v_canonical_pessoa_id::text
+    else v_target_contact_key
+  end;
+
+  select coalesce(array_agg(distinct identity_key order by identity_key), array[]::text[])
+    into v_identity_keys
+  from (
+    select v_identity_key as identity_key
+    union
+    select v_target_contact_key as identity_key
+    union
+    select public.zelochat_conversation_identity_key(s.pessoa_id, s.customer_phone, s.remote_jid) as identity_key
+    from public.zelochat_sessions s
+    where s.empresa_id = p_empresa_id
+      and (
+        s.remote_jid = p_remote_jid
+        or (v_canonical_pessoa_id is not null and s.pessoa_id = v_canonical_pessoa_id)
+        or public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = v_target_contact_key
+      )
+    union
+    select public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) as identity_key
+    from public.zelochat_sessions s
+    where s.empresa_id = p_empresa_id
+      and (
+        s.remote_jid = p_remote_jid
+        or (v_canonical_pessoa_id is not null and s.pessoa_id = v_canonical_pessoa_id)
+        or public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = v_target_contact_key
+      )
+  ) identities
+  where identity_key is not null;
+
+  for v_identity_key in
+    select unnest(v_identity_keys) order by 1
+  loop
+    perform pg_advisory_xact_lock(hashtextextended(p_empresa_id::text || ':' || v_identity_key, 0));
+  end loop;
+
+  v_identity_key := case
+    when v_canonical_pessoa_id is not null then 'person:' || v_canonical_pessoa_id::text
+    else v_target_contact_key
+  end;
+
+  insert into public.zelochat_conversation_ai_control (
+    empresa_id,
+    identity_key,
+    mode,
+    epoch,
+    changed_source,
+    changed_at
+  )
+  values (
+    p_empresa_id,
+    v_identity_key,
+    case
+      when exists (
+        select 1
+        from public.zelochat_sessions s
+        where s.empresa_id = p_empresa_id
+          and (
+            s.remote_jid = p_remote_jid
+            or (v_canonical_pessoa_id is not null and s.pessoa_id = v_canonical_pessoa_id)
+            or public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = v_target_contact_key
+          )
+          and coalesce(s.auto_reply, true) = false
+      ) then 'human'
+      else 'ai'
+    end,
+    0,
+    'ensure',
+    v_now
+  )
+  on conflict (empresa_id, identity_key) do nothing;
 
   select c.id
     into v_existing_control_id
   from public.zelochat_conversation_ai_control c
   where c.empresa_id = p_empresa_id
-    and c.identity_key = v_identity_key
-  for update;
-
-  if v_existing_control_id is null then
-    insert into public.zelochat_conversation_ai_control (
-      empresa_id,
-      identity_key,
-      mode,
-      epoch,
-      changed_source,
-      changed_at
-    )
-    values (
-      p_empresa_id,
-      v_identity_key,
-      case
-        when exists (
-          select 1
-          from public.zelochat_sessions s
-          where s.empresa_id = p_empresa_id
-            and public.zelochat_conversation_identity_key(s.pessoa_id, s.customer_phone, s.remote_jid) = v_identity_key
-            and coalesce(s.auto_reply, true) = false
-        ) then 'human'
-        else 'ai'
-      end,
-      0,
-      'ensure',
-      v_now
-    )
-    returning id into v_existing_control_id;
-  end if;
+    and c.identity_key = v_identity_key;
 
   select coalesce(array_agg(distinct id order by id), array[]::uuid[])
     into v_duplicate_control_ids
   from (
     select v_existing_control_id as id
+    union
+    select c.id
+    from public.zelochat_conversation_ai_control c
+    where c.empresa_id = p_empresa_id
+      and c.identity_key = any(v_identity_keys)
     union
     select s.conversation_control_id as id
     from public.zelochat_sessions s
@@ -131,7 +255,8 @@ begin
       and s.conversation_control_id is not null
       and (
         s.remote_jid = p_remote_jid
-        or public.zelochat_conversation_identity_key(s.pessoa_id, s.customer_phone, s.remote_jid) = v_identity_key
+        or (v_canonical_pessoa_id is not null and s.pessoa_id = v_canonical_pessoa_id)
+        or public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = v_target_contact_key
       )
   ) candidates
   where id is not null;
@@ -162,12 +287,27 @@ begin
     select 1
     from public.zelochat_sessions s
     where s.empresa_id = p_empresa_id
-      and public.zelochat_conversation_identity_key(s.pessoa_id, s.customer_phone, s.remote_jid) = v_identity_key
+      and (
+        s.remote_jid = p_remote_jid
+        or (v_canonical_pessoa_id is not null and s.pessoa_id = v_canonical_pessoa_id)
+        or public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = v_target_contact_key
+      )
       and coalesce(s.auto_reply, true) = false
   );
 
   if v_duplicate_count > 1 then
     v_next_epoch := v_next_epoch + 1;
+
+    update public.zelochat_outbound_jobs j
+       set status = 'delivery_uncertain',
+           suppression_reason = 'controls_merged_active_job',
+           lease_owner = null,
+           lease_expires_at = null,
+           updated_at = v_now
+     where j.empresa_id = p_empresa_id
+       and j.conversation_control_id = any(v_duplicate_control_ids)
+       and j.conversation_control_id <> v_winner_control_id
+       and j.status in ('sending','dispatch_started');
 
     update public.zelochat_sessions s
        set conversation_control_id = v_winner_control_id
@@ -223,16 +363,35 @@ begin
    where c.empresa_id = p_empresa_id
      and c.id = v_winner_control_id;
 
+  perform set_config('zelochat.projecting_control', '1', true);
+
   update public.zelochat_sessions s
      set conversation_control_id = v_winner_control_id,
          auto_reply = not v_any_human,
          updated_at = v_now
    where s.empresa_id = p_empresa_id
-     and public.zelochat_conversation_identity_key(s.pessoa_id, s.customer_phone, s.remote_jid) = v_identity_key
+     and (
+       s.remote_jid = p_remote_jid
+       or (v_canonical_pessoa_id is not null and s.pessoa_id = v_canonical_pessoa_id)
+       or public.zelochat_conversation_identity_key(null, s.customer_phone, s.remote_jid) = v_target_contact_key
+     )
      and (
        s.conversation_control_id is distinct from v_winner_control_id
        or s.auto_reply is distinct from not v_any_human
      );
+
+  perform set_config('zelochat.projecting_control', '', true);
+
+  if v_any_human then
+    update public.zelochat_outbound_jobs j
+       set status = 'cancelled',
+           suppression_reason = 'human_takeover',
+           updated_at = v_now
+     where j.empresa_id = p_empresa_id
+       and j.conversation_control_id = v_winner_control_id
+       and j.status = 'queued'
+       and j.outbound_origin in ('ai_auto','ai_followup');
+  end if;
 
   return query
   select *
@@ -266,6 +425,14 @@ declare
 begin
   if p_message_id is null then
     raise exception 'INVALID_AI_TURN_MESSAGE_ID';
+  end if;
+  if not exists (
+    select 1
+    from public.zelochat_messages m
+    where m.empresa_id = p_empresa_id
+      and m.id = p_message_id
+  ) then
+    raise exception 'MESSAGE_NOT_IN_TENANT';
   end if;
 
   select *
@@ -353,6 +520,17 @@ declare
 begin
   if p_source not in ('zelochat_operator','native_whatsapp','explicit_manual_toggle','escalation') then
     raise exception 'INVALID_TAKEOVER_SOURCE';
+  end if;
+  if not public.zelochat_actor_belongs_to_empresa(p_empresa_id, p_actor_user_id) then
+    raise exception 'ACTOR_NOT_IN_TENANT';
+  end if;
+  if p_message_id is not null and not exists (
+    select 1
+    from public.zelochat_messages m
+    where m.empresa_id = p_empresa_id
+      and m.id = p_message_id
+  ) then
+    raise exception 'MESSAGE_NOT_IN_TENANT';
   end if;
 
   select *
@@ -448,6 +626,9 @@ declare
 begin
   if p_actor_user_id is null then
     raise exception 'INVALID_RESUME_ACTOR';
+  end if;
+  if not public.zelochat_actor_belongs_to_empresa(p_empresa_id, p_actor_user_id) then
+    raise exception 'ACTOR_NOT_IN_TENANT';
   end if;
 
   select *
@@ -546,6 +727,143 @@ $$;
 
 revoke all on function public.check_zelochat_ai_epoch(uuid, text, bigint) from public, anon, authenticated;
 grant execute on function public.check_zelochat_ai_epoch(uuid, text, bigint) to service_role;
+
+create or replace function public.zelochat_conversation_control_session_bridge()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_control public.zelochat_conversation_ai_control%rowtype;
+  v_now timestamptz := now();
+begin
+  if current_setting('zelochat.projecting_control', true) = '1' then
+    return null;
+  end if;
+
+  if TG_OP = 'INSERT' then
+    perform public.ensure_zelochat_conversation_control(NEW.empresa_id, NEW.remote_jid);
+    return null;
+  end if;
+
+  if NEW.conversation_control_id is null
+     or NEW.remote_jid is distinct from OLD.remote_jid
+     or NEW.pessoa_id is distinct from OLD.pessoa_id
+     or NEW.customer_phone is distinct from OLD.customer_phone then
+    perform public.ensure_zelochat_conversation_control(NEW.empresa_id, NEW.remote_jid);
+    return null;
+  end if;
+
+  if TG_OP = 'UPDATE' and NEW.auto_reply is distinct from OLD.auto_reply then
+    select *
+      into v_control
+    from public.zelochat_conversation_ai_control c
+    where c.empresa_id = NEW.empresa_id
+      and c.id = NEW.conversation_control_id
+    for update;
+
+    if not found then
+      perform public.ensure_zelochat_conversation_control(NEW.empresa_id, NEW.remote_jid);
+      return null;
+    end if;
+
+    if NEW.auto_reply = false and v_control.mode <> 'human' then
+      update public.zelochat_conversation_ai_control c
+         set mode = 'human',
+             epoch = c.epoch + 1,
+             changed_by_actor = null,
+             changed_source = 'legacy_auto_reply_update',
+             changed_at = v_now
+       where c.empresa_id = NEW.empresa_id
+         and c.id = NEW.conversation_control_id
+       returning * into v_control;
+
+      insert into public.zelochat_conversation_control_events (
+        empresa_id,
+        conversation_control_id,
+        remote_jid,
+        event_type,
+        epoch,
+        actor_user_id,
+        source,
+        message_id
+      )
+      values (
+        NEW.empresa_id,
+        NEW.conversation_control_id,
+        NEW.remote_jid,
+        'human_takeover',
+        v_control.epoch,
+        null,
+        'legacy_auto_reply_update',
+        null
+      );
+
+      update public.zelochat_outbound_jobs j
+         set status = 'cancelled',
+             suppression_reason = 'human_takeover',
+             updated_at = v_now
+       where j.empresa_id = NEW.empresa_id
+         and j.conversation_control_id = NEW.conversation_control_id
+         and j.status = 'queued'
+         and j.outbound_origin in ('ai_auto','ai_followup');
+    elsif NEW.auto_reply = true and v_control.mode <> 'ai' then
+      update public.zelochat_conversation_ai_control c
+         set mode = 'ai',
+             epoch = c.epoch + 1,
+             changed_by_actor = null,
+             changed_source = 'legacy_auto_reply_update',
+             changed_at = v_now
+       where c.empresa_id = NEW.empresa_id
+         and c.id = NEW.conversation_control_id
+       returning * into v_control;
+
+      insert into public.zelochat_conversation_control_events (
+        empresa_id,
+        conversation_control_id,
+        remote_jid,
+        event_type,
+        epoch,
+        actor_user_id,
+        source,
+        message_id
+      )
+      values (
+        NEW.empresa_id,
+        NEW.conversation_control_id,
+        NEW.remote_jid,
+        'ai_resumed',
+        v_control.epoch,
+        null,
+        'legacy_auto_reply_update',
+        null
+      );
+    end if;
+
+    perform public.zelochat_project_conversation_control(
+      NEW.empresa_id,
+      NEW.conversation_control_id,
+      coalesce(NEW.auto_reply, true),
+      v_now
+    );
+  end if;
+
+  return null;
+end;
+$$;
+
+revoke all on function public.zelochat_conversation_control_session_bridge() from public, anon, authenticated;
+grant execute on function public.zelochat_conversation_control_session_bridge() to service_role;
+
+drop trigger if exists trg_zelochat_conversation_control_session_bridge
+  on public.zelochat_sessions;
+
+create trigger trg_zelochat_conversation_control_session_bridge
+after insert or update of auto_reply, pessoa_id, customer_phone, remote_jid, conversation_control_id
+on public.zelochat_sessions
+for each row
+execute function public.zelochat_conversation_control_session_bridge();
 
 comment on function public.ensure_zelochat_conversation_control(uuid, text) is
   'Resolves/locks the canonical conversation control for one tenant JID, merging duplicates with human mode winning.';

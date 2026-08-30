@@ -74,3 +74,45 @@ Attempted but not completed:
 Planned commit message:
 
 `feat(chat): add atomic human takeover and AI epoch`
+
+## Fix Round 1/5 — CHANGES_REQUESTED
+
+Date: 2026-08-30
+
+Status: DONE_WITH_CONCERNS
+
+Review findings addressed:
+
+- P1 family split: `ensure_zelochat_conversation_control` now builds the canonical family from both `person:*` identity and the unresolved phone/contact key. If any session in the contact family has `pessoa_id`, the canonical control becomes `person:<pessoa_id>` and unresolved `phone:*` controls are merged into it. The test for a new JID variation no longer pre-associates the JID; the fake repo resolves it by normalized contact key.
+- P1 rolling deploy compatibility: migration 064 now adds `trg_zelochat_conversation_control_session_bridge`. Legacy inserts and identity updates call `ensure` inside the same database transaction; legacy direct `auto_reply` writes become audited control transitions with epoch advancement and family projection. Legacy `auto_reply=false` also cancels queued AI jobs.
+- P1 tenant validation: `advance`, `pause`, and `resume` validate `p_message_id` against `zelochat_messages.empresa_id`; `pause`/`resume` validate actor ownership or active sub-user membership through `empresa_perfil`/`access_users`.
+- P2 toggle actor: `/api/sessions/:jid/auto-reply` now resolves `requireActorAccess(req)` and passes `access.actorUserId` to `setAutoReply`.
+- P2 merge with active jobs: before reassigning losing controls, active `sending|dispatch_started` jobs on losing controls are moved to `delivery_uncertain` with `suppression_reason='controls_merged_active_job'`, avoiding the partial unique index collision.
+- P2 deadlock risk: identity advisory locks are now acquired after collecting all candidate identity keys and always in sorted order; control row locks remain ordered by control id.
+- P2 epoch shape: TypeScript no longer accepts numeric epochs from RPC responses; only string and `bigint` are accepted.
+- P2 log hygiene: `conversationControl` warning logs redact remote JIDs.
+
+Commands run:
+
+```powershell
+npx tsx tests/conversationControl.test.ts
+npx tsx tests/replyDebouncer.test.ts
+npx tsx tests/auditFixGuardrails.test.ts
+npm run lint
+```
+
+Observed outputs:
+
+- `tests/conversationControl.test.ts`: `Conversation control tests passed`
+- `tests/replyDebouncer.test.ts`: `12 pass, 0 fail`
+- `tests/auditFixGuardrails.test.ts`: `28 pass, 0 fail`
+- `npm run lint`: exited with code 0 (`tsc --noEmit`)
+
+Not rerun:
+
+- `npm test`, per instruction for this review round. Previous full-suite attempt hung at `tests/aiSimulatorScheduleGuard.test.ts`.
+
+Remaining concerns:
+
+- The SQL migration has guardrail coverage in unit tests but was not applied to a live Postgres instance in this round.
+- Future dispatcher/fromMe callers remain intentionally unmigrated for later tasks.

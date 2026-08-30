@@ -90,7 +90,7 @@ class FakeRepo {
   }
 
   private controlFor(jid: string): FakeControl {
-    const id = this.jidToControl.get(jid);
+    const id = this.jidToControl.get(jid) ?? this.findControlByContactKey(jid);
     if (!id) throw new Error(`No control for ${jid}`);
     const control = this.controls.get(id);
     if (!control) throw new Error(`Missing control ${id}`);
@@ -102,6 +102,16 @@ class FakeRepo {
     this.jidToControl.set(jid, control.id);
   }
 
+  private findControlByContactKey(jid: string): string | undefined {
+    const targetKey = contactKeyFromJid(jid);
+    for (const control of this.controls.values()) {
+      if (control.remoteJids.some((remoteJid) => contactKeyFromJid(remoteJid) === targetKey)) {
+        return control.id;
+      }
+    }
+    return undefined;
+  }
+
   private snapshot(control: FakeControl): ConversationControlSnapshot {
     return {
       conversationControlId: control.id,
@@ -111,6 +121,13 @@ class FakeRepo {
       changedAt: '2026-08-29T00:00:00.000Z',
     };
   }
+}
+
+function contactKeyFromJid(jid: string): string {
+  let digits = jid.replace(/@.*$/, '').replace(/\D/g, '');
+  if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
+  if (digits.length === 11 && digits[2] === '9') digits = `${digits.slice(0, 2)}${digits.slice(3)}`;
+  return digits;
 }
 
 function makeRepo(): FakeRepo {
@@ -268,36 +285,78 @@ console.log('\nTest 6: a different conversation in the same tenant is not change
 
 console.log('\nTest 7: a new simultaneous JID variation inherits the canonical human control');
 {
-  const repo = makeRepo();
-  repo.jidToControl.set('551400@s.whatsapp.net', 'control-1');
+  const repo = new FakeRepo();
+  repo.addControl({
+    id: 'control-1',
+    mode: 'ai',
+    epoch: 7n,
+    remoteJids: ['5511999999999@s.whatsapp.net'],
+    seenInboundIds: new Set(),
+  });
   const control = createConversationControl({ rpc: repo.rpc.bind(repo) });
   await control.claimHumanTakeover({
     empresaId: 'e1',
-    remoteJid: '551499@s.whatsapp.net',
+    remoteJid: '5511999999999@s.whatsapp.net',
     actorUserId: 'u1',
     source: 'zelochat_operator',
   });
   const ensured = await control.ensureConversationControl({
     empresaId: 'e1',
-    remoteJid: '551400@s.whatsapp.net',
+    remoteJid: '551199999999@s.whatsapp.net',
   });
 
   assert.equal(ensured.conversationControlId, 'control-1');
   assert.equal(ensured.mode, 'human');
   assert.equal(ensured.epoch, '8');
   assert.deepEqual(ensured.remoteJids, [
-    '551499@s.whatsapp.net',
-    '551498@s.whatsapp.net',
-    '551400@s.whatsapp.net',
+    '5511999999999@s.whatsapp.net',
+    '551199999999@s.whatsapp.net',
   ]);
 }
 
-console.log('\nTest 8: migration 064 exposes service-role-only canonical RPCs');
+console.log('\nTest 8: numeric epochs from RPC responses are rejected');
+{
+  const control = createConversationControl({
+    rpc: async () => ({
+      data: {
+        conversation_control_id: 'control-1',
+        mode: 'ai',
+        epoch: 8,
+        remote_jids: ['551499@s.whatsapp.net'],
+        changed_at: '2026-08-29T00:00:00.000Z',
+      },
+      error: null,
+    }),
+  });
+
+  await assert.rejects(
+    () => control.ensureConversationControl({
+      empresaId: 'e1',
+      remoteJid: '551499@s.whatsapp.net',
+    }),
+    /epoch/,
+  );
+}
+
+console.log('\nTest 9: migration 064 exposes service-role-only canonical RPCs and review guardrails');
 {
   const sql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');
+  const router = readFileSync('server/router.ts', 'utf8');
   assert.match(sql, /create or replace function public\.ensure_zelochat_conversation_control/i);
   assert.match(sql, /pg_advisory_xact_lock/i);
+  assert.match(sql, /for v_identity_key in\s+select unnest\(v_identity_keys\) order by 1/is);
   assert.match(sql, /controls_merged/i);
+  assert.match(sql, /controls_merged_active_job/i);
+  assert.match(sql, /status = 'delivery_uncertain'/i);
+  assert.match(sql, /status in \('sending','dispatch_started'\)/i);
+  assert.match(sql, /pessoa_id = v_canonical_pessoa_id/i);
+  assert.match(sql, /zelochat_conversation_identity_key\(null, s\.customer_phone, s\.remote_jid\) = v_target_contact_key/i);
+  assert.match(sql, /zelochat_conversation_control_session_bridge/i);
+  assert.match(sql, /legacy_auto_reply_update/i);
+  assert.match(sql, /after insert or update of auto_reply/i);
+  assert.match(sql, /MESSAGE_NOT_IN_TENANT/i);
+  assert.match(sql, /ACTOR_NOT_IN_TENANT/i);
+  assert.match(sql, /access_users/i);
   assert.match(sql, /create or replace function public\.advance_zelochat_ai_epoch_for_inbound/i);
   assert.match(sql, /create or replace function public\.pause_zelochat_ai_for_human/i);
   assert.match(sql, /create or replace function public\.resume_zelochat_ai/i);
@@ -306,6 +365,7 @@ console.log('\nTest 8: migration 064 exposes service-role-only canonical RPCs');
   assert.match(sql, /outbound_origin in \('ai_auto','ai_followup'\)/i);
   assert.doesNotMatch(sql, /grant execute on function .* to (anon|authenticated)/i);
   assert.match(sql, /grant execute on function .* to service_role/i);
+  assert.match(router, /const access = await requireActorAccess\(req\);[\s\S]*setAutoReply\(req\.params\.jid, !!enabled, access\.empresaId, access\.actorUserId\)/i);
 }
 
 console.log('\nConversation control tests passed');

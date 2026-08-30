@@ -2524,9 +2524,9 @@ router.post('/api/ai/reply', async (req: Request, res: Response) => {
  */
 router.post('/api/sessions/:jid/auto-reply', async (req: Request, res: Response) => {
   try {
-    const empresaId = await requireEmpresaId(req);
+    const access = await requireActorAccess(req);
     const { enabled } = req.body;
-    await setAutoReply(req.params.jid, !!enabled, empresaId);
+    await setAutoReply(req.params.jid, !!enabled, access.empresaId, access.actorUserId);
     res.json({ ok: true });
   } catch (error) {
     sendAuthError(res, error);
