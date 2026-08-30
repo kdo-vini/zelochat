@@ -205,6 +205,7 @@ declare
   v_duplicate_count integer := 0;
   v_any_human boolean := false;
   v_next_epoch bigint := 0;
+  v_uncertain_hold_job_id uuid;
   v_now timestamptz := now();
 begin
   perform public.zelochat_conversation_control_rollout_gate();
@@ -392,7 +393,8 @@ begin
   if v_duplicate_count > 1 then
     v_next_epoch := v_next_epoch + 1;
 
-    update public.zelochat_outbound_jobs j
+    with uncertain as (
+      update public.zelochat_outbound_jobs j
        set status = 'delivery_uncertain',
            suppression_reason = 'controls_merged_active_job',
            lease_owner = null,
@@ -401,7 +403,9 @@ begin
      where j.empresa_id = p_empresa_id
        and j.conversation_control_id = any(v_duplicate_control_ids)
        and j.conversation_control_id <> v_winner_control_id
-       and j.status in ('sending','dispatch_started');
+       and j.status in ('sending','dispatch_started')
+       returning j.id
+    ) select id into v_uncertain_hold_job_id from uncertain order by id limit 1;
 
     update public.zelochat_sessions s
        set conversation_control_id = v_winner_control_id
@@ -414,6 +418,12 @@ begin
      where j.empresa_id = p_empresa_id
        and j.conversation_control_id = any(v_duplicate_control_ids)
        and j.conversation_control_id <> v_winner_control_id;
+
+    if v_uncertain_hold_job_id is not null then
+      update public.zelochat_conversation_ai_control c
+         set hold_reason = 'delivery_uncertain', hold_job_id = v_uncertain_hold_job_id, changed_at = v_now
+       where c.empresa_id = p_empresa_id and c.id = v_winner_control_id;
+    end if;
 
     update public.zelochat_conversation_control_events e
        set conversation_control_id = v_winner_control_id

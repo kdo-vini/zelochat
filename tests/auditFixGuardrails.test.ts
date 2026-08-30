@@ -28,11 +28,12 @@ assert(router.includes('messageExistsByWhatsAppId'), 'fromMe echo skip checks da
 assert(router.includes('createAssistantMessageIntent'), 'manual sends persist an outbound intent before WhatsApp send');
 assert(router.includes('markAssistantMessageSendFailed'), 'manual send failures are persisted');
 assert(router.includes('serializeManualSendError'), 'manual send provider failures return a controlled API error');
+assert(!router.includes('...(payload.providerStatus ? { providerStatus: payload.providerStatus } : {})'), 'manual send errors do not expose provider status to the frontend');
 assert(router.includes('WhatsApp sent, but failed to mark DB message as sent'), 'manual sends do not turn post-send DB status failures into 500s');
 
 const whatsapp = read('server/whatsapp.ts');
 assert(whatsapp.includes('toWhatsmiauNumber(jid)'), 'outbound sends pass phone digits to Whatsmiau instead of full JIDs');
-assert(whatsapp.includes('requireWhatsmiauMessageId(res.data'), 'manual outbound success records only a real provider message id');
+assert(whatsapp.includes('extractWhatsmiauMessageId(res.data) ?? null'), 'manual outbound success returns only a real provider message id or null');
 assert(whatsapp.includes('data?.data?.message?.key?.id'), 'Whatsmiau message id extraction accepts nested data.message.key.id responses');
 assert(whatsapp.includes("err.code === 'ECONNABORTED'"), 'QR connect timeouts keep the instance in connecting state');
 

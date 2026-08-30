@@ -6,6 +6,7 @@ begin;
 
 alter table public.zelochat_outbound_jobs
   drop constraint if exists zelochat_outbound_jobs_payload_no_data_url;
+alter table public.zelochat_outbound_jobs add column if not exists media_cleaned_at timestamptz;
 alter table public.zelochat_outbound_jobs
   add constraint zelochat_outbound_jobs_payload_no_data_url
   check (
@@ -16,6 +17,41 @@ alter table public.zelochat_outbound_jobs
     )
   );
 
+alter table public.zelochat_outbound_jobs drop constraint if exists zelochat_outbound_jobs_conversation_shape_check;
+alter table public.zelochat_outbound_jobs add constraint zelochat_outbound_jobs_conversation_shape_check check (
+  (job_type = 'conversation' and (
+    conversation_control_id is not null and nullif(trim(conversation_jid), '') is not null
+    and outbound_origin in ('human_zelochat','human_native_whatsapp','ai_auto','ai_followup','system_handoff','system_transactional','internal_system')
+    and nullif(trim(payload_fingerprint), '') is not null
+    and payload is not null
+    and (outbound_origin not in ('ai_auto','ai_followup') or control_epoch is not null)
+  )) or (job_type = 'campaign' and conversation_control_id is null and outbound_origin in ('campaign','internal_system'))
+     or (job_type = 'automation' and conversation_control_id is null and outbound_origin in ('automation','internal_system'))
+);
+
+alter table public.zelochat_outbound_jobs drop constraint if exists zelochat_outbound_jobs_media_shape_check;
+alter table public.zelochat_outbound_jobs add constraint zelochat_outbound_jobs_media_shape_check check (
+  payload is null or payload->>'kind' not in ('media','audio','sticker') or status = 'preparing' or (
+    jsonb_typeof(payload->'storagePath') = 'string' and payload->>'storagePath' ~ '^outbound/[^/]+/[^/]+/[a-f0-9]{64}$'
+    and jsonb_typeof(payload->'mimeType') = 'string' and nullif(payload->>'mimeType', '') is not null
+    and jsonb_typeof(payload->'fileName') = 'string' and nullif(payload->>'fileName', '') is not null
+    and jsonb_typeof(payload->'sizeBytes') = 'number' and (payload->>'sizeBytes')::bigint between 1 and 26214400
+    and payload->>'checksum' ~ '^[a-f0-9]{64}$'
+    and payload - array['kind','storagePath','mimeType','fileName','sizeBytes','checksum','caption','ptt','quoted']::text[] = '{}'::jsonb
+    and (payload->>'kind' <> 'audio' or jsonb_typeof(payload->'ptt') = 'boolean')
+    and (payload->>'kind' = 'audio' or not (payload ? 'ptt'))
+    and (payload->>'kind' = 'media' or not (payload ? 'caption'))
+    and (not (payload ? 'caption') or jsonb_typeof(payload->'caption') = 'string')
+  )
+);
+
+alter table public.zelochat_campaign_recipients drop constraint if exists zelochat_campaign_recipients_status_check;
+alter table public.zelochat_campaign_recipients add constraint zelochat_campaign_recipients_status_check
+  check (status in ('eligible','suppressed','queued','sending','sent','failed','cancelled','delivery_uncertain'));
+alter table public.zelochat_automation_dispatches drop constraint if exists zelochat_automation_dispatches_status_check;
+alter table public.zelochat_automation_dispatches add constraint zelochat_automation_dispatches_status_check
+  check (status in ('eligible','suppressed','queued','sending','sent','failed','cancelled','delivery_uncertain'));
+
 create or replace function public.release_zelochat_expired_leases()
 returns integer
 language plpgsql
@@ -25,8 +61,17 @@ as $$
 declare
   v_count integer := 0;
   v_now timestamptz := now();
+  v_control_id uuid;
 begin
   perform public.zelochat_conversation_control_rollout_gate();
+
+  for v_control_id in
+    select distinct j.conversation_control_id from public.zelochat_outbound_jobs j
+     where j.conversation_control_id is not null and j.status in ('sending','dispatch_started') and j.lease_expires_at < v_now
+     order by j.conversation_control_id
+  loop
+    perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id for update;
+  end loop;
 
   with uncertain as (
     update public.zelochat_outbound_jobs j
@@ -37,7 +82,7 @@ begin
            updated_at = v_now
      where j.status = 'dispatch_started'
        and j.lease_expires_at < v_now
-     returning j.id, j.empresa_id, j.conversation_control_id, j.message_id
+     returning j.id, j.empresa_id, j.conversation_control_id, j.message_id, j.job_type, j.recipient_id, j.automation_dispatch_id
   ), held as (
     update public.zelochat_conversation_ai_control c
        set hold_reason = 'delivery_uncertain',
@@ -55,6 +100,12 @@ begin
      where u.message_id = m.id
        and u.empresa_id = m.empresa_id
      returning m.id
+  ), campaign_uncertain as (
+    update public.zelochat_campaign_recipients r set status = 'delivery_uncertain', last_error = 'Não foi possível confirmar a entrega.', updated_at = v_now
+      from uncertain u where u.job_type = 'campaign' and u.recipient_id = r.id and u.empresa_id = r.empresa_id returning r.id
+  ), automation_uncertain as (
+    update public.zelochat_automation_dispatches d set status = 'delivery_uncertain', last_error = 'Não foi possível confirmar a entrega.', updated_at = v_now
+      from uncertain u where u.job_type = 'automation' and u.automation_dispatch_id = d.id and u.empresa_id = d.empresa_id returning d.id
   )
   select count(*) into v_count from uncertain;
 
@@ -65,9 +116,8 @@ begin
            lease_owner = null,
            lease_expires_at = null,
            updated_at = v_now
-     where j.status = 'sending'
-       and j.lease_expires_at < v_now
-       and j.attempts >= j.max_attempts
+     where j.attempts >= j.max_attempts
+       and (j.status = 'queued' or (j.status = 'sending' and j.lease_expires_at < v_now))
      returning j.id, j.empresa_id, j.recipient_id, j.automation_dispatch_id, j.job_type, j.message_id
   ), campaign_terminal as (
     update public.zelochat_campaign_recipients r
@@ -206,6 +256,9 @@ begin
                suppression_reason = case when v_control.mode <> 'ai' then 'paused' else 'stale_epoch' end,
                updated_at = v_now
          where id = v_claimed.id and empresa_id = v_claimed.empresa_id and status = 'queued';
+        update public.zelochat_messages
+           set outbound_status = 'cancelled', outbound_error = null
+         where id = v_claimed.message_id and empresa_id = v_claimed.empresa_id;
         insert into public.zelochat_conversation_control_events (
           empresa_id, conversation_control_id, remote_jid, event_type, epoch, source, message_id, job_id
         ) values (
@@ -220,7 +273,6 @@ begin
        set status = 'sending',
            lease_owner = p_worker,
            lease_expires_at = v_now + make_interval(secs => greatest(p_lease_seconds, 15)),
-           attempts = j.attempts + 1,
            updated_at = v_now
      where j.id = v_claimed.id
        and j.empresa_id = v_claimed.empresa_id
@@ -344,11 +396,14 @@ grant execute on function public.begin_zelochat_human_outbound(uuid, text, uuid,
 
 create or replace function public.start_zelochat_outbound_transport(p_id uuid, p_empresa_id uuid, p_lease_owner text)
 returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now();
+declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_control_id uuid;
 begin
-  update public.zelochat_outbound_jobs j set status = 'dispatch_started', transport_started_at = v_now, updated_at = v_now
+  perform public.zelochat_conversation_control_rollout_gate();
+  select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
+  if v_control_id is not null then perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update; end if;
+  update public.zelochat_outbound_jobs j set status = 'dispatch_started', transport_started_at = v_now, attempts = j.attempts + 1, updated_at = v_now
    where j.id = p_id and j.empresa_id = p_empresa_id and j.lease_owner = p_lease_owner
-     and j.status = 'sending' and j.lease_expires_at >= v_now returning * into v_job;
+     and j.status = 'sending' and j.lease_expires_at >= v_now and j.attempts < j.max_attempts returning * into v_job;
   if not found then return false; end if;
   update public.zelochat_messages set outbound_status = 'dispatch_started' where id = v_job.message_id and empresa_id = p_empresa_id;
   return true;
@@ -356,9 +411,12 @@ end $$;
 
 create or replace function public.complete_zelochat_outbound_job(p_id uuid, p_empresa_id uuid, p_lease_owner text, p_provider_message_id text)
 returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now();
+declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_control_id uuid;
 begin
   if nullif(trim(p_provider_message_id), '') is null then return false; end if;
+  perform public.zelochat_conversation_control_rollout_gate();
+  select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
+  if v_control_id is not null then perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update; end if;
   update public.zelochat_outbound_jobs j set status = 'sent', provider_message_id = p_provider_message_id, sent_at = v_now,
       lease_owner = null, lease_expires_at = null, last_error = null, updated_at = v_now
    where j.id = p_id and j.empresa_id = p_empresa_id and j.lease_owner = p_lease_owner and j.status = 'dispatch_started'
@@ -379,9 +437,12 @@ create or replace function public.fail_zelochat_outbound_job(
   p_retry_at timestamptz default null, p_delivery_uncertain boolean default false
 )
 returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_status text;
+declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_status text; v_control_id uuid;
 begin
   v_status := case when p_delivery_uncertain then 'delivery_uncertain' when p_retry_at is not null then 'queued' else 'failed_before_dispatch' end;
+  perform public.zelochat_conversation_control_rollout_gate();
+  select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
+  if v_control_id is not null then perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update; end if;
   update public.zelochat_outbound_jobs j set status = v_status, last_error = left(coalesce(p_reason, 'Falha ao enviar.'), 1000),
       next_attempt_at = coalesce(p_retry_at, j.next_attempt_at), lease_owner = null, lease_expires_at = null, updated_at = v_now
    where j.id = p_id and j.empresa_id = p_empresa_id and j.lease_owner = p_lease_owner
@@ -395,17 +456,20 @@ begin
   update public.zelochat_messages set outbound_status = v_status, outbound_error = case when p_delivery_uncertain then 'Não foi possível confirmar a entrega.' else 'Mensagem não enviada.' end
    where id = v_job.message_id and empresa_id = p_empresa_id;
   if v_job.job_type = 'campaign' and v_job.recipient_id is not null then
-    update public.zelochat_campaign_recipients set status = case when v_status = 'queued' then 'queued' else 'failed' end, last_error = left(coalesce(p_reason, 'Falha ao enviar.'), 1000), updated_at = v_now where id = v_job.recipient_id and empresa_id = p_empresa_id;
+    update public.zelochat_campaign_recipients set status = case when v_status = 'queued' then 'queued' when v_status = 'delivery_uncertain' then 'delivery_uncertain' else 'failed' end, last_error = left(coalesce(p_reason, 'Falha ao enviar.'), 1000), updated_at = v_now where id = v_job.recipient_id and empresa_id = p_empresa_id;
   elsif v_job.job_type = 'automation' and v_job.automation_dispatch_id is not null then
-    update public.zelochat_automation_dispatches set status = case when v_status = 'queued' then 'queued' else 'failed' end, last_error = left(coalesce(p_reason, 'Falha ao enviar.'), 1000), updated_at = v_now where id = v_job.automation_dispatch_id and empresa_id = p_empresa_id;
+    update public.zelochat_automation_dispatches set status = case when v_status = 'queued' then 'queued' when v_status = 'delivery_uncertain' then 'delivery_uncertain' else 'failed' end, last_error = left(coalesce(p_reason, 'Falha ao enviar.'), 1000), updated_at = v_now where id = v_job.automation_dispatch_id and empresa_id = p_empresa_id;
   end if;
   return true;
 end $$;
 
 create or replace function public.suppress_zelochat_outbound_job(p_id uuid, p_empresa_id uuid, p_lease_owner text, p_reason text)
 returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now();
+declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_control_id uuid;
 begin
+  perform public.zelochat_conversation_control_rollout_gate();
+  select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
+  if v_control_id is not null then perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update; end if;
   update public.zelochat_outbound_jobs j set status = 'cancelled', suppression_reason = left(coalesce(p_reason, 'suppressed'), 200),
       lease_owner = null, lease_expires_at = null, updated_at = v_now
    where j.id = p_id and j.empresa_id = p_empresa_id and j.lease_owner = p_lease_owner and j.status = 'sending'

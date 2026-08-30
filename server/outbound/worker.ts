@@ -2,9 +2,10 @@ import type { OutboundOrigin, OutboundPayload, PersistedOutboundPayload } from '
 import { getServiceSupabase } from '../supabase.js';
 import { getInstanceForEmpresa } from '../instanceManager.js';
 import { fetchInstanceConnectionState } from '../whatsapp.js';
-import { OutboundQueue, type OutboundJob, type OutboundJobInput, type OutboundJobStore } from './queue.js';
+import { OutboundQueue, assertQueueablePayload, type OutboundJob, type OutboundJobInput, type OutboundJobStore } from './queue.js';
 import { getCrmRolloutFlags, isOutboundJobAllowed } from '../customers/rollout.js';
 import { createProviderAdapter, type ProviderAdapter, type ProviderDispatchResult } from './providerAdapter.js';
+import { cleanupTerminalOutboundMedia } from './mediaStore.js';
 
 const originFor = (jobType: OutboundJob['jobType'], value?: string | null): OutboundOrigin =>
   (value ?? (jobType === 'automation' ? 'automation' : jobType === 'campaign' ? 'campaign' : 'internal_system')) as OutboundOrigin;
@@ -35,7 +36,7 @@ function mapRow(row: Record<string, any>): OutboundJob {
     leaseExpiresAt: row.lease_expires_at,
     attempts: row.attempts,
     suppressionReason: row.suppression_reason,
-  };
+  } as OutboundJob;
 }
 
 const rpcBoolean = (data: unknown): boolean => data === true || (Array.isArray(data) && data[0] === true);
@@ -46,6 +47,7 @@ export function createSupabaseOutboundJobStore(): OutboundJobStore {
     async insert(input: OutboundJobInput) {
       const isAutomation = input.jobType === 'automation';
       const payload = input.payload ?? { kind: 'text', text: input.text };
+      assertQueueablePayload(payload);
       if (/"data:[^"\\]*,/i.test(JSON.stringify(payload))) throw new Error('OUTBOUND_PAYLOAD_DATA_URL_FORBIDDEN');
       const { data, error } = await db.from('zelochat_outbound_jobs').upsert({
         empresa_id: input.empresaId,
@@ -128,7 +130,7 @@ export function createSupabaseOutboundJobStore(): OutboundJobStore {
 
 export interface OutboundWorkerDependencies {
   queue: OutboundQueue;
-  transport?: Pick<ProviderAdapter, 'dispatch'>;
+  transport?: Pick<ProviderAdapter, 'prepare' | 'send'>;
   resolveInstance?: (empresaId: string) => Promise<string>;
   getStatus?: (instance: string) => Promise<string>;
   /** Rolling compatibility for focused legacy tests; production uses transport. */
@@ -140,11 +142,12 @@ export interface OutboundWorkerDependencies {
 export class OutboundWorker {
   private running = false;
   private readonly locks = new Set<string>();
-  private readonly transport: Pick<ProviderAdapter, 'dispatch'>;
+  private readonly transport: Pick<ProviderAdapter, 'prepare' | 'send'>;
 
   constructor(private readonly deps: OutboundWorkerDependencies) {
     this.transport = deps.transport ?? (deps.send
-      ? { dispatch: async (job): Promise<ProviderDispatchResult> => {
+      ? { prepare: async (job) => ({ kind: 'text' as const, job, payload: { kind: 'text' as const, text: job.text } }), send: async (prepared): Promise<ProviderDispatchResult> => {
+          const job = prepared.job;
           const id = await deps.send!(job.conversationJid ?? job.phone ?? '', job.text, job.empresaId);
           return id ? { state: 'sent', providerMessageId: id } : { state: 'delivery_uncertain', reason: 'PROVIDER_MESSAGE_ID_MISSING' };
         } }
@@ -187,10 +190,17 @@ export class OutboundWorker {
       if (check.action === 'defer') { await this.deps.queue.defer(job, check.reason ?? 'Envio aguardando condições seguras.'); return false; }
       if (check.action === 'suppress') { await this.deps.queue.suppress(job, check.reason ?? 'Destinatário não elegível.'); return false; }
 
+      let prepared;
+      try {
+        prepared = await this.transport.prepare({ ...job, instanceKey: instance });
+      } catch (cause) {
+        await this.deps.queue.failBeforeDispatch(job, cause instanceof Error ? cause.message : 'Payload inválido para envio.');
+        return false;
+      }
       transportStarted = await this.deps.queue.startTransport(job);
       if (!transportStarted) return false;
-      const dispatchJob: OutboundJob = { ...job, status: 'dispatch_started' };
-      const result = await this.transport.dispatch(dispatchJob);
+      const dispatchJob: OutboundJob = { ...job, instanceKey: instance, status: 'dispatch_started' };
+      const result = await this.transport.send({ ...prepared, job: dispatchJob } as typeof prepared);
       if (result.state === 'delivery_uncertain') {
         await this.deps.queue.deliveryUncertain(dispatchJob, result.reason);
         return true;
@@ -215,6 +225,9 @@ export class OutboundWorker {
   stop(): void { this.running = false; }
 }
 
+export const canUseAutomationPhoneSnapshot = (job: OutboundJob, pessoaId: string | null): boolean =>
+  job.jobType === 'automation' && !pessoaId && Boolean(job.phone);
+
 async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }> {
   if (job.jobType === 'conversation') return { action: 'send' };
   const db = getServiceSupabase();
@@ -226,7 +239,7 @@ async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' |
   }
   const targetId = job.jobType === 'automation' ? job.automationDispatchId : job.recipientId;
   if (!targetId) return { action: 'send' };
-  let recipient: { status: string; pessoa_id: string } | null = null;
+  let recipient: { status: string; pessoa_id: string | null } | null = null;
   if (job.jobType === 'automation') {
     const { data, error } = await db.from('zelochat_automation_dispatches').select('status,pessoa_id').eq('id', targetId).eq('empresa_id', job.empresaId).maybeSingle();
     if (error) throw error; if (!data) return { action: 'suppress', reason: 'Jornada não encontrada.' }; recipient = { status: data.status, pessoa_id: data.pessoa_id };
@@ -234,6 +247,9 @@ async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' |
     const { data, error } = await db.from('zelochat_campaign_recipients').select('status,pessoa_id').eq('id', targetId).eq('empresa_id', job.empresaId).maybeSingle();
     if (error) throw error; if (!data) return { action: 'suppress', reason: 'Destinatário não encontrado.' }; recipient = data;
   }
+  if (!recipient || !['queued', 'sending'].includes(recipient.status)) return { action: 'suppress', reason: 'Destinatário já não está na fila.' };
+  if (canUseAutomationPhoneSnapshot(job, recipient.pessoa_id)) return { action: 'send' };
+  if (!recipient.pessoa_id) return { action: 'suppress', reason: 'missing_phone' };
   const pessoaId = recipient.pessoa_id;
   const [{ data: person, error: personError }, { data: relationship, error: relationshipError }, { data: optout, error: optoutError }, { data: conflicts, error: conflictError }] = await Promise.all([
     db.from('pessoas').select('id,tipo,contato').eq('id', pessoaId).maybeSingle(),
@@ -243,7 +259,6 @@ async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' |
   ]);
   if (personError || relationshipError || optoutError || conflictError) throw personError ?? relationshipError ?? optoutError ?? conflictError;
   const conflict = (conflicts ?? []).some((row) => Array.isArray(row.candidate_person_ids) && row.candidate_person_ids.includes(pessoaId));
-  if (!recipient || !['queued', 'sending'].includes(recipient.status)) return { action: 'suppress', reason: 'Destinatário já não está na fila.' };
   if (optout) return { action: 'suppress', reason: 'opt_out' };
   if (relationship?.whatsapp_blocked_at) return { action: 'suppress', reason: 'blocked' };
   if (conflict) return { action: 'suppress', reason: 'identity_conflict' };
@@ -252,7 +267,14 @@ async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' |
 }
 
 let startedWorker: OutboundWorker | null = null;
+let cleanupTimer: NodeJS.Timeout | null = null;
 export function startOutboundWorker(): OutboundWorker {
-  if (!startedWorker) { startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) }); startedWorker.start(); }
+  if (!startedWorker) {
+    startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) });
+    startedWorker.start();
+    void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown'));
+    cleanupTimer = setInterval(() => { void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown')); }, 60 * 60 * 1000);
+    cleanupTimer.unref();
+  }
   return startedWorker;
 }

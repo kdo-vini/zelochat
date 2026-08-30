@@ -4,14 +4,13 @@ import { nextRetryAt } from './policy.js';
 /** `failed` remains readable while old replicas drain; new writers never emit it. */
 export type OutboundStatus = OutboundState | 'failed';
 
-export interface OutboundJobInput {
+interface OutboundJobInputBase {
   id?: string;
   empresaId: string;
   instanceKey: string;
   recipientId?: string;
   automationDispatchId?: string;
   campaignId?: string;
-  jobType?: 'conversation' | 'campaign' | 'automation';
   idempotencyKey: string;
   phone?: string | null;
   text: string;
@@ -23,8 +22,13 @@ export interface OutboundJobInput {
   payloadFingerprint?: string;
   controlEpoch?: string;
 }
+export type OutboundJobInput =
+  | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: 'ai_auto' | 'ai_followup'; payload: OutboundPayload | PersistedOutboundPayload; payloadFingerprint: string; controlEpoch: string })
+  | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: Exclude<OutboundOrigin, 'campaign' | 'automation' | 'ai_auto' | 'ai_followup'>; payload: OutboundPayload | PersistedOutboundPayload; payloadFingerprint: string; controlEpoch?: string })
+  | (OutboundJobInputBase & { jobType?: 'campaign'; origin?: 'campaign' | 'internal_system' })
+  | (OutboundJobInputBase & { jobType: 'automation'; origin?: 'automation' | 'internal_system' });
 
-export interface OutboundJob {
+interface StoredOutboundJobBase {
   id: string;
   empresaId: string;
   instanceKey: string;
@@ -49,6 +53,20 @@ export interface OutboundJob {
   suppressionReason?: string | null;
 }
 
+type ConversationJobBase = StoredOutboundJobBase & {
+  jobType: 'conversation';
+  conversationControlId: string;
+  conversationJid: string;
+  origin: Exclude<OutboundOrigin, 'campaign' | 'automation'>;
+  payloadFingerprint: string;
+};
+export type ConversationOutboundJob =
+  | (ConversationJobBase & { origin: 'ai_auto' | 'ai_followup'; controlEpoch: string })
+  | (ConversationJobBase & { origin: Exclude<ConversationJobBase['origin'], 'ai_auto' | 'ai_followup'>; controlEpoch?: string });
+export type CampaignOutboundJob = StoredOutboundJobBase & { jobType: 'campaign'; origin: 'campaign' | 'internal_system'; campaignId?: string };
+export type AutomationOutboundJob = StoredOutboundJobBase & { jobType: 'automation'; origin: 'automation' | 'internal_system'; automationDispatchId?: string };
+export type OutboundJob = ConversationOutboundJob | CampaignOutboundJob | AutomationOutboundJob;
+
 type LegacyStoredJob = Omit<OutboundJob, 'jobType' | 'origin' | 'payload' | 'payloadFingerprint'>
   & Partial<Pick<OutboundJob, 'jobType' | 'origin' | 'payload' | 'payloadFingerprint'>>;
 
@@ -65,15 +83,40 @@ export interface OutboundJobStore {
 }
 
 const succeeded = (result: boolean | void): boolean => result !== false;
+const mediaKeys = new Set(['kind','storagePath','mimeType','fileName','sizeBytes','checksum','caption','ptt','quoted']);
+export function assertQueueablePayload(payload: OutboundPayload | PersistedOutboundPayload): void {
+  const record = payload as unknown as Record<string, unknown>;
+  if (['media','audio','sticker'].includes(String(record.kind)) && (
+    typeof record.storagePath !== 'string' || typeof record.mimeType !== 'string' || typeof record.fileName !== 'string'
+    || typeof record.sizeBytes !== 'number' || typeof record.checksum !== 'string'
+    || Object.keys(record).some((key) => !mediaKeys.has(key))
+    || (record.kind === 'audio' && typeof record.ptt !== 'boolean')
+    || (record.kind !== 'audio' && 'ptt' in record)
+    || (record.kind !== 'media' && 'caption' in record)
+    || ('caption' in record && typeof record.caption !== 'string')
+  )) throw new Error('OUTBOUND_MEDIA_NOT_QUEUEABLE');
+}
+export function assertOutboundJobShape(job: OutboundJob): void {
+  if (job.jobType === 'conversation') {
+    if (!job.conversationControlId || !job.conversationJid || !job.origin || !job.payloadFingerprint) throw new Error('OUTBOUND_CONVERSATION_SHAPE_INVALID');
+    if (['campaign','automation'].includes(job.origin as string)) throw new Error('OUTBOUND_CONVERSATION_ORIGIN_INVALID');
+    if ((job.origin === 'ai_auto' || job.origin === 'ai_followup') && !job.controlEpoch) throw new Error('OUTBOUND_CONVERSATION_EPOCH_REQUIRED');
+  }
+  if (job.jobType === 'campaign' && !['campaign','internal_system'].includes(job.origin)) throw new Error('OUTBOUND_CAMPAIGN_ORIGIN_INVALID');
+  if (job.jobType === 'automation' && !['automation','internal_system'].includes(job.origin)) throw new Error('OUTBOUND_AUTOMATION_ORIGIN_INVALID');
+  assertQueueablePayload(job.payload);
+}
 const normalizeJob = (job: OutboundJob | LegacyStoredJob): OutboundJob => {
   const jobType = job.jobType ?? 'campaign';
-  return {
+  const normalized = {
     ...job,
     jobType,
     origin: job.origin ?? (jobType === 'automation' ? 'automation' : 'campaign'),
     payload: job.payload ?? { kind: 'text', text: job.text },
     payloadFingerprint: job.payloadFingerprint ?? '',
-  };
+  } as OutboundJob;
+  assertOutboundJobShape(normalized);
+  return normalized;
 };
 
 export class OutboundQueue {
@@ -116,6 +159,11 @@ export class OutboundQueue {
     if (job.status === 'dispatch_started') return this.deliveryUncertain(job, reason);
     const retryAt = job.attempts >= this.maxAttempts ? null : nextRetryAt(job.attempts, new Date());
     return succeeded(await this.store.markFailed(job.id, reason, retryAt, job.empresaId, job.leaseOwner));
+  }
+
+  async failBeforeDispatch(job: OutboundJob, reason: string): Promise<boolean> {
+    if (!job.leaseOwner) return false;
+    return succeeded(await this.store.markFailed(job.id, reason, null, job.empresaId, job.leaseOwner));
   }
 
   async defer(job: OutboundJob, reason: string, retryAt = new Date(Date.now() + 60_000)): Promise<boolean> {

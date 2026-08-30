@@ -1505,14 +1505,13 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
       res.json({ ok: true, messageId: waMessageId ?? null, dbMessageId: intent.id });
     } catch (sendError) {
       const payload = serializeManualSendError(sendError);
-      await markAssistantMessageSendFailed(empresaId, intent.id, payload.providerMessage ?? payload.message).catch((markError) => {
+      await markAssistantMessageSendFailed(empresaId, intent.id, payload.message).catch((markError) => {
         console.warn('[Router] Failed to mark WhatsApp send as failed:', markError);
       });
       console.error('[Router] WhatsApp provider send error:', sendError);
       res.status(502).json({
         error: payload.message,
         code: payload.error,
-        ...(payload.providerStatus ? { providerStatus: payload.providerStatus } : {}),
       });
     }
   } catch (error: any) {
@@ -3491,7 +3490,7 @@ router.post('/api/messages/:id/retry', async (req: Request, res: Response) => {
       }),
       getErrorMessage: (error) => {
         const payload = serializeManualSendError(error);
-        return payload.providerMessage ?? payload.message;
+        return payload.message;
       },
     });
 
