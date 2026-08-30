@@ -393,6 +393,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert(mediaClaim.includes('p_intent_payload_fingerprint text'));
   assert(mediaClaim.includes('j.intent_payload_fingerprint = p_intent_payload_fingerprint'));
   assert(mediaClaim.includes('j.intent_payload_fingerprint is null'));
+  assert(mediaClaim.includes("j.outbound_origin in ('ai_auto','ai_followup')"));
   assert(mediaClaim.includes("j.payload->>'storagePath' = 'preparing/' || repeat('0', 64)"));
   assert(mediaClaim.includes('coalesce(j.intent_payload_fingerprint, p_intent_payload_fingerprint)'));
   assert(sql.includes("j.lease_owner = p_lease_owner"));

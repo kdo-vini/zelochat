@@ -1,5 +1,25 @@
 # Incidentes e padrões conhecidos
 
+## XXI. Retry humano de mídia pre-R2 podia assumir payload sem prova forte (risco auditado em 2026-08-30)
+
+### Sintoma possível
+
+Uma repetição com a mesma idempotency key podia assumir um job humano de mídia ainda em `preparing`, criado antes do fingerprint forte, e materializar bytes diferentes sobre a intenção antiga.
+
+### Causa-raiz
+
+O schema pre-R2 guardava somente metadata fraca de arquivo; o Round 3 permitia ao claim novo preencher `intent_payload_fingerprint=null`, mas nome/MIME/caption não provam quais bytes originaram a intenção humana.
+
+### Fix
+
+O dispatcher novo falha fechado antes de claim/upload e pede uma nova tentativa quando mídia humana não traz fingerprint forte; o RPC de 5 argumentos só pode adotar null-intent para AI, preservando o overload de 4 argumentos exclusivamente para réplicas antigas durante o rollout — `server/conversationOutbound.ts:254`, `supabase/migrations/065_conversation_outbound_claims.sql:517`, `tests/conversationOutbound.test.ts:410`.
+
+### Recovery / rollout
+
+Não editar nem reaproveitar o job legado. O operador deve reenviar a mídia, gerando nova intenção/idempotency key. Não remover o overload de 4 argumentos até todas as réplicas antigas drenarem.
+
+---
+
 ## XX. `ocultar_no_pdv` misturava venda manual com publicação online (2026-08-24)
 
 ### Sintoma

@@ -124,6 +124,7 @@ const TERMINAL_STATES = new Set<JobState>(['sent', 'failed_before_dispatch', 'de
 const FRIENDLY_NOT_SENT = 'Mensagem não enviada.';
 const FRIENDLY_UNCERTAIN = 'Não foi possível confirmar a entrega.';
 const FRIENDLY_PREPARE_FAILED = 'Não foi possível preparar a mensagem para envio.';
+const FRIENDLY_RETRY_REQUIRED = 'Não foi possível validar esta tentativa. Envie a mensagem novamente.';
 
 function isMediaPayload(payload: OutboundPayload): payload is Extract<OutboundPayload, { kind: 'media' | 'audio' | 'sticker' }> {
   return payload.kind === 'media' || payload.kind === 'audio' || payload.kind === 'sticker';
@@ -251,6 +252,35 @@ function isExpectedAiJob(
   if ((job.intentPayloadFingerprint ?? job.payloadFingerprint) !== expectedIntentFingerprint) return false;
   if (MEDIA_KINDS.has(expectedPayload.kind)) return job.payload?.kind === expectedPayload.kind;
   return stableStringify(job.payload) === stableStringify(expectedPayload);
+}
+
+function isExpectedHumanJob(
+  job: ConversationOutboundJobSnapshot,
+  request: ConversationOutboundRequest,
+  expectedPayload: PersistedOutboundPayload,
+  expectedIntentFingerprint: string,
+): boolean {
+  if (job.empresaId !== request.empresaId) return false;
+  if (job.remoteJid !== request.remoteJid) return false;
+  if (job.idempotencyKey !== request.idempotencyKey) return false;
+  if (job.origin !== 'human_zelochat') return false;
+
+  if (MEDIA_KINDS.has(expectedPayload.kind)) {
+    return job.intentPayloadFingerprint === expectedIntentFingerprint
+      && job.payload?.kind === expectedPayload.kind;
+  }
+
+  if ((job.intentPayloadFingerprint ?? job.payloadFingerprint) !== expectedIntentFingerprint) return false;
+  return stableStringify(job.payload) === stableStringify(expectedPayload);
+}
+
+function retryRequiredResult(job: ConversationOutboundJobSnapshot): DispatchResult {
+  return {
+    state: 'failed_before_dispatch',
+    jobId: job.id,
+    messageId: job.messageId,
+    friendlyMessage: FRIENDLY_RETRY_REQUIRED,
+  };
 }
 
 function resultFromJob(job: ConversationOutboundJobSnapshot): DispatchResult {
@@ -529,6 +559,11 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
 
       if (job.takeoverApplied) {
         await deps.cancelPendingReply(request.empresaId, request.remoteJid);
+      }
+
+      // FIX 2026-08-30: mídia humana pre-R2 não prova os bytes da intenção → o dispatcher novo exige fingerprint forte e pede uma nova tentativa.
+      if (!isExpectedHumanJob(job, request, initialPayload, initialFingerprint)) {
+        return retryRequiredResult(job);
       }
 
       job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);

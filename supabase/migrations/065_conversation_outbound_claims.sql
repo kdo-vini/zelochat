@@ -517,6 +517,7 @@ begin
        j.intent_payload_fingerprint = p_intent_payload_fingerprint
        or (
          j.intent_payload_fingerprint is null
+         and j.outbound_origin in ('ai_auto','ai_followup')
          and j.payload_fingerprint is not null
          and nullif(trim(j.payload_fingerprint), '') is not null
          and j.payload->>'kind' in ('media','audio','sticker')

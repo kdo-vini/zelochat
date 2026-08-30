@@ -90,3 +90,22 @@ Data: 2026-08-30
 - GREEN confirmado:
   - `npx tsx tests/conversationOutbound.test.ts`
   - `npx tsx tests/conversationOutboundWorker.test.ts`
+
+## Fix Round 4 — P1 human media pre-R2
+
+- O dispatcher novo agora rejeita toda mídia humana `preparing` sem `intent_payload_fingerprint` forte, inclusive retry aparentemente exato: metadata legada não prova os bytes da intenção original.
+- A rejeição ocorre antes de claim/upload/provider e retorna `failed_before_dispatch` com copy amigável pedindo novo envio, sem alterar ownership, payload, fingerprint ou status do job legado.
+- Jobs humanos novos com fingerprint forte continuam reutilizando a mesma idempotency key sem upload duplicado.
+- O overload novo de 5 argumentos só pode adotar null-intent para `ai_auto|ai_followup`; o overload legado de 4 argumentos foi preservado sem alteração para réplicas antigas durante o rollout, e AI pre-R2 mantém o comportamento revisado.
+
+## RED/GREEN — Fix Round 4
+
+- RED confirmado:
+  - `npx tsx tests/conversationOutbound.test.ts` retornou `queued` para retry humano pre-R2 em vez de falhar antes do claim.
+  - `npx tsx tests/conversationOutboundWorker.test.ts` mostrou que o claim novo de 5 argumentos ainda não limitava adoção nula a origens AI.
+- GREEN confirmado:
+  - `npx tsx tests/conversationOutbound.test.ts`
+  - `npx tsx tests/conversationOutboundWorker.test.ts`
+  - `npx tsx tests/auditFixGuardrails.test.ts` (38 pass, 0 fail)
+  - `npm run lint`
+- A suíte unitária completa foi iniciada sem falhas nos blocos executados, mas interrompida no caminho lento conhecido por não fazer parte do gate deste round; a validação global permanece para a Task 11.

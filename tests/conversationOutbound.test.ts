@@ -71,6 +71,7 @@ class FakeRepo {
       status: params.payload.kind === 'media' || params.payload.kind === 'audio' || params.payload.kind === 'sticker' ? 'preparing' : 'queued',
       payload: params.payload,
       payloadFingerprint: params.payloadFingerprint,
+      intentPayloadFingerprint: params.payloadFingerprint,
       takeoverApplied,
     };
     this.jobs.set(job.id, job);
@@ -184,6 +185,26 @@ function addPreR2AiMediaJob(repo: FakeRepo, payload: Extract<OutboundPayload, { 
     remoteJid: 'j1',
     idempotencyKey: 'ai-media-pre-r2',
     origin: 'ai_auto',
+    conversationControlId: 'control-1',
+    controlEpoch: '7',
+    status: 'preparing',
+    payload: legacyPreparingMediaPayload(payload),
+    payloadFingerprint: legacyMediaFingerprint(payload),
+    intentPayloadFingerprint: null,
+    preparationOwner: null,
+  };
+  repo.jobs.set(job.id, job);
+  return job;
+}
+
+function addPreR2HumanMediaJob(repo: FakeRepo, payload: Extract<OutboundPayload, { kind: 'media' | 'audio' | 'sticker' }>): StoredJob {
+  const job: StoredJob = {
+    id: 'job-human-pre-r2',
+    messageId: 'message-human-pre-r2',
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    idempotencyKey: 'human-media-pre-r2',
+    origin: 'human_zelochat',
     conversationControlId: 'control-1',
     controlEpoch: '7',
     status: 'preparing',
@@ -387,6 +408,74 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
   assert.equal(repo.uploadCount, 1, 'somente o dono da preparação faz upload');
   assert.equal([...repo.jobs.values()][0].status, 'queued', 'perdedor não transforma queued válido em failed');
   assert.equal(repo.calls.includes('mark-failed-before-dispatch'), false);
+}
+
+for (const retryKind of ['exact', 'divergent'] as const) {
+  const repo = new FakeRepo();
+  const originalMedia: Extract<OutboundPayload, { kind: 'media' }> = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=' },
+    caption: 'Foto legada',
+  };
+  const retryMedia: Extract<OutboundPayload, { kind: 'media' }> = retryKind === 'exact'
+    ? originalMedia
+    : {
+        kind: 'media',
+        attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,b3V0cmE=' },
+        caption: 'Foto divergente',
+      };
+  const job = addPreR2HumanMediaJob(repo, originalMedia);
+  const originalJob = structuredClone(job);
+
+  const result = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: 'u1',
+    origin: 'human_zelochat',
+    takeoverPolicy: 'take_over',
+    idempotencyKey: 'human-media-pre-r2',
+    payload: retryMedia,
+  });
+
+  assert.equal(result.state, 'failed_before_dispatch');
+  assert.match(result.friendlyMessage, /envie.*novamente/i);
+  assert.equal(repo.calls.includes('claim-media-preparation'), false, `${retryKind}: dispatcher novo não toma ownership`);
+  assert.equal(repo.uploadCount, 0, `${retryKind}: retry sem prova forte não chama upload/provider`);
+  assert.equal(repo.calls.includes('mark-prepared'), false, `${retryKind}: retry não sobrescreve payload`);
+  assert.deepEqual(job, originalJob, `${retryKind}: job humano pre-R2 permanece inalterado`);
+}
+
+{
+  const repo = new FakeRepo();
+  const mediaPayload: Extract<OutboundPayload, { kind: 'media' }> = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,bm92YQ==' },
+    caption: 'Foto nova',
+  };
+  const dispatch = dispatcher(repo, 1);
+  const first = await dispatch.dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: 'u1',
+    origin: 'human_zelochat',
+    takeoverPolicy: 'take_over',
+    idempotencyKey: 'human-media-strong',
+    payload: mediaPayload,
+  });
+  const retry = await dispatch.dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: 'u1',
+    origin: 'human_zelochat',
+    takeoverPolicy: 'take_over',
+    idempotencyKey: 'human-media-strong',
+    payload: mediaPayload,
+  });
+
+  assert.equal(first.state, 'queued');
+  assert.deepEqual(retry, first, 'job novo com fingerprint forte reutiliza a mesma intenção');
+  assert.equal(repo.jobs.size, 1);
+  assert.equal(repo.uploadCount, 1, 'retry forte não repete upload');
 }
 
 {
