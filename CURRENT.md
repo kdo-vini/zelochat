@@ -13,7 +13,7 @@
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Nenhum fix foi aplicado ainda. Execução começa pelas Tasks 1–5 e não pode ativar `enforce` antes dos gates de banco, corrida cross-replica e `fromMe`.
+- Task 3 local concluída em 2026-08-30: `conversationControl` agora expõe takeover/resume/epoch por família canônica, com migration 064 de RPCs service-role-only e wrappers legados para `setAutoReply`/`escalateSession`. Ainda não ativar `enforce` nem migrar callers futuros antes dos gates de dispatcher, corrida cross-replica e `fromMe`.
 
 ## Rollout CRM (2026-08-26)
 

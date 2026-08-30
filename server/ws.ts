@@ -18,6 +18,7 @@ export type WsEventType =
   | 'escalation_triggered'
   | 'escalation_resolved'
   | 'session_status_changed'
+  | 'conversation_mode_changed'
   | 'session_tags_updated'
   | 'reaction_update';
 

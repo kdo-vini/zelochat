@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Engine de tomada humana e outbound (2026-08-30)
+
+- ✅ TAKEOVER-003 — toggle manual/escalonamento ainda escreviam `auto_reply` direto e a IA não tinha epoch canônico fail-closed por família de JIDs → migration 064 adiciona RPCs service-role-only que resolvem/lockam o controle canônico por `empresa_id + remote_jid`, fundem controles com humano vencendo, cancelam IA queued e expõem epoch como string no seam TypeScript; `ensureSession`, `setAutoReply` e `escalateSession` passam pelo controle novo sem migrar callers futuros — `supabase/migrations/064_conversation_control_rpcs.sql:43`, `server/conversationControl.ts:9`, `server/messageHandler.ts:1171`, `server/messageHandler.ts:2625`, `server/escalation.ts:211`, `tests/conversationControl.test.ts:1`
+
 ### Clientes CRM — rollout (2026-08-26)
 
 - ✅ CRM-ROLLOUT-045 — CRM ainda passava por flag de rollout, contrariando sua inclusão no plano → `Clientes`, APIs, painel operacional e fallback de acesso agora tratam CRM como capacidade sempre disponível para assinaturas válidas; a tabela de flags fica restrita a campanhas/automações — `server/customers/rollout.ts:9`, `src/domain/navigation.ts:50`, `src/AppShell.tsx:152`, `supabase/migrations/062_retire_crm_rollout_gate.sql:1`

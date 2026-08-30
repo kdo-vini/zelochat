@@ -4,6 +4,11 @@ import { ensureCustomerForSession } from './customers/identity.js';
 import { transcribeAudio } from './transcription.js';
 import { sendTextMessage } from './whatsapp.js';
 import { redactJid } from './redact.js';
+import {
+  claimHumanTakeover,
+  ensureConversationControl,
+  resumeAiConversation,
+} from './conversationControl.js';
 import { setTimeout } from 'node:timers/promises';
 import type { AudioTranscriptStatus, ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
 import {
@@ -39,8 +44,8 @@ const MESSAGE_ACTIVITY_CONCURRENCY = 4;
 const BULK_SESSION_RESOLUTION_CHUNK_SIZE = 50;
 const BULK_SESSION_RESOLUTION_CONCURRENCY = 4;
 
-const SESSION_COLUMNS_FULL = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
-const SESSION_COLUMNS_LIST = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
+const SESSION_COLUMNS_FULL = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, conversation_control_id, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
+const SESSION_COLUMNS_LIST = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, conversation_control_id, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
 
 function normalizeSessionRows(
   rows: Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }> | null | undefined,
@@ -320,6 +325,7 @@ interface SessionRow {
   unread_count: number | null;
   status: SessionStatus;
   auto_reply: boolean | null;
+  conversation_control_id: string | null;
   profile_pic_url: string | null;
   escalated_at: string | null;
   acknowledged_at: string | null;
@@ -1092,6 +1098,11 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
   };
 }
 
+export async function fetchSessionFamilyJids(empresaId: string, jid: string): Promise<string[]> {
+  const family = await fetchSessionFamily(empresaId, jid);
+  return family?.rows.map((row) => row.remote_jid) ?? [jid];
+}
+
 export async function ensureSession(params: {
   empresaId: string;
   jid: string;
@@ -1157,7 +1168,9 @@ export async function ensureSession(params: {
       throw new Error(error.message);
     }
 
-    return data as SessionRow;
+    await ensureConversationControl({ empresaId: params.empresaId, remoteJid: params.jid });
+    const refreshedFamily = await fetchSessionFamily(params.empresaId, params.jid);
+    return refreshedFamily?.primary ?? (data as SessionRow);
   }
 
   const { data, error } = await supabase
@@ -1170,7 +1183,9 @@ export async function ensureSession(params: {
     throw new Error(error.message);
   }
 
-  return data as SessionRow;
+  await ensureConversationControl({ empresaId: params.empresaId, remoteJid: params.jid });
+  const refreshedFamily = await fetchSessionFamily(params.empresaId, params.jid);
+  return refreshedFamily?.primary ?? (data as SessionRow);
 }
 
 export async function updateSessionProfilePic(empresaId: string, jid: string, profilePicUrl: string) {
@@ -2611,26 +2626,48 @@ export async function setAutoReply(
   jid: string,
   enabled: boolean,
   empresaId: string,
+  actorUserId?: string | null,
 ): Promise<void> {
   if (!empresaId) {
     return;
   }
 
-  const family = await fetchSessionFamily(empresaId, jid);
-  if (!family) {
-    return;
+  const resolvedActorUserId = actorUserId ?? await getEmpresaUserId(empresaId);
+  if (enabled && !resolvedActorUserId) {
+    throw new Error('CONVERSATION_CONTROL_RESUME_ACTOR_REQUIRED');
   }
 
-  const supabase = getServiceSupabase();
-  const { error } = await supabase
-    .from('zelochat_sessions')
-    .update({
-      auto_reply: enabled,
-      updated_at: new Date().toISOString(),
-    })
-    .in('id', family.rows.map((row) => row.id));
+  const snapshot = enabled
+    ? await resumeAiConversation({
+        empresaId,
+        remoteJid: jid,
+        actorUserId: resolvedActorUserId,
+      })
+    : await claimHumanTakeover({
+        empresaId,
+        remoteJid: jid,
+        actorUserId: resolvedActorUserId ?? null,
+        source: 'explicit_manual_toggle',
+      });
 
-  if (error) {
-    throw new Error(error.message);
+  if (enabled && !snapshot.conversationControlId) {
+    throw new Error('CONVERSATION_CONTROL_NOT_FOUND');
   }
+
+  broadcast(
+    {
+      type: 'conversation_mode_changed',
+      data: {
+        empresaId,
+        sessionId: jid,
+        conversationControlId: snapshot.conversationControlId,
+        mode: snapshot.mode,
+        autoReply: snapshot.mode === 'ai',
+        epoch: snapshot.epoch,
+        remoteJids: snapshot.remoteJids,
+        changedAt: snapshot.changedAt,
+      },
+    },
+    empresaId,
+  );
 }

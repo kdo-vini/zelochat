@@ -3,6 +3,7 @@ import { broadcast } from './ws.js';
 import { sendTextMessage } from './whatsapp.js';
 import { getConfig } from './configStore.js';
 import { addAssistantMessage } from './messageHandler.js';
+import { claimHumanTakeover } from './conversationControl.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
 
 export type ReasonCategory =
@@ -207,6 +208,13 @@ export async function escalateSession(
   const wasAlreadyEscalated = session.status === 'escalated';
   const now = new Date().toISOString();
 
+  const controlSnapshot = await claimHumanTakeover({
+    empresaId,
+    remoteJid: jid,
+    actorUserId: null,
+    source: 'escalation',
+  });
+
   const { data: inserted, error: insertErr } = await supabase
     .from('zelochat_escalation_events')
     .insert({
@@ -235,7 +243,6 @@ export async function escalateSession(
       .from('zelochat_sessions')
       .update({
         status: 'escalated',
-        auto_reply: false,
         escalated_at: now,
         acknowledged_at: null,
         updated_at: now,
@@ -272,6 +279,23 @@ export async function escalateSession(
       empresaId,
     );
   }
+
+  broadcast(
+    {
+      type: 'conversation_mode_changed',
+      data: {
+        empresaId,
+        sessionId: jid,
+        conversationControlId: controlSnapshot.conversationControlId,
+        mode: controlSnapshot.mode,
+        autoReply: controlSnapshot.mode === 'ai',
+        epoch: controlSnapshot.epoch,
+        remoteJids: controlSnapshot.remoteJids,
+        changedAt: controlSnapshot.changedAt,
+      },
+    },
+    empresaId,
+  );
 
   if (!wasAlreadyEscalated && !params.skipCustomerMessage) {
     const handoff = handoffMessageFor(params.reasonCategory);

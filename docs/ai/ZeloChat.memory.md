@@ -4,6 +4,12 @@
 
 ## Purpose
 
+### Human takeover/outbound engine (confirmed 2026-08-30)
+- Task 3 introduced `server/conversationControl.ts` as the canonical seam for AI/manual conversation control. Public callers use `beginAiTurn`, `claimHumanTakeover`, `resumeAiConversation`, `ensureConversationControl`, and `isAiPermitCurrent`; `AiTurnPermit.epoch` is exposed to TypeScript as a string so Postgres `bigint` is never lossy in JS.
+- Migration `064_conversation_control_rpcs.sql` is the database authority for conversation mode and epoch. RPC callers pass only `empresa_id + remote_jid` plus actor/message metadata; the database resolves the canonical control, takes advisory/row locks, merges duplicate controls with human mode winning, projects legacy `zelochat_sessions.auto_reply`, and cancels only queued `ai_auto|ai_followup` jobs on takeover.
+- `ensureSession` now calls `ensure_zelochat_conversation_control` before returning a session, so a newly observed JID variation inherits the existing family control/mode before it becomes eligible for AI. Legacy direct writes are bridged through `setAutoReply` and `escalateSession`; do not reintroduce direct service-role updates to `auto_reply` outside the control RPC projection.
+- This task did not migrate future outbound dispatcher/fromMe callers. Treat the new seam as the authority for subsequent tasks, but keep enforcement rollout gated until dispatcher ordering, worker epoch validation, and fromMe classification are implemented and verified.
+
 ### CRM rollout (confirmed 2026-08-26)
 - CRM no longer has a per-company rollout gate. Migration `062_retire_crm_rollout_gate.sql` normalizes the legacy `crm_enabled` column, while `server/customers/rollout.ts`, navigation, and customer APIs treat CRM as always available behind the normal subscription/paywall and actor permissions. Only campaigns and automations remain rollout-gated.
 - Migration `061_enable_crm_for_active_plans.sql` now enables the Clientes module for every empresa with a `subscriptions.status` of `active` or `trialing`; it leaves campaigns, automations, and outbound jobs disabled. Treat the rollout flag as plan inclusion for CRM, not as a paid add-on. The production bundle published at 14:26 includes the new navigation; authenticated visual validation still requires an operator session.
