@@ -39,7 +39,7 @@ assert.equal(isOutboundJobAllowed({ crm: true, campaigns: true, automations: tru
 let deferred = 0; let sent = 0;
 const workerStore: OutboundJobStore = {
   async insert(input) { return { ...input, id: 'job', status: 'queued', attempts: 0 }; },
-  async claim() { return { id: 'job', empresaId: 'e', instanceKey: 'i', jobType: 'campaign', campaignId: 'c', idempotencyKey: 'k', phone: '5511999999999', text: 'oi', status: 'sending', attempts: 3 }; },
+  async claim(workerId) { return { id: 'job', empresaId: 'e', instanceKey: 'i', jobType: 'campaign', campaignId: 'c', idempotencyKey: 'k', phone: '5511999999999', text: 'oi', status: 'sending', leaseOwner: workerId, attempts: 3 }; },
   async markSent() { sent++; }, async markFailed() {}, async releaseExpired() {},
   async defer() { deferred++; },
 };

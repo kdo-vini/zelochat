@@ -1,73 +1,258 @@
+import type { OutboundOrigin, OutboundPayload, PersistedOutboundPayload } from '../../src/domain/outbound.js';
 import { getServiceSupabase } from '../supabase.js';
 import { getInstanceForEmpresa } from '../instanceManager.js';
-import { fetchInstanceConnectionState, sendTextMessage } from '../whatsapp.js';
+import { fetchInstanceConnectionState } from '../whatsapp.js';
 import { OutboundQueue, type OutboundJob, type OutboundJobInput, type OutboundJobStore } from './queue.js';
 import { getCrmRolloutFlags, isOutboundJobAllowed } from '../customers/rollout.js';
+import { createProviderAdapter, type ProviderAdapter, type ProviderDispatchResult } from './providerAdapter.js';
+
+const originFor = (jobType: OutboundJob['jobType'], value?: string | null): OutboundOrigin =>
+  (value ?? (jobType === 'automation' ? 'automation' : jobType === 'campaign' ? 'campaign' : 'internal_system')) as OutboundOrigin;
+
+function mapRow(row: Record<string, any>): OutboundJob {
+  const jobType = (row.job_type ?? 'campaign') as OutboundJob['jobType'];
+  const text = String(row.message ?? '');
+  return {
+    id: row.id,
+    empresaId: row.empresa_id,
+    instanceKey: row.instance_key ?? '',
+    campaignId: row.campaign_id ?? undefined,
+    jobType,
+    recipientId: row.recipient_id ?? undefined,
+    automationDispatchId: row.automation_dispatch_id ?? undefined,
+    idempotencyKey: row.idempotency_key,
+    phone: row.phone_snapshot,
+    text,
+    conversationControlId: row.conversation_control_id ?? undefined,
+    conversationJid: row.conversation_jid ?? undefined,
+    messageId: row.message_id ?? undefined,
+    origin: originFor(jobType, row.outbound_origin),
+    payload: (row.payload ?? { kind: 'text', text }) as OutboundPayload | PersistedOutboundPayload,
+    payloadFingerprint: row.payload_fingerprint ?? '',
+    controlEpoch: row.control_epoch == null ? undefined : String(row.control_epoch),
+    status: row.status,
+    leaseOwner: row.lease_owner,
+    leaseExpiresAt: row.lease_expires_at,
+    attempts: row.attempts,
+    suppressionReason: row.suppression_reason,
+  };
+}
+
+const rpcBoolean = (data: unknown): boolean => data === true || (Array.isArray(data) && data[0] === true);
 
 export function createSupabaseOutboundJobStore(): OutboundJobStore {
   const db = getServiceSupabase();
   return {
     async insert(input: OutboundJobInput) {
       const isAutomation = input.jobType === 'automation';
-      const { data, error } = await db.from('zelochat_outbound_jobs').upsert({ empresa_id: input.empresaId, campaign_id: input.campaignId ?? null, recipient_id: isAutomation ? null : input.recipientId ?? null, automation_dispatch_id: isAutomation ? input.automationDispatchId ?? input.recipientId ?? null : null, pessoa_id: input.recipientId ?? null, job_type: input.jobType ?? 'campaign', instance_key: input.instanceKey, idempotency_key: input.idempotencyKey, phone_snapshot: input.phone ?? null, message: input.text, status: 'queued', next_attempt_at: new Date().toISOString() }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id,empresa_id,campaign_id,recipient_id,automation_dispatch_id,job_type,idempotency_key,phone_snapshot,message,status,attempts,lease_expires_at,instance_key').maybeSingle();
+      const payload = input.payload ?? { kind: 'text', text: input.text };
+      if (/"data:[^"\\]*,/i.test(JSON.stringify(payload))) throw new Error('OUTBOUND_PAYLOAD_DATA_URL_FORBIDDEN');
+      const { data, error } = await db.from('zelochat_outbound_jobs').upsert({
+        empresa_id: input.empresaId,
+        campaign_id: input.campaignId ?? null,
+        recipient_id: isAutomation ? null : input.recipientId ?? null,
+        automation_dispatch_id: isAutomation ? input.automationDispatchId ?? input.recipientId ?? null : null,
+        pessoa_id: input.recipientId ?? null,
+        job_type: input.jobType ?? 'campaign',
+        instance_key: input.instanceKey,
+        idempotency_key: input.idempotencyKey,
+        phone_snapshot: input.phone ?? null,
+        message: input.text,
+        conversation_control_id: input.conversationControlId ?? null,
+        conversation_jid: input.conversationJid ?? null,
+        message_id: input.messageId ?? null,
+        outbound_origin: input.origin ?? (isAutomation ? 'automation' : 'campaign'),
+        takeover_policy: 'preserve_ai',
+        payload,
+        payload_fingerprint: input.payloadFingerprint ?? '',
+        control_epoch: input.controlEpoch ?? null,
+        status: 'queued',
+        next_attempt_at: new Date().toISOString(),
+      }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('*').maybeSingle();
       if (error || !data) throw error ?? new Error('JOB_INSERT_FAILED');
-      return { id: data.id, empresaId: data.empresa_id, instanceKey: data.instance_key ?? input.instanceKey, campaignId: data.campaign_id ?? undefined, jobType: data.job_type ?? input.jobType ?? 'campaign', recipientId: data.recipient_id ?? undefined, automationDispatchId: data.automation_dispatch_id ?? undefined, idempotencyKey: data.idempotency_key, phone: data.phone_snapshot, text: data.message, status: data.status, attempts: data.attempts, leaseExpiresAt: data.lease_expires_at };
+      return mapRow(data);
     },
-    async claim(workerId, leaseMs) { const { data, error } = await db.rpc('claim_zelochat_outbound_job', { p_worker: workerId, p_lease_seconds: Math.ceil(leaseMs / 1000) }); if (error || !data?.[0]) return null; const row = data[0]; if (row.recipient_id && row.job_type === 'campaign') await db.from('zelochat_campaign_recipients').update({ status: 'sending', updated_at: new Date().toISOString() }).eq('id', row.recipient_id).in('status', ['queued', 'sending']); if (row.automation_dispatch_id && row.job_type === 'automation') await db.from('zelochat_automation_dispatches').update({ status: 'sending', updated_at: new Date().toISOString() }).eq('id', row.automation_dispatch_id).eq('status', 'queued'); return { id: row.id, empresaId: row.empresa_id, instanceKey: row.instance_key ?? '', jobType: row.job_type ?? 'campaign', recipientId: row.recipient_id ?? undefined, automationDispatchId: row.automation_dispatch_id ?? undefined, campaignId: row.campaign_id ?? undefined, idempotencyKey: row.idempotency_key, phone: row.phone_snapshot, text: row.message, status: row.status, attempts: row.attempts, leaseExpiresAt: row.lease_expires_at }; },
-    async markSent(id, messageId) { const { data: job, error: lookupError } = await db.from('zelochat_outbound_jobs').select('recipient_id,automation_dispatch_id,job_type,empresa_id').eq('id', id).maybeSingle(); if (lookupError) throw lookupError; const now = new Date().toISOString(); const { error } = await db.from('zelochat_outbound_jobs').update({ status: 'sent', provider_message_id: messageId, sent_at: now, lease_owner: null, lease_expires_at: null, updated_at: now }).eq('id', id).eq('empresa_id', job?.empresa_id); if (error) throw error; if (job?.recipient_id && job.job_type === 'campaign') await db.from('zelochat_campaign_recipients').update({ status: 'sent', provider_message_id: messageId, sent_at: now, updated_at: now }).eq('id', job.recipient_id).eq('empresa_id', job.empresa_id); if (job?.automation_dispatch_id && job.job_type === 'automation') await db.from('zelochat_automation_dispatches').update({ status: 'sent', sent_at: now, updated_at: now }).eq('id', job.automation_dispatch_id).eq('empresa_id', job.empresa_id); },
-    async markFailed(id, reason, retryAt) { const { data: job, error: lookupError } = await db.from('zelochat_outbound_jobs').select('recipient_id,automation_dispatch_id,job_type,empresa_id').eq('id', id).maybeSingle(); if (lookupError) throw lookupError; const nextStatus = retryAt ? 'queued' : 'failed'; const now = new Date().toISOString(); const { error } = await db.from('zelochat_outbound_jobs').update({ status: nextStatus, last_error: reason, next_attempt_at: retryAt?.toISOString() ?? now, lease_owner: null, lease_expires_at: null, updated_at: now }).eq('id', id).eq('empresa_id', job?.empresa_id); if (error) throw error; if (job?.recipient_id && job.job_type === 'campaign') await db.from('zelochat_campaign_recipients').update({ status: nextStatus === 'queued' ? 'queued' : 'failed', last_error: reason, updated_at: now }).eq('id', job.recipient_id).eq('empresa_id', job.empresa_id); if (job?.automation_dispatch_id && job.job_type === 'automation') await db.from('zelochat_automation_dispatches').update({ status: nextStatus, last_error: reason, updated_at: now }).eq('id', job.automation_dispatch_id).eq('empresa_id', job.empresa_id); },
-    async defer(id, reason, retryAt = new Date(Date.now() + 60_000)) { const { data: job, error: lookupError } = await db.from('zelochat_outbound_jobs').select('recipient_id,automation_dispatch_id,job_type,empresa_id').eq('id', id).maybeSingle(); if (lookupError) throw lookupError; const now = new Date().toISOString(); const { error } = await db.from('zelochat_outbound_jobs').update({ status: 'queued', attempts: 0, last_error: reason, next_attempt_at: retryAt.toISOString(), lease_owner: null, lease_expires_at: null, updated_at: now }).eq('id', id).eq('empresa_id', job?.empresa_id); if (error) throw error; if (job?.recipient_id && job.job_type === 'campaign') await db.from('zelochat_campaign_recipients').update({ status: 'queued', last_error: reason, updated_at: now }).eq('id', job.recipient_id).eq('empresa_id', job.empresa_id); if (job?.automation_dispatch_id && job.job_type === 'automation') await db.from('zelochat_automation_dispatches').update({ status: 'queued', last_error: reason, updated_at: now }).eq('id', job.automation_dispatch_id).eq('empresa_id', job.empresa_id); },
-    async markSuppressed(id, reason) { const { data: job, error: lookupError } = await db.from('zelochat_outbound_jobs').select('recipient_id,automation_dispatch_id,job_type,empresa_id').eq('id', id).maybeSingle(); if (lookupError) throw lookupError; const now = new Date().toISOString(); const { error } = await db.from('zelochat_outbound_jobs').update({ status: 'cancelled', last_error: reason, lease_owner: null, lease_expires_at: null, updated_at: now }).eq('id', id).eq('empresa_id', job?.empresa_id); if (error) throw error; if (job?.recipient_id && job.job_type === 'campaign') await db.from('zelochat_campaign_recipients').update({ status: 'suppressed', suppression_reason: reason, updated_at: now }).eq('id', job.recipient_id).eq('empresa_id', job.empresa_id); if (job?.automation_dispatch_id && job.job_type === 'automation') await db.from('zelochat_automation_dispatches').update({ status: 'suppressed', suppression_reason: reason, updated_at: now }).eq('id', job.automation_dispatch_id).eq('empresa_id', job.empresa_id); },
-    async releaseExpired() { const { error } = await db.rpc('release_zelochat_expired_leases'); if (error) throw error; },
+
+    async claim(workerId, leaseMs) {
+      const { data, error } = await db.rpc('claim_zelochat_outbound_job', { p_worker: workerId, p_lease_seconds: Math.ceil(leaseMs / 1000) });
+      if (error) throw error;
+      return data?.[0] ? mapRow(data[0]) : null;
+    },
+
+    async startTransport(id, empresaId, leaseOwner) {
+      const { data, error } = await db.rpc('start_zelochat_outbound_transport', { p_id: id, p_empresa_id: empresaId, p_lease_owner: leaseOwner });
+      if (error) throw error;
+      return rpcBoolean(data);
+    },
+
+    async markSent(id, messageId, empresaId, leaseOwner) {
+      if (!empresaId || !leaseOwner) return false;
+      const { data, error } = await db.rpc('complete_zelochat_outbound_job', { p_id: id, p_empresa_id: empresaId, p_lease_owner: leaseOwner, p_provider_message_id: messageId });
+      if (error) throw error;
+      return rpcBoolean(data);
+    },
+
+    async markDeliveryUncertain(id, reason, empresaId, leaseOwner) {
+      const { data, error } = await db.rpc('fail_zelochat_outbound_job', { p_id: id, p_empresa_id: empresaId, p_lease_owner: leaseOwner, p_reason: reason, p_retry_at: null, p_delivery_uncertain: true });
+      if (error) throw error;
+      return rpcBoolean(data);
+    },
+
+    async markFailed(id, reason, retryAt, empresaId, leaseOwner) {
+      if (!empresaId || !leaseOwner) return false;
+      const { data, error } = await db.rpc('fail_zelochat_outbound_job', { p_id: id, p_empresa_id: empresaId, p_lease_owner: leaseOwner, p_reason: reason, p_retry_at: retryAt?.toISOString() ?? null, p_delivery_uncertain: false });
+      if (error) throw error;
+      return rpcBoolean(data);
+    },
+
+    async defer(id, reason, retryAt = new Date(Date.now() + 60_000), empresaId, leaseOwner) {
+      if (!empresaId || !leaseOwner) return false;
+      const { data, error } = await db.rpc('fail_zelochat_outbound_job', { p_id: id, p_empresa_id: empresaId, p_lease_owner: leaseOwner, p_reason: reason, p_retry_at: retryAt.toISOString(), p_delivery_uncertain: false });
+      if (error) throw error;
+      return rpcBoolean(data);
+    },
+
+    async markSuppressed(id, reason, empresaId, leaseOwner) {
+      if (!empresaId || !leaseOwner) return false;
+      const { data, error } = await db.rpc('suppress_zelochat_outbound_job', { p_id: id, p_empresa_id: empresaId, p_lease_owner: leaseOwner, p_reason: reason });
+      if (error) throw error;
+      return rpcBoolean(data);
+    },
+
+    async releaseExpired() {
+      const { error } = await db.rpc('release_zelochat_expired_leases');
+      if (error) throw error;
+    },
   };
 }
 
-export interface OutboundWorkerDependencies { queue: OutboundQueue; resolveInstance?: (empresaId: string) => Promise<string>; getStatus?: (instance: string) => Promise<string>; send?: (phone: string, text: string, empresaId: string) => Promise<string | undefined>; validate?: (job: OutboundJob) => Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }>; getRolloutFlags?: (empresaId: string) => Promise<Awaited<ReturnType<typeof getCrmRolloutFlags>>>; }
+export interface OutboundWorkerDependencies {
+  queue: OutboundQueue;
+  transport?: Pick<ProviderAdapter, 'dispatch'>;
+  resolveInstance?: (empresaId: string) => Promise<string>;
+  getStatus?: (instance: string) => Promise<string>;
+  /** Rolling compatibility for focused legacy tests; production uses transport. */
+  send?: (phone: string, text: string, empresaId: string) => Promise<string | undefined>;
+  validate?: (job: OutboundJob) => Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }>;
+  getRolloutFlags?: (empresaId: string) => Promise<Awaited<ReturnType<typeof getCrmRolloutFlags>>>;
+}
+
 export class OutboundWorker {
   private running = false;
   private readonly locks = new Set<string>();
-  constructor(private readonly deps: OutboundWorkerDependencies) {}
-  async runOnce(workerId = `campaign-worker-${process.pid}`): Promise<boolean> {
-    await this.deps.queue.releaseExpired(); const job = await this.deps.queue.claim(workerId); if (!job || !job.phone) return false;
-    try {
-      const rollout = await (this.deps.getRolloutFlags ?? getCrmRolloutFlags)(job.empresaId);
-      if (!isOutboundJobAllowed(rollout, job)) { await this.deps.queue.defer(job, 'Este recurso está pausado temporariamente; a fila será retomada depois.'); return false; }
-    } catch (error) {
-      console.warn('[outbound] rollout indisponível; job mantido na fila', error instanceof Error ? error.message : 'unknown');
-      await this.deps.queue.defer(job, 'O envio está temporariamente pausado; a fila será retomada depois.');
+  private readonly transport: Pick<ProviderAdapter, 'dispatch'>;
+
+  constructor(private readonly deps: OutboundWorkerDependencies) {
+    this.transport = deps.transport ?? (deps.send
+      ? { dispatch: async (job): Promise<ProviderDispatchResult> => {
+          const id = await deps.send!(job.conversationJid ?? job.phone ?? '', job.text, job.empresaId);
+          return id ? { state: 'sent', providerMessageId: id } : { state: 'delivery_uncertain', reason: 'PROVIDER_MESSAGE_ID_MISSING' };
+        } }
+      : createProviderAdapter());
+  }
+
+  async runOnce(workerId = `outbound-worker-${process.pid}`): Promise<boolean> {
+    await this.deps.queue.releaseExpired();
+    const job = await this.deps.queue.claim(workerId);
+    if (!job || (!job.phone && !job.conversationJid)) return false;
+
+    if (job.jobType !== 'conversation') {
+      try {
+        const rollout = await (this.deps.getRolloutFlags ?? getCrmRolloutFlags)(job.empresaId);
+        if (!isOutboundJobAllowed(rollout, { jobType: job.jobType })) {
+          await this.deps.queue.defer(job, 'Este recurso está pausado temporariamente; a fila será retomada depois.');
+          return false;
+        }
+      } catch (error) {
+        console.warn('[outbound] rollout indisponível; job mantido na fila', error instanceof Error ? error.message : 'unknown');
+        await this.deps.queue.defer(job, 'O envio está temporariamente pausado; a fila será retomada depois.');
+        return false;
+      }
+    }
+
+    const instance = job.instanceKey || await (this.deps.resolveInstance ?? getInstanceForEmpresa)(job.empresaId);
+    if (this.locks.has(instance)) {
+      await this.deps.queue.defer(job, 'Outra mensagem desta conexão está sendo enviada.');
       return false;
     }
-    const instance = job.instanceKey || await (this.deps.resolveInstance ?? getInstanceForEmpresa)(job.empresaId); if (this.locks.has(instance)) { await this.deps.queue.defer(job, 'Outra mensagem desta conexão está sendo enviada.'); return false; }
     this.locks.add(instance);
+    let transportStarted = false;
     try {
-      const status = await (this.deps.getStatus ?? fetchInstanceConnectionState)(instance); if (status !== 'connected') { await this.deps.queue.defer(job, 'Conexão indisponível; a mensagem ficará na fila.'); return false; }
-      const check = await (this.deps.validate?.(job) ?? validateOutboundJob(job)); if (check.action === 'defer') { await this.deps.queue.defer(job, check.reason ?? 'Envio aguardando condições seguras.'); return false; } if (check.action === 'suppress') { await this.deps.queue.suppress(job, check.reason ?? 'Destinatário não elegível.'); return false; }
-      const messageId = await (this.deps.send ?? sendTextMessage)(job.phone, job.text, job.empresaId); if (!messageId) throw new Error('SEND_ID_MISSING'); await this.deps.queue.complete(job, messageId); return true;
-    } catch (cause) { await this.deps.queue.fail(job, cause instanceof Error ? cause.message : 'Falha ao enviar.'); return false; } finally { this.locks.delete(instance); }
+      const status = await (this.deps.getStatus ?? fetchInstanceConnectionState)(instance);
+      if (status !== 'connected') {
+        await this.deps.queue.defer(job, 'Conexão indisponível; a mensagem ficará na fila.');
+        return false;
+      }
+      const check = await (this.deps.validate?.(job) ?? validateOutboundJob(job));
+      if (check.action === 'defer') { await this.deps.queue.defer(job, check.reason ?? 'Envio aguardando condições seguras.'); return false; }
+      if (check.action === 'suppress') { await this.deps.queue.suppress(job, check.reason ?? 'Destinatário não elegível.'); return false; }
+
+      transportStarted = await this.deps.queue.startTransport(job);
+      if (!transportStarted) return false;
+      const dispatchJob: OutboundJob = { ...job, status: 'dispatch_started' };
+      const result = await this.transport.dispatch(dispatchJob);
+      if (result.state === 'delivery_uncertain') {
+        await this.deps.queue.deliveryUncertain(dispatchJob, result.reason);
+        return true;
+      }
+      return this.deps.queue.complete(dispatchJob, result.providerMessageId);
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : 'Falha ao enviar.';
+      if (transportStarted) await this.deps.queue.deliveryUncertain({ ...job, status: 'dispatch_started' }, reason);
+      else await this.deps.queue.fail(job, reason);
+      return false;
+    } finally {
+      this.locks.delete(instance);
+    }
   }
-  start(intervalMs = 1_000): void { if (this.running) return; this.running = true; const tick = () => { if (!this.running) return; void this.runOnce().finally(() => setTimeout(tick, intervalMs)); }; void tick(); }
+
+  start(intervalMs = 1_000): void {
+    if (this.running) return;
+    this.running = true;
+    const tick = () => { if (!this.running) return; void this.runOnce().catch((error) => console.error('[outbound] worker tick failed', error instanceof Error ? error.message : 'unknown')).finally(() => setTimeout(tick, intervalMs)); };
+    void tick();
+  }
   stop(): void { this.running = false; }
 }
 
 async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }> {
+  if (job.jobType === 'conversation') return { action: 'send' };
   const db = getServiceSupabase();
-  if (job.campaignId) { const { data, error } = await db.from('zelochat_campaigns').select('status,scheduled_at').eq('id', job.campaignId).eq('empresa_id', job.empresaId).maybeSingle(); if (error) throw error; if (!data || data.status === 'paused' || data.status === 'cancelled') return { action: 'defer', reason: 'Campanha pausada; a fila será retomada depois.' }; if (data.status === 'scheduled' && (!data.scheduled_at || Date.parse(data.scheduled_at) > Date.now())) return { action: 'defer', reason: 'Campanha agendada; a fila aguardará o horário.' }; }
+  if (job.campaignId) {
+    const { data, error } = await db.from('zelochat_campaigns').select('status,scheduled_at').eq('id', job.campaignId).eq('empresa_id', job.empresaId).maybeSingle();
+    if (error) throw error;
+    if (!data || data.status === 'paused' || data.status === 'cancelled') return { action: 'defer', reason: 'Campanha pausada; a fila será retomada depois.' };
+    if (data.status === 'scheduled' && (!data.scheduled_at || Date.parse(data.scheduled_at) > Date.now())) return { action: 'defer', reason: 'Campanha agendada; a fila aguardará o horário.' };
+  }
   const targetId = job.jobType === 'automation' ? job.automationDispatchId : job.recipientId;
   if (!targetId) return { action: 'send' };
   let recipient: { status: string; pessoa_id: string } | null = null;
-  if (job.jobType === 'automation') { const { data, error } = await db.from('zelochat_automation_dispatches').select('status,pessoa_id').eq('id', targetId).eq('empresa_id', job.empresaId).maybeSingle(); if (error) throw error; if (!data) return { action: 'suppress', reason: 'Jornada não encontrada.' }; recipient = { status: data.status, pessoa_id: data.pessoa_id }; }
-  else { const { data, error } = await db.from('zelochat_campaign_recipients').select('status,pessoa_id').eq('id', targetId).eq('empresa_id', job.empresaId).maybeSingle(); if (error) throw error; if (!data) return { action: 'suppress', reason: 'Destinatário não encontrado.' }; recipient = data; }
+  if (job.jobType === 'automation') {
+    const { data, error } = await db.from('zelochat_automation_dispatches').select('status,pessoa_id').eq('id', targetId).eq('empresa_id', job.empresaId).maybeSingle();
+    if (error) throw error; if (!data) return { action: 'suppress', reason: 'Jornada não encontrada.' }; recipient = { status: data.status, pessoa_id: data.pessoa_id };
+  } else {
+    const { data, error } = await db.from('zelochat_campaign_recipients').select('status,pessoa_id').eq('id', targetId).eq('empresa_id', job.empresaId).maybeSingle();
+    if (error) throw error; if (!data) return { action: 'suppress', reason: 'Destinatário não encontrado.' }; recipient = data;
+  }
   const pessoaId = recipient.pessoa_id;
   const [{ data: person, error: personError }, { data: relationship, error: relationshipError }, { data: optout, error: optoutError }, { data: conflicts, error: conflictError }] = await Promise.all([
     db.from('pessoas').select('id,tipo,contato').eq('id', pessoaId).maybeSingle(),
     db.from('zelochat_customer_relationships').select('whatsapp_blocked_at').eq('empresa_id', job.empresaId).eq('pessoa_id', pessoaId).maybeSingle(),
     db.from('zelochat_customer_optouts').select('id').eq('empresa_id', job.empresaId).eq('pessoa_id', pessoaId).maybeSingle(),
     db.from('zelochat_person_match_conflicts').select('candidate_person_ids').eq('empresa_id', job.empresaId).eq('state', 'open'),
-  ]); if (personError || relationshipError || optoutError || conflictError) throw personError ?? relationshipError ?? optoutError ?? conflictError;
+  ]);
+  if (personError || relationshipError || optoutError || conflictError) throw personError ?? relationshipError ?? optoutError ?? conflictError;
   const conflict = (conflicts ?? []).some((row) => Array.isArray(row.candidate_person_ids) && row.candidate_person_ids.includes(pessoaId));
-  if (!pessoaId) return { action: 'send' };
-  if (!recipient || !['queued', 'sending'].includes(recipient.status)) return { action: 'suppress', reason: 'Destinatário já não está na fila.' }; if (optout) return { action: 'suppress', reason: 'opt_out' }; if (relationship?.whatsapp_blocked_at) return { action: 'suppress', reason: 'blocked' }; if (conflict) return { action: 'suppress', reason: 'identity_conflict' }; if (!person || person.tipo !== 'cliente' || !person.contato) return { action: 'suppress', reason: 'missing_phone' }; return { action: 'send' };
+  if (!recipient || !['queued', 'sending'].includes(recipient.status)) return { action: 'suppress', reason: 'Destinatário já não está na fila.' };
+  if (optout) return { action: 'suppress', reason: 'opt_out' };
+  if (relationship?.whatsapp_blocked_at) return { action: 'suppress', reason: 'blocked' };
+  if (conflict) return { action: 'suppress', reason: 'identity_conflict' };
+  if (!person || person.tipo !== 'cliente' || !person.contato) return { action: 'suppress', reason: 'missing_phone' };
+  return { action: 'send' };
 }
 
 let startedWorker: OutboundWorker | null = null;
-export function startOutboundWorker(): OutboundWorker { if (!startedWorker) { startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) }); startedWorker.start(); } return startedWorker; }
+export function startOutboundWorker(): OutboundWorker {
+  if (!startedWorker) { startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) }); startedWorker.start(); }
+  return startedWorker;
+}

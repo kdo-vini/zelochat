@@ -23,7 +23,7 @@ assert.equal(campaignStartKey('empresa-1', 'inst-1'), 'empresa-1:inst-1');
 const rows = new Map<string, any>();
 const store: OutboundJobStore = {
   async insert(input) { const row = { ...input, id: `j${rows.size + 1}`, status: 'queued' as const, attempts: 0 }; rows.set(row.id, row); return row; },
-  async claim() { const row = [...rows.values()].find((item) => item.status === 'queued'); if (!row) return null; row.status = 'sending'; row.attempts += 1; return row; },
+  async claim(workerId) { const row = [...rows.values()].find((item) => item.status === 'queued'); if (!row) return null; row.status = 'sending'; row.leaseOwner = workerId; row.attempts += 1; return row; },
   async markSent() {}, async markFailed() {}, async releaseExpired() {},
   async defer(id) { rows.get(id).status = 'queued'; rows.get(id).attempts -= 1; },
 };

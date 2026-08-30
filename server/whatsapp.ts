@@ -176,6 +176,14 @@ function toWhatsmiauNumber(jidOrPhone: string): string {
   return digits;
 }
 
+class ProviderMessageIdMissingError extends Error {
+  readonly code = 'PROVIDER_MESSAGE_ID_MISSING';
+}
+
+export function isProviderMessageIdMissingError(error: unknown): boolean {
+  return error instanceof ProviderMessageIdMissingError;
+}
+
 function requireWhatsmiauMessageId(data: any, context: string): string {
   const id = extractWhatsmiauMessageId(data);
   if (id) return id;
@@ -187,7 +195,7 @@ function requireWhatsmiauMessageId(data: any, context: string): string {
     data?.response?.message ??
     data?.error ??
     'Whatsmiau aceitou a requisição sem retornar ID da mensagem.';
-  throw new Error(`${context}: ${typeof message === 'string' ? message : JSON.stringify(message)}${status ? ` (status ${status})` : ''}`);
+  throw new ProviderMessageIdMissingError(`${context}: ${typeof message === 'string' ? message : JSON.stringify(message)}${status ? ` (status ${status})` : ''}`);
 }
 
 const TUNNEL_URL_FILE = resolve('.tunnel-url');
@@ -457,7 +465,7 @@ export async function sendTextMessage(
     { number: toWhatsmiauNumber(jid), text: normalizedText, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
-  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de texto no Whatsmiau');
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de texto');
   trackSent(id);
   return id;
 }
@@ -476,9 +484,9 @@ export async function sendButtonMessage(
   footer: string,
   buttons: ButtonDef[],
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendButtons/${instance}`,
     {
       number: toWhatsmiauNumber(jid),
@@ -494,6 +502,9 @@ export async function sendButtonMessage(
     },
     { headers: apiHeaders() },
   );
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de botões');
+  trackSent(id);
+  return id;
 }
 
 export async function sendMediaMessage(
@@ -518,7 +529,7 @@ export async function sendMediaMessage(
     { number: toWhatsmiauNumber(jid), ...normalizedParams, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
-  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de mídia no Whatsmiau');
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de mídia');
   trackSent(id);
   return id;
 }
@@ -536,7 +547,7 @@ export async function sendWhatsAppAudio(
     { number: toWhatsmiauNumber(jid), audio: audioUrl, encoding: true, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
     { headers: apiHeaders() },
   );
-  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de áudio no Whatsmiau');
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de áudio');
   trackSent(id);
   return id;
 }
@@ -545,9 +556,9 @@ export async function sendContactMessage(
   jid: string,
   contact: { fullName: string; phoneNumber: string; organization?: string },
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendContact/${instance}`,
     {
       number: toWhatsmiauNumber(jid),
@@ -559,6 +570,26 @@ export async function sendContactMessage(
     },
     { headers: apiHeaders() },
   );
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de contato');
+  trackSent(id);
+  return id;
+}
+
+export async function sendStickerMessage(
+  jid: string,
+  sticker: string,
+  empresaId?: string | null,
+  quoted?: QuotedContext | null,
+): Promise<string | undefined> {
+  const instance = await resolveInstance(empresaId);
+  const res = await axios.post(
+    `${BASE_URL}/message/sendSticker/${instance}`,
+    { number: toWhatsmiauNumber(jid), sticker, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
+    { headers: apiHeaders() },
+  );
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de figurinha');
+  trackSent(id);
+  return id;
 }
 
 export async function fetchProfilePicture(
@@ -1056,13 +1087,16 @@ export async function sendListMessage(
     delay?: number;
   },
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendList/${instance}`,
     { number: toWhatsmiauNumber(jid), ...params },
     { headers: apiHeaders() },
   );
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de lista');
+  trackSent(id);
+  return id;
 }
 
 // ─── Location ─────────────────────────────────────────────────────────────────
@@ -1071,13 +1105,16 @@ export async function sendLocationMessage(
   jid: string,
   params: { latitude: number; longitude: number; name?: string; address?: string; delay?: number },
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendLocation/${instance}`,
     { number: toWhatsmiauNumber(jid), ...params },
     { headers: apiHeaders() },
   );
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de localização');
+  trackSent(id);
+  return id;
 }
 
 // ─── Reaction ─────────────────────────────────────────────────────────────────
@@ -1088,13 +1125,16 @@ export async function sendReaction(
   reaction: string,
   fromMe = false,
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendReaction/${instance}`,
     { reaction, key: { remoteJid: jid, id: messageId, fromMe } },
     { headers: apiHeaders() },
   );
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de reação');
+  trackSent(id);
+  return id;
 }
 
 // ─── Poll ─────────────────────────────────────────────────────────────────────
@@ -1103,13 +1143,16 @@ export async function sendPollMessage(
   jid: string,
   params: { name: string; values: string[]; selectableCount?: number; delay?: number },
   empresaId?: string | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const instance = await resolveInstance(empresaId);
-  await axios.post(
+  const res = await axios.post(
     `${BASE_URL}/message/sendPoll/${instance}`,
     { number: toWhatsmiauNumber(jid), ...params },
     { headers: apiHeaders() },
   );
+  const id = requireWhatsmiauMessageId(res.data, 'Falha ao confirmar envio de enquete');
+  trackSent(id);
+  return id;
 }
 
 // ─── Revoke Message ───────────────────────────────────────────────────────────
