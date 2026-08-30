@@ -5,11 +5,17 @@ import type {
 } from 'openai/resources/chat/completions.js';
 import {
   getSession,
-  addAssistantMessage,
-  addToolMessage,
+  addAssistantMessage as addAssistantMessageUnchecked,
+  addToolMessage as addToolMessageUnchecked,
   waitForPendingAudioTranscriptions,
 } from './messageHandler.js';
-import { sendTextMessage, sendButtonMessage, sendPresence } from './whatsapp.js';
+import { sendPresence } from './whatsapp.js';
+import type { AiTurnPermit } from './conversationControl.js';
+import { isAiPermitCurrent } from './conversationControl.js';
+import {
+  dispatchConversationOutbound,
+  type DispatchResult,
+} from './conversationOutbound.js';
 import {
   getConfig,
   ensureAiSettingsHydrated,
@@ -106,19 +112,90 @@ export function getZeloMenuPublicBaseUrl(): string {
   return 'https://menu.zelopdv.com.br';
 }
 
-type AssistantPersistOptions = NonNullable<Parameters<typeof addAssistantMessage>[5]>;
+type PermitChecker = (permit: AiTurnPermit) => Promise<boolean>;
+type AiOutboundDispatch = typeof dispatchConversationOutbound;
 
-async function sendAndPersistText(
+export async function runAiModelStep<T>(
+  permit: AiTurnPermit,
+  context: string,
+  model: () => Promise<T>,
+  checkPermit: PermitChecker = isAiPermitCurrent,
+): Promise<T | null> {
+  if (!(await checkPermit(permit))) {
+    console.log(`[AiTrace] abort empresa=${permit.empresaId} jid=${redactJid(permit.remoteJid)} reason=stale_permit_before_${context}`);
+    return null;
+  }
+  const result = await model();
+  if (!(await checkPermit(permit))) {
+    console.log(`[AiTrace] abort empresa=${permit.empresaId} jid=${redactJid(permit.remoteJid)} reason=stale_permit_after_${context}`);
+    return null;
+  }
+  return result;
+}
+
+async function runAiMutationStep<T>(
+  permit: AiTurnPermit,
+  context: string,
+  mutation: () => Promise<T>,
+): Promise<T | null> {
+  if (!(await isAiPermitCurrent(permit))) {
+    console.log(`[AiTrace] suppress empresa=${permit.empresaId} jid=${redactJid(permit.remoteJid)} reason=stale_permit_before_${context}`);
+    return null;
+  }
+  return mutation();
+}
+
+async function addAiAssistantAudit(
+  permit: AiTurnPermit,
   jid: string,
-  text: string,
+  content: string | null,
+  toolCalls: AiToolCall[] | undefined,
   empresaId: string,
-  options: AssistantPersistOptions = {},
-): Promise<void> {
-  const waMessageId = await sendTextMessage(jid, text, empresaId);
-  await addAssistantMessage(jid, text, undefined, empresaId, undefined, {
-    ...options,
-    waMessageId,
+): Promise<boolean> {
+  const result = await runAiMutationStep(permit, 'assistant-audit', () =>
+    addAssistantMessageUnchecked(jid, content, toolCalls, empresaId));
+  return result !== null;
+}
+
+async function addAiToolAudit(
+  permit: AiTurnPermit,
+  jid: string,
+  content: string,
+  toolCallId: string,
+  empresaId: string,
+): Promise<boolean> {
+  const result = await runAiMutationStep(permit, `tool-audit:${toolCallId}`, () =>
+    addToolMessageUnchecked(jid, content, toolCallId, empresaId));
+  return result !== null;
+}
+
+export async function enqueueAutomatedText(
+  params: {
+    permit: AiTurnPermit;
+    text: string;
+    origin: 'ai_auto' | 'ai_followup';
+    purpose: string;
+  },
+  dependencies: {
+    isPermitCurrent?: PermitChecker;
+    dispatch?: AiOutboundDispatch;
+  } = {},
+): Promise<DispatchResult | null> {
+  const checkPermit = dependencies.isPermitCurrent ?? isAiPermitCurrent;
+  if (!(await checkPermit(params.permit))) return null;
+  const dispatch = dependencies.dispatch ?? dispatchConversationOutbound;
+  const purpose = params.purpose.replace(/[^a-zA-Z0-9:_-]/g, '-').slice(0, 100) || 'reply';
+  const result = await dispatch({
+    empresaId: params.permit.empresaId,
+    remoteJid: params.permit.remoteJid,
+    actorUserId: null,
+    origin: params.origin,
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: `ai:${params.permit.triggerMessageId}:${params.origin}:${purpose}`,
+    payload: { kind: 'text', text: params.text },
+    aiPermit: params.permit,
   });
+  return result.state === 'suppressed' ? null : result;
 }
 
 const DEFAULT_REDIRECT_CONTACT_MESSAGE =
@@ -139,18 +216,20 @@ function buildRedirectContactMessage(trig: TriggerRecord): { phone: string; text
 async function sendRedirectContactReply(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
   trig: TriggerRecord,
   toolCall: AiToolCall,
   persistAssistantToolCall: boolean,
 ): Promise<string | null> {
   if (persistAssistantToolCall) {
-    await addAssistantMessage(jid, null, [toolCall], empresaId);
+    if (!(await addAiAssistantAudit(permit, jid, null, [toolCall], empresaId))) return null;
   }
 
   const redirect = buildRedirectContactMessage(trig);
   if (!redirect) {
     console.warn(`[AI] redirect_contact trigger ${trig.id} sem redirectPhone configurado.`);
-    await addToolMessage(
+    await addAiToolAudit(
+      permit,
       jid,
       'Encaminhamento configurado sem número — ignorado.',
       toolCall.id,
@@ -159,12 +238,38 @@ async function sendRedirectContactReply(
     return null;
   }
 
-  await addToolMessage(jid, `Encaminhado para ${redirect.phone}`, toolCall.id, empresaId);
-  await sendAndPersistText(jid, redirect.text, empresaId, { responseSource: 'ai_auto' });
+  if (!(await addAiToolAudit(permit, jid, `Encaminhado para ${redirect.phone}`, toolCall.id, empresaId))) return null;
+  const dispatched = await enqueueAutomatedText({
+    permit,
+    text: redirect.text,
+    origin: 'ai_auto',
+    purpose: `redirect:${toolCall.id}`,
+  });
+  if (!dispatched) return null;
   return redirect.text;
 }
 
+async function enqueueInternalSystemText(params: {
+  permit: AiTurnPermit;
+  empresaId: string;
+  jid: string;
+  text: string;
+  idempotencyKey: string;
+}): Promise<DispatchResult | null> {
+  if (!(await isAiPermitCurrent(params.permit))) return null;
+  return dispatchConversationOutbound({
+    empresaId: params.empresaId,
+    remoteJid: params.jid,
+    actorUserId: null,
+    origin: 'internal_system',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: params.idempotencyKey,
+    payload: { kind: 'text', text: params.text },
+  });
+}
+
 async function notifyManagerForConfirmedOrder(params: {
+  permit: AiTurnPermit;
   empresaId: string;
   jid: string;
   customerName: string;
@@ -191,19 +296,22 @@ async function notifyManagerForConfirmedOrder(params: {
   const dateBR = isoToDisplayBR(params.pickupDate) || params.pickupDate;
   for (const match of matches) {
     try {
-      await sendTextMessage(
-        managerJid,
-        `🔔 *${safeForPrompt(match.trigger.name, 80)}*\n` +
+      if (!(await isAiPermitCurrent(params.permit))) return;
+      await enqueueInternalSystemText({
+        permit: params.permit,
+        empresaId: params.empresaId,
+        jid: managerJid,
+        idempotencyKey: `internal:order:${params.permit.triggerMessageId}:${match.trigger.id}`,
+        text: `🔔 *${safeForPrompt(match.trigger.name, 80)}*\n` +
           `*Cliente:* ${safeForPrompt(params.customerName, 80)} (${safeForPrompt(params.customerPhone, 30)})\n` +
           `*Itens do pedido:*\n${safeForPrompt(itemsList, 480)}\n` +
           `*Retirada/entrega:* ${safeForPrompt(dateBR, 20)} às ${safeForPrompt(params.pickupTime, 20)}\n` +
           `*Pagamento:* ${safeForPrompt(params.paymentMethod || 'Não informado', 40)}\n` +
           `*Total:* R$ ${params.total.toFixed(2)}\n` +
           `*Motivo:* ${safeForPrompt(match.reason, 180)}`,
-        params.empresaId,
-      );
+      });
       if (params.toolCallId) {
-        await addToolMessage(params.jid, 'Gerente notificado', params.toolCallId, params.empresaId);
+        await addAiToolAudit(params.permit, params.jid, 'Gerente notificado', params.toolCallId, params.empresaId);
       }
     } catch (err) {
       console.warn('[AI] Failed to notify manager for confirmed order:', err);
@@ -401,7 +509,8 @@ export async function getPendingOrder(jid: string, empresaId: string): Promise<P
 // já exista no DB no momento do deploy via o TTL de PENDING_ORDER_TTL_MIN, e
 // então deixam de ter efeito (getPendingOrder sempre retorna null).
 
-export async function clearPendingOrder(jid: string, empresaId: string): Promise<void> {
+export async function clearPendingOrder(jid: string, empresaId: string, permit: AiTurnPermit): Promise<void> {
+  if (!(await isAiPermitCurrent(permit))) return;
   await getServiceSupabase()
     .from('zelochat_pending_orders')
     .delete()
@@ -412,6 +521,7 @@ export async function clearPendingOrder(jid: string, empresaId: string): Promise
 export async function updatePendingOrderPixReceipt(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
   patch: {
     status: 'required' | 'approved' | 'rejected';
     messageId?: string;
@@ -419,6 +529,7 @@ export async function updatePendingOrderPixReceipt(
     rejectionReason?: string | null;
   },
 ): Promise<void> {
+  if (!(await isAiPermitCurrent(permit))) return;
   const { error } = await getServiceSupabase()
     .from('zelochat_pending_orders')
     .update({
@@ -442,41 +553,40 @@ export function pendingOrderRequiresPixReceipt(pending: PendingOrder): boolean {
 export async function sendPixReceiptRequiredMessage(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
 ): Promise<void> {
   const msg = 'Perfeito, para finalizar preciso do comprovante Pix. Pode enviar a imagem ou PDF por aqui. Assim que eu conferir beneficiário, valor e data, eu confirmo o pedido. 😊';
-  await sendAndPersistText(jid, msg, empresaId, { responseSource: 'ai_auto' });
+  await enqueueAutomatedText({ permit, text: msg, origin: 'ai_auto', purpose: 'pix-required' });
 }
 
 export async function sendPixReceiptRejectedMessage(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
   reason: string,
   fallback: 'ask_retry' | 'escalate_human',
 ): Promise<void> {
   if (fallback === 'escalate_human') {
+    const customerHandoffMessage = `Recebi o comprovante, mas não consegui aprovar automaticamente: ${reason}\n\nVou chamar um atendente para conferir com segurança.`;
     await escalateSession(empresaId, jid, {
+      aiPermit: permit,
       triggerId: null,
       triggerKind: 'escalate_human',
       triggerName: 'Comprovante Pix precisa de revisão',
       reasonCategory: 'custom',
       reasonText: reason,
       customerMessageExcerpt: 'Comprovante Pix rejeitado automaticamente',
+      customerHandoffMessage,
     });
-    await sendAndPersistText(
-      jid,
-      `Recebi o comprovante, mas não consegui aprovar automaticamente: ${reason}\n\nVou chamar um atendente para conferir com segurança.`,
-      empresaId,
-      { responseSource: 'ai_auto' },
-    );
     return;
   }
 
-  await sendAndPersistText(
-    jid,
-    `Recebi o comprovante, mas não consegui aprovar: ${reason}\n\nPode enviar uma nova imagem ou PDF mais legível, por favor?`,
-    empresaId,
-    { responseSource: 'ai_auto' },
-  );
+  await enqueueAutomatedText({
+    permit,
+    text: `Recebi o comprovante, mas não consegui aprovar: ${reason}\n\nPode enviar uma nova imagem ou PDF mais legível, por favor?`,
+    origin: 'ai_auto',
+    purpose: 'pix-rejected-retry',
+  });
 }
 
 /**
@@ -515,7 +625,8 @@ export async function sendPixReceiptRejectedMessage(
  *
  * Always test the full webhook → AI → confirm chain after touching this.
  */
-export async function confirmPendingOrder(jid: string, empresaId: string): Promise<void> {
+export async function confirmPendingOrder(jid: string, empresaId: string, permit: AiTurnPermit): Promise<void> {
+  if (!(await isAiPermitCurrent(permit))) return;
   console.log('[AI] confirmPendingOrder called for JID:', jid);
   const pending = await getPendingOrder(jid, empresaId);
   if (!pending) {
@@ -530,20 +641,22 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   );
   if (pendingScheduleGuard) {
     console.warn(`[AI] confirmPendingOrder blocked by schedule guard for JID: ${jid}`);
-    await clearPendingOrder(jid, pending.empresaId);
-    await sendAndPersistText(jid, pendingScheduleGuard.reply, pending.empresaId);
+    await clearPendingOrder(jid, pending.empresaId, permit);
+    await enqueueAutomatedText({ permit, text: pendingScheduleGuard.reply, origin: 'ai_auto', purpose: 'pending-schedule-block' });
     return;
   }
   if (pendingOrderRequiresPixReceipt(pending)) {
     console.warn('[AI] confirmPendingOrder blocked: Pix receipt is required and not approved for JID:', jid);
-    await sendPixReceiptRequiredMessage(jid, pending.empresaId);
+    await sendPixReceiptRequiredMessage(jid, pending.empresaId, permit);
     return;
   }
 
   const currentStockIssue = await findCurrentStockIssueForItems(pending.empresaId, pending.items);
   if (currentStockIssue) {
     console.warn(`[AI] confirmPendingOrder blocked by current stock: ${currentStockIssue}`);
+    const customerHandoffMessage = `Antes de confirmar, vi que não temos essa quantidade em estoque agora (${currentStockIssue}). Vou chamar um atendente pra ajustar com você.`;
     await escalateSession(pending.empresaId, jid, {
+      aiPermit: permit,
       triggerId: null,
       triggerKind: 'escalate_human',
       triggerName: 'Estoque insuficiente na confirmação',
@@ -552,9 +665,8 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
         `O cliente confirmou um pedido, mas o estoque atual não cobre a quantidade: ${safeForPrompt(currentStockIssue, 240)}.\n` +
         `Ajuste a quantidade, ofereça troca ou confirme reposição antes de finalizar.`,
       customerMessageExcerpt: null,
+      customerHandoffMessage,
     });
-    const msg = `Antes de confirmar, vi que não temos essa quantidade em estoque agora (${currentStockIssue}). Vou chamar um atendente pra ajustar com você.`;
-    await sendAndPersistText(jid, msg, pending.empresaId);
     return;
   }
 
@@ -562,6 +674,8 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   // stays in place and the customer can click Confirmar again without re-entering data.
   let orderId: string;
   try {
+    // FIX 2026-08-30: takeover durante consultas de agenda/estoque ainda permitia criar o pedido → revalida o epoch imediatamente antes da mutação.
+    if (!(await isAiPermitCurrent(permit))) return;
     orderId = await createOrderInDb(pending.empresaId, pending);
   } catch (err) {
     console.error('[AI] Failed to insert order, keeping pending row:', err);
@@ -572,7 +686,7 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     // confirmPendingOrder de novo (a pending row continua intacta porque
     // FIX H1 só limpa em sucesso).
     const errMsg = 'Desculpe, tive um problema momentâneo. Pode responder *Sim* pra eu tentar confirmar de novo? 🙏';
-    await sendAndPersistText(jid, errMsg, pending.empresaId);
+    await enqueueAutomatedText({ permit, text: errMsg, origin: 'ai_auto', purpose: 'pending-confirm-error' });
     return;
   }
 
@@ -586,9 +700,10 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
     });
   }).then(null, (err) => console.error('[stock] decrement failed (non-blocking):', err));
 
-  await clearPendingOrder(jid, pending.empresaId);
+  await clearPendingOrder(jid, pending.empresaId, permit);
 
   await notifyManagerForConfirmedOrder({
+    permit,
     empresaId: pending.empresaId,
     jid,
     customerName: pending.customerName,
@@ -623,16 +738,7 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   // me deixa retentar manualmente". Pedido continua válido (createOrderInDb
   // já rolou). justConfirmedMap também é setado pra evitar que o próximo
   // "obrigado" do cliente vire criar_pedido novamente.
-  let sendOk = true;
-  let waMessageId: string | undefined;
-  try {
-    waMessageId = await sendTextMessage(jid, reply, pending.empresaId);
-  } catch (sendErr) {
-    sendOk = false;
-    console.error('[AI] confirmPendingOrder: send to customer FAILED — order is in DB but customer was not notified:', sendErr);
-  }
-  const persistedReply = sendOk ? reply : `[FALHA NO ENVIO — reenviar manualmente]\n${reply}`;
-  await addAssistantMessage(jid, persistedReply, undefined, pending.empresaId, undefined, { waMessageId });
+  const dispatch = await enqueueAutomatedText({ permit, text: reply, origin: 'ai_auto', purpose: `pending-confirmed:${orderId}` });
 
   broadcast(
     { type: 'order_created', data: { orderId, empresaId: pending.empresaId } },
@@ -640,27 +746,19 @@ export async function confirmPendingOrder(jid: string, empresaId: string): Promi
   );
   // Mark this JID so generateAndSendReply blocks any accidental criar_pedido for 5 min.
   justConfirmedMap.set(`${pending.empresaId}:${jid}`, Date.now());
-  console.log(`[AI] Confirmed pending order #${shortId} for ${jid} (send=${sendOk ? 'ok' : 'FAILED'})`);
+  console.log(`[AI] Confirmed pending order #${shortId} for ${jid} (outbound=${dispatch ? dispatch.state : 'suppressed'})`);
 }
 
-export async function cancelPendingOrder(jid: string, empresaId: string): Promise<void> {
-  await clearPendingOrder(jid, empresaId);
+export async function cancelPendingOrder(jid: string, empresaId: string, permit: AiTurnPermit): Promise<void> {
+  if (!(await isAiPermitCurrent(permit))) return;
+  await clearPendingOrder(jid, empresaId, permit);
   const reply = 'Tudo bem! Pedido cancelado. Se quiser fazer outro, é só me chamar 😊';
   // P1.10 — same try/catch pattern as confirmPendingOrder. Cancelar é menos
   // crítico (sem efeito colateral em zelochat_orders), mas se o customer não
   // receber a mensagem ele continua mandando "não" e a IA pode ficar em loop
   // de "Tudo bem! Pedido cancelado." invisível. Persistir com marker permite
   // o operador detectar o problema rapidamente.
-  let sendOk = true;
-  let waMessageId: string | undefined;
-  try {
-    waMessageId = await sendTextMessage(jid, reply, empresaId);
-  } catch (sendErr) {
-    sendOk = false;
-    console.error('[AI] cancelPendingOrder: send to customer FAILED:', sendErr);
-  }
-  const persistedReply = sendOk ? reply : `[FALHA NO ENVIO — reenviar manualmente]\n${reply}`;
-  await addAssistantMessage(jid, persistedReply, undefined, empresaId, undefined, { waMessageId });
+  await enqueueAutomatedText({ permit, text: reply, origin: 'ai_auto', purpose: 'pending-cancelled' });
 }
 
 /**
@@ -977,10 +1075,11 @@ export function buildBlockedDateReply(blockedDate: { date: string; reason: strin
 async function sendBlockedDateReply(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
   blockedDate: { date: string; reason: string },
 ): Promise<string> {
   const reply = buildBlockedDateReply(blockedDate);
-  await sendAndPersistText(jid, reply, empresaId, { responseSource: 'ai_auto' });
+  await enqueueAutomatedText({ permit, text: reply, origin: 'ai_auto', purpose: 'blocked-date' });
   return reply;
 }
 
@@ -1527,10 +1626,11 @@ export function buildBusinessHoursReply(issue: BusinessHoursIssue, tz: string = 
 async function sendBusinessHoursReply(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
   issue: BusinessHoursIssue,
 ): Promise<string> {
   const reply = buildBusinessHoursReply(issue, getEmpresaTimezone(empresaId));
-  await sendAndPersistText(jid, reply, empresaId, { responseSource: 'ai_auto' });
+  await enqueueAutomatedText({ permit, text: reply, origin: 'ai_auto', purpose: 'business-hours' });
   return reply;
 }
 
@@ -2954,6 +3054,7 @@ export function planToolCallsForTurn(
 async function applyAutoTag(
   empresaId: string,
   jid: string,
+  permit: AiTurnPermit,
   toolCall: AiToolCall,
   autoTags: TagRecord[],
 ): Promise<{ result: string; tag: TagRecord | null }> {
@@ -2965,6 +3066,9 @@ async function applyAutoTag(
     return { result: `Erro: tag ${tagId} não encontrada`, tag: null };
   }
   try {
+    if (!(await isAiPermitCurrent(permit))) {
+      return { result: 'A ação foi cancelada porque o atendimento mudou de modo.', tag: null };
+    }
     await applyTagToSession(empresaId, jid, tagId);
     const updatedTags = await getSessionTagsFull(empresaId, jid);
     broadcast({ type: 'session_tags_updated', data: { sessionId: jid, tags: updatedTags } }, empresaId);
@@ -3006,9 +3110,14 @@ function buildRuntimeMessageForOpenAI(
 async function isAutoReplyStillAllowed(
   empresaId: string,
   jid: string,
+  permit: AiTurnPermit,
   context: string,
 ): Promise<boolean> {
   try {
+    if (!(await isAiPermitCurrent(permit))) {
+      console.log(`[ai] aborted ${context}: stale AI permit for empresa=${empresaId} jid=${jid}`);
+      return false;
+    }
     const freshSession = await getSession(jid, empresaId);
     if (freshSession && (!freshSession.autoReply || freshSession.status === 'escalated')) {
       console.log(`[ai] aborted ${context}: auto_reply off or session escalated for empresa=${empresaId} jid=${jid}`);
@@ -3101,6 +3210,7 @@ async function findActiveOrderForCustomerPhone(
 async function handleReceiptForActiveOrder(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
   order: ActiveOrderRow,
   lastMsg: { id: string; waMessageId?: string | null; attachment?: any; content?: string | null; preview?: string | null },
   lastText: string,
@@ -3137,6 +3247,7 @@ async function handleReceiptForActiveOrder(
           if (!Number.isSafeInteger(order.revision) || order.revision! < 0) {
             throw new Error('PIX_ORDER_REVISION_MISSING');
           }
+          if (!(await isAiPermitCurrent(permit))) return null;
           const { error: transitionError } = await getServiceSupabase().rpc('transition_zelo_order', {
             p_order_id: order.id,
             p_expected_revision: order.revision,
@@ -3150,7 +3261,9 @@ async function handleReceiptForActiveOrder(
           });
           if (transitionError) {
             console.error('[AI] approved Pix receipt could not transition canonical order:', transitionError);
+            const pendingAck = `Recebi seu comprovante do pedido *#${shortId}*. Um atendente vai concluir a confirmação pra você. 🙏`;
             await escalateSession(empresaId, jid, {
+              aiPermit: permit,
               triggerId: null,
               triggerKind: 'escalate_human',
               triggerName: 'Comprovante Pix aprovado aguardando baixa',
@@ -3158,17 +3271,19 @@ async function handleReceiptForActiveOrder(
               reasonText: `O comprovante do pedido #${shortId} foi validado, mas o estado mudou antes da baixa. Confira manualmente.`,
               customerMessageExcerpt: 'Comprovante Pix aprovado com conflito operacional',
               skipCustomerMessage: true,
+              customerHandoffMessage: pendingAck,
             });
-            const pendingAck = `Recebi seu comprovante do pedido *#${shortId}*. Um atendente vai concluir a confirmaÃ§Ã£o pra vocÃª. ðŸ™`;
-            await sendAndPersistText(jid, pendingAck, empresaId, { responseSource: 'ai_auto' });
             return pendingAck;
           }
           // The ZeloMenu preference gives the AI the same transactional
           // authority as the operator. Never report success if this second
           // transition needs human intervention.
+          if (!(await isAiPermitCurrent(permit))) return null;
           const autoAcceptResult = await autoAcceptCanonicalOrderIfConfigured(empresaId, order.id, order.source);
           if (autoAcceptResult.manualReviewRequired) {
+            const pendingAck = `Recebi seu comprovante do pedido *#${shortId}*. O pagamento foi validado, mas um atendente vai concluir a entrada do pedido na produção. 🙏`;
             await escalateSession(empresaId, jid, {
+              aiPermit: permit,
               triggerId: null,
               triggerKind: 'escalate_human',
               triggerName: 'Aceite automático do pedido aguardando atendimento',
@@ -3176,14 +3291,13 @@ async function handleReceiptForActiveOrder(
               reasonText: `O comprovante do pedido #${shortId} foi validado, mas o pedido não pôde entrar automaticamente na produção. Confira o pedido e aceite manualmente.`,
               customerMessageExcerpt: 'Pagamento Pix validado, aceite operacional pendente',
               skipCustomerMessage: true,
+              customerHandoffMessage: pendingAck,
             });
-            const pendingAck = `Recebi seu comprovante do pedido *#${shortId}*. O pagamento foi validado, mas um atendente vai concluir a entrada do pedido na produção. 🙏`;
-            await sendAndPersistText(jid, pendingAck, empresaId, { responseSource: 'ai_auto' });
             return pendingAck;
           }
         }
         const ack = `Recebi seu comprovante do pedido *#${shortId}* — beneficiário, valor e data conferem. Obrigado! 🙏\n\nQualquer dúvida, é só chamar.`;
-        await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });
+        await enqueueAutomatedText({ permit, text: ack, origin: 'ai_auto', purpose: `pix-approved:${order.id}` });
         return ack;
       }
       // Mismatch: never auto-confirm money. Escalate with the parsed reason
@@ -3193,7 +3307,9 @@ async function handleReceiptForActiveOrder(
       // below — without this, escalateSession would also send the generic
       // "Vou chamar um atendente humano" handoff and the customer gets two
       // back-to-back replies for the same event.
+      const ack = `Recebi o comprovante do pedido *#${shortId}*, mas vou pedir pra um atendente conferir com calma antes de te confirmar. Já te chamo. 🙏`;
       await escalateSession(empresaId, jid, {
+        aiPermit: permit,
         triggerId: null,
         triggerKind: 'escalate_human',
         triggerName: 'Comprovante Pix divergente em pedido confirmado',
@@ -3201,9 +3317,8 @@ async function handleReceiptForActiveOrder(
         reasonText: `Cliente enviou comprovante para o pedido #${shortId} (total R$ ${order.total.toFixed(2)}), mas a leitura automática rejeitou: ${safeForPrompt(result.reason, 200)}.`,
         customerMessageExcerpt: 'Comprovante Pix em pedido já confirmado',
         skipCustomerMessage: true,
+        customerHandoffMessage: ack,
       });
-      const ack = `Recebi o comprovante do pedido *#${shortId}*, mas vou pedir pra um atendente conferir com calma antes de te confirmar. Já te chamo. 🙏`;
-      await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });
       return ack;
     } catch (err) {
       console.error('[AI] handleReceiptForActiveOrder validation failed:', err);
@@ -3225,7 +3340,9 @@ async function handleReceiptForActiveOrder(
   // escalate for human eyes since we cannot validate.
   // skipCustomerMessage=true — same reason as Branch 1: we send our own
   // contextual ack below; escalateSession's generic handoff would duplicate.
+  const ack = `Recebi seu comprovante do pedido *#${shortId}*. Vou pedir pra um atendente conferir com você antes de eu confirmar como pago. Já te chamo. 🙏`;
   await escalateSession(empresaId, jid, {
+    aiPermit: permit,
     triggerId: null,
     triggerKind: 'escalate_human',
     triggerName: 'Comprovante recebido em pedido já confirmado',
@@ -3233,9 +3350,8 @@ async function handleReceiptForActiveOrder(
     reasonText: `Cliente enviou ${attachment?.type === 'document' ? 'PDF' : attachment?.type === 'image' ? 'imagem' : 'mensagem'} parecendo comprovante para o pedido #${shortId} (total R$ ${order.total.toFixed(2)}, pagamento ${safeForPrompt(order.paymentMethod ?? 'não informado', 40)}). Não há validação automática configurada — confirme manualmente o valor e o beneficiário antes de tratar como pago.`,
     customerMessageExcerpt: 'Comprovante em pedido já confirmado',
     skipCustomerMessage: true,
+    customerHandoffMessage: ack,
   });
-  const ack = `Recebi seu comprovante do pedido *#${shortId}*. Vou pedir pra um atendente conferir com você antes de eu confirmar como pago. Já te chamo. 🙏`;
-  await sendAndPersistText(jid, ack, empresaId, { responseSource: 'ai_auto' });
   return ack;
 }
 
@@ -3245,6 +3361,7 @@ const PROFILE_MIN_MESSAGES = 6;
 const PROFILE_CONTEXT_CHARS = 1500;
 
 async function updateCustomerProfile(
+  permit: AiTurnPermit,
   customerPhone: string | undefined,
   empresaId: string,
   messages: { role: string; content?: string | null; preview?: string | null }[],
@@ -3268,7 +3385,7 @@ async function updateCustomerProfile(
   let newProfile: string;
   try {
     const openai = getAI();
-    const res = await openai.chat.completions.create({
+    const res = await runAiModelStep(permit, 'customer-profile-model', () => openai.chat.completions.create({
       model: OPENAI_MODEL,
       max_tokens: 150,
       temperature: 0.3,
@@ -3285,7 +3402,8 @@ async function updateCustomerProfile(
           content: `Perfil atual: ${currentProfile || 'nenhum'}\n\nÚltimas mensagens:\n${snippet}`,
         },
       ],
-    });
+    }));
+    if (!res) return;
     recordAiUsage({
       empresaId,
       feature: 'customer_profile',
@@ -3300,6 +3418,7 @@ async function updateCustomerProfile(
   }
 
   if (!newProfile) return;
+  if (!(await isAiPermitCurrent(permit))) return;
 
   // Update all sessions in the family (same empresa + same phone)
   const { error } = await supabase
@@ -3366,6 +3485,7 @@ async function updateCustomerProfile(
 export async function generateAndSendReply(
   jid: string,
   empresaId: string,
+  permit: AiTurnPermit,
 ): Promise<string | null> {
   const startedAt = Date.now();
   console.log(`[AiTrace] start empresa=${empresaId || '<missing>'} jid=${redactJid(jid)}`);
@@ -3376,6 +3496,14 @@ export async function generateAndSendReply(
     return null;
   }
   const resolvedEmpresaId = empresaId;
+  if (permit.empresaId !== resolvedEmpresaId || permit.remoteJid !== jid) {
+    console.warn(`[AiTrace] skip empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=permit_scope_mismatch`);
+    return null;
+  }
+  if (!(await isAiPermitCurrent(permit))) {
+    console.log(`[AiTrace] skip empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=stale_permit_before_turn`);
+    return null;
+  }
 
   // Global kill-switch — dono can disable the assistant without dropping the WhatsApp session.
   // Fail-closed: hydrate from DB on first webhook hit, and only proceed if aiEnabled is
@@ -3418,8 +3546,8 @@ export async function generateAndSendReply(
     );
     if (pendingScheduleGuard) {
       console.log(`[AI] Blocking pending order before confirmation: invalid schedule for empresa=${resolvedEmpresaId} jid=${jid}`);
-      await clearPendingOrder(jid, resolvedEmpresaId);
-      await sendAndPersistText(jid, pendingScheduleGuard.reply, resolvedEmpresaId, { responseSource: 'ai_auto' });
+      await clearPendingOrder(jid, resolvedEmpresaId, permit);
+      await enqueueAutomatedText({ permit, text: pendingScheduleGuard.reply, origin: 'ai_auto', purpose: 'pending-schedule-guard' });
       return pendingScheduleGuard.reply;
     }
 
@@ -3442,28 +3570,28 @@ export async function generateAndSendReply(
           expectedTotal: pendingForEdit.total,
           config: receiptConfig,
         });
-        await updatePendingOrderPixReceipt(jid, resolvedEmpresaId, {
+        await updatePendingOrderPixReceipt(jid, resolvedEmpresaId, permit, {
           status: result.approved ? 'approved' : 'rejected',
           messageId: lastMsg.waMessageId || lastMsg.id,
           analysis: result.analysis,
           rejectionReason: result.approved ? null : result.reason,
         });
         if (result.approved) {
-          await confirmPendingOrder(jid, resolvedEmpresaId);
+          await confirmPendingOrder(jid, resolvedEmpresaId, permit);
           return 'confirmed';
         }
-        await sendPixReceiptRejectedMessage(jid, resolvedEmpresaId, result.reason, receiptConfig.fallback);
+        await sendPixReceiptRejectedMessage(jid, resolvedEmpresaId, permit, result.reason, receiptConfig.fallback);
         return 'receipt_rejected';
       } catch (err) {
         console.error('[AI] Pix receipt validation failed:', err);
         const reason = 'não consegui ler o comprovante com segurança agora';
-        await updatePendingOrderPixReceipt(jid, resolvedEmpresaId, {
+        await updatePendingOrderPixReceipt(jid, resolvedEmpresaId, permit, {
           status: 'rejected',
           messageId: lastMsg.waMessageId || lastMsg.id,
           analysis: null,
           rejectionReason: reason,
         });
-        await sendPixReceiptRejectedMessage(jid, resolvedEmpresaId, reason, receiptConfig.fallback);
+        await sendPixReceiptRejectedMessage(jid, resolvedEmpresaId, permit, reason, receiptConfig.fallback);
         return 'receipt_rejected';
       }
     }
@@ -3471,6 +3599,7 @@ export async function generateAndSendReply(
     if (escalationIntent) {
       console.log(`[AI] Pending order + escalation intent detected for ${jid} — preserving pending row and handing off.`);
       await escalateSession(resolvedEmpresaId, jid, {
+        aiPermit: permit,
         triggerId: null,
         triggerKind: 'escalate_human',
         triggerName: escalationIntent.triggerName,
@@ -3510,17 +3639,17 @@ export async function generateAndSendReply(
 
     if (isAffirmative || richIsAffirmative) {
       console.log(`[AI] Pending order: affirmative text detected ("${lastText}", classifier=${richIntent}) — auto-confirming`);
-      await confirmPendingOrder(jid, resolvedEmpresaId);
+      await confirmPendingOrder(jid, resolvedEmpresaId, permit);
       return receiptRequired ? 'receipt_required' : 'confirmed';
     }
     if (isNegative || richIsNegative) {
       console.log(`[AI] Pending order: negative text detected ("${lastText}", classifier=${richIntent}) — auto-cancelling`);
-      await cancelPendingOrder(jid, resolvedEmpresaId);
+      await cancelPendingOrder(jid, resolvedEmpresaId, permit);
       return 'cancelled';
     }
     if (pendingTurn.action === 'edit_pending_order') {
       console.log(`[AI] Pending order edit detected for ${jid}; clearing pending and processing the edit in the same AI turn.`);
-      await clearPendingOrder(jid, resolvedEmpresaId);
+      await clearPendingOrder(jid, resolvedEmpresaId, permit);
       const pendingItems = pendingForEdit.items
         .map((i) => `${safeForPrompt(i.quantity, 10)}x ${safeForPrompt(i.product, 200)}`)
         .join(', ');
@@ -3533,11 +3662,11 @@ export async function generateAndSendReply(
     } else if (pendingTurn.action === 'clarify_pending_order') {
       console.log(`[AI] Pending order ambiguous reply for ${jid}; preserving pending row and asking a short clarification.`);
       const clarify = 'Só pra eu não confirmar errado: você quer confirmar esse pedido, cancelar, ou alterar alguma coisa?';
-      await sendAndPersistText(jid, clarify, resolvedEmpresaId, { responseSource: 'ai_auto' });
+      await enqueueAutomatedText({ permit, text: clarify, origin: 'ai_auto', purpose: 'pending-clarify' });
       return clarify;
     }
     if (receiptRequired && pendingTurn.action !== 'edit_pending_order') {
-      await sendPixReceiptRequiredMessage(jid, resolvedEmpresaId);
+      await sendPixReceiptRequiredMessage(jid, resolvedEmpresaId, permit);
       return 'receipt_required';
     }
   }
@@ -3583,6 +3712,7 @@ export async function generateAndSendReply(
         const ack = await handleReceiptForActiveOrder(
           jid,
           resolvedEmpresaId,
+          permit,
           activeOrder,
           lastMsg as any,
           lastTextForProof,
@@ -3611,14 +3741,14 @@ export async function generateAndSendReply(
     : null;
   if (blockedDateFromMessage) {
     console.log(`[AI] Blocking reply before OpenAI: requested blocked date ${blockedDateFromMessage.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
-    return sendBlockedDateReply(jid, resolvedEmpresaId, blockedDateFromMessage);
+    return sendBlockedDateReply(jid, resolvedEmpresaId, permit, blockedDateFromMessage);
   }
   const todayBlockedOperationalContext = !isGeneralMode
     ? findRecentTodayBlockedOperationalGuard(resolvedEmpresaId, session.messages)
     : null;
   if (todayBlockedOperationalContext) {
     console.log(`[AI] Blocking reply before OpenAI: today blocked and recent order/payment context for empresa=${resolvedEmpresaId} jid=${jid}`);
-    return sendBlockedDateReply(jid, resolvedEmpresaId, todayBlockedOperationalContext);
+    return sendBlockedDateReply(jid, resolvedEmpresaId, permit, todayBlockedOperationalContext);
   }
   const recentScheduleContext = findRecentScheduleContextGuard(
     resolvedEmpresaId,
@@ -3626,11 +3756,11 @@ export async function generateAndSendReply(
   );
   if (recentScheduleContext?.type === 'blocked_date') {
     console.log(`[AI] Blocking reply before OpenAI: recent context has blocked date ${recentScheduleContext.blockedDate.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
-    return sendBlockedDateReply(jid, resolvedEmpresaId, recentScheduleContext.blockedDate);
+    return sendBlockedDateReply(jid, resolvedEmpresaId, permit, recentScheduleContext.blockedDate);
   }
   if (recentScheduleContext?.type === 'business_hours') {
     console.log(`[AI] Blocking reply before OpenAI: recent context has invalid schedule for empresa=${resolvedEmpresaId} jid=${jid}`);
-    return sendBusinessHoursReply(jid, resolvedEmpresaId, recentScheduleContext.issue);
+    return sendBusinessHoursReply(jid, resolvedEmpresaId, permit, recentScheduleContext.issue);
   }
   const businessHoursIssueFromMessage = lastUserTextForDate
     && !isGeneralMode
@@ -3643,7 +3773,7 @@ export async function generateAndSendReply(
     : null;
   if (businessHoursIssueFromMessage) {
     console.log(`[AI] Blocking reply before OpenAI: requested outside business hours for empresa=${resolvedEmpresaId} jid=${jid}`);
-    return sendBusinessHoursReply(jid, resolvedEmpresaId, businessHoursIssueFromMessage);
+    return sendBusinessHoursReply(jid, resolvedEmpresaId, permit, businessHoursIssueFromMessage);
   }
 
   const [customerHistory, triggers, activeOrdersBlock, sessionTags, allTags] = await Promise.all([
@@ -3734,13 +3864,15 @@ export async function generateAndSendReply(
       : [CONSULT_ORDER_TOOL, DISPATCH_TRIGGER_TOOL];
     if (autoTags.length > 0) tools.push(APPLY_TAG_TOOL);
     console.log(`[AiTrace] openai_request empresa=${resolvedEmpresaId} jid=${redactJid(jid)} model=${OPENAI_MODEL} history=${trimmedHistory.length} tools=${tools.map((t) => (t.type === 'function' ? t.function.name : t.type)).join('+')}`);
-    const response = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
-      temperature: OPENAI_CHAT_TEMPERATURE,
-      messages,
-      tools,
-      tool_choice: 'auto',
-    });
+    const response = await runAiModelStep(permit, 'primary-model', () =>
+      openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        temperature: OPENAI_CHAT_TEMPERATURE,
+        messages,
+        tools,
+        tool_choice: 'auto',
+      }));
+    if (!response) return null;
     console.log(`[AiTrace] openai_response empresa=${resolvedEmpresaId} jid=${redactJid(jid)} finish=${response.choices[0]?.finish_reason ?? '<none>'} usage=${response.usage?.total_tokens ?? '<none>'} elapsedMs=${Date.now() - startedAt}`);
     recordAiUsage({
       empresaId: resolvedEmpresaId,
@@ -3763,7 +3895,7 @@ export async function generateAndSendReply(
     // Supabase round-trip (~5ms) is negligible compared to the OpenAI latency.
     try {
       const freshSession = await getSession(jid, resolvedEmpresaId);
-      if (freshSession && (!freshSession.autoReply || freshSession.status === 'escalated')) {
+      if (!(await isAiPermitCurrent(permit)) || (freshSession && (!freshSession.autoReply || freshSession.status === 'escalated'))) {
         console.log(`[AiTrace] abort empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=auto_reply_off_mid_flight status=${freshSession.status} autoReply=${freshSession.autoReply}`);
         return null;
       }
@@ -3797,7 +3929,7 @@ export async function generateAndSendReply(
 
       if (toolPlan?.mode === 'sequential_non_terminal') {
         const toolMessages: ChatCompletionMessageParam[] = [];
-        await addAssistantMessage(jid, null, toolPlan.calls, resolvedEmpresaId);
+        if (!(await addAiAssistantAudit(permit, jid, null, toolPlan.calls, resolvedEmpresaId))) return null;
 
         for (const toolCall of toolPlan.calls) {
           if (toolCall.function.name === 'consultar_pedido') {
@@ -3807,7 +3939,7 @@ export async function generateAndSendReply(
               session.customerPhone,
               typeof parsed.orderShortId === 'string' ? parsed.orderShortId : undefined,
             );
-            await addToolMessage(jid, statusInfo, toolCall.id, resolvedEmpresaId);
+            if (!(await addAiToolAudit(permit, jid, statusInfo, toolCall.id, resolvedEmpresaId))) return null;
             toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: statusInfo } as any);
             continue;
           }
@@ -3825,7 +3957,7 @@ export async function generateAndSendReply(
             if (!trig) {
               console.warn('[AI] Unknown trigger_id from model in multi-tool turn:', triggerId);
               const result = `Erro: gatilho ${triggerId} não encontrado`;
-              await addToolMessage(jid, result, toolCall.id, resolvedEmpresaId);
+              if (!(await addAiToolAudit(permit, jid, result, toolCall.id, resolvedEmpresaId))) return null;
               toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result } as any);
               continue;
             }
@@ -3834,7 +3966,7 @@ export async function generateAndSendReply(
               // This should be unreachable because planToolCallsForTurn makes
               // escalation a single terminal action. Keep the stop here as a
               // belt-and-suspenders guardrail if trigger config changes mid-turn.
-              await addToolMessage(jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId);
+              if (!(await addAiToolAudit(permit, jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId))) return null;
               const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
               const reasonCategory: ReasonCategory = isBuiltinTriggerId(triggerId)
                 ? (triggerId === 'builtin:offensive'
@@ -3845,6 +3977,7 @@ export async function generateAndSendReply(
                 : categorizeReason(`${trig.name} ${trig.conditionDescription}`);
 
               await escalateSession(resolvedEmpresaId, jid, {
+                aiPermit: permit,
                 triggerId: isBuiltinTriggerId(triggerId) ? null : trig.id,
                 triggerKind: 'escalate_human',
                 triggerName: trig.name,
@@ -3861,6 +3994,7 @@ export async function generateAndSendReply(
               const redirectText = await sendRedirectContactReply(
                 jid,
                 resolvedEmpresaId,
+                permit,
                 trig,
                 toolCall,
                 false,
@@ -3876,11 +4010,13 @@ export async function generateAndSendReply(
             const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
             if (managerJid) {
               try {
-                await sendTextMessage(
-                  managerJid,
-                  `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
-                  resolvedEmpresaId,
-                );
+                await enqueueInternalSystemText({
+                  permit,
+                  empresaId: resolvedEmpresaId,
+                  jid: managerJid,
+                  idempotencyKey: `internal:trigger:${permit.triggerMessageId}:${toolCall.id}`,
+                  text: `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
+                });
               } catch (err) {
                 console.warn('[AI] Failed to notify manager (alert):', err);
               }
@@ -3888,26 +4024,28 @@ export async function generateAndSendReply(
               console.warn('[AI] notify_manager triggered but managerPhone not configured.');
             }
 
-            await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
+            if (!(await addAiToolAudit(permit, jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId))) return null;
             toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any);
           }
 
           if (toolCall.function.name === 'aplicar_tag') {
-            const { result } = await applyAutoTag(resolvedEmpresaId, jid, toolCall, autoTags);
-            await addToolMessage(jid, result, toolCall.id, resolvedEmpresaId);
+            const { result } = await applyAutoTag(resolvedEmpresaId, jid, permit, toolCall, autoTags);
+            if (!(await addAiToolAudit(permit, jid, result, toolCall.id, resolvedEmpresaId))) return null;
             toolMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result } as any);
           }
         }
 
-        const followUp = await openai.chat.completions.create({
-          model: OPENAI_MODEL,
-          temperature: OPENAI_CHAT_TEMPERATURE,
-          messages: [
-            ...messages,
-            buildAssistantToolCallMessage(toolPlan.calls),
-            ...toolMessages,
-          ],
-        });
+        const followUp = await runAiModelStep(permit, 'sequential-tool-followup-model', () =>
+          openai.chat.completions.create({
+            model: OPENAI_MODEL,
+            temperature: OPENAI_CHAT_TEMPERATURE,
+            messages: [
+              ...messages,
+              buildAssistantToolCallMessage(toolPlan.calls),
+              ...toolMessages,
+            ],
+          }));
+        if (!followUp) return null;
         recordAiUsage({
           empresaId: resolvedEmpresaId,
           feature: 'ai_auto_followup',
@@ -3919,10 +4057,10 @@ export async function generateAndSendReply(
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'sequential tool follow-up'))) {
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, permit, 'sequential tool follow-up'))) {
           return null;
         }
-        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
+        await enqueueAutomatedText({ permit, text: cleanFollow, origin: 'ai_followup', purpose: 'sequential-tool-followup' });
         console.log(`[AI] Processed ${toolPlan.calls.length} non-terminal tool_calls sequentially for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
@@ -3930,7 +4068,7 @@ export async function generateAndSendReply(
 
       if (toolPlan?.mode === 'sequential_then_terminal') {
         const prefixCalls = toolPlan.calls.slice(0, -1);
-        await addAssistantMessage(jid, null, prefixCalls, resolvedEmpresaId);
+        if (!(await addAiAssistantAudit(permit, jid, null, prefixCalls, resolvedEmpresaId))) return null;
 
         for (const prefixCall of prefixCalls) {
           if (prefixCall.function.name === 'consultar_pedido') {
@@ -3940,11 +4078,11 @@ export async function generateAndSendReply(
               session.customerPhone,
               typeof parsed.orderShortId === 'string' ? parsed.orderShortId : undefined,
             );
-            await addToolMessage(jid, statusInfo, prefixCall.id, resolvedEmpresaId);
+            if (!(await addAiToolAudit(permit, jid, statusInfo, prefixCall.id, resolvedEmpresaId))) return null;
             const customerStatus = statusInfo.startsWith('Pedido #')
               ? `Sobre o pedido anterior: ${statusInfo.replace(/\s+\|\s+/g, '. ')}.`
               : statusInfo;
-            await sendAndPersistText(jid, customerStatus, resolvedEmpresaId, { responseSource: 'ai_auto' });
+            await enqueueAutomatedText({ permit, text: customerStatus, origin: 'ai_followup', purpose: `order-prefix:${prefixCall.id}` });
             continue;
           }
 
@@ -3960,14 +4098,14 @@ export async function generateAndSendReply(
 
             if (!trig) {
               console.warn('[AI] Unknown trigger_id from model before terminal tool:', triggerId);
-              await addToolMessage(jid, `Erro: gatilho ${triggerId} não encontrado`, prefixCall.id, resolvedEmpresaId);
+              if (!(await addAiToolAudit(permit, jid, `Erro: gatilho ${triggerId} não encontrado`, prefixCall.id, resolvedEmpresaId))) return null;
               continue;
             }
 
             if (trig.kind === 'escalate_human') {
               // planToolCallsForTurn should have made this the only call. Stop here
               // anyway in case trigger config changed between planning and execution.
-              await addToolMessage(jid, 'Atendimento escalado para humano', prefixCall.id, resolvedEmpresaId);
+              if (!(await addAiToolAudit(permit, jid, 'Atendimento escalado para humano', prefixCall.id, resolvedEmpresaId))) return null;
               const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
               const reasonCategory: ReasonCategory = isBuiltinTriggerId(triggerId)
                 ? (triggerId === 'builtin:offensive'
@@ -3977,6 +4115,7 @@ export async function generateAndSendReply(
                       : 'complaint')
                 : categorizeReason(`${trig.name} ${trig.conditionDescription}`);
               await escalateSession(resolvedEmpresaId, jid, {
+                aiPermit: permit,
                 triggerId: isBuiltinTriggerId(triggerId) ? null : trig.id,
                 triggerKind: 'escalate_human',
                 triggerName: trig.name,
@@ -3992,6 +4131,7 @@ export async function generateAndSendReply(
               const redirectText = await sendRedirectContactReply(
                 jid,
                 resolvedEmpresaId,
+                permit,
                 trig,
                 prefixCall,
                 false,
@@ -4007,27 +4147,29 @@ export async function generateAndSendReply(
             const managerJid = cfg.managerPhone ? phoneToJid(cfg.managerPhone) : null;
             if (managerJid) {
               try {
-                await sendTextMessage(
-                  managerJid,
-                  `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
-                  resolvedEmpresaId,
-                );
+                await enqueueInternalSystemText({
+                  permit,
+                  empresaId: resolvedEmpresaId,
+                  jid: managerJid,
+                  idempotencyKey: `internal:trigger-prefix:${permit.triggerMessageId}:${prefixCall.id}`,
+                  text: `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
+                });
               } catch (err) {
                 console.warn('[AI] Failed to notify manager before terminal tool:', err);
               }
             } else {
               console.warn('[AI] notify_manager triggered before terminal tool but managerPhone not configured.');
             }
-            await addToolMessage(jid, 'Gerente notificado', prefixCall.id, resolvedEmpresaId);
+            if (!(await addAiToolAudit(permit, jid, 'Gerente notificado', prefixCall.id, resolvedEmpresaId))) return null;
           }
 
           if (prefixCall.function.name === 'aplicar_tag') {
-            const { result } = await applyAutoTag(resolvedEmpresaId, jid, prefixCall, autoTags);
-            await addToolMessage(jid, result, prefixCall.id, resolvedEmpresaId);
+            const { result } = await applyAutoTag(resolvedEmpresaId, jid, permit, prefixCall, autoTags);
+            if (!(await addAiToolAudit(permit, jid, result, prefixCall.id, resolvedEmpresaId))) return null;
           }
         }
 
-        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'terminal tool after prefix tools'))) {
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, permit, 'terminal tool after prefix tools'))) {
           return null;
         }
       }
@@ -4053,15 +4195,17 @@ export async function generateAndSendReply(
         );
 
         // Complete the tool call within the SAME OpenAI request — H3 invariant.
-        const followUp = await openai.chat.completions.create({
-          model: OPENAI_MODEL,
-          temperature: OPENAI_CHAT_TEMPERATURE,
-          messages: [
-            ...messages,
-            selectedToolCallMessage,
-            { role: 'tool', tool_call_id: toolCall.id, content: statusInfo } as any,
-          ],
-        });
+        const followUp = await runAiModelStep(permit, 'order-followup-model', () =>
+          openai.chat.completions.create({
+            model: OPENAI_MODEL,
+            temperature: OPENAI_CHAT_TEMPERATURE,
+            messages: [
+              ...messages,
+              selectedToolCallMessage,
+              { role: 'tool', tool_call_id: toolCall.id, content: statusInfo } as any,
+            ],
+          }));
+        if (!followUp) return null;
         recordAiUsage({
           empresaId: resolvedEmpresaId,
           feature: 'ai_auto_followup',
@@ -4071,22 +4215,22 @@ export async function generateAndSendReply(
         });
 
         // Persist the audit trail. Order matters: assistant(tool_calls) → tool → assistant(text).
-        await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-        await addToolMessage(jid, statusInfo, toolCall.id, resolvedEmpresaId);
+        if (!(await addAiAssistantAudit(permit, jid, null, [toolCall], resolvedEmpresaId))) return null;
+        if (!(await addAiToolAudit(permit, jid, statusInfo, toolCall.id, resolvedEmpresaId))) return null;
 
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Consultei aqui — qualquer outra dúvida é só chamar! 😊';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'consultar_pedido follow-up'))) {
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, permit, 'consultar_pedido follow-up'))) {
           return null;
         }
-        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
+        await enqueueAutomatedText({ permit, text: cleanFollow, origin: 'ai_followup', purpose: `order-followup:${toolCall.id}` });
         console.log(`[AI] consultar_pedido answered for ${jid}`);
         return cleanFollow;
       }
 
       if (toolCall.type === 'function' && toolCall.function.name === 'aplicar_tag') {
-        const { result, tag } = await applyAutoTag(resolvedEmpresaId, jid, toolCall, autoTags);
+        const { result, tag } = await applyAutoTag(resolvedEmpresaId, jid, permit, toolCall, autoTags);
 
         // Complete the tool call within the SAME OpenAI request — H3 invariant.
         // If the applied tag carries behavior instructions ("o que o robô faz
@@ -4103,11 +4247,13 @@ export async function generateAndSendReply(
             content: `INSTRUÇÃO DA TAG "${safeForPrompt(tag.name, 80)}" (aplica-se agora a esta conversa): ${safeForPrompt(tag.aiInstructions, 2000)}`,
           } as any);
         }
-        const followUp = await openai.chat.completions.create({
-          model: OPENAI_MODEL,
-          temperature: OPENAI_CHAT_TEMPERATURE,
-          messages: followUpMessages,
-        });
+        const followUp = await runAiModelStep(permit, 'tag-followup-model', () =>
+          openai.chat.completions.create({
+            model: OPENAI_MODEL,
+            temperature: OPENAI_CHAT_TEMPERATURE,
+            messages: followUpMessages,
+          }));
+        if (!followUp) return null;
         recordAiUsage({
           empresaId: resolvedEmpresaId,
           feature: 'ai_auto_followup',
@@ -4117,16 +4263,16 @@ export async function generateAndSendReply(
         });
 
         // Persist the audit trail. Order matters: assistant(tool_calls) → tool → assistant(text).
-        await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-        await addToolMessage(jid, result, toolCall.id, resolvedEmpresaId);
+        if (!(await addAiAssistantAudit(permit, jid, null, [toolCall], resolvedEmpresaId))) return null;
+        if (!(await addAiToolAudit(permit, jid, result, toolCall.id, resolvedEmpresaId))) return null;
 
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Perfeito! Como posso te ajudar?';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'aplicar_tag follow-up'))) {
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, permit, 'aplicar_tag follow-up'))) {
           return null;
         }
-        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
+        await enqueueAutomatedText({ permit, text: cleanFollow, origin: 'ai_followup', purpose: `tag-followup:${toolCall.id}` });
         console.log(`[AI] aplicar_tag answered for ${jid}`);
         return cleanFollow;
       }
@@ -4152,10 +4298,10 @@ export async function generateAndSendReply(
           const fallback = choice.message.content?.trim()
             || 'Tudo certo! Se precisar de algo mais, é só chamar. 😊';
 
-          await addToolMessage(jid, `Erro: gatilho ${triggerId} não encontrado`, toolCall.id, resolvedEmpresaId);
-          await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
+          if (!(await addAiToolAudit(permit, jid, `Erro: gatilho ${triggerId} não encontrado`, toolCall.id, resolvedEmpresaId))) return null;
+          if (!(await addAiAssistantAudit(permit, jid, null, [toolCall], resolvedEmpresaId))) return null;
 
-          await sendAndPersistText(jid, fallback, resolvedEmpresaId, { responseSource: 'ai_auto' });
+          await enqueueAutomatedText({ permit, text: fallback, origin: 'ai_auto', purpose: `trigger-fallback:${toolCall.id}` });
           resetAiFailureCounter(resolvedEmpresaId, jid);
           return fallback;
         }
@@ -4164,8 +4310,8 @@ export async function generateAndSendReply(
           // Persist the tool-call audit row first so OpenAI history stays consistent
           // (assistant tool_call must have a matching tool result row); escalateSession
           // takes over from there: status flip, manager notification, customer handoff.
-          await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-          await addToolMessage(jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId);
+          if (!(await addAiAssistantAudit(permit, jid, null, [toolCall], resolvedEmpresaId))) return null;
+          if (!(await addAiToolAudit(permit, jid, 'Atendimento escalado para humano', toolCall.id, resolvedEmpresaId))) return null;
 
           const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
           const reasonCategory: ReasonCategory = isBuiltinTriggerId(triggerId)
@@ -4177,6 +4323,7 @@ export async function generateAndSendReply(
             : categorizeReason(`${trig.name} ${trig.conditionDescription}`);
 
           await escalateSession(resolvedEmpresaId, jid, {
+            aiPermit: permit,
             triggerId: isBuiltinTriggerId(triggerId) ? null : trig.id,
             triggerKind: 'escalate_human',
             triggerName: trig.name,
@@ -4196,6 +4343,7 @@ export async function generateAndSendReply(
           const redirectText = await sendRedirectContactReply(
             jid,
             resolvedEmpresaId,
+            permit,
             trig,
             toolCall,
             true,
@@ -4210,11 +4358,13 @@ export async function generateAndSendReply(
         // notify_manager — alert and continue the conversation
         if (managerJid) {
           try {
-            await sendTextMessage(
-              managerJid,
-              `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
-              resolvedEmpresaId,
-            );
+            await enqueueInternalSystemText({
+              permit,
+              empresaId: resolvedEmpresaId,
+              jid: managerJid,
+              idempotencyKey: `internal:trigger:${permit.triggerMessageId}:${toolCall.id}`,
+              text: `🔔 *${safeForPrompt(trig.name, 80)}*\nCliente: ${safeForPrompt(session.customerName, 80)} (${safeForPrompt(session.customerPhone, 30)})\nMotivo: ${safeForPrompt(reason, 300)}`,
+            });
           } catch (err) {
             console.warn('[AI] Failed to notify manager (alert):', err);
           }
@@ -4222,15 +4372,17 @@ export async function generateAndSendReply(
           console.warn('[AI] notify_manager triggered but managerPhone not configured.');
         }
 
-        const followUp = await openai.chat.completions.create({
-          model: OPENAI_MODEL,
-          temperature: OPENAI_CHAT_TEMPERATURE,
-          messages: [
-            ...messages,
-            selectedToolCallMessage,
-            { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any,
-          ],
-        });
+        const followUp = await runAiModelStep(permit, 'trigger-followup-model', () =>
+          openai.chat.completions.create({
+            model: OPENAI_MODEL,
+            temperature: OPENAI_CHAT_TEMPERATURE,
+            messages: [
+              ...messages,
+              selectedToolCallMessage,
+              { role: 'tool', tool_call_id: toolCall.id, content: 'gerente notificado' } as any,
+            ],
+          }));
+        if (!followUp) return null;
         recordAiUsage({
           empresaId: resolvedEmpresaId,
           feature: 'ai_auto_followup',
@@ -4239,15 +4391,15 @@ export async function generateAndSendReply(
           usage: followUp.usage,
         });
         
-        await addAssistantMessage(jid, null, [toolCall], resolvedEmpresaId);
-        await addToolMessage(jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId);
+        if (!(await addAiAssistantAudit(permit, jid, null, [toolCall], resolvedEmpresaId))) return null;
+        if (!(await addAiToolAudit(permit, jid, 'Gerente notificado', toolCall.id, resolvedEmpresaId))) return null;
         const followText = followUp.choices[0]?.message?.content?.trim()
           || 'Beleza! Já anotei aqui. 👍';
         const cleanFollow = followText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
-        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, 'dispatch_trigger follow-up'))) {
+        if (!(await isAutoReplyStillAllowed(resolvedEmpresaId, jid, permit, 'dispatch_trigger follow-up'))) {
           return null;
         }
-        await sendAndPersistText(jid, cleanFollow, resolvedEmpresaId, { responseSource: 'ai_auto' });
+        await enqueueAutomatedText({ permit, text: cleanFollow, origin: 'ai_followup', purpose: `trigger-followup:${toolCall.id}` });
         console.log(`[AI] Dispatched notify_manager (${trig.name}) for ${jid}`);
         resetAiFailureCounter(resolvedEmpresaId, jid);
         return cleanFollow;
@@ -4257,10 +4409,11 @@ export async function generateAndSendReply(
     const replyText = choice.message.content || 'Desculpe, deu um erro aqui. Pode repetir?';
     const cleanReply = replyText.replace(/<ALERT>.*?<\/ALERT>/g, '').trim();
 
-    await sendAndPersistText(jid, cleanReply, resolvedEmpresaId, { responseSource: 'ai_auto' });
+    await enqueueAutomatedText({ permit, text: cleanReply, origin: 'ai_auto', purpose: 'final-reply' });
 
     // Fire-and-forget: update customer profile after each successful AI reply.
     updateCustomerProfile(
+      permit,
       session.customerPhone,
       resolvedEmpresaId,
       session.messages,
@@ -4292,6 +4445,7 @@ export async function generateAndSendReply(
       const result = await recordAiFailure(
         resolvedEmpresaId,
         jid,
+        permit,
         error?.message || 'unknown',
         lastUserMsg?.content ?? lastUserMsg?.preview ?? null,
       );
@@ -4303,7 +4457,7 @@ export async function generateAndSendReply(
     if (!suppressApology) {
       const errMsg = 'Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 🙏';
       try {
-        await sendAndPersistText(jid, errMsg, resolvedEmpresaId);
+        await enqueueAutomatedText({ permit, text: errMsg, origin: 'ai_auto', purpose: 'error-apology' });
       } catch {
         // ignore secondary failure
       }

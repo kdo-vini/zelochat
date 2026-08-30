@@ -188,7 +188,10 @@ export class OutboundWorker {
       return false;
     }
 
-    if (job.jobType !== 'conversation') {
+    // `internal_system` is an operational notification (for example, the
+    // manager side of an escalation), not a CRM campaign/automation. It must
+    // still use the durable worker but is deliberately outside CRM rollout.
+    if (job.jobType !== 'conversation' && job.origin !== 'internal_system') {
       try {
         const rollout = await (this.deps.getRolloutFlags ?? getCrmRolloutFlags)(job.empresaId);
         if (!isOutboundJobAllowed(rollout, { jobType: job.jobType })) {

@@ -2168,7 +2168,11 @@ export async function updateSessionName(
  * informational WhatsApp event (reaction/poll vote) that should not prompt the
  * AI. See `upsertInboundUserMessage` for the dedup contract (P0.14).
  */
-export async function handleIncomingMessage(msg: any, empresaId: string): Promise<boolean> {
+export interface PersistedAiInbound {
+  messageId: string;
+}
+
+export async function handleIncomingMessage(msg: any, empresaId: string): Promise<PersistedAiInbound | false> {
   if (!empresaId) {
     console.warn('[InboundTrace] message_handler_skip reason=empresa_required');
     return false;
@@ -2205,7 +2209,7 @@ function normalizeDocumentMime(rawMime: unknown): string {
   return mime && ALLOWED_DOC_MIMES.has(mime) ? mime : 'application/octet-stream';
 }
 
-async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<boolean> {
+async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Promise<PersistedAiInbound | false> {
   const jid = msg.key.remoteJid;
   console.log(`[InboundTrace] message_handler_start empresa=${resolvedEmpresaId} jid=${redactJid(jid)} messageId=${msg.key?.id ?? '<missing>'} hasPushName=${!!msg.pushName}`);
 
@@ -2471,7 +2475,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   if (!shouldTriggerAutoReply) {
     console.log(`[InboundTrace] message_handler_return_false empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=not_auto_reply_trigger`);
   }
-  return shouldTriggerAutoReply;
+  return shouldTriggerAutoReply ? { messageId: storedMsg.id } : false;
 }
 
 export async function handleOutboundMessage(data: any, empresaId: string): Promise<void> {

@@ -1,5 +1,25 @@
 # Incidentes e padrões conhecidos
 
+## XXII. Resposta automática podia ultrapassar takeover humano (risco corrigido em 2026-08-30)
+
+### Sintoma possível
+
+Uma resposta, confirmação de pedido ou aviso de Pix iniciado pela IA podia chegar depois que operador, WhatsApp nativo, toggle Manual ou escalação já haviam assumido a conversa.
+
+### Causa-raiz
+
+O inbound, debounce, modelos e helpers não carregavam o mesmo epoch durável, e caminhos especiais enviavam mensagens diretamente sem o fence atômico da fila.
+
+### Fix
+
+O `AiTurnPermit` agora acompanha a execução inteira; modelos/helpers falham fechado, jobs AI validam epoch no banco e escalações fazem takeover antes de enfileirar `system_handoff`, com gerente em `internal_system` separado — `server/ai.ts:118`, `server/index.ts:239`, `server/escalation.ts:198`, `supabase/migrations/065_conversation_outbound_claims.sql:740`.
+
+### Recovery / rollout
+
+Aplicar a migration 065 antes deste backend e manter enforcement desligado até concluir Task 7 e a reconciliação `fromMe`; não reintroduzir sends customer-facing diretos em `server/ai.ts`.
+
+---
+
 ## XXI. Retry humano de mídia pre-R2 podia assumir payload sem prova forte (risco auditado em 2026-08-30)
 
 ### Sintoma possível

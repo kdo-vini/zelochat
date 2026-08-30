@@ -35,6 +35,7 @@ class FakeRepo {
   readonly jobs = new Map<string, StoredJob>();
   readonly mediaPersisted: string[] = [];
   readonly enqueueAiRequests: Array<{ empresaId: string; remoteJid: string; permitRemoteJid: string }> = [];
+  readonly enqueueSystemRequests: Array<{ origin: string; remoteJid: string }> = [];
   beginCount = 0;
   eventCount = 0;
   cancelDebounceCount = 0;
@@ -100,6 +101,35 @@ class FakeRepo {
       conversationControlId: params.aiPermit.conversationControlId,
       controlEpoch: params.aiPermit.epoch,
       status: params.payload.kind === 'media' || params.payload.kind === 'audio' || params.payload.kind === 'sticker' ? 'preparing' : 'queued',
+      payload: params.payload,
+      payloadFingerprint: params.payloadFingerprint,
+      intentPayloadFingerprint: params.payloadFingerprint,
+    };
+    this.jobs.set(job.id, job);
+    return job;
+  }
+
+  async enqueueSystemOutbound(params: {
+    empresaId: string;
+    remoteJid: string;
+    idempotencyKey: string;
+    origin: 'system_handoff' | 'system_transactional' | 'internal_system';
+    payload: PersistedOutboundPayload;
+    payloadFingerprint: string;
+  }): Promise<StoredJob> {
+    this.calls.push('enqueue-system-outbound');
+    this.enqueueSystemRequests.push({ origin: params.origin, remoteJid: params.remoteJid });
+    const existing = this.find(params.empresaId, params.idempotencyKey);
+    if (existing) return existing;
+    const job: StoredJob = {
+      id: `job-${this.nextId++}`,
+      messageId: params.origin === 'internal_system' ? null : `message-${this.nextId++}`,
+      empresaId: params.empresaId,
+      remoteJid: params.remoteJid,
+      idempotencyKey: params.idempotencyKey,
+      origin: params.origin,
+      conversationControlId: params.origin === 'internal_system' ? undefined : 'control-1',
+      status: 'queued',
       payload: params.payload,
       payloadFingerprint: params.payloadFingerprint,
       intentPayloadFingerprint: params.payloadFingerprint,
@@ -231,6 +261,7 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
     sendWaitMs: waitMs,
     beginHumanOutbound: repo.beginHumanOutbound.bind(repo),
     enqueueAiOutbound: repo.enqueueAiOutbound.bind(repo),
+    enqueueSystemOutbound: repo.enqueueSystemOutbound.bind(repo),
     claimMediaPreparation: repo.claimMediaPreparation.bind(repo),
     markPrepared: repo.markPrepared.bind(repo),
     markFailedBeforeDispatch: repo.markFailedBeforeDispatch.bind(repo),
@@ -251,6 +282,28 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
     },
     fingerprintPayload: async (payload) => `${payload.kind}-fingerprint`,
   } as any);
+}
+
+{
+  const repo = new FakeRepo();
+  const result = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1', remoteJid: 'j1', actorUserId: null,
+    origin: 'system_handoff', takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'handoff-1', payload: textPayload,
+  });
+  assert.equal(result.state, 'queued');
+  assert.deepEqual(repo.enqueueSystemRequests, [{ origin: 'system_handoff', remoteJid: 'j1' }]);
+}
+
+{
+  const repo = new FakeRepo();
+  const result = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1', remoteJid: '5511999999999@s.whatsapp.net', actorUserId: null,
+    origin: 'internal_system', takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'manager-1', payload: textPayload,
+  });
+  assert.equal(result.state, 'queued');
+  assert.equal([...repo.jobs.values()][0].messageId, null, 'notificação interna não cria bolha na conversa do cliente');
 }
 
 {

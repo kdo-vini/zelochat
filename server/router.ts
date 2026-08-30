@@ -58,6 +58,7 @@ import {
   updateSessionName,
   formatPhone,
   serializeForJid,
+  handleIncomingMessage,
 } from './messageHandler.js';
 import {
   generateAndSendReply,
@@ -67,8 +68,10 @@ import {
   getPendingOrder,
   pendingOrderRequiresPixReceipt,
   sendPixReceiptRequiredMessage,
+  enqueueAutomatedText,
   getPublicAppBaseUrl,
 } from './ai.js';
+import { beginAiTurn } from './conversationControl.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
 import { isRetryableOutboundFailure } from '../src/domain/outbound.js';
@@ -616,6 +619,14 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     const isHardCancel = buttonId === 'CANCEL_ORDER' || isCancelText;
 
     if (isHardConfirm || isHardCancel) {
+      const persistedAction = await handleIncomingMessage(data, empresaId);
+      if (!persistedAction) return;
+      const permit = await beginAiTurn({
+        empresaId,
+        remoteJid,
+        inboundMessageId: persistedAction.messageId,
+      });
+      if (!permit) return;
       // ──────────────────────────────────────────────────────────────────
       // CRITICAL — order confirmation hard-button path
       // ──────────────────────────────────────────────────────────────────
@@ -653,12 +664,12 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
           try {
             if (isHardConfirm) {
               if (pendingOrderRequiresPixReceipt(pending)) {
-                await sendPixReceiptRequiredMessage(remoteJid, empresaId);
+                await sendPixReceiptRequiredMessage(remoteJid, empresaId, permit);
               } else {
-                await confirmPendingOrder(remoteJid, empresaId);
+                await confirmPendingOrder(remoteJid, empresaId, permit);
               }
             } else {
-              await cancelPendingOrder(remoteJid, empresaId);
+              await cancelPendingOrder(remoteJid, empresaId, permit);
             }
           } catch (err) {
             console.error(
@@ -673,8 +684,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
         if (isHardConfirm) {
           const ack = 'Seu pedido já foi confirmado! ✅ Qualquer dúvida é só chamar 😊';
           try {
-            const waMessageId = await sendTextMessage(remoteJid, ack, empresaId);
-            await addAssistantMessage(remoteJid, ack, undefined, empresaId, undefined, { waMessageId });
+            await enqueueAutomatedText({ permit, text: ack, origin: 'ai_auto', purpose: 'hard-confirm-idempotent' });
           } catch (err) {
             console.error('[Webhook] idempotent confirm reply failed:', err);
           }
@@ -706,6 +716,14 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
       const isSoftConfirm = normalized === 'sim' || normalized === 's';
       const isSoftCancel = normalized === 'nao' || normalized === 'n';
       if (isSoftConfirm || isSoftCancel) {
+        const pendingBeforePersist = await getPendingOrder(remoteJid, empresaId);
+        if (!pendingBeforePersist) {
+          // Sem pedido pendente, "sim/não" é conversa normal e segue para o inbound abaixo.
+        } else {
+          const persistedAction = await handleIncomingMessage(data, empresaId);
+          if (!persistedAction) return;
+          const permit = await beginAiTurn({ empresaId, remoteJid, inboundMessageId: persistedAction.messageId });
+          if (!permit) return;
         // Serialize through the per-JID queue (see hard-confirm block above).
         // Without this, a soft "Sim" arriving while a button click is in-flight
         // can read the same pending row and trigger a second confirm.
@@ -716,12 +734,12 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
           try {
             if (isSoftConfirm) {
               if (pendingOrderRequiresPixReceipt(pending)) {
-                await sendPixReceiptRequiredMessage(remoteJid, empresaId);
+                await sendPixReceiptRequiredMessage(remoteJid, empresaId, permit);
               } else {
-                await confirmPendingOrder(remoteJid, empresaId);
+                await confirmPendingOrder(remoteJid, empresaId, permit);
               }
             } else {
-              await cancelPendingOrder(remoteJid, empresaId);
+              await cancelPendingOrder(remoteJid, empresaId, permit);
             }
           } catch (err) {
             console.error(
@@ -736,6 +754,7 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
           // the hard-button branch: kill any debounced reply for this contact.
           cancelPendingReply(empresaId, remoteJid);
           return;
+        }
         }
       }
     }
@@ -2514,7 +2533,18 @@ router.post('/api/ai/reply', async (req: Request, res: Response) => {
 
   try {
     const empresaId = await requireEmpresaId(req);
-    const reply = await generateAndSendReply(jid, empresaId);
+    const session = await getSession(jid, empresaId);
+    const inboundMessage = session?.messages.slice().reverse().find((message) => message.role === 'user');
+    if (!inboundMessage) {
+      res.status(409).json({ error: 'Não há uma mensagem do cliente aguardando resposta.' });
+      return;
+    }
+    const permit = await beginAiTurn({ empresaId, remoteJid: jid, inboundMessageId: inboundMessage.id });
+    if (!permit) {
+      res.status(409).json({ error: 'Esta conversa está em atendimento manual.' });
+      return;
+    }
+    const reply = await generateAndSendReply(jid, empresaId, permit);
     if (reply) {
       res.json({ ok: true, reply });
     } else {

@@ -32,6 +32,7 @@ import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
 import { redactJid } from './redact.js';
 import { startOutboundWorker } from './outbound/worker.js';
+import { beginAiTurn, type AiTurnPermit } from './conversationControl.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -238,10 +239,11 @@ function checkAutoReplyRateLimit(empresaId: string, jid: string): boolean {
 async function scheduleAutoReplyIfAllowed(params: {
   empresaId: string;
   jid: string;
+  permit: AiTurnPermit;
   messageId?: string;
   reason: 'inbound' | 'audio_transcription_settled';
 }): Promise<void> {
-  const { empresaId, jid, messageId } = params;
+  const { empresaId, jid, permit, messageId } = params;
   console.log(`[AutoReplyTrace] evaluate empresa=${empresaId} jid=${redactJid(jid)} reason=${params.reason} messageId=${messageId ?? '<none>'}`);
   const session = await getSession(jid, empresaId);
   if (!session) {
@@ -271,8 +273,9 @@ async function scheduleAutoReplyIfAllowed(params: {
   scheduleReply({
     empresaId,
     jid,
+    permit,
     messageId,
-    fire: async () => {
+    fire: async (scheduledPermit) => {
       console.log(`[AutoReplyTrace] fire empresa=${empresaId} jid=${redactJid(jid)} messageId=${messageId ?? '<none>'}`);
       const freshSession = await getSession(jid, empresaId);
       if (!freshSession) {
@@ -295,7 +298,7 @@ async function scheduleAutoReplyIfAllowed(params: {
       if (!checkAutoReplyRateLimit(empresaId, jid)) return;
 
       try {
-        const result = await generateAndSendReply(jid, empresaId);
+        const result = await generateAndSendReply(jid, empresaId, scheduledPermit);
         console.log(`[AutoReplyTrace] fire_done empresa=${empresaId} jid=${redactJid(jid)} result=${result ? 'reply_or_action' : 'no_reply'}`);
       } catch (err) {
         console.error(`[AutoReplyTrace] fire_error empresa=${empresaId} jid=${redactJid(jid)}:`, err);
@@ -308,9 +311,12 @@ onAudioTranscriptionSettled(async ({ empresaId, jid, messageId }) => {
   try {
     const shouldRearm = await shouldRearmAfterAudioTranscription(empresaId, jid, messageId);
     if (!shouldRearm) return;
+    const permit = await beginAiTurn({ empresaId, remoteJid: jid, inboundMessageId: messageId });
+    if (!permit) return;
     await scheduleAutoReplyIfAllowed({
       empresaId,
       jid,
+      permit,
       messageId,
       reason: 'audio_transcription_settled',
     });
@@ -340,7 +346,7 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // and we MUST skip the auto-reply scheduling below. Without this skip, a
   // single customer message could fire criar_pedido twice on Whatsmiau retry,
   // bringing back the duplicate-order bug the dedup is supposed to prevent.
-  let persisted = false;
+  let persisted: Awaited<ReturnType<typeof handleIncomingMessage>> = false;
   try {
     persisted = await handleIncomingMessage(msg, empresaId);
   } catch (error) {
@@ -351,6 +357,12 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
     return;
   }
   console.log(`[InboundTrace] persisted=true empresa=${empresaId} jid=${redactJid(msg?.key?.remoteJid)} messageId=${msg?.key?.id ?? '<missing>'}`);
+
+  const permit = await beginAiTurn({
+    empresaId,
+    remoteJid: msg.key.remoteJid,
+    inboundMessageId: persisted.messageId,
+  });
 
   // Fire-and-forget Web Push. The SW shows the notification only when no
   // ZeloChat tab is focused (handled inside the SW's push handler), so we
@@ -378,10 +390,15 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
     console.warn(`[InboundTrace] skip_auto_reply empresa=${empresaId} reason=no_jid_after_persist`);
     return;
   }
+  if (!permit) {
+    console.log(`[InboundTrace] skip_auto_reply empresa=${empresaId} jid=${redactJid(jid)} reason=ai_turn_not_permitted`);
+    return;
+  }
 
   await scheduleAutoReplyIfAllowed({
     empresaId,
     jid,
+    permit,
     messageId: msg.key?.id,
     reason: 'inbound',
   });

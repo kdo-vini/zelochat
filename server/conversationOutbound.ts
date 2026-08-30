@@ -83,10 +83,23 @@ type EnqueueAiOutbound = (params: {
   origin: 'ai_auto' | 'ai_followup';
 }) => Promise<ConversationOutboundJobSnapshot | null>;
 
+type SystemOutboundOrigin = 'system_handoff' | 'system_transactional' | 'internal_system';
+
+type EnqueueSystemOutbound = (params: {
+  empresaId: string;
+  remoteJid: string;
+  idempotencyKey: string;
+  payload: PersistedOutboundPayload;
+  payloadFingerprint: string;
+  messageText: string;
+  origin: SystemOutboundOrigin;
+}) => Promise<ConversationOutboundJobSnapshot | null>;
+
 export interface ConversationOutboundDependencies {
   sendWaitMs?: number;
   beginHumanOutbound?: BeginHumanOutbound;
   enqueueAiOutbound?: EnqueueAiOutbound;
+  enqueueSystemOutbound?: EnqueueSystemOutbound;
   claimMediaPreparation?: (
     jobId: string,
     empresaId: string,
@@ -274,6 +287,21 @@ function isExpectedHumanJob(
   return stableStringify(job.payload) === stableStringify(expectedPayload);
 }
 
+function isExpectedSystemJob(
+  job: ConversationOutboundJobSnapshot,
+  request: ConversationOutboundRequest & { origin: SystemOutboundOrigin },
+  expectedPayload: PersistedOutboundPayload,
+  expectedIntentFingerprint: string,
+): boolean {
+  if (job.empresaId !== request.empresaId) return false;
+  if (job.remoteJid !== request.remoteJid) return false;
+  if (job.idempotencyKey !== request.idempotencyKey) return false;
+  if (job.origin !== request.origin) return false;
+  if ((job.intentPayloadFingerprint ?? job.payloadFingerprint) !== expectedIntentFingerprint) return false;
+  if (MEDIA_KINDS.has(expectedPayload.kind)) return job.payload?.kind === expectedPayload.kind;
+  return stableStringify(job.payload) === stableStringify(expectedPayload);
+}
+
 function retryRequiredResult(job: ConversationOutboundJobSnapshot): DispatchResult {
   return {
     state: 'failed_before_dispatch',
@@ -376,6 +404,21 @@ async function defaultEnqueueAiOutbound(params: Parameters<EnqueueAiOutbound>[0]
   return row ? mapRow(row) : null;
 }
 
+async function defaultEnqueueSystemOutbound(params: Parameters<EnqueueSystemOutbound>[0]): Promise<ConversationOutboundJobSnapshot | null> {
+  const { data, error } = await getServiceSupabase().rpc('enqueue_zelochat_system_outbound', {
+    p_empresa_id: params.empresaId,
+    p_remote_jid: params.remoteJid,
+    p_origin: params.origin,
+    p_idempotency_key: params.idempotencyKey,
+    p_payload: params.payload,
+    p_payload_fingerprint: params.payloadFingerprint,
+    p_message_text: params.messageText,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? mapRow(row) : null;
+}
+
 async function defaultReadJob(jobId: string, empresaId: string): Promise<ConversationOutboundJobSnapshot | null> {
   const { data, error } = await getServiceSupabase()
     .from('zelochat_outbound_jobs')
@@ -458,6 +501,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
     sendWaitMs: dependencies.sendWaitMs ?? CONVERSATION_SEND_WAIT_MS,
     beginHumanOutbound: dependencies.beginHumanOutbound ?? defaultBeginHumanOutbound,
     enqueueAiOutbound: dependencies.enqueueAiOutbound ?? defaultEnqueueAiOutbound,
+    enqueueSystemOutbound: dependencies.enqueueSystemOutbound ?? defaultEnqueueSystemOutbound,
     claimMediaPreparation: dependencies.claimMediaPreparation ?? defaultClaimMediaPreparation,
     markPrepared: dependencies.markPrepared ?? defaultMarkPrepared,
     markFailedBeforeDispatch: dependencies.markFailedBeforeDispatch ?? defaultMarkFailedBeforeDispatch,
@@ -533,6 +577,24 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
         }
         if (!isExpectedAiJob(job, request as ConversationOutboundRequest & { origin: 'ai_auto' | 'ai_followup'; aiPermit: AiTurnPermit }, initialPayload, initialFingerprint, legacyMediaFingerprint)) {
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
+        }
+        job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);
+        return waitForTerminal(job, deps, deps.sendWaitMs);
+      }
+
+      if (request.origin === 'system_handoff' || request.origin === 'system_transactional' || request.origin === 'internal_system') {
+        if (request.takeoverPolicy !== 'preserve_ai') throw new Error(FRIENDLY_PREPARE_FAILED);
+        let job = await deps.enqueueSystemOutbound({
+          empresaId: request.empresaId,
+          remoteJid: request.remoteJid,
+          idempotencyKey: request.idempotencyKey,
+          payload: initialPayload,
+          payloadFingerprint: initialFingerprint,
+          messageText: messagePreview(request.payload),
+          origin: request.origin,
+        });
+        if (!job || !isExpectedSystemJob(job, request as ConversationOutboundRequest & { origin: SystemOutboundOrigin }, initialPayload, initialFingerprint)) {
+          throw new Error(FRIENDLY_PREPARE_FAILED);
         }
         job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);
         return waitForTerminal(job, deps, deps.sendWaitMs);

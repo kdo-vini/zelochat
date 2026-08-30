@@ -13,7 +13,16 @@ process.env.AI_DEBOUNCE_TYPING_MS = '50';
 process.env.AI_DEBOUNCE_REPLY_MS = '50';
 process.env.ZELOCHAT_DISABLE_WHATSAPP_NETWORK = '1';
 
-const { scheduleReply, cancelPendingReply } = await import('../server/replyDebouncer.js');
+const { scheduleReply: scheduleReplyWithPermit, cancelPendingReply } = await import('../server/replyDebouncer.js');
+const testPermit = {
+  empresaId: 'test-empresa',
+  conversationControlId: 'test-control',
+  remoteJid: 'test@s.whatsapp.net',
+  epoch: '1',
+  triggerMessageId: 'test-message',
+};
+const scheduleReply = (args: Omit<Parameters<typeof scheduleReplyWithPermit>[0], 'permit'>) =>
+  scheduleReplyWithPermit({ ...args, permit: { ...testPermit, empresaId: args.empresaId, remoteJid: args.jid } });
 
 const TOTAL_MS = 150; // 50 + 50 + 50
 const SETTLE_MS = 100;

@@ -12,7 +12,16 @@ process.env.AI_DEBOUNCE_READ_MS = '50';
 process.env.AI_DEBOUNCE_TYPING_MS = '50';
 process.env.AI_DEBOUNCE_REPLY_MS = '50';
 
-const { scheduleReply, cancelPendingReply } = await import('../server/replyDebouncer.js');
+const { scheduleReply: scheduleReplyWithPermit, cancelPendingReply } = await import('../server/replyDebouncer.js');
+const testPermit = {
+  empresaId: 'test-empresa',
+  conversationControlId: 'test-control',
+  remoteJid: 'test@s.whatsapp.net',
+  epoch: '1',
+  triggerMessageId: 'test-message',
+};
+const scheduleReply = (args: Omit<Parameters<typeof scheduleReplyWithPermit>[0], 'permit'>) =>
+  scheduleReplyWithPermit({ ...args, permit: { ...testPermit, empresaId: args.empresaId, remoteJid: args.jid } });
 
 let pass = 0;
 let fail = 0;

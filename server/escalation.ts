@@ -1,9 +1,8 @@
 import { getServiceSupabase, getBoundEmpresaId } from './supabase.js';
 import { broadcast } from './ws.js';
-import { sendTextMessage } from './whatsapp.js';
 import { getConfig } from './configStore.js';
-import { addAssistantMessage } from './messageHandler.js';
-import { claimHumanTakeover } from './conversationControl.js';
+import { claimHumanTakeover, isAiPermitCurrent, type AiTurnPermit } from './conversationControl.js';
+import { dispatchConversationOutbound } from './conversationOutbound.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
 
 export type ReasonCategory =
@@ -173,6 +172,7 @@ async function findSessionByJid(empresaId: string, jid: string) {
 }
 
 interface EscalateParams {
+  aiPermit?: AiTurnPermit;
   triggerId: string | null;
   triggerKind: 'escalate_human' | 'notify_manager';
   triggerName: string;
@@ -181,6 +181,8 @@ interface EscalateParams {
   customerMessageExcerpt?: string | null;
   /** Skip sending the handoff text to the customer (e.g. if the AI already sent it). */
   skipCustomerMessage?: boolean;
+  /** Contextual customer text sent by the durable `system_handoff` after takeover. */
+  customerHandoffMessage?: string;
 }
 
 export interface EscalateResult {
@@ -198,6 +200,11 @@ export async function escalateSession(
   jid: string,
   params: EscalateParams,
 ): Promise<EscalateResult | null> {
+  // FIX 2026-08-30: uma resposta antiga podia escalar e enviar após takeover concorrente → o permit obsoleto falha fechado antes de qualquer write.
+  if (params.aiPermit && !(await isAiPermitCurrent(params.aiPermit))) {
+    console.log(`[Escalation] stale AI permit suppressed escalation for empresa=${empresaId}`);
+    return null;
+  }
   const supabase = getServiceSupabase();
   const session = await findSessionByJid(empresaId, jid);
   if (!session) {
@@ -297,11 +304,18 @@ export async function escalateSession(
     empresaId,
   );
 
-  if (!wasAlreadyEscalated && !params.skipCustomerMessage) {
-    const handoff = handoffMessageFor(params.reasonCategory);
+  if (!wasAlreadyEscalated && (!params.skipCustomerMessage || params.customerHandoffMessage)) {
+    const handoff = params.customerHandoffMessage ?? handoffMessageFor(params.reasonCategory);
     try {
-      const waMessageId = await sendTextMessage(jid, handoff, empresaId);
-      await addAssistantMessage(jid, handoff, undefined, empresaId, undefined, { waMessageId });
+      await dispatchConversationOutbound({
+        empresaId,
+        remoteJid: jid,
+        actorUserId: null,
+        origin: 'system_handoff',
+        takeoverPolicy: 'preserve_ai',
+        idempotencyKey: `handoff:${event.id}`,
+        payload: { kind: 'text', text: handoff },
+      });
     } catch (err) {
       console.error('[Escalation] Failed to send handoff to customer:', err);
     }
@@ -323,7 +337,15 @@ export async function escalateSession(
         : '') +
       `\n\nAuto-resposta da IA desativada.`;
     try {
-      await sendTextMessage(managerPhone.jid, body, empresaId);
+      await dispatchConversationOutbound({
+        empresaId,
+        remoteJid: managerPhone.jid,
+        actorUserId: null,
+        origin: 'internal_system',
+        takeoverPolicy: 'preserve_ai',
+        idempotencyKey: `internal:escalation:${event.id}`,
+        payload: { kind: 'text', text: body },
+      });
     } catch (err) {
       console.warn('[Escalation] Failed to notify manager:', err);
     }
@@ -460,6 +482,7 @@ export function resetAiFailureCounter(empresaId: string, jid: string): void {
 export async function recordAiFailure(
   empresaId: string,
   jid: string,
+  permit: AiTurnPermit,
   errorMessage: string,
   customerMessageExcerpt?: string | null,
 ): Promise<{ escalated: boolean }> {
@@ -472,6 +495,7 @@ export async function recordAiFailure(
   consecutiveFailures.delete(key);
   try {
     await escalateSession(empresaId, jid, {
+      aiPermit: permit,
       triggerId: null,
       triggerKind: 'escalate_human',
       triggerName: 'Falha repetida da IA',

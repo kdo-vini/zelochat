@@ -1,4 +1,5 @@
 import { sendPresence, markWhatsAppMessageAsRead } from './whatsapp.js';
+import type { AiTurnPermit } from './conversationControl.js';
 
 // Three-stage debounce for AI auto-replies. Replaces the old single 1500ms
 // timer with a "human-feeling" cadence: read receipt → typing indicator → reply.
@@ -34,6 +35,7 @@ interface PendingState {
   lastMessageId: string | null;
   empresaId: string;
   jid: string;
+  permit: AiTurnPermit;
 }
 
 const pending = new Map<string, PendingState>();
@@ -54,14 +56,15 @@ function clearTimers(state: PendingState): void {
 export interface ScheduleReplyArgs {
   empresaId: string;
   jid: string;
+  permit: AiTurnPermit;
   // Optional: some Whatsmiau payload shapes (system, edge cases) may arrive
   // without a usable key.id. When absent, we skip the read receipt but still
   // debounce + reply normally. Customer never gets dropped.
   messageId?: string;
-  fire: () => Promise<void>;
+  fire: (permit: AiTurnPermit) => Promise<void>;
 }
 
-export function scheduleReply({ empresaId, jid, messageId, fire }: ScheduleReplyArgs): void {
+export function scheduleReply({ empresaId, jid, permit, messageId, fire }: ScheduleReplyArgs): void {
   const key = keyOf(empresaId, jid);
 
   // Kill switch: legacy single-timer mode. Skip read/typing entirely.
@@ -74,12 +77,14 @@ export function scheduleReply({ empresaId, jid, messageId, fire }: ScheduleReply
       lastMessageId: messageId ?? null,
       empresaId,
       jid,
+      permit,
     };
+    state.permit = permit;
     state.replyTimer = setTimeout(async () => {
       state.replyTimer = undefined;
       pending.delete(key);
       try {
-        await fire();
+        await fire(state.permit);
       } catch (err) {
         console.error('[replyDebouncer] fire callback threw:', err);
       }
@@ -100,6 +105,7 @@ export function scheduleReply({ empresaId, jid, messageId, fire }: ScheduleReply
       existing.hasShownTyping = false;
     }
     if (messageId) existing.lastMessageId = messageId;
+    existing.permit = permit;
   }
 
   const state: PendingState = existing ?? {
@@ -108,6 +114,7 @@ export function scheduleReply({ empresaId, jid, messageId, fire }: ScheduleReply
     lastMessageId: messageId ?? null,
     empresaId,
     jid,
+    permit,
   };
 
   state.readTimer = setTimeout(async () => {
@@ -134,7 +141,7 @@ export function scheduleReply({ empresaId, jid, messageId, fire }: ScheduleReply
     state.replyTimer = undefined;
     pending.delete(key);
     try {
-      await fire();
+      await fire(state.permit);
     } catch (err) {
       console.error('[replyDebouncer] fire callback threw:', err);
     }
