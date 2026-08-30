@@ -71,6 +71,7 @@ import {
 } from './ai.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
+import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton } from '../src/domain/aiWhatsAppOrdering.js';
 import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
@@ -348,11 +349,16 @@ async function requireInternalApiKey(req: Request): Promise<string> {
 // JIDs that recently had a button action handled — used to suppress duplicate text events
 // that WhatsApp/Whatsmiau sends for the same button click (within 5-second window)
 const recentlyHandled = new Map<string, number>();
+const canonicalButtonMessageIds = new Map<string, number>();
 
 setInterval(() => {
   const cutoff = Date.now() - 10_000;
+  const canonicalButtonCutoff = Date.now() - 10 * 60_000;
   for (const [jid, ts] of recentlyHandled) {
     if (ts < cutoff) recentlyHandled.delete(jid);
+  }
+  for (const [messageKey, ts] of canonicalButtonMessageIds) {
+    if (ts < canonicalButtonCutoff) canonicalButtonMessageIds.delete(messageKey);
   }
 }, 30_000);
 
@@ -578,23 +584,30 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     ).trim();
 
     // Task 6 buttons carry an opaque confirmation token and must be consumed
-    // before the legacy Confirmar/Cancelar safety net below. ZeloMenu owns the
-    // atomic message-id/revision dedupe; this local window avoids duplicate
-    // acknowledgements without nesting the message-handler's persistence queue.
+    // before the legacy Confirmar/Cancelar safety net below. Identification,
+    // exact-message retry check and the canonical command all run inside the
+    // shared JID queue. Customer sends/persistence run after the queue releases,
+    // avoiding a nested `serializeForJid` deadlock in addAssistantMessage.
     if (buttonId) {
-      const handledKey = `${empresaId}:${remoteJid}`;
-      const prevHandledAt = recentlyHandled.get(handledKey);
-      const isRetry = !!prevHandledAt && Date.now() - prevHandledAt < 5000;
-      const canonicalButtonHandled = isRetry || await tryHandleAiWhatsAppOrderingButton({
-        jid: remoteJid,
-        empresaId,
-        buttonId,
-        messageId: data.key?.id ?? `button-${Date.now()}`,
-      });
-      if (canonicalButtonHandled) {
-        recentlyHandled.set(handledKey, Date.now());
-        cancelPendingReply(empresaId, remoteJid);
-        return;
+      const task6Button = parseOrderingButton(buttonId);
+      if (task6Button) {
+        const messageId = data.key?.id ?? '';
+        const exactKey = canonicalButtonMessageKey({ empresaId, jid: remoteJid, messageId });
+        const canonicalButton = await serializeForJid(remoteJid, () => handleCanonicalButtonOnce(
+          canonicalButtonMessageIds,
+          exactKey,
+          () => tryHandleAiWhatsAppOrderingButton({
+            jid: remoteJid,
+            empresaId,
+            buttonId,
+            messageId: messageId || `button-${Date.now()}`,
+          }),
+        ));
+        if (canonicalButton.handled) {
+          await canonicalButton.complete?.();
+          cancelPendingReply(empresaId, remoteJid);
+          return;
+        }
       }
     }
 

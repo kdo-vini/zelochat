@@ -109,7 +109,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
-- **Task 6 rollout:** executar shadow global com a integração interna configurada; ativação real continua desligada até revisão operacional e teste ponta a ponta em tenant controlado.
+- **Task 6 rollout:** executar shadow global com a integração interna configurada; ativação real continua desligada até revisão operacional e teste ponta a ponta em tenant controlado. O deploy depende do ZeloMenu conter as rotas internas dos commits `719ee33` e `eaeaae0`; elas pertencem ao repo ZeloMenu, não a este backend.
 - **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**

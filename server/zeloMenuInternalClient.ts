@@ -6,6 +6,12 @@ import type {
   OrderingSnapshot,
 } from '../src/domain/aiWhatsAppOrdering.js';
 
+export const DEFAULT_ZELOMENU_INTERNAL_BASE_URL = 'http://127.0.0.1:3101';
+
+export function resolveZeloMenuInternalBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return env.ZELOMENU_INTERNAL_BASE_URL?.trim() || DEFAULT_ZELOMENU_INTERNAL_BASE_URL;
+}
+
 export const ORDERING_MODEL_TOOLS: ChatCompletionFunctionTool[] = [
   {
     type: 'function',
@@ -126,7 +132,7 @@ export class ZeloMenuInternalClient {
   }
 
   static fromEnv(env: NodeJS.ProcessEnv = process.env): ZeloMenuInternalClient | null {
-    const baseUrl = env.ZELOMENU_INTERNAL_BASE_URL?.trim();
+    const baseUrl = resolveZeloMenuInternalBaseUrl(env);
     const apiKey = env.ZELO_INTERNAL_API_KEY?.trim();
     const timeoutMs = Number(env.ZELOMENU_INTERNAL_TIMEOUT_MS ?? '4000');
     if (!baseUrl || !apiKey || !Number.isFinite(timeoutMs) || timeoutMs < 100) return null;

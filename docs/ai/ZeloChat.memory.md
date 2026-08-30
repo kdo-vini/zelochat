@@ -9,6 +9,8 @@
 - Model tools are allowlisted to `buscar_cardapio`, `alterar_carrinho`, and `consultar_carrinho`; confirmation/cancellation never come from the model. Summaries/buttons are deterministic PT-BR with an opaque confirmation token.
 - Rollout is split and fail-closed: the kill switch must be explicitly `0`; shadow is read-only and active is separate. Metrics log only event/mode/outcome/duration, never JID, content, customer data, cart or token.
 - The old `zelochat_pending_orders` path remains isolated and runs first. Task 6 button IDs are consumed before legacy `CONFIRM_ORDER`; ZeloMenu owns message-id idempotency and optimistic revision checks.
+- Follow-ups to deterministic catalog questions (`Qual você quer?`, size/option prompts) reuse the prior ordering query and freshly search canonical candidates. Button commands run inside the shared JID queue, dedupe only an exact provider messageId, and defer customer sends until after the queue releases.
+- Deployment dependency: internal catalog/ordering routes are owned by ZeloMenu commits `719ee33` and `eaeaae0` and must be deployed there before shadow/active rollout here. The local ZeloMenu default is `http://127.0.0.1:3101`.
 
 ### CRM rollout (confirmed 2026-08-26)
 - CRM no longer has a per-company rollout gate. Migration `062_retire_crm_rollout_gate.sql` normalizes the legacy `crm_enabled` column, while `server/customers/rollout.ts`, navigation, and customer APIs treat CRM as always available behind the normal subscription/paywall and actor permissions. Only campaigns and automations remain rollout-gated.

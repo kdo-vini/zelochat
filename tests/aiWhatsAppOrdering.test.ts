@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   AI_ORDER_CONFIRM_PREFIX,
   applyOrderingDefaults,
   buildConfirmationButtons,
   classifyOrderingTurn,
+  canonicalButtonMessageKey,
+  findPriorOrderingQuery,
   getAiWhatsAppOrderingMode,
+  handleCanonicalButtonOnce,
+  isOrderingFollowUp,
   parseOrderingButton,
   renderCatalogReply,
   renderOrderingSummary,
@@ -12,6 +17,7 @@ import {
 } from '../src/domain/aiWhatsAppOrdering.js';
 import {
   ORDERING_MODEL_TOOLS,
+  resolveZeloMenuInternalBaseUrl,
   ZeloMenuInternalClient,
   ZeloMenuInternalError,
 } from '../server/zeloMenuInternalClient.js';
@@ -74,6 +80,66 @@ assert.deepEqual(classifyOrderingTurn('cancela o pedido', true), { kind: 'cancel
 assert.deepEqual(classifyOrderingTurn('quero cancelar meu pedido por favor', true), { kind: 'cancel' });
 assert.equal(classifyOrderingTurn('cancelar só a coca', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('não, prefiro retirar', true).kind, 'alter');
+
+// A deterministic catalog question keeps a bare option reply in the ordering flow.
+const optionSequence = [
+  { role: 'user', content: 'oq tem de mistura hoje' },
+  { role: 'assistant', content: 'Hoje tem Marmita do dia: Frango, Carne. Qual você quer?' },
+  { role: 'user', content: 'frango' },
+];
+assert.equal(isOrderingFollowUp(optionSequence), true);
+assert.equal(findPriorOrderingQuery(optionSequence, 'frango'), 'oq tem de mistura hoje');
+assert.equal(isOrderingFollowUp([
+  { role: 'assistant', content: 'Tem pequeno, médio e grande. Qual tamanho você quer?' },
+  { role: 'user', content: 'médio' },
+]), true);
+assert.equal(isOrderingFollowUp([
+  { role: 'assistant', content: 'Encontrei mais de uma opção parecida. Qual delas você quer?' },
+  { role: 'user', content: 'a segunda' },
+]), true);
+
+// Concurrent retry dedupes only the exact provider message; Alterar remains distinct.
+const handledButtons = new Map<string, number>();
+const empresaId = snapshot().empresaId;
+const jid = snapshot().remoteJid;
+const confirmKey = canonicalButtonMessageKey({ empresaId, jid, messageId: 'confirm-message-id' });
+const alterKey = canonicalButtonMessageKey({ empresaId, jid, messageId: 'alter-message-id' });
+let queue: Promise<unknown> = Promise.resolve();
+const serialize = <T>(work: () => Promise<T>): Promise<T> => {
+  const next = queue.then(work, work);
+  queue = next.then(() => undefined, () => undefined);
+  return next;
+};
+let confirmRuns = 0;
+let alterRuns = 0;
+const [firstConfirm, retryConfirm, differentAlter] = await Promise.all([
+  serialize(() => handleCanonicalButtonOnce(handledButtons, confirmKey, async () => {
+    confirmRuns += 1;
+    await Promise.resolve();
+    return { handled: true };
+  })),
+  serialize(() => handleCanonicalButtonOnce(handledButtons, confirmKey, async () => {
+    confirmRuns += 1;
+    return { handled: true };
+  })),
+  serialize(() => handleCanonicalButtonOnce(handledButtons, alterKey, async () => {
+    alterRuns += 1;
+    return { handled: true };
+  })),
+]);
+assert.equal(firstConfirm.handled && retryConfirm.handled && differentAlter.handled, true);
+assert.equal(confirmRuns, 1, 'exact confirmation retry executes once');
+assert.equal(alterRuns, 1, 'different Alterar message is not swallowed');
+assert.notEqual(confirmKey, alterKey);
+
+const routerSource = readFileSync(new URL('../server/router.ts', import.meta.url), 'utf8');
+const identificationStart = routerSource.indexOf('const task6Button = parseOrderingButton');
+const task6BlockStart = routerSource.indexOf('const exactKey = canonicalButtonMessageKey');
+const serializedStart = routerSource.indexOf('serializeForJid(remoteJid', task6BlockStart);
+const handlerStart = routerSource.indexOf('tryHandleAiWhatsAppOrderingButton', serializedStart);
+const completionStart = routerSource.indexOf('canonicalButton.complete', handlerStart);
+assert.ok(identificationStart >= 0 && task6BlockStart > identificationStart && serializedStart > task6BlockStart && handlerStart > serializedStart);
+assert.ok(completionStart > handlerStart, 'customer effect runs after serialized command');
 
 const buttons = buildConfirmationButtons(snapshot());
 assert.deepEqual(buttons.map((button) => button.displayText), ['Confirmar', 'Alterar']);
@@ -139,6 +205,7 @@ assert.deepEqual(ORDERING_MODEL_TOOLS.map((tool) => tool.function.name), [
   'consultar_carrinho',
 ]);
 assert.equal(ORDERING_MODEL_TOOLS.some((tool) => /confirm/i.test(tool.function.name)), false);
+assert.equal(resolveZeloMenuInternalBaseUrl({}), 'http://127.0.0.1:3101');
 
 let requestHeaders: Headers | undefined;
 const client = new ZeloMenuInternalClient({

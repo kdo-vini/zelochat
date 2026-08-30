@@ -21,6 +21,13 @@ export type OrderingTurn =
   | { kind: 'catalog_or_order'; query: string }
   | { kind: 'none' };
 
+export interface OrderingConversationMessage {
+  role: string;
+  content: string | null;
+  preview?: string;
+  audio_transcript?: string | null;
+}
+
 const normalize = (value: string) => value
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '')
@@ -42,6 +49,48 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
     return { kind: 'catalog_or_order', query: text.trim() };
   }
   return { kind: 'none' };
+}
+
+const messageText = (message: OrderingConversationMessage) =>
+  (message.audio_transcript || message.preview || message.content || '').trim();
+
+export function isOrderingFollowUp(messages: OrderingConversationMessage[]): boolean {
+  const previousAssistant = [...messages].reverse().find((candidate) => candidate.role === 'assistant');
+  return /entrega ou retirada|qual é o endereço|como vai pagar|o que você quer alterar|qual (?:(?:deles|delas)(?: você)?|você|voce) quer|qual (?:tamanho|opção|opcao)/i
+    .test(previousAssistant?.content || previousAssistant?.preview || '');
+}
+
+export function findPriorOrderingQuery(messages: OrderingConversationMessage[], fallback: string): string {
+  return [...messages].reverse()
+    .filter((candidate) => candidate.role === 'user')
+    .map(messageText)
+    .find((text) => classifyOrderingTurn(text, false).kind === 'catalog_or_order') || fallback;
+}
+
+export interface CanonicalButtonHandling {
+  handled: boolean;
+  complete?: () => Promise<void>;
+}
+
+export function canonicalButtonMessageKey(input: {
+  empresaId: string;
+  jid: string;
+  messageId?: string | null;
+}): string | null {
+  const messageId = input.messageId?.trim();
+  return messageId ? `${input.empresaId}:${input.jid}:${messageId}` : null;
+}
+
+/** Must run inside the shared per-JID queue. Marks only recognized Task 6 events. */
+export async function handleCanonicalButtonOnce<T extends CanonicalButtonHandling>(
+  handledMessageIds: Map<string, number>,
+  exactKey: string | null,
+  handler: () => Promise<T>,
+): Promise<T | CanonicalButtonHandling> {
+  if (exactKey && handledMessageIds.has(exactKey)) return { handled: true };
+  const result = await handler();
+  if (result.handled && exactKey) handledMessageIds.set(exactKey, Date.now());
+  return result;
 }
 
 export function parseOrderingButton(buttonId: string): { kind: 'confirm'; token: string } | { kind: 'alter' } | null {

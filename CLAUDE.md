@@ -242,7 +242,7 @@ SUPABASE_SERVICE_KEY    # Supabase service role key (server)
 ZELOCHAT_AI_ORDERING_KILL_SWITCH # fail-closed; só "0" permite shadow/active
 ZELOCHAT_AI_ORDERING_SHADOW      # busca/classifica sem alterar resposta ou carrinho
 ZELOCHAT_AI_ORDERING_ACTIVE      # ativação global separada do shadow
-ZELOMENU_INTERNAL_BASE_URL       # URL privada do backend ZeloMenu
+ZELOMENU_INTERNAL_BASE_URL       # URL privada do ZeloMenu (default local http://127.0.0.1:3101)
 ZELO_INTERNAL_API_KEY            # segredo compartilhado, nunca expor em log/copy
 ZELOMENU_INTERNAL_TIMEOUT_MS     # timeout do client interno (default 4000)
 ```

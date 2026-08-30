@@ -8,9 +8,12 @@ import { escalateSession } from './escalation.js';
 import {
   applyOrderingDefaults,
   buildConfirmationButtons,
+  type CanonicalButtonHandling,
   classifyOrderingTurn,
+  findPriorOrderingQuery,
   findLatestOrderingState,
   getAiWhatsAppOrderingMode,
+  isOrderingFollowUp,
   parseOrderingButton,
   renderCatalogReply,
   renderOrderingSummary,
@@ -94,18 +97,6 @@ function lastUserText(session: StoredSession): string {
 function lastUserMessageId(session: StoredSession): string {
   const message = [...session.messages].reverse().find((candidate) => candidate.role === 'user');
   return message?.waMessageId || message?.id || `zelo-${Date.now()}`;
-}
-
-function priorOrderingQuery(session: StoredSession, fallback: string): string {
-  return [...session.messages].reverse()
-    .filter((candidate) => candidate.role === 'user')
-    .map((candidate) => (candidate.audio_transcript || candidate.preview || candidate.content || '').trim())
-    .find((text) => classifyOrderingTurn(text, false).kind === 'catalog_or_order') || fallback;
-}
-
-function isOrderingFollowUp(session: StoredSession): boolean {
-  const previousAssistant = [...session.messages].reverse().find((candidate) => candidate.role === 'assistant');
-  return /entrega ou retirada|qual é o endereço|como vai pagar|o que você quer alterar/i.test(previousAssistant?.content || '');
 }
 
 async function customerContext(session: StoredSession, empresaId: string) {
@@ -221,25 +212,25 @@ async function transferOnFailure(jid: string, empresaId: string): Promise<string
   return text;
 }
 
-async function handleConfirmation(
-  session: StoredSession,
+type ConfirmationOutcome =
+  | { kind: 'summary'; snapshot: OrderingSnapshot }
+  | { kind: 'confirmed'; snapshot: OrderingSnapshot };
+
+async function resolveConfirmation(
   snapshot: OrderingSnapshot,
   client: ZeloMenuInternalClient,
   empresaId: string,
   jid: string,
   messageId: string,
   token?: string,
-): Promise<string> {
+): Promise<ConfirmationOutcome> {
   try {
     const confirmed = await client.confirmDraft({
       empresaId, remoteJid: jid, messageId, orderingId: snapshot.orderingId,
       expectedRevision: snapshot.revision, confirmationToken: token,
     });
-    if (confirmed.requiresReview || confirmed.state === 'cart_open') return sendSummary(jid, empresaId, confirmed);
-    const text = 'Pedido confirmado e enviado para a loja. Aviso por aqui quando houver novidade.';
-    await persistPointer(jid, empresaId, confirmed);
-    await sendText(jid, empresaId, text);
-    return text;
+    if (confirmed.requiresReview || confirmed.state === 'cart_open') return { kind: 'summary', snapshot: confirmed };
+    return { kind: 'confirmed', snapshot: confirmed };
   } catch (error) {
     if (error instanceof ZeloMenuInternalError && error.current) {
       const refreshed = await client.updateDraft({
@@ -247,10 +238,22 @@ async function handleConfirmation(
         orderingId: error.current.orderingId, expectedRevision: error.current.revision,
         draft: snapshotToDraft(error.current),
       });
-      return sendSummary(jid, empresaId, refreshed);
+      return { kind: 'summary', snapshot: refreshed };
     }
     throw error;
   }
+}
+
+async function completeConfirmation(
+  jid: string,
+  empresaId: string,
+  outcome: ConfirmationOutcome,
+): Promise<string> {
+  if (outcome.kind === 'summary') return sendSummary(jid, empresaId, outcome.snapshot);
+  const text = 'Pedido confirmado e enviado para a loja. Aviso por aqui quando houver novidade.';
+  await persistPointer(jid, empresaId, outcome.snapshot);
+  await sendText(jid, empresaId, text);
+  return text;
 }
 
 export async function tryHandleAiWhatsAppOrdering(
@@ -265,7 +268,7 @@ export async function tryHandleAiWhatsAppOrdering(
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(findLatestOrderingState(session.messages));
   const initialTurn = classifyOrderingTurn(text, hasPointer);
-  const followUp = !hasPointer && isOrderingFollowUp(session);
+  const followUp = !hasPointer && isOrderingFollowUp(session.messages);
   if (initialTurn.kind === 'none' && !followUp) return { handled: false };
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
@@ -282,7 +285,7 @@ export async function tryHandleAiWhatsAppOrdering(
 
     if (mode === 'shadow') {
       if (turn.kind === 'catalog_or_order' || followUp) {
-        await client.searchCatalog({ empresaId, query: priorOrderingQuery(session, text), limit: 12 });
+        await client.searchCatalog({ empresaId, query: findPriorOrderingQuery(session.messages, text), limit: 12 });
       }
       metric('ordering_turn', mode, 'shadow_observed', startedAt);
       return { handled: false };
@@ -297,7 +300,8 @@ export async function tryHandleAiWhatsAppOrdering(
     }
 
     if (current && turn.kind === 'confirm') {
-      const response = await handleConfirmation(session, current, client, empresaId, jid, messageId);
+      const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId);
+      const response = await completeConfirmation(jid, empresaId, outcome);
       metric('ordering_confirm', mode, 'handled', startedAt);
       return { handled: true, response };
     }
@@ -316,7 +320,7 @@ export async function tryHandleAiWhatsAppOrdering(
 
     const context = await customerContext(session, empresaId);
     let draft: OrderingDraft | null = null;
-    const query = priorOrderingQuery(session, text);
+    const query = findPriorOrderingQuery(session.messages, text);
     if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
     const catalog = await client.searchCatalog({ empresaId, query, limit: 12 });
     const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp;
@@ -355,39 +359,38 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
   empresaId: string;
   buttonId: string;
   messageId: string;
-}): Promise<boolean> {
+}): Promise<CanonicalButtonHandling> {
   const action = parseOrderingButton(input.buttonId);
-  if (!action) return false;
+  if (!action) return { handled: false };
   const mode = getAiWhatsAppOrderingMode();
-  if (mode !== 'active') return true; // fail closed and never leak a stale Task 6 button to legacy AI
+  if (mode !== 'active') return { handled: true }; // fail closed and never leak a stale Task 6 button to legacy AI
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
-    await transferOnFailure(input.jid, input.empresaId);
-    return true;
+    return { handled: true, complete: async () => { await transferOnFailure(input.jid, input.empresaId); } };
   }
   const session = await getSession(input.jid, input.empresaId);
-  if (!session) return true;
+  if (!session) return { handled: true };
   try {
     const current = await loadCanonicalSnapshot(session, input.empresaId, input.jid, client);
-    if (!current) return true;
+    if (!current) return { handled: true };
     if (current.state !== 'cart_open' && !current.requiresReview) {
-      await sendText(
-        input.jid,
-        input.empresaId,
-        current.order || current.state.startsWith('confirmed') || current.state === 'accepted'
+      const text = current.order || current.state.startsWith('confirmed') || current.state === 'accepted'
           ? 'Esse pedido já foi confirmado. Se precisar, posso chamar um atendente.'
-          : 'Esse pedido já foi finalizado. Quer começar um novo?',
-      );
-      return true;
+          : 'Esse pedido já foi finalizado. Quer começar um novo?';
+      return { handled: true, complete: async () => { await sendText(input.jid, input.empresaId, text); } };
     }
     if (action.kind === 'alter') {
-      await sendText(input.jid, input.empresaId, 'Tudo bem. O que você quer alterar no pedido?');
-      return true;
+      return {
+        handled: true,
+        complete: async () => { await sendText(input.jid, input.empresaId, 'Tudo bem. O que você quer alterar no pedido?'); },
+      };
     }
-    await handleConfirmation(session, current, client, input.empresaId, input.jid, input.messageId, action.token);
-    return true;
+    const outcome = await resolveConfirmation(current, client, input.empresaId, input.jid, input.messageId, action.token);
+    return {
+      handled: true,
+      complete: async () => { await completeConfirmation(input.jid, input.empresaId, outcome); },
+    };
   } catch {
-    await transferOnFailure(input.jid, input.empresaId);
-    return true;
+    return { handled: true, complete: async () => { await transferOnFailure(input.jid, input.empresaId); } };
   }
 }
