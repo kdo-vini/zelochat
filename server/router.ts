@@ -71,6 +71,7 @@ import {
 } from './ai.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
+import { isRetryableOutboundFailure } from '../src/domain/outbound.js';
 import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
@@ -3459,7 +3460,7 @@ router.post('/api/messages/:id/retry', async (req: Request, res: Response) => {
       .eq('id', req.params.id)
       .maybeSingle();
     if (messageError) throw new Error(messageError.message);
-    if (!message || message.role !== 'assistant' || message.outbound_status !== 'failed') {
+    if (!message || message.role !== 'assistant' || !isRetryableOutboundFailure(message.outbound_status)) {
       res.status(404).json({ error: 'Mensagem não encontrada para reenviar.' });
       return;
     }

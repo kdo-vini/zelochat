@@ -11,6 +11,7 @@ import {
   paginateCustomerMessages,
   type CustomerMessagePermission,
 } from '../src/domain/customerMessages.ts';
+import { isRetryableOutboundFailure } from '../src/domain/outbound.ts';
 
 const permissions: CustomerMessagePermission = { pessoasVisualizar: true, clientesComunicar: true };
 
@@ -20,5 +21,6 @@ await runSuite('customer messages', [
   { name: 'returns a session id instead of a remote jid for Atendimento', run: () => { assert(resolveCustomerSessionId([{ id: 'session-1' }], 'session-1') === 'session-1', 'known message session is returned'); assert(resolveCustomerSessionId([{ id: 'session-1' }], '5514999999999@s.whatsapp.net') === null, 'remote jid is never treated as a session id'); } },
   { name: 'returns the latest real session for Atendimento', run: () => { assert(resolveLatestCustomerSessionId([{ id: 'old' }, { id: 'latest' }], [{ sessionId: 'old' }, { sessionId: 'latest' }]) === 'latest', 'latest message session wins'); } },
   { name: 'persists outbound lifecycle through sent or failed', run: () => { const pending = createPendingOutboundMessage('m-new', 's-1', 'Oi', '2026-01-03T00:00:00Z'); assert(pending.status === 'sending', 'new outbound message starts sending'); assert(markOutboundSent(pending, 'wa-1').status === 'sent', 'successful send becomes sent'); assert(markOutboundFailed(pending, 'não enviado').status === 'failed', 'failed send becomes retryable'); } },
+  { name: 'treats legacy and canonical failed outbound statuses as retryable', run: () => { assert(isRetryableOutboundFailure('failed'), 'legacy failed status remains retryable'); assert(isRetryableOutboundFailure('failed_before_dispatch'), 'canonical pre-dispatch failure is retryable'); assert(!isRetryableOutboundFailure('delivery_uncertain'), 'uncertain delivery is not auto-retryable'); assert(!isRetryableOutboundFailure('sent'), 'sent messages are not retryable'); } },
   { name: 'paginates aggregate without losing session identity', run: () => { const items = aggregateCustomerMessages([{ id: 's-1', messages: [{ id: 'm-1', timestamp: '2026-01-01T00:00:00Z', content: 'um' }, { id: 'm-2', timestamp: '2026-01-02T00:00:00Z', content: 'dois' }] }]); const page = paginateCustomerMessages(items, 1, null); assert(page.items.length === 1 && page.hasMore && page.nextCursor === 'm-1', 'page cursor points to the last message'); assert(canSendCustomerMessage(permissions) && !canSendCustomerMessage({ pessoasVisualizar: true, clientesComunicar: false }), 'send requires clientes.comunicar'); } },
 ]);

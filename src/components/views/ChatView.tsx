@@ -48,6 +48,7 @@ import {
   maskBrazilianPhone,
   maskTime24h,
 } from '../../domain/chat';
+import { isRetryableOutboundFailure } from '../../domain/outbound';
 import { MessageDateSeparator } from './MessageDateSeparator';
 import {
   getManualChatAssistSuggestion,
@@ -1551,7 +1552,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
   };
 
   const handleDeleteMessage = async (message: ChatMessage) => {
-    if (!message.waMessageId && message.status !== 'failed') {
+    if (!message.waMessageId && !isRetryableOutboundFailure(message.status)) {
       setChatActionError('Esta mensagem ainda nao pode ser apagada para todos.');
       return;
     }
@@ -3517,7 +3518,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
       <ConfirmModal
         open={deleteMessagePending !== null}
         title="Apagar mensagem?"
-        message={deleteMessagePending?.status === 'failed'
+        message={isRetryableOutboundFailure(deleteMessagePending?.status)
           ? 'Esta mensagem não foi enviada e será removida apenas do histórico.'
           : 'Essa acao tenta apagar a mensagem para todos no WhatsApp e nao pode ser desfeita.'}
         onClose={() => setDeleteMessagePending(null)}

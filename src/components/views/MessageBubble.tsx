@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ChatMessage, MessageReaction, MessageStatus } from '../../types';
+import { isRetryableOutboundFailure } from '../../domain/outbound';
 import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../domain/chat';
 import { parseChatEventCard, type ChatEventCardData, type ChatEventTone } from '../../domain/chatFeedback';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
@@ -62,7 +63,7 @@ function MessageTicks({ status }: { status?: MessageStatus }) {
   if (status === 'queued' || status === 'sending') {
     return <Clock className="w-3 h-3 ml-0.5 text-[#8696a0]" strokeWidth={2} />;
   }
-  if (status === 'failed') {
+  if (isRetryableOutboundFailure(status)) {
     return <X className="w-3 h-3 ml-0.5 text-[var(--color-alert)]" strokeWidth={2} />;
   }
   if (!status || status === 'sent') {
@@ -227,7 +228,7 @@ function AudioTranscript({
     );
   }
 
-  if (status === 'failed') {
+  if (isRetryableOutboundFailure(status)) {
     return (
       <div style={{ ...baseStyle, color: '#8696a0' }}>
         Não foi possível transcrever
@@ -563,8 +564,8 @@ const MessageBubbleInner = React.memo(function MessageBubble({
     remoteJid: sessionRemoteJid,
   });
 
-  const canRetry = isOutgoing && message.status === 'failed' && !!onRetry;
-  const canDelete = isOutgoing && !!onDelete && (!!message.waMessageId || message.status === 'failed');
+  const canRetry = isOutgoing && isRetryableOutboundFailure(message.status) && !!onRetry;
+  const canDelete = isOutgoing && !!onDelete && (!!message.waMessageId || isRetryableOutboundFailure(message.status));
   const isUpdating = isDeleting || isRetrying;
   const deleteMenuButton = canDelete ? (
     <div className="absolute right-1 top-1 z-30">
@@ -642,7 +643,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
               className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-medium text-[#b42318] transition-colors hover:bg-[#fee4e2]"
             >
               <Trash2 className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
-              <span>{message.status === 'failed' ? 'Excluir mensagem' : 'Apagar mensagem para todos'}</span>
+              <span>{isRetryableOutboundFailure(message.status) ? 'Excluir mensagem' : 'Apagar mensagem para todos'}</span>
             </button>
           </div>
         </>

@@ -1,16 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { AiTurnPermit } from './conversationControl.js';
-import { isAiPermitCurrent } from './conversationControl.js';
 import { getServiceSupabase } from './supabase.js';
 import { cancelPendingReply } from './replyDebouncer.js';
 import {
   createOutboundMediaStore,
   type OutboundMediaStore,
 } from './outbound/mediaStore.js';
-import {
-  createSupabaseOutboundJobStore,
-} from './outbound/worker.js';
-import { OutboundQueue } from './outbound/queue.js';
 import {
   fingerprintOutboundPayload,
 } from './outbound/providerAdapter.js';
@@ -83,25 +78,31 @@ type EnqueueAiOutbound = (params: {
   aiPermit: AiTurnPermit;
   messageText: string;
   origin: 'ai_auto' | 'ai_followup';
-}) => Promise<ConversationOutboundJobSnapshot>;
+}) => Promise<ConversationOutboundJobSnapshot | null>;
 
 export interface ConversationOutboundDependencies {
   sendWaitMs?: number;
   beginHumanOutbound?: BeginHumanOutbound;
   enqueueAiOutbound?: EnqueueAiOutbound;
+  claimMediaPreparation?: (
+    jobId: string,
+    empresaId: string,
+    owner: string,
+  ) => Promise<ConversationOutboundJobSnapshot | null>;
   markPrepared?: (
     jobId: string,
     payload: PersistedOutboundPayload,
     payloadFingerprint: string,
     empresaId: string,
-  ) => Promise<ConversationOutboundJobSnapshot>;
+    owner: string,
+  ) => Promise<ConversationOutboundJobSnapshot | null>;
   markFailedBeforeDispatch?: (
     jobId: string,
     empresaId: string,
     reason: string,
-  ) => Promise<ConversationOutboundJobSnapshot>;
+    owner?: string,
+  ) => Promise<ConversationOutboundJobSnapshot | null>;
   readJob?: (jobId: string, empresaId: string) => Promise<ConversationOutboundJobSnapshot | null>;
-  isAiPermitCurrent?: (permit: AiTurnPermit) => Promise<boolean>;
   cancelPendingReply?: (empresaId: string, remoteJid: string) => void | Promise<void>;
   persistMediaPayload?: (params: {
     empresaId: string;
@@ -173,19 +174,22 @@ function asPersistablePayload(payload: OutboundPayload): PersistedOutboundPayloa
 }
 
 function mapRow(row: Record<string, any>): ConversationOutboundJobSnapshot {
+  const source = row.result && typeof row.result === 'object'
+    ? row.result as Record<string, any>
+    : (row.job && typeof row.job === 'object') ? row.job as Record<string, any> : row;
   return {
-    id: row.id,
-    messageId: row.message_id ?? row.messageId ?? null,
-    empresaId: row.empresa_id ?? row.empresaId,
-    remoteJid: row.conversation_jid ?? row.remoteJid,
-    idempotencyKey: row.idempotency_key ?? row.idempotencyKey,
-    origin: row.outbound_origin ?? row.origin,
-    status: row.status,
-    payload: row.payload,
-    payloadFingerprint: row.payload_fingerprint ?? row.payloadFingerprint ?? '',
-    providerMessageId: row.provider_message_id ?? row.providerMessageId ?? null,
-    suppressionReason: row.suppression_reason ?? row.suppressionReason ?? null,
-    takeoverApplied: row.takeover_applied ?? row.takeoverApplied ?? true,
+    id: source.id,
+    messageId: source.message_id ?? source.messageId ?? null,
+    empresaId: source.empresa_id ?? source.empresaId,
+    remoteJid: source.conversation_jid ?? source.remoteJid,
+    idempotencyKey: source.idempotency_key ?? source.idempotencyKey,
+    origin: source.outbound_origin ?? source.origin,
+    status: source.status,
+    payload: source.payload,
+    payloadFingerprint: source.payload_fingerprint ?? source.payloadFingerprint ?? '',
+    providerMessageId: source.provider_message_id ?? source.providerMessageId ?? null,
+    suppressionReason: source.suppression_reason ?? source.suppressionReason ?? null,
+    takeoverApplied: row.takeover_applied ?? row.takeoverApplied ?? source.takeover_applied ?? source.takeoverApplied ?? false,
   };
 }
 
@@ -265,35 +269,21 @@ async function defaultBeginHumanOutbound(params: Parameters<BeginHumanOutbound>[
   return mapRow(row);
 }
 
-async function defaultEnqueueAiOutbound(params: Parameters<EnqueueAiOutbound>[0]): Promise<ConversationOutboundJobSnapshot> {
-  const queue = new OutboundQueue(createSupabaseOutboundJobStore());
-  const job = await queue.enqueue({
-    empresaId: params.empresaId,
-    instanceKey: '',
-    idempotencyKey: params.idempotencyKey,
-    text: params.messageText,
-    jobType: 'conversation',
-    conversationControlId: params.aiPermit.conversationControlId,
-    conversationJid: params.remoteJid,
-    messageId: null,
-    origin: params.origin,
-    payload: params.payload,
-    payloadFingerprint: params.payloadFingerprint,
-    controlEpoch: params.aiPermit.epoch,
+async function defaultEnqueueAiOutbound(params: Parameters<EnqueueAiOutbound>[0]): Promise<ConversationOutboundJobSnapshot | null> {
+  const { data, error } = await getServiceSupabase().rpc('enqueue_zelochat_ai_outbound', {
+    p_empresa_id: params.empresaId,
+    p_remote_jid: params.remoteJid,
+    p_conversation_control_id: params.aiPermit.conversationControlId,
+    p_control_epoch: params.aiPermit.epoch,
+    p_origin: params.origin,
+    p_idempotency_key: params.idempotencyKey,
+    p_payload: params.payload,
+    p_payload_fingerprint: params.payloadFingerprint,
+    p_message_text: params.messageText,
   });
-  return {
-    id: job.id,
-    messageId: job.messageId ?? null,
-    empresaId: job.empresaId,
-    remoteJid: job.conversationJid,
-    idempotencyKey: job.idempotencyKey,
-    origin: job.origin,
-    status: job.status as JobState,
-    payload: job.payload as PersistedOutboundPayload,
-    payloadFingerprint: job.payloadFingerprint,
-    providerMessageId: null,
-    suppressionReason: job.suppressionReason ?? null,
-  };
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? mapRow(row) : null;
 }
 
 async function defaultReadJob(jobId: string, empresaId: string): Promise<ConversationOutboundJobSnapshot | null> {
@@ -307,65 +297,56 @@ async function defaultReadJob(jobId: string, empresaId: string): Promise<Convers
   return data ? mapRow(data) : null;
 }
 
+async function defaultClaimMediaPreparation(
+  jobId: string,
+  empresaId: string,
+  owner: string,
+): Promise<ConversationOutboundJobSnapshot | null> {
+  const { data, error } = await getServiceSupabase().rpc('claim_zelochat_outbound_media_preparation', {
+    p_id: jobId,
+    p_empresa_id: empresaId,
+    p_owner: owner,
+    p_lease_seconds: 120,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? mapRow(row) : null;
+}
+
 async function defaultMarkPrepared(
   jobId: string,
   payload: PersistedOutboundPayload,
   payloadFingerprint: string,
   empresaId: string,
-): Promise<ConversationOutboundJobSnapshot> {
-  const db = getServiceSupabase();
-  const { data, error } = await db
-    .from('zelochat_outbound_jobs')
-    .update({
-      payload,
-      payload_fingerprint: payloadFingerprint,
-      status: 'queued',
-      next_attempt_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('empresa_id', empresaId)
-    .eq('id', jobId)
-    .eq('status', 'preparing')
-    .select('id,empresa_id,conversation_jid,idempotency_key,outbound_origin,status,payload,payload_fingerprint,message_id,provider_message_id,suppression_reason')
-    .maybeSingle();
-  if (error || !data) throw new Error(error?.message ?? 'OUTBOUND_JOB_NOT_PREPARING');
-  if (data.message_id) {
-    await db
-      .from('zelochat_messages')
-      .update({ outbound_status: 'queued', outbound_error: null })
-      .eq('empresa_id', empresaId)
-      .eq('id', data.message_id);
-  }
-  return mapRow(data);
+  owner: string,
+): Promise<ConversationOutboundJobSnapshot | null> {
+  const { data, error } = await getServiceSupabase().rpc('complete_zelochat_outbound_media_preparation', {
+    p_id: jobId,
+    p_empresa_id: empresaId,
+    p_owner: owner,
+    p_payload: payload,
+    p_payload_fingerprint: payloadFingerprint,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? mapRow(row) : null;
 }
 
 async function defaultMarkFailedBeforeDispatch(
   jobId: string,
   empresaId: string,
   reason: string,
-): Promise<ConversationOutboundJobSnapshot> {
-  const db = getServiceSupabase();
-  const { data, error } = await db
-    .from('zelochat_outbound_jobs')
-    .update({
-      status: 'failed_before_dispatch',
-      last_error: reason.slice(0, 1000),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('empresa_id', empresaId)
-    .eq('id', jobId)
-    .in('status', ['preparing', 'queued'])
-    .select('id,empresa_id,conversation_jid,idempotency_key,outbound_origin,status,payload,payload_fingerprint,message_id,provider_message_id,suppression_reason')
-    .maybeSingle();
-  if (error || !data) throw new Error(error?.message ?? 'OUTBOUND_JOB_NOT_MARKED_FAILED');
-  if (data.message_id) {
-    await db
-      .from('zelochat_messages')
-      .update({ outbound_status: 'failed_before_dispatch', outbound_error: FRIENDLY_NOT_SENT })
-      .eq('empresa_id', empresaId)
-      .eq('id', data.message_id);
-  }
-  return mapRow(data);
+  owner?: string,
+): Promise<ConversationOutboundJobSnapshot | null> {
+  const { data, error } = await getServiceSupabase().rpc('fail_zelochat_outbound_media_preparation', {
+    p_id: jobId,
+    p_empresa_id: empresaId,
+    p_owner: owner ?? null,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? mapRow(row) : null;
 }
 
 async function defaultFingerprintPayload(
@@ -385,16 +366,45 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
     sendWaitMs: dependencies.sendWaitMs ?? CONVERSATION_SEND_WAIT_MS,
     beginHumanOutbound: dependencies.beginHumanOutbound ?? defaultBeginHumanOutbound,
     enqueueAiOutbound: dependencies.enqueueAiOutbound ?? defaultEnqueueAiOutbound,
+    claimMediaPreparation: dependencies.claimMediaPreparation ?? defaultClaimMediaPreparation,
     markPrepared: dependencies.markPrepared ?? defaultMarkPrepared,
     markFailedBeforeDispatch: dependencies.markFailedBeforeDispatch ?? defaultMarkFailedBeforeDispatch,
     readJob: dependencies.readJob ?? defaultReadJob,
-    isAiPermitCurrent: dependencies.isAiPermitCurrent ?? isAiPermitCurrent,
     cancelPendingReply: dependencies.cancelPendingReply ?? cancelPendingReply,
     persistMediaPayload: dependencies.persistMediaPayload ?? ((params) => {
       const mediaStore: OutboundMediaStore = createOutboundMediaStore();
       return mediaStore.persistPayload(params);
     }),
     fingerprintPayload: dependencies.fingerprintPayload ?? defaultFingerprintPayload,
+  };
+
+  const prepareMediaIfNeeded = async (
+    current: ConversationOutboundJobSnapshot,
+    payload: OutboundPayload,
+  ): Promise<ConversationOutboundJobSnapshot> => {
+    if (!isMediaPayload(payload)) return current;
+
+    const owner = `media-preparation:${process.pid}:${randomUUID()}`;
+    let job = await deps.claimMediaPreparation(current.id, current.empresaId, owner);
+    if (!job) return await deps.readJob(current.id, current.empresaId) ?? current;
+
+    try {
+      const persisted = await deps.persistMediaPayload({
+        empresaId: current.empresaId,
+        jobId: current.id,
+        payload,
+      });
+      const persistedFingerprint = await deps.fingerprintPayload(persisted, {
+        empresaId: current.empresaId,
+        jobId: current.id,
+      });
+      const prepared = await deps.markPrepared(current.id, persisted, persistedFingerprint, current.empresaId, owner);
+      job = prepared ?? await deps.readJob(current.id, current.empresaId) ?? job;
+      return job;
+    } catch {
+      const failed = await deps.markFailedBeforeDispatch(current.id, current.empresaId, FRIENDLY_NOT_SENT, owner);
+      return failed ?? await deps.readJob(current.id, current.empresaId) ?? job;
+    }
   };
 
   return {
@@ -409,11 +419,10 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
         if (!request.aiPermit) {
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
-        const allowed = await deps.isAiPermitCurrent(request.aiPermit);
-        if (!allowed) {
+        if (request.aiPermit.empresaId !== request.empresaId || request.aiPermit.remoteJid !== request.remoteJid) {
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
-        const job = await deps.enqueueAiOutbound({
+        let job = await deps.enqueueAiOutbound({
           empresaId: request.empresaId,
           remoteJid: request.remoteJid,
           idempotencyKey: request.idempotencyKey,
@@ -423,6 +432,10 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
           messageText: messagePreview(request.payload),
           origin: request.origin,
         });
+        if (!job) {
+          return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
+        }
+        job = await prepareMediaIfNeeded(job, request.payload);
         return waitForTerminal(job, deps, deps.sendWaitMs);
       }
 
@@ -449,23 +462,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
         await deps.cancelPendingReply(request.empresaId, request.remoteJid);
       }
 
-      if (isMediaPayload(request.payload)) {
-        try {
-          const persisted = await deps.persistMediaPayload({
-            empresaId: request.empresaId,
-            jobId: job.id,
-            payload: request.payload,
-          });
-          const persistedFingerprint = await deps.fingerprintPayload(persisted, {
-            empresaId: request.empresaId,
-            jobId: job.id,
-          });
-          job = await deps.markPrepared(job.id, persisted, persistedFingerprint, request.empresaId);
-        } catch {
-          job = await deps.markFailedBeforeDispatch(job.id, request.empresaId, FRIENDLY_NOT_SENT);
-          return resultFromJob(job);
-        }
-      }
+      job = await prepareMediaIfNeeded(job, request.payload);
 
       return waitForTerminal(job, deps, deps.sendWaitMs);
     },

@@ -167,12 +167,16 @@ export class OutboundWorker {
 
   private async broadcastStatus(job: OutboundJob, status: ChatMessage['status']): Promise<void> {
     if (!job.messageId) return;
-    if (this.deps.broadcastStatus) {
-      await this.deps.broadcastStatus(job.empresaId, job.messageId, status);
-      return;
+    try {
+      if (this.deps.broadcastStatus) {
+        await this.deps.broadcastStatus(job.empresaId, job.messageId, status);
+        return;
+      }
+      const { broadcastAssistantMessageStatus } = await import('../messageHandler.js');
+      broadcastAssistantMessageStatus(job.empresaId, job.messageId, status);
+    } catch (error) {
+      console.warn('[outbound] status broadcast skipped', error instanceof Error ? error.message : 'unknown');
     }
-    const { broadcastAssistantMessageStatus } = await import('../messageHandler.js');
-    broadcastAssistantMessageStatus(job.empresaId, job.messageId, status);
   }
 
   async runOnce(workerId = `outbound-worker-${process.pid}`): Promise<boolean> {

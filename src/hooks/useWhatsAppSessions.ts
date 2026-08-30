@@ -9,6 +9,7 @@ import type {
   SessionStatus,
 } from '../types';
 import { WS_URL } from '../config';
+import { isRetryableOutboundFailure } from '../domain/outbound';
 import {
   acknowledgeSession as acknowledgeSessionApi,
   archiveSessions as archiveSessionsApi,
@@ -139,7 +140,7 @@ function normalizeMessageStatus(status: string): ChatMessage['status'] | null {
   if (value === 'read' || value === 'read_ack') return 'read';
   if (value === 'delivered' || value === 'delivery_ack') return 'delivered';
   if (value === 'sent' || value === 'server_ack') return 'sent';
-  if (value === 'queued' || value === 'sending' || value === 'failed') return value;
+  if (value === 'queued' || value === 'sending' || value === 'failed' || value === 'failed_before_dispatch') return value;
   return null;
 }
 
@@ -383,7 +384,7 @@ export function useWhatsAppSessions(token: string | null) {
     if (!token) {
       throw new Error('Faca login para apagar mensagens.');
     }
-    const isFailedOutgoing = message.role === 'assistant' && message.status === 'failed';
+    const isFailedOutgoing = message.role === 'assistant' && isRetryableOutboundFailure(message.status);
     if (!message.waMessageId && !isFailedOutgoing) {
       throw new Error('Esta mensagem ainda nao tem o ID do WhatsApp para apagar para todos.');
     }
@@ -418,7 +419,7 @@ export function useWhatsAppSessions(token: string | null) {
 
   const retryFailedMessage = useCallback(async (jid: string, message: ChatMessage) => {
     if (!token) throw new Error('Faça login para reenviar mensagens.');
-    if (message.role !== 'assistant' || message.status !== 'failed') {
+    if (message.role !== 'assistant' || !isRetryableOutboundFailure(message.status)) {
       throw new Error('Apenas mensagens que não foram enviadas podem ser reenviadas.');
     }
 

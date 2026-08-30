@@ -61,6 +61,10 @@ export const policyForOrigin = (origin: OutboundOrigin): TakeoverPolicy =>
     ? 'take_over'
     : 'preserve_ai';
 
+export function isRetryableOutboundFailure(status: string | null | undefined): boolean {
+  return status === 'failed' || status === 'failed_before_dispatch';
+}
+
 /** Returns a stable internal code; null means the payload is valid. */
 export function validateOutboundPayload(payload: unknown): string | null {
   const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -170,6 +170,29 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert.equal(store.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(store.rows.get('j1')?.attempts, 0);
 }
 
+// Status broadcast is out-of-band; a WebSocket failure after startTransport must not block the POST.
+{
+  phase = 'broadcast fail-soft';
+  const store = new SharedLeaseStore([conversationJob()], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null } });
+  let posts = 0;
+  const transport = {
+    async prepare(job: OutboundJob) { return { job, request: { url: 'https://provider.test/send', body: '{}', headers: {} } }; },
+    async send(): Promise<ProviderDispatchResult> { posts++; return { state: 'sent', providerMessageId: 'provider-j1' }; },
+  };
+  const outboundWorker = new OutboundWorker({
+    queue: new OutboundQueue(store),
+    transport,
+    getStatus: async () => 'connected',
+    validate: async () => ({ action: 'send' }),
+    broadcastStatus: async (_empresaId, _messageId, status) => {
+      if (status === 'dispatch_started') throw new Error('WS_CLOSED');
+    },
+  });
+  assert.equal(await outboundWorker.runOnce('broadcast'), true);
+  assert.equal(posts, 1);
+  assert.equal(store.rows.get('j1')?.status, 'sent');
+}
+
 // A hold installed after claim/preflight returns the same intent to queued.
 {
   phase = 'hold during preflight';
@@ -343,6 +366,17 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   for (const name of ['begin_zelochat_human_outbound', 'start_zelochat_outbound_transport', 'complete_zelochat_outbound_job', 'fail_zelochat_outbound_job', 'suppress_zelochat_outbound_job']) {
     assert(sql.includes(`create or replace function public.${name}`));
   }
+  assert(sql.includes('create or replace function public.enqueue_zelochat_ai_outbound'));
+  assert(sql.includes('create or replace function public.claim_zelochat_outbound_media_preparation'));
+  assert(sql.includes('create or replace function public.complete_zelochat_outbound_media_preparation'));
+  const aiEnqueue = sql.slice(sql.indexOf('create or replace function public.enqueue_zelochat_ai_outbound'), sql.indexOf('create or replace function public.start_zelochat_outbound_transport'));
+  assert(aiEnqueue.includes('where s.empresa_id = p_empresa_id'));
+  assert(aiEnqueue.includes('s.remote_jid = p_remote_jid'));
+  assert(aiEnqueue.includes('c.id = p_conversation_control_id'));
+  assert(aiEnqueue.includes("c.mode = 'ai'"));
+  assert(aiEnqueue.includes('c.epoch = p_control_epoch'));
+  assert(aiEnqueue.includes('for update'));
+  assert(aiEnqueue.indexOf('insert into public.zelochat_messages') < aiEnqueue.indexOf('insert into public.zelochat_outbound_jobs'));
   assert(sql.includes("j.lease_owner = p_lease_owner"));
   assert(sql.includes('zelochat_outbound_jobs_payload_no_data_url'));
   assert(sql.includes('zelochat_outbound_jobs_conversation_shape_check'));

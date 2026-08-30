@@ -27,6 +27,7 @@ assert(router.includes('safeEqualString(headerToken, webhookToken)'), 'webhook t
 assert(router.includes('messageExistsByWhatsAppId'), 'fromMe echo skip checks database persistence');
 assert(router.includes('createAssistantMessageIntent'), 'manual sends persist an outbound intent before WhatsApp send');
 assert(router.includes('markAssistantMessageSendFailed'), 'manual send failures are persisted');
+assert(router.includes('isRetryableOutboundFailure(message.outbound_status)'), 'retry route accepts legacy and canonical failed outbound statuses');
 assert(router.includes('serializeManualSendError'), 'manual send provider failures return a controlled API error');
 assert(!router.includes('...(payload.providerStatus ? { providerStatus: payload.providerStatus } : {})'), 'manual send errors do not expose provider status to the frontend');
 for (const routeContext of ['send contact failed','send list failed','send location failed','send reaction failed','send poll failed']) {
@@ -55,6 +56,11 @@ assert(waApi.includes('ChatSessionsQuery'), 'frontend sessions API accepts serve
 const chatView = read('src/components/views/ChatView.tsx');
 assert(chatView.includes('loadMoreSessions'), 'chat list can request additional server pages');
 assert(chatView.includes('loadOlderMessages'), 'chat detail can request older message pages');
+assert(chatView.includes('isRetryableOutboundFailure(message.status)'), 'failed_before_dispatch can be deleted/retried from Atendimento');
+const messageBubble = read('src/components/views/MessageBubble.tsx');
+assert(messageBubble.includes('isRetryableOutboundFailure(message.status)'), 'failed_before_dispatch renders retry/delete actions in the chat bubble');
+const sessionsHook = read('src/hooks/useWhatsAppSessions.ts');
+assert(sessionsHook.includes("value === 'failed_before_dispatch'"), 'WebSocket status normalization accepts canonical failed_before_dispatch');
 
 const settingsView = read('src/components/views/SettingsView.tsx');
 assert(settingsView.includes("data.status === 'connecting'"), 'WhatsApp QR UI keeps polling while the QR is being prepared');

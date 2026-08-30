@@ -20,6 +20,7 @@ type StoredJob = {
   providerMessageId?: string | null;
   suppressionReason?: 'paused' | 'stale_epoch' | null;
   takeoverApplied?: boolean;
+  preparationOwner?: string | null;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -28,11 +29,14 @@ class FakeRepo {
   readonly calls: string[] = [];
   readonly jobs = new Map<string, StoredJob>();
   readonly mediaPersisted: string[] = [];
+  readonly enqueueAiRequests: Array<{ empresaId: string; remoteJid: string; permitRemoteJid: string }> = [];
   beginCount = 0;
   eventCount = 0;
+  cancelDebounceCount = 0;
+  uploadCount = 0;
   takeoverShouldFail = false;
-  aiPermitCurrent = true;
   nextId = 1;
+  private humanMode = false;
 
   async beginHumanOutbound(params: {
     empresaId: string;
@@ -45,9 +49,13 @@ class FakeRepo {
     this.calls.push('begin-human-outbound');
     if (this.takeoverShouldFail) throw new Error('ACTOR_NOT_IN_TENANT');
     const existing = this.find(params.empresaId, params.idempotencyKey);
-    if (existing) return existing;
+    if (existing) return { ...existing, takeoverApplied: false };
     this.beginCount += 1;
-    this.eventCount += 1;
+    const takeoverApplied = !this.humanMode;
+    if (takeoverApplied) {
+      this.eventCount += 1;
+      this.humanMode = true;
+    }
     const job: StoredJob = {
       id: `job-${this.nextId++}`,
       messageId: `message-${this.nextId++}`,
@@ -58,7 +66,7 @@ class FakeRepo {
       status: params.payload.kind === 'media' || params.payload.kind === 'audio' || params.payload.kind === 'sticker' ? 'preparing' : 'queued',
       payload: params.payload,
       payloadFingerprint: params.payloadFingerprint,
-      takeoverApplied: true,
+      takeoverApplied,
     };
     this.jobs.set(job.id, job);
     return job;
@@ -70,8 +78,10 @@ class FakeRepo {
     idempotencyKey: string;
     payload: PersistedOutboundPayload;
     payloadFingerprint: string;
+    aiPermit: AiTurnPermit;
   }): Promise<StoredJob> {
     this.calls.push('enqueue-ai-outbound');
+    this.enqueueAiRequests.push({ empresaId: params.empresaId, remoteJid: params.remoteJid, permitRemoteJid: params.aiPermit.remoteJid });
     const existing = this.find(params.empresaId, params.idempotencyKey);
     if (existing) return existing;
     const job: StoredJob = {
@@ -81,7 +91,7 @@ class FakeRepo {
       remoteJid: params.remoteJid,
       idempotencyKey: params.idempotencyKey,
       origin: 'ai_auto',
-      status: 'queued',
+      status: params.payload.kind === 'media' || params.payload.kind === 'audio' || params.payload.kind === 'sticker' ? 'preparing' : 'queued',
       payload: params.payload,
       payloadFingerprint: params.payloadFingerprint,
     };
@@ -89,27 +99,38 @@ class FakeRepo {
     return job;
   }
 
-  async markPrepared(jobId: string, payload: PersistedOutboundPayload, payloadFingerprint: string): Promise<StoredJob> {
+  async claimMediaPreparation(jobId: string, _empresaId: string, owner: string): Promise<StoredJob | null> {
+    this.calls.push('claim-media-preparation');
+    const job = this.jobs.get(jobId);
+    assert(job);
+    if (job.status !== 'preparing') return null;
+    if (job.preparationOwner && job.preparationOwner !== owner) return null;
+    job.preparationOwner = owner;
+    return job;
+  }
+
+  async markPrepared(jobId: string, payload: PersistedOutboundPayload, payloadFingerprint: string, _empresaId?: string, owner?: string): Promise<StoredJob | null> {
     this.calls.push('mark-prepared');
     const job = this.jobs.get(jobId);
     assert(job);
+    if (job.status !== 'preparing') return null;
+    if (job.preparationOwner && job.preparationOwner !== owner) return null;
     job.payload = payload;
     job.payloadFingerprint = payloadFingerprint;
     job.status = 'queued';
+    job.preparationOwner = null;
     return job;
   }
 
-  async markFailedBeforeDispatch(jobId: string): Promise<StoredJob> {
+  async markFailedBeforeDispatch(jobId: string, _empresaId?: string, _reason?: string, owner?: string): Promise<StoredJob | null> {
     this.calls.push('mark-failed-before-dispatch');
     const job = this.jobs.get(jobId);
     assert(job);
+    if (job.status !== 'preparing') return null;
+    if (job.preparationOwner && job.preparationOwner !== owner) return null;
     job.status = 'failed_before_dispatch';
+    job.preparationOwner = null;
     return job;
-  }
-
-  async isAiPermitCurrent(_permit: AiTurnPermit): Promise<boolean> {
-    this.calls.push('check-ai-permit');
-    return this.aiPermitCurrent;
   }
 
   async readJob(jobId: string): Promise<StoredJob | null> {
@@ -129,13 +150,14 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
     sendWaitMs: waitMs,
     beginHumanOutbound: repo.beginHumanOutbound.bind(repo),
     enqueueAiOutbound: repo.enqueueAiOutbound.bind(repo),
+    claimMediaPreparation: repo.claimMediaPreparation.bind(repo),
     markPrepared: repo.markPrepared.bind(repo),
     markFailedBeforeDispatch: repo.markFailedBeforeDispatch.bind(repo),
     readJob: repo.readJob.bind(repo),
-    isAiPermitCurrent: repo.isAiPermitCurrent.bind(repo),
-    cancelPendingReply: async () => { repo.calls.push('cancel-debounce'); },
+    cancelPendingReply: async () => { repo.cancelDebounceCount += 1; repo.calls.push('cancel-debounce'); },
     persistMediaPayload: async ({ empresaId, jobId }) => {
       repo.calls.push('upload-media');
+      repo.uploadCount += 1;
       repo.mediaPersisted.push(`${empresaId}/${jobId}`);
       return {
         kind: 'media',
@@ -147,7 +169,7 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
       };
     },
     fingerprintPayload: async (payload) => `${payload.kind}-fingerprint`,
-  });
+  } as any);
 }
 
 {
@@ -190,6 +212,7 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
   assert.equal(repo.jobs.size, 1);
   assert.equal(repo.beginCount, 1);
   assert.equal(repo.eventCount, 1);
+  assert.equal(repo.cancelDebounceCount, 1, 'retry idempotente não cancela debounce de novo');
 }
 
 {
@@ -275,7 +298,39 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
 
 {
   const repo = new FakeRepo();
-  repo.aiPermitCurrent = false;
+  const mediaPayload: OutboundPayload = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,aGVsbG8=' },
+    caption: 'Foto',
+  };
+  const dispatch = dispatcher(repo, 1);
+  const first = dispatch.dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: 'u1',
+    origin: 'human_zelochat',
+    takeoverPolicy: 'take_over',
+    idempotencyKey: 'media-concurrent',
+    payload: mediaPayload,
+  });
+  const second = dispatch.dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: 'u1',
+    origin: 'human_zelochat',
+    takeoverPolicy: 'take_over',
+    idempotencyKey: 'media-concurrent',
+    payload: mediaPayload,
+  });
+  await Promise.all([first, second]);
+  assert.equal(repo.jobs.size, 1);
+  assert.equal(repo.uploadCount, 1, 'somente o dono da preparação faz upload');
+  assert.equal([...repo.jobs.values()][0].status, 'queued', 'perdedor não transforma queued válido em failed');
+  assert.equal(repo.calls.includes('mark-failed-before-dispatch'), false);
+}
+
+{
+  const repo = new FakeRepo();
   const result = await dispatcher(repo).dispatchConversationOutbound({
     empresaId: 'e1',
     remoteJid: 'j1',
@@ -292,11 +347,10 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
 
 {
   const repo = new FakeRepo();
-  repo.aiPermitCurrent = false;
   const permit: AiTurnPermit = {
     empresaId: 'e1',
     conversationControlId: 'control-1',
-    remoteJid: 'j1',
+    remoteJid: 'other-jid',
     epoch: '7',
     triggerMessageId: 'inbound-1',
   };
@@ -311,8 +365,38 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
     aiPermit: permit,
   });
   assert.deepEqual(result, { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' });
-  assert.deepEqual(repo.calls, ['check-ai-permit']);
+  assert.deepEqual(repo.calls, []);
   assert.equal(repo.jobs.size, 0);
+  assert.equal(repo.enqueueAiRequests.length, 0, 'permit de outro JID não chega ao enqueue atômico');
+}
+
+{
+  const repo = new FakeRepo();
+  const permit: AiTurnPermit = {
+    empresaId: 'e1',
+    conversationControlId: 'control-1',
+    remoteJid: 'j1',
+    epoch: '7',
+    triggerMessageId: 'inbound-1',
+  };
+  const mediaPayload: OutboundPayload = {
+    kind: 'media',
+    attachment: { type: 'image', mimeType: 'image/png', fileName: 'foto.png', dataUrl: 'data:image/png;base64,aGVsbG8=' },
+    caption: 'Foto da IA',
+  };
+  const result = await dispatcher(repo, 1).dispatchConversationOutbound({
+    empresaId: 'e1',
+    remoteJid: 'j1',
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: 'ai-media',
+    payload: mediaPayload,
+    aiPermit: permit,
+  });
+  assert.equal(result.state, 'queued');
+  assert.deepEqual(repo.mediaPersisted, ['e1/job-1']);
+  assert.equal([...repo.jobs.values()][0].status, 'queued');
 }
 
 console.log('conversationOutbound: ok');
