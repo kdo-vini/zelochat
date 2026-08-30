@@ -12,7 +12,7 @@ O inbound, debounce, modelos e helpers não carregavam o mesmo epoch durável, e
 
 ### Fix
 
-O `AiTurnPermit` agora acompanha a execução inteira; modelos/helpers falham fechado, jobs AI validam epoch no banco e escalações fazem takeover antes de enfileirar `system_handoff`, com gerente em `internal_system` separado — `server/ai.ts:118`, `server/index.ts:239`, `server/escalation.ts:198`, `supabase/migrations/065_conversation_outbound_claims.sql:740`.
+O `AiTurnPermit` agora acompanha a execução inteira; modelos/helpers falham fechado, jobs AI validam epoch no banco, escalação usa claim condicional atômica, confirmação pending compara epoch/trigger na mesma transação do pedido e validação Pix é cercada antes/depois do modelo — `server/ai.ts:132`, `server/conversationControl.ts:229`, `server/escalation.ts:200`, `supabase/migrations/065_conversation_outbound_claims.sql:740`.
 
 ### Recovery / rollout
 

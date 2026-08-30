@@ -35,9 +35,17 @@ Status: concluída localmente em 2026-08-30. Sem deploy, push ou alteração de 
 - P1: confirmação de pedido, transição Pix, aceite automático e atualização de perfil revalidam o permit imediatamente antes do write/model relevante.
 - P1: `internal_system` inicialmente cairia no gate de campanhas; o worker agora o trata como notificação operacional durable, fora apenas do rollout CRM.
 
+## Fix Round 1 — P0/P1
+
+- P0: escalação AI deixou de fazer `check → lookup → takeover` em operações separadas. `pause_zelochat_ai_for_human_if_permitted` resolve a família, locka o controle, valida control/epoch/latest trigger e só então muda para humano; stale retorna zero linhas antes de evento/handoff.
+- P0: confirmação pending deixou de usar UUID novo e writes separados. `confirm_zelochat_pending_order_if_ai_permitted` locka controle e pending, compara modo/epoch/trigger, resolve vínculo CRM fail-soft, chama `create_zelo_order` com key `ai-pending:<trigger>:<pending>` e só então apaga a pending na mesma transação.
+- P1: as rotas Pix pending e pedido ativo usam `runAiModelStep` e `permitGuard` imediatamente antes/depois do validador externo; stale não grava resultado, telemetria, transição nem outbound automático.
+- Regressões novas cobrem perda do claim de escalação para takeover concorrente, zero insert/delete pending na intercalação e descarte das duas respostas de validador Pix.
+- Checks adicionais: `conversationControl`, `pixReceipt` (17/17), `messageHandlerMedia` (3/3) e `routerWebhookGuardrails` (29/29) passaram.
+
 ## P2/P3 para review final
 
-- P2: mutations não-outbound (tag/pedido/Pix/perfil) usam recheck imediatamente anterior, mas não compartilham uma transação SQL com o epoch; uma RPC CAS por mutation eliminaria a janela residual entre check e write.
+- P2: mutations não-outbound restantes (tag, transições Pix fora da confirmação pending e perfil) usam recheck imediatamente anterior, mas não compartilham uma transação SQL com o epoch; RPCs CAS por mutation eliminariam a janela residual entre check e write.
 - P2: falha antes da criação do job `system_handoff` fica em log e no evento de escalação, mas ainda não possui alerta operacional dedicado/retry de intenção.
 - P3: `server/ai.ts` permanece monolítico e torna os testes que o importam lentos; extrair o executor fenceado e os helpers de outbound reduziria startup e simplificaria mocks.
 

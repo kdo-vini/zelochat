@@ -75,8 +75,6 @@ import {
   type WeeklyHours,
 } from '../src/domain/businessHours.js';
 import { autoAcceptCanonicalOrderIfConfigured, LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
-import { resolveCustomerForOrder } from './customers/identity.js';
-import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;
@@ -131,6 +129,22 @@ export async function runAiModelStep<T>(
     return null;
   }
   return result;
+}
+
+export async function confirmPendingOrderUnderPermit<T>(
+  permit: AiTurnPermit,
+  pendingOrderId: string,
+  transaction: (params: {
+    permit: AiTurnPermit;
+    pendingOrderId: string;
+    idempotencyKey: string;
+  }) => Promise<T | null>,
+): Promise<T | null> {
+  return transaction({
+    permit,
+    pendingOrderId,
+    idempotencyKey: `ai-pending:${permit.triggerMessageId}:${pendingOrderId}`,
+  });
 }
 
 async function runAiMutationStep<T>(
@@ -410,6 +424,7 @@ function normalizeIntentText(value: string): string {
 // fonte única agora: nascem no ZeloMenu.
 
 interface PendingOrder {
+  id: string;
   empresaId: string;
   jid: string;
   customerName: string;
@@ -432,6 +447,7 @@ interface PendingOrder {
 }
 
 interface PendingOrderRow {
+  id: string;
   empresa_id: string;
   remote_jid: string;
   customer_name: string;
@@ -455,6 +471,7 @@ interface PendingOrderRow {
 
 function rowToPendingOrder(row: PendingOrderRow): PendingOrder {
   return {
+    id: row.id,
     empresaId: row.empresa_id,
     jid: row.remote_jid,
     customerName: row.customer_name,
@@ -485,7 +502,7 @@ export async function getPendingOrder(jid: string, empresaId: string): Promise<P
   try {
     const { data, error } = await getServiceSupabase()
       .from('zelochat_pending_orders')
-      .select('empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id, order_type, delivery_address, delivery_neighborhood, delivery_fee, observations, pix_receipt_status, pix_receipt_message_id, pix_receipt_analysis, pix_receipt_rejection_reason')
+      .select('id, empresa_id, remote_jid, customer_name, customer_phone, items, pickup_date, pickup_time, payment_method, total, tool_call_id, order_type, delivery_address, delivery_neighborhood, delivery_fee, observations, pix_receipt_status, pix_receipt_message_id, pix_receipt_analysis, pix_receipt_rejection_reason')
       .eq('empresa_id', empresaId)
       .eq('remote_jid', jid)
       .gt('expires_at', new Date().toISOString())
@@ -674,9 +691,10 @@ export async function confirmPendingOrder(jid: string, empresaId: string, permit
   // stays in place and the customer can click Confirmar again without re-entering data.
   let orderId: string;
   try {
-    // FIX 2026-08-30: takeover durante consultas de agenda/estoque ainda permitia criar o pedido → revalida o epoch imediatamente antes da mutação.
-    if (!(await isAiPermitCurrent(permit))) return;
-    orderId = await createOrderInDb(pending.empresaId, pending);
+    // FIX 2026-08-30 R1: check+insert+clear separados permitiam takeover na janela e retry com UUID novo → RPC locka controle/pending e usa key derivada do trigger.
+    const confirmedOrderId = await createOrderInDb(pending.empresaId, pending, permit);
+    if (!confirmedOrderId) return;
+    orderId = confirmedOrderId;
   } catch (err) {
     console.error('[AI] Failed to insert order, keeping pending row:', err);
     // P1.23 — antes a mensagem dizia "Toque em ✅ Confirmar de novo" mas o
@@ -699,8 +717,6 @@ export async function confirmPendingOrder(jid: string, empresaId: string, permit
       p_items: pending.items.map((i) => ({ name: i.product, qty: i.quantity })),
     });
   }).then(null, (err) => console.error('[stock] decrement failed (non-blocking):', err));
-
-  await clearPendingOrder(jid, pending.empresaId, permit);
 
   await notifyManagerForConfirmedOrder({
     permit,
@@ -2371,63 +2387,32 @@ export async function fetchOrderForCustomer(
 
 async function createOrderInDb(
   empresaId: string,
-  args: {
-    customerName: string;
-    customerPhone: string;
-    items: { product: string; quantity: number }[];
-    pickupDate: string;
-    pickupTime: string;
-    paymentMethod?: string;
-    total: number;
-    orderType?: 'pickup' | 'delivery';
-    deliveryAddress?: string;
-    deliveryNeighborhood?: string;
-    deliveryFee?: number;
-    observations?: string;
-    pixReceiptMessageId?: string;
-    pixReceiptAnalysis?: PixReceiptAnalysis | null;
-  },
-): Promise<string> {
+  args: PendingOrder,
+  permit: AiTurnPermit,
+): Promise<string | null> {
   console.log('[AI] Creating order in DB for empresa:', empresaId, 'args:', JSON.stringify(args));
   const supabase = getServiceSupabase();
-  let pessoaId: string | null = null;
-  const ownerUserId = await getEmpresaUserId(empresaId);
-  if (ownerUserId) {
-    const identity = await resolveCustomerForOrder({ empresaId, ownerUserId, phone: args.customerPhone, observedName: args.customerName, source: 'whatsapp' });
-    if (identity.status === 'linked' || identity.status === 'created') pessoaId = identity.pessoaId;
-  }
-  const { data, error } = await createCanonicalOrderWithOptionalPerson(supabase, {
-    p_session_id: null,
-    p_expected_revision: 0,
-    p_idempotency_key: `legacy-whatsapp-${crypto.randomUUID()}`,
-    p_snapshots: {
-      empresaId,
-      source: 'whatsapp',
-      customer: { name: args.customerName, phone: args.customerPhone || null },
-      fulfillment: {
-        type: args.orderType ?? 'pickup', pickupDate: args.pickupDate, pickupTime: args.pickupTime,
-        deliveryAddress: args.deliveryAddress ?? null, deliveryNeighborhood: args.deliveryNeighborhood ?? null,
-        deliveryFee: args.deliveryFee ?? 0,
-      },
-      payment: { declaredMethod: args.paymentMethod ?? null, pixReceiptMessageId: args.pixReceiptMessageId ?? null, pixReceiptAnalysis: args.pixReceiptAnalysis ?? null },
-      pricing: { subtotal: args.total - (args.deliveryFee ?? 0), deliveryFee: args.deliveryFee ?? 0, discount: 0, total: args.total },
-      cart: {
-        observations: args.observations ?? null,
-        items: args.items.map((item, position) => {
-          const totalQuantity = args.items.reduce((sum, candidate) => sum + candidate.quantity, 0) || 1;
-          const lineTotal = (args.total - (args.deliveryFee ?? 0)) * (item.quantity / totalQuantity);
-          return { productName: item.product, quantity: item.quantity, unitPrice: lineTotal / item.quantity, lineTotal, position };
-        }),
-      },
-    },
-    p_pessoa_id: pessoaId,
-  });
+  const rpcResult = await confirmPendingOrderUnderPermit(permit, args.id, async ({ idempotencyKey }) => supabase.rpc('confirm_zelochat_pending_order_if_ai_permitted', {
+    p_empresa_id: empresaId,
+    p_remote_jid: args.jid,
+    p_pending_order_id: args.id,
+    p_expected_conversation_control_id: permit.conversationControlId,
+    p_expected_epoch: permit.epoch,
+    p_trigger_message_id: permit.triggerMessageId,
+    p_idempotency_key: idempotencyKey,
+  }));
+  if (!rpcResult) return null;
+  const { data, error } = rpcResult;
 
   if (error) {
     console.error('[AI] Supabase order insert error:', error);
     throw new Error(`Falha ao criar pedido: ${error.message}`);
   }
   const result = (Array.isArray(data) ? data[0] : data) as { orderId?: string; order_id?: string } | null;
+  if (!result) {
+    console.log(`[AI] Pending confirmation suppressed by stale permit for empresa=${empresaId}`);
+    return null;
+  }
   const orderId = result?.orderId ?? result?.order_id;
   if (!orderId) throw new Error('Falha ao criar pedido: resposta invÃ¡lida.');
   console.log('[AI] Order created successfully ID:', orderId);
@@ -3228,12 +3213,14 @@ async function handleReceiptForActiveOrder(
   // are how we distinguish a real receipt from a food photo or screenshot.
   if (orderIsPix && attachmentSupported && isPixReceiptConfigActive(config)) {
     try {
-      const result = await validatePixReceipt({
+      const result = await runAiModelStep(permit, 'active-order-pix-validator', () => validatePixReceipt({
         empresaId,
         attachment,
         expectedTotal: order.total,
         config,
-      });
+        permitGuard: () => isAiPermitCurrent(permit),
+      }));
+      if (!result) return null;
       // FALSE-ALARM EXIT: the image isn't a receipt. Don't hijack the
       // conversation. Return null so the caller continues to OpenAI, which
       // will respond appropriately (likely conversationally about the food
@@ -3564,12 +3551,14 @@ export async function generateAndSendReply(
     ) {
       const receiptConfig = getConfig(resolvedEmpresaId).pixReceiptConfig;
       try {
-        const result = await validatePixReceipt({
+        const result = await runAiModelStep(permit, 'pending-pix-validator', () => validatePixReceipt({
           empresaId: resolvedEmpresaId,
           attachment: lastMsg.attachment,
           expectedTotal: pendingForEdit.total,
           config: receiptConfig,
-        });
+          permitGuard: () => isAiPermitCurrent(permit),
+        }));
+        if (!result) return null;
         await updatePendingOrderPixReceipt(jid, resolvedEmpresaId, permit, {
           status: result.approved ? 'approved' : 'rejected',
           messageId: lastMsg.waMessageId || lastMsg.id,

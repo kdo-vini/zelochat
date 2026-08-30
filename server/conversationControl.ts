@@ -50,6 +50,11 @@ export interface ConversationControl {
     source: TakeoverSource;
     sourceMessageId?: string | null;
   }): Promise<ConversationControlSnapshot>;
+  claimHumanTakeoverIfAiPermitCurrent(params: {
+    permit: AiTurnPermit;
+    actorUserId: string | null;
+    source: 'escalation';
+  }): Promise<ConversationControlSnapshot | null>;
   resumeAiConversation(params: {
     empresaId: string;
     remoteJid: string;
@@ -224,6 +229,40 @@ export function createConversationControl(
       return snapshot;
     },
 
+    async claimHumanTakeoverIfAiPermitCurrent(params) {
+      try {
+        const { data, error } = await rpc('pause_zelochat_ai_for_human_if_permitted', {
+          p_empresa_id: params.permit.empresaId,
+          p_remote_jid: params.permit.remoteJid,
+          p_actor_user_id: params.actorUserId,
+          p_expected_conversation_control_id: params.permit.conversationControlId,
+          p_expected_epoch: params.permit.epoch,
+          p_trigger_message_id: params.permit.triggerMessageId,
+        });
+        if (error) throw new Error(rpcErrorMessage(error));
+        if (firstRow(data) == null) return null;
+        const snapshot = await withResolvedFamilyJids(
+          normalizeSnapshot(data),
+          { empresaId: params.permit.empresaId, remoteJid: params.permit.remoteJid },
+          dependencies.resolveFamilyJids,
+        );
+        await cancelFamilyPendingReplies(
+          snapshot,
+          params.permit.empresaId,
+          params.permit.remoteJid,
+          dependencies.cancelPendingReply,
+        );
+        return snapshot;
+      } catch (error) {
+        console.warn('[conversation-control] conditional AI escalation failed closed', {
+          empresaId: params.permit.empresaId,
+          remoteJid: redactRemoteJidForLog(params.permit.remoteJid),
+          error: error instanceof Error ? error.message : 'unknown',
+        });
+        return null;
+      }
+    },
+
     async resumeAiConversation(params) {
       return withResolvedFamilyJids(
         await snapshotFromRpc(rpc, 'resume_zelochat_ai', {
@@ -281,6 +320,7 @@ const defaultControl = createConversationControl({
 
 export const beginAiTurn = defaultControl.beginAiTurn;
 export const claimHumanTakeover = defaultControl.claimHumanTakeover;
+export const claimHumanTakeoverIfAiPermitCurrent = defaultControl.claimHumanTakeoverIfAiPermitCurrent;
 export const resumeAiConversation = defaultControl.resumeAiConversation;
 export const ensureConversationControl = defaultControl.ensureConversationControl;
 export const isAiPermitCurrent = defaultControl.isAiPermitCurrent;

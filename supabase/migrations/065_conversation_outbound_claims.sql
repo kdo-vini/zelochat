@@ -736,6 +736,233 @@ $$;
 revoke all on function public.enqueue_zelochat_ai_outbound(uuid, text, uuid, bigint, text, text, jsonb, text, text) from public, anon, authenticated;
 grant execute on function public.enqueue_zelochat_ai_outbound(uuid, text, uuid, bigint, text, text, jsonb, text, text) to service_role;
 
+create or replace function public.pause_zelochat_ai_for_human_if_permitted(
+  p_empresa_id uuid,
+  p_remote_jid text,
+  p_actor_user_id uuid,
+  p_expected_conversation_control_id uuid,
+  p_expected_epoch bigint,
+  p_trigger_message_id uuid
+)
+returns table (
+  conversation_control_id uuid,
+  mode text,
+  epoch text,
+  remote_jids text[],
+  changed_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_snapshot record;
+  v_control public.zelochat_conversation_ai_control%rowtype;
+  v_now timestamptz := now();
+begin
+  perform public.zelochat_conversation_control_rollout_gate();
+  if p_expected_conversation_control_id is null or p_expected_epoch is null or p_trigger_message_id is null then
+    return;
+  end if;
+  if not public.zelochat_actor_belongs_to_empresa(p_empresa_id, p_actor_user_id) then
+    raise exception 'ACTOR_NOT_IN_TENANT';
+  end if;
+
+  -- Resolve/lock in the canonical family order before inspecting the permit.
+  select * into v_snapshot
+    from public.ensure_zelochat_conversation_control(p_empresa_id, p_remote_jid);
+  select * into v_control
+    from public.zelochat_conversation_ai_control c
+   where c.empresa_id = p_empresa_id
+     and c.id = v_snapshot.conversation_control_id
+   for update;
+
+  if v_control.id is distinct from p_expected_conversation_control_id
+     or v_control.mode <> 'ai'
+     or v_control.epoch is distinct from p_expected_epoch
+     or v_control.latest_inbound_message_id is distinct from p_trigger_message_id
+     or not exists (
+       select 1
+         from public.zelochat_messages m
+         join public.zelochat_sessions s
+           on s.id = m.session_id and s.empresa_id = m.empresa_id
+        where m.empresa_id = p_empresa_id
+          and m.id = p_trigger_message_id
+          and m.role = 'user'
+          and s.conversation_control_id = v_control.id
+     ) then
+    return;
+  end if;
+
+  update public.zelochat_conversation_ai_control c
+     set mode = 'human', epoch = c.epoch + 1,
+         latest_takeover_message_id = p_trigger_message_id,
+         changed_by_actor = p_actor_user_id, changed_source = 'escalation', changed_at = v_now
+   where c.empresa_id = p_empresa_id and c.id = v_control.id
+   returning * into v_control;
+  update public.zelochat_sessions s
+     set auto_reply = false, updated_at = v_now
+   where s.empresa_id = p_empresa_id
+     and s.conversation_control_id = v_control.id
+     and s.auto_reply is distinct from false;
+  update public.zelochat_outbound_jobs j
+     set status = 'cancelled', suppression_reason = 'human_takeover', updated_at = v_now
+   where j.empresa_id = p_empresa_id
+     and j.conversation_control_id = v_control.id
+     and j.status = 'queued'
+     and j.outbound_origin in ('ai_auto','ai_followup');
+  insert into public.zelochat_conversation_control_events (
+    empresa_id, conversation_control_id, remote_jid, event_type, epoch,
+    actor_user_id, source, message_id
+  ) values (
+    p_empresa_id, v_control.id, p_remote_jid, 'human_takeover', v_control.epoch,
+    p_actor_user_id, 'escalation', p_trigger_message_id
+  );
+
+  return query select *
+    from public.zelochat_conversation_control_snapshot(p_empresa_id, v_control.id);
+end;
+$$;
+
+revoke all on function public.pause_zelochat_ai_for_human_if_permitted(uuid, text, uuid, uuid, bigint, uuid) from public, anon, authenticated;
+grant execute on function public.pause_zelochat_ai_for_human_if_permitted(uuid, text, uuid, uuid, bigint, uuid) to service_role;
+
+create or replace function public.confirm_zelochat_pending_order_if_ai_permitted(
+  p_empresa_id uuid,
+  p_remote_jid text,
+  p_pending_order_id uuid,
+  p_expected_conversation_control_id uuid,
+  p_expected_epoch bigint,
+  p_trigger_message_id uuid,
+  p_idempotency_key text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_snapshot record;
+  v_control public.zelochat_conversation_ai_control%rowtype;
+  v_pending public.zelochat_pending_orders%rowtype;
+  v_owner_user_id uuid;
+  v_identity jsonb;
+  v_pessoa_id uuid;
+  v_snapshots jsonb;
+  v_items jsonb;
+  v_subtotal numeric;
+  v_total_quantity numeric;
+  v_result jsonb;
+begin
+  perform public.zelochat_conversation_control_rollout_gate();
+  if p_pending_order_id is null or p_expected_conversation_control_id is null
+     or p_expected_epoch is null or p_trigger_message_id is null then
+    return null;
+  end if;
+  if p_idempotency_key is distinct from (
+    'ai-pending:' || p_trigger_message_id::text || ':' || p_pending_order_id::text
+  ) then
+    raise exception 'INVALID_PENDING_CONFIRM_IDEMPOTENCY_KEY';
+  end if;
+  select * into v_snapshot
+    from public.ensure_zelochat_conversation_control(p_empresa_id, p_remote_jid);
+  select * into v_control
+    from public.zelochat_conversation_ai_control c
+   where c.empresa_id = p_empresa_id and c.id = v_snapshot.conversation_control_id
+   for update;
+  if v_control.id is distinct from p_expected_conversation_control_id
+     or v_control.mode <> 'ai'
+     or v_control.epoch is distinct from p_expected_epoch
+     or v_control.latest_inbound_message_id is distinct from p_trigger_message_id then
+    return null;
+  end if;
+  if not exists (
+    select 1
+      from public.zelochat_messages m
+      join public.zelochat_sessions s on s.id = m.session_id and s.empresa_id = m.empresa_id
+     where m.empresa_id = p_empresa_id and m.id = p_trigger_message_id
+       and m.role = 'user' and s.conversation_control_id = v_control.id
+  ) then
+    return null;
+  end if;
+
+  select * into v_pending
+    from public.zelochat_pending_orders p
+   where p.id = p_pending_order_id
+     and p.empresa_id = p_empresa_id
+     and p.remote_jid = p_remote_jid
+     and p.expires_at > now()
+   for update;
+  if not found then return null; end if;
+
+  select coalesce(sum((item->>'quantity')::numeric), 0)
+    into v_total_quantity from jsonb_array_elements(v_pending.items) item;
+  if v_total_quantity <= 0 then raise exception 'INVALID_PENDING_CONFIRM_ITEMS'; end if;
+  v_subtotal := v_pending.total - coalesce(v_pending.delivery_fee, 0);
+  select jsonb_agg(jsonb_build_object(
+    'productName', item->>'product',
+    'quantity', (item->>'quantity')::integer,
+    'unitPrice', v_subtotal / v_total_quantity,
+    'lineTotal', v_subtotal * ((item->>'quantity')::numeric / v_total_quantity),
+    'position', ordinality - 1
+  ) order by ordinality)
+    into v_items
+    from jsonb_array_elements(v_pending.items) with ordinality as items(item, ordinality);
+  v_snapshots := jsonb_build_object(
+    'empresaId', p_empresa_id,
+    'source', 'legacy_zelochat',
+    'customer', jsonb_build_object('name', v_pending.customer_name, 'phone', v_pending.customer_phone),
+    'fulfillment', jsonb_build_object(
+      'type', coalesce(v_pending.order_type, 'pickup'),
+      'pickupDate', v_pending.pickup_date,
+      'pickupTime', v_pending.pickup_time,
+      'deliveryAddress', v_pending.delivery_address,
+      'deliveryNeighborhood', v_pending.delivery_neighborhood,
+      'deliveryFee', coalesce(v_pending.delivery_fee, 0)
+    ),
+    'payment', jsonb_build_object(
+      'declaredMethod', v_pending.payment_method,
+      'pixReceiptMessageId', v_pending.pix_receipt_message_id,
+      'pixReceiptAnalysis', v_pending.pix_receipt_analysis
+    ),
+    'pricing', jsonb_build_object(
+      'subtotal', v_subtotal, 'deliveryFee', coalesce(v_pending.delivery_fee, 0),
+      'discount', 0, 'total', v_pending.total
+    ),
+    'cart', jsonb_build_object('observations', v_pending.observations, 'items', v_items)
+  );
+
+  -- The canonical order RPC deduplicates on empresa+key. Holding the control
+  -- lock makes the permit check, order insert and pending consumption one
+  -- linearizable operation with respect to human takeover.
+  begin
+    select ep.user_id into v_owner_user_id
+      from public.empresa_perfil ep where ep.id = p_empresa_id;
+    if v_owner_user_id is not null and nullif(trim(coalesce(v_pending.customer_phone, '')), '') is not null then
+      v_identity := public.ensure_customer_from_whatsapp(
+        v_owner_user_id, v_pending.customer_phone, v_pending.customer_name
+      );
+      if v_identity->>'status' in ('linked','created') then
+        v_pessoa_id := nullif(v_identity->>'pessoaId', '')::uuid;
+      end if;
+    end if;
+  exception when others then
+    -- CRM enrichment remains fail-soft; order confirmation stays canonical.
+    v_pessoa_id := null;
+  end;
+  v_result := public.create_zelo_order(null, 0, p_idempotency_key, v_snapshots, v_pessoa_id);
+  if nullif(v_result->>'orderId', '') is null and nullif(v_result->>'order_id', '') is null then
+    raise exception 'PENDING_CONFIRM_ORDER_NOT_CREATED';
+  end if;
+  delete from public.zelochat_pending_orders p
+   where p.id = v_pending.id and p.empresa_id = p_empresa_id and p.remote_jid = p_remote_jid;
+  return v_result;
+end;
+$$;
+
+revoke all on function public.confirm_zelochat_pending_order_if_ai_permitted(uuid, text, uuid, uuid, bigint, uuid, text) from public, anon, authenticated;
+grant execute on function public.confirm_zelochat_pending_order_if_ai_permitted(uuid, text, uuid, uuid, bigint, uuid, text) to service_role;
+
 create or replace function public.enqueue_zelochat_system_outbound(
   p_empresa_id uuid,
   p_remote_jid text,

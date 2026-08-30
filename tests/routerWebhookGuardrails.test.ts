@@ -73,14 +73,14 @@ await runSuite('Router webhook/order guardrails', [
     name: 'Pix-required pending order blocks confirm and asks for receipt',
     run: () => {
       const hardPix = router.indexOf('pendingOrderRequiresPixReceipt(pending)');
-      const hardReceipt = router.indexOf('await sendPixReceiptRequiredMessage(remoteJid, empresaId);', hardPix);
-      const hardConfirm = router.indexOf('await confirmPendingOrder(remoteJid, empresaId);', hardPix);
+      const hardReceipt = router.indexOf('await sendPixReceiptRequiredMessage(remoteJid, empresaId, permit);', hardPix);
+      const hardConfirm = router.indexOf('await confirmPendingOrder(remoteJid, empresaId, permit);', hardPix);
       assert(hardPix >= 0 && hardReceipt > hardPix && hardConfirm > hardReceipt, 'hard confirm checks Pix receipt before confirming');
 
       const softBranch = router.indexOf('Soft confirmation keywords');
       const softPix = router.indexOf('pendingOrderRequiresPixReceipt(pending)', softBranch);
-      const softReceipt = router.indexOf('await sendPixReceiptRequiredMessage(remoteJid, empresaId);', softPix);
-      const softConfirm = router.indexOf('await confirmPendingOrder(remoteJid, empresaId);', softPix);
+      const softReceipt = router.indexOf('await sendPixReceiptRequiredMessage(remoteJid, empresaId, permit);', softPix);
+      const softConfirm = router.indexOf('await confirmPendingOrder(remoteJid, empresaId, permit);', softPix);
       assert(softPix > softBranch && softReceipt > softPix && softConfirm > softReceipt, 'soft confirm checks Pix receipt before confirming');
     },
   },

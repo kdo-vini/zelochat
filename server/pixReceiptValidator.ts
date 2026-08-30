@@ -59,7 +59,8 @@ export async function validatePixReceipt(params: {
   attachment: ChatAttachment;
   expectedTotal: number;
   config: PixReceiptConfig;
-}): Promise<PixReceiptValidationResult> {
+  permitGuard?: () => Promise<boolean>;
+}): Promise<PixReceiptValidationResult | null> {
   const inputPart = inputPartForAttachment(params.attachment);
   if (!inputPart) {
     const analysis: PixReceiptAnalysis = {
@@ -99,6 +100,7 @@ Regras:
 - Não diga que o dinheiro caiu na conta; isto é apenas leitura documental.`;
 
   try {
+    if (params.permitGuard && !(await params.permitGuard())) return null;
     const openai = getOpenAIClient();
     const response = await openai.responses.create({
       model: PIX_RECEIPT_MODEL,
@@ -112,6 +114,8 @@ Regras:
         },
       ],
     } as any);
+    // FIX 2026-08-30 R1: takeover durante o modelo Pix não pode produzir nem telemetria/mutação automática posterior.
+    if (params.permitGuard && !(await params.permitGuard())) return null;
     recordAiUsage({
       empresaId: params.empresaId,
       feature: 'pix_receipt_validation',
@@ -133,6 +137,7 @@ Regras:
       reason: evaluation.reason,
     };
   } catch (error) {
+    if (params.permitGuard && !(await params.permitGuard())) return null;
     recordAiUsage({
       empresaId: params.empresaId,
       feature: 'pix_receipt_validation',

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { AiTurnPermit, TakeoverSource } from '../server/conversationControl.js';
 import {
+  confirmPendingOrderUnderPermit,
   enqueueAutomatedText,
   runAiModelStep,
 } from '../server/ai.js';
@@ -27,6 +28,29 @@ const permit: AiTurnPermit = {
   epoch: '7',
   triggerMessageId: '00000000-0000-4000-8000-000000000003',
 };
+
+{
+  let current = true;
+  let inserts = 0;
+  let pendingDeletes = 0;
+  const enteredTransaction = new Deferred<void>();
+  const releaseTransaction = new Deferred<void>();
+  const confirmation = confirmPendingOrderUnderPermit(permit, 'pending-1', async ({ idempotencyKey }) => {
+    assert.equal(idempotencyKey, `ai-pending:${permit.triggerMessageId}:pending-1`);
+    enteredTransaction.resolve();
+    await releaseTransaction.promise;
+    if (!current) return null;
+    inserts += 1;
+    pendingDeletes += 1;
+    return 'order-1';
+  });
+  await enteredTransaction.promise;
+  current = false;
+  releaseTransaction.resolve();
+  assert.equal(await confirmation, null, 'takeover intercalado suprime transação pending');
+  assert.equal(inserts, 0, 'takeover intercalado cria zero pedido');
+  assert.equal(pendingDeletes, 0, 'takeover intercalado não consome pending');
+}
 
 for (const source of [
   'zelochat_operator',
@@ -105,6 +129,20 @@ for (const purpose of ['tool-followup', 'trigger-fallback', 'pix-helper', 'pendi
   });
   assert.equal(result, null, `${purpose}: helper falha fechado`);
   assert.equal(jobWrites, 0, `${purpose}: zero write automático e zero job AI`);
+}
+
+for (const context of ['pending-pix-validator', 'active-order-pix-validator']) {
+  let current = true;
+  let mutations = 0;
+  const validator = new Deferred<{ approved: boolean }>();
+  const validation = runAiModelStep(permit, context, () => validator.promise, async () => current);
+  await Promise.resolve();
+  current = false;
+  validator.resolve({ approved: true });
+  const result = await validation;
+  if (result) mutations += 1;
+  assert.equal(result, null, `${context}: resultado externo obsoleto é descartado`);
+  assert.equal(mutations, 0, `${context}: zero mutação após takeover durante validador`);
 }
 
 console.log('aiTakeoverRace: ok');

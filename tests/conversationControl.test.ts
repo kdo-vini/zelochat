@@ -60,6 +60,21 @@ class FakeRepo {
       return { data: this.snapshot(control), error: null };
     }
 
+    if (name === 'pause_zelochat_ai_for_human_if_permitted') {
+      const triggerId = String(args.p_trigger_message_id);
+      if (control.id !== String(args.p_expected_conversation_control_id)
+        || control.mode !== 'ai'
+        || control.epoch !== BigInt(String(args.p_expected_epoch))
+        || !control.seenInboundIds.has(triggerId)) {
+        return { data: null, error: null };
+      }
+      control.mode = 'human';
+      control.epoch += 1n;
+      this.cancelledAiJobs += 2;
+      this.updatedFamilyJids = [...control.remoteJids];
+      return { data: this.snapshot(control), error: null };
+    }
+
     if (name === 'resume_zelochat_ai') {
       if (control.mode !== 'ai') {
         control.epoch += 1n;
@@ -263,6 +278,39 @@ console.log('\nTest 5: RPC failures fail closed for AI permits');
 }
 
 console.log('\nTest 6: a different conversation in the same tenant is not changed');
+{
+  const repo = makeRepo();
+  const control = createConversationControl({ rpc: repo.rpc.bind(repo) });
+  const permit = await control.beginAiTurn({
+    empresaId: 'e1', remoteJid: '551499@s.whatsapp.net', inboundMessageId: 'msg-escalate',
+  });
+  assert(permit);
+  const claimed = await control.claimHumanTakeoverIfAiPermitCurrent({
+    permit, actorUserId: null, source: 'escalation',
+  });
+  assert.equal(claimed?.mode, 'human');
+  assert.equal(claimed?.epoch, '9');
+}
+
+console.log('\nTest 6b: conditional escalation loses cleanly to a concurrent takeover');
+{
+  const repo = makeRepo();
+  const control = createConversationControl({ rpc: repo.rpc.bind(repo) });
+  const permit = await control.beginAiTurn({
+    empresaId: 'e1', remoteJid: '551499@s.whatsapp.net', inboundMessageId: 'msg-stale',
+  });
+  assert(permit);
+  await control.claimHumanTakeover({
+    empresaId: 'e1', remoteJid: '551499@s.whatsapp.net', actorUserId: 'u1', source: 'zelochat_operator',
+  });
+  const stale = await control.claimHumanTakeoverIfAiPermitCurrent({
+    permit, actorUserId: null, source: 'escalation',
+  });
+  assert.equal(stale, null);
+  assert.equal(repo.controls.get('control-1')?.epoch, 9n, 'stale AI não avança epoch nem reclama takeover');
+}
+
+console.log('\nTest 6c: a different conversation in the same tenant is not changed');
 {
   const repo = makeRepo();
   const control = createConversationControl({ rpc: repo.rpc.bind(repo) });

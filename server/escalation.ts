@@ -1,7 +1,7 @@
 import { getServiceSupabase, getBoundEmpresaId } from './supabase.js';
 import { broadcast } from './ws.js';
 import { getConfig } from './configStore.js';
-import { claimHumanTakeover, isAiPermitCurrent, type AiTurnPermit } from './conversationControl.js';
+import { claimHumanTakeover, claimHumanTakeoverIfAiPermitCurrent, type AiTurnPermit } from './conversationControl.js';
 import { dispatchConversationOutbound } from './conversationOutbound.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
 
@@ -200,11 +200,6 @@ export async function escalateSession(
   jid: string,
   params: EscalateParams,
 ): Promise<EscalateResult | null> {
-  // FIX 2026-08-30: uma resposta antiga podia escalar e enviar após takeover concorrente → o permit obsoleto falha fechado antes de qualquer write.
-  if (params.aiPermit && !(await isAiPermitCurrent(params.aiPermit))) {
-    console.log(`[Escalation] stale AI permit suppressed escalation for empresa=${empresaId}`);
-    return null;
-  }
   const supabase = getServiceSupabase();
   const session = await findSessionByJid(empresaId, jid);
   if (!session) {
@@ -215,12 +210,23 @@ export async function escalateSession(
   const wasAlreadyEscalated = session.status === 'escalated';
   const now = new Date().toISOString();
 
-  const controlSnapshot = await claimHumanTakeover({
-    empresaId,
-    remoteJid: jid,
-    actorUserId: null,
-    source: 'escalation',
-  });
+  // FIX 2026-08-30: check+claim separados deixavam a IA stale escrever evento/handoff → o RPC valida control/epoch/trigger e toma o controle sob o mesmo lock.
+  const controlSnapshot = params.aiPermit
+    ? await claimHumanTakeoverIfAiPermitCurrent({
+      permit: params.aiPermit,
+      actorUserId: null,
+      source: 'escalation',
+    })
+    : await claimHumanTakeover({
+      empresaId,
+      remoteJid: jid,
+      actorUserId: null,
+      source: 'escalation',
+    });
+  if (!controlSnapshot) {
+    console.log(`[Escalation] stale AI permit suppressed escalation for empresa=${empresaId}`);
+    return null;
+  }
 
   const { data: inserted, error: insertErr } = await supabase
     .from('zelochat_escalation_events')
