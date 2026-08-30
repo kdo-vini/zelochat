@@ -11,6 +11,7 @@ import {
 } from './conversationControl.js';
 import { setTimeout } from 'node:timers/promises';
 import type { AudioTranscriptStatus, ChatAttachment, ChatMessage, MessageRole } from '../src/types.js';
+import type { OutboundOrigin, OutboundState } from '../src/domain/outbound.js';
 import {
   buildAttachmentPreview,
   buildContactKey,
@@ -351,9 +352,12 @@ interface MessageRow {
   quoted_preview: string | null;
   outbound_status: ChatMessage['status'] | null;
   outbound_error: string | null;
+  outbound_origin: OutboundOrigin | null;
+  outbound_actor_user_id: string | null;
+  outbound_job_id: string | null;
 }
 
-const MESSAGE_COLUMNS = 'id, session_id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status, reactions, quoted_wa_id, quoted_from_me, quoted_preview, outbound_status, outbound_error';
+const MESSAGE_COLUMNS = 'id, session_id, wa_message_id, role, content, tool_calls, tool_call_id, sent_at, audio_transcript, audio_transcript_status, reactions, quoted_wa_id, quoted_from_me, quoted_preview, outbound_status, outbound_error, outbound_origin, outbound_actor_user_id, outbound_job_id';
 
 type AssistantResponseSource = 'ai_auto' | 'human_manual';
 
@@ -873,6 +877,8 @@ function mapMessage(row: MessageRow): ChatMessage {
     quotedFromMe: row.quoted_from_me ?? undefined,
     quotedPreview: row.quoted_preview ?? undefined,
     status: row.outbound_status ?? undefined,
+    outboundOrigin: row.outbound_origin ?? undefined,
+    outboundState: (row.outbound_status as OutboundState | null) ?? undefined,
   };
 }
 
@@ -1214,6 +1220,9 @@ async function insertMessage(params: {
   quotedPreview?: string | null;
   outboundStatus?: ChatMessage['status'] | null;
   outboundError?: string | null;
+  outboundOrigin?: OutboundOrigin | null;
+  outboundActorUserId?: string | null;
+  outboundJobId?: string | null;
 }): Promise<ChatMessage> {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
@@ -1232,6 +1241,9 @@ async function insertMessage(params: {
       quoted_preview: params.quotedPreview || null,
       outbound_status: params.outboundStatus ?? null,
       outbound_error: params.outboundError ?? null,
+      outbound_origin: params.outboundOrigin ?? null,
+      outbound_actor_user_id: params.outboundActorUserId ?? null,
+      outbound_job_id: params.outboundJobId ?? null,
     })
     .select(MESSAGE_COLUMNS)
     .single();
@@ -1274,6 +1286,12 @@ export async function createAssistantMessageIntent(
   empresaId: string,
   attachment?: ChatAttachment,
   quoted?: Pick<AddAssistantMessageOptions, 'quotedWaId' | 'quotedFromMe' | 'quotedPreview'>,
+  lifecycle: {
+    origin?: OutboundOrigin;
+    actorUserId?: string | null;
+    initialStatus?: ChatMessage['status'];
+    outboundJobId?: string | null;
+  } = {},
 ): Promise<ChatMessage> {
   if (!empresaId) throw new Error('empresaId is required');
 
@@ -1297,7 +1315,10 @@ export async function createAssistantMessageIntent(
       quotedWaId: quoted?.quotedWaId ?? null,
       quotedFromMe: quoted?.quotedFromMe ?? null,
       quotedPreview: quoted?.quotedPreview ?? null,
-      outboundStatus: 'sending',
+      outboundStatus: lifecycle.initialStatus ?? 'queued',
+      outboundOrigin: lifecycle.origin ?? 'human_zelochat',
+      outboundActorUserId: lifecycle.actorUserId ?? null,
+      outboundJobId: lifecycle.outboundJobId ?? null,
     });
 
     const family = await fetchSessionFamily(empresaId, jid);
@@ -1339,21 +1360,53 @@ export async function markAssistantMessageSendSucceeded(
   broadcast({ type: 'message_status', data: { messageId: waMessageId ?? messageId, dbMessageId: messageId, status: 'sent' } }, empresaId);
 }
 
+async function markAssistantMessageLifecycle(
+  empresaId: string,
+  messageId: string,
+  status: ChatMessage['status'],
+  errorMessage: string | null,
+): Promise<void> {
+  const { error } = await getServiceSupabase()
+    .from('zelochat_messages')
+    .update({
+      outbound_status: status,
+      outbound_error: errorMessage ? errorMessage.slice(0, 1000) : null,
+    })
+    .eq('empresa_id', empresaId)
+    .eq('id', messageId);
+  if (error) throw new Error(error.message);
+  broadcast({ type: 'message_status', data: { messageId, dbMessageId: messageId, status } }, empresaId);
+}
+
+export function broadcastAssistantMessageStatus(
+  empresaId: string,
+  messageId: string | null | undefined,
+  status: ChatMessage['status'],
+): void {
+  if (!messageId) return;
+  broadcast({ type: 'message_status', data: { messageId, dbMessageId: messageId, status } }, empresaId);
+}
+
 export async function markAssistantMessageSendFailed(
   empresaId: string,
   messageId: string,
   errorMessage: string,
 ): Promise<void> {
-  const { error } = await getServiceSupabase()
-    .from('zelochat_messages')
-    .update({
-      outbound_status: 'failed',
-      outbound_error: errorMessage.slice(0, 1000),
-    })
-    .eq('empresa_id', empresaId)
-    .eq('id', messageId);
-  if (error) throw new Error(error.message);
-  broadcast({ type: 'message_status', data: { messageId, dbMessageId: messageId, status: 'failed' } }, empresaId);
+  await markAssistantMessageLifecycle(empresaId, messageId, 'failed_before_dispatch', errorMessage);
+}
+
+export async function markAssistantMessageDeliveryUncertain(
+  empresaId: string,
+  messageId: string,
+): Promise<void> {
+  await markAssistantMessageLifecycle(empresaId, messageId, 'delivery_uncertain', 'Não foi possível confirmar a entrega.');
+}
+
+export async function markAssistantMessageCancelled(
+  empresaId: string,
+  messageId: string,
+): Promise<void> {
+  await markAssistantMessageLifecycle(empresaId, messageId, 'cancelled', null);
 }
 
 /**
@@ -1370,7 +1423,7 @@ export async function claimFailedAssistantMessageForRetry(
     .eq('empresa_id', empresaId)
     .eq('id', messageId)
     .eq('role', 'assistant')
-    .eq('outbound_status', 'failed')
+    .in('outbound_status', ['failed', 'failed_before_dispatch'])
     .select('id');
 
   if (error) throw new Error(error.message);
@@ -1392,7 +1445,7 @@ export async function deleteFailedAssistantMessage(
     .eq('empresa_id', empresaId)
     .eq('id', messageId)
     .eq('role', 'assistant')
-    .eq('outbound_status', 'failed')
+    .in('outbound_status', ['failed', 'failed_before_dispatch'])
     .select('id, session_id')
     .maybeSingle();
 

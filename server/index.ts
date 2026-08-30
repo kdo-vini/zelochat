@@ -479,7 +479,8 @@ httpServer.listen(PORT, () => {
   // is no-op via UNIQUE(user_id, day) on the log tables.
   startOnboardingFollowupLoop();
 
-  // Campanhas usam uma fila persistente com lease; chamar duas vezes no mesmo
-  // processo retorna o mesmo worker e não abre concorrência adicional.
+  // Outbound conversacional/campanhas usa worker singleton por processo. A
+  // concorrência local é limitada por OUTBOUND_WORKER_CONCURRENCY; o mutex
+  // autoritativo entre réplicas e por conversa fica nas RPCs do banco.
   startOutboundWorker();
 });

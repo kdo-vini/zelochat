@@ -368,7 +368,18 @@ export type MessageRole = 'user' | 'assistant' | 'tool' | 'system';
 
 export type ChatAttachmentType = 'image' | 'document' | 'audio' | 'video' | 'sticker';
 
-export type MessageStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageStatus =
+  | 'preparing'
+  | 'queued'
+  | 'sending'
+  | 'dispatch_started'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'failed'
+  | 'failed_before_dispatch'
+  | 'delivery_uncertain'
+  | 'cancelled';
 
 export interface ChatAttachment {
   type: ChatAttachmentType;

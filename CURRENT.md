@@ -13,7 +13,7 @@
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Tasks 3–4 locais concluídas em 2026-08-30: `conversationControl` expõe takeover/resume/epoch por família canônica; a migration 065 e o worker agora serializam leases por `conversation_control_id`, linearizam antes do POST, fenceiam finalizações e mantêm mídia fora do JSONB. Ainda não ativar `enforce` nem migrar callers futuros: o dispatcher da Task 5 e a reconciliação `fromMe` continuam pendentes.
+- Tasks 3–5 locais concluídas em 2026-08-30: `conversationControl` expõe takeover/resume/epoch por família canônica; a migration 065 e o worker serializam leases por `conversation_control_id`, linearizam antes do POST, fenceiam finalizações e mantêm mídia fora do JSONB. A Task 5 adicionou o dispatcher único `dispatchConversationOutbound`, lifecycle canônico nas bolhas e batch concorrente por conversas distintas. Ainda não ativar `enforce` nem migrar callers futuros: Tasks 6–7 (AI/rotas) e a reconciliação `fromMe` continuam pendentes.
 
 ## Rollout CRM (2026-08-26)
 

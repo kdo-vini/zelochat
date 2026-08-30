@@ -119,7 +119,7 @@ class RecordingTransport {
 }
 
 function worker(store: SharedLeaseStore, transport: RecordingTransport): OutboundWorker {
-  return new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', getRolloutFlags: async () => ({ crm: true, campaigns: true, automations: true }), validate: async () => ({ action: 'send' }) });
+  return new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', getRolloutFlags: async () => ({ crm: true, campaigns: true, automations: true }), validate: async () => ({ action: 'send' }), broadcastStatus: async () => undefined });
 }
 
 // Two replicas cannot send the same conversational intent.
@@ -156,7 +156,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   phase = 'deferral attempts';
   const deferred = { ...conversationJob(), jobType: 'campaign', origin: 'campaign', conversationControlId: undefined, conversationJid: undefined } as OutboundJob;
   const store = new SharedLeaseStore([deferred]); const transport = new RecordingTransport();
-  const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getRolloutFlags: async () => ({ crm: true, campaigns: false, automations: true }) });
+  const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getRolloutFlags: async () => ({ crm: true, campaigns: false, automations: true }), broadcastStatus: async () => undefined });
   assert.equal(await outboundWorker.runOnce('defer'), false); assert.equal(store.rows.get('j1')?.attempts, 0); assert.equal(store.rows.get('j1')?.status, 'queued');
 }
 
@@ -165,7 +165,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   phase = 'preflight failure';
   const store = new SharedLeaseStore([conversationJob()], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null } });
   const transport = { async prepare() { throw new Error('OUTBOUND_CONTACT_VCARD_INVALID'); }, async send(): Promise<ProviderDispatchResult> { throw new Error('send must not run'); } };
-  const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) });
+  const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }), broadcastStatus: async () => undefined });
   assert.equal(await outboundWorker.runOnce('preflight'), false);
   assert.equal(store.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(store.rows.get('j1')?.attempts, 0);
 }
@@ -179,7 +179,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
     async prepare(job: OutboundJob) { if (installHold) { store.controls.get('control-1')!.holdJobId = 'uncertain-before-j1'; installHold = false; } return { job, request: { url: 'https://provider.test/send', body: '{}', headers: {} } }; },
     async send(): Promise<ProviderDispatchResult> { posts++; return { state: 'sent', providerMessageId: 'must-not-send' }; },
   };
-  const heldWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) });
+  const heldWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }), broadcastStatus: async () => undefined });
   assert.equal(await heldWorker.runOnce('held'), false); assert.equal(posts, 0);
   assert.equal(store.rows.get('j1')?.status, 'queued'); assert.equal(store.rows.get('j1')?.attempts, 0); assert.equal(store.rows.get('j1')?.leaseOwner, null);
   assert.equal(await heldWorker.runOnce('still-held'), false); assert.equal(posts, 0);
@@ -196,7 +196,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
     async prepare(job: OutboundJob) { store.controls.set('control-1', { mode: 'human', epoch: '8', holdJobId: null }); return { job, request: { url: 'https://provider.test/send', body: '{}', headers: {} } }; },
     async send(): Promise<ProviderDispatchResult> { posts++; return { state: 'sent', providerMessageId: 'must-not-send' }; },
   };
-  const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) });
+  const outboundWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }), broadcastStatus: async () => undefined });
   assert.equal(await outboundWorker.runOnce('takeover'), false); assert.equal(posts, 0);
   assert.equal(store.rows.get('j1')?.status, 'cancelled'); assert.equal(store.rows.get('j1')?.suppressionReason, 'paused');
 }
@@ -208,7 +208,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   const textFingerprint = await fingerprintOutboundPayload({ kind: 'text', text: 'Olá' });
   const invalidStore = new SharedLeaseStore([conversationJob({ conversationJid: 'invalid-jid', payloadFingerprint: textFingerprint })], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null } });
   const adapter = createProviderAdapter({ prepareRequest: prepareWhatsAppHttpRequest, sendPrepared: async () => { posts++; return 'unexpected'; }, prepareMedia: async () => { throw new Error('unexpected media'); } });
-  assert.equal(await new OutboundWorker({ queue: new OutboundQueue(invalidStore), transport: adapter, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) }).runOnce('invalid-jid'), false);
+  assert.equal(await new OutboundWorker({ queue: new OutboundQueue(invalidStore), transport: adapter, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }), broadcastStatus: async () => undefined }).runOnce('invalid-jid'), false);
   assert.equal(invalidStore.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(posts, 0);
 
   const missing = { ...conversationJob(), jobType: 'campaign', origin: 'campaign', conversationControlId: undefined, conversationJid: undefined, phone: null } as OutboundJob;
@@ -271,6 +271,17 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   const store = new SharedLeaseStore([row], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null } });
   assert.equal(await new OutboundQueue(store).complete({ ...row, leaseOwner: 'owner-b' }, 'provider-id'), false);
   assert.equal(store.rows.get('j1')?.status, 'dispatch_started');
+}
+
+// A single process can use its global concurrency on different conversations.
+{
+  phase = 'batch different controls';
+  const c1 = conversationJob({ id: 'j1', conversationControlId: 'control-1' });
+  const c2 = conversationJob({ id: 'j2', idempotencyKey: 'e1:j2', conversationControlId: 'control-2', conversationJid: '5521999999999@s.whatsapp.net' });
+  const store = new SharedLeaseStore([c1, c2], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null }, 'control-2': { mode: 'human', epoch: '3', holdJobId: null } });
+  const transport = new RecordingTransport();
+  assert.equal(await worker(store, transport).runBatch('batch', 2), 2);
+  assert.equal(transport.calls.length, 2);
 }
 
 // Probe each real helper: the provider's key.id response is returned, never synthesized.

@@ -1,4 +1,5 @@
 import type { OutboundOrigin, OutboundPayload, PersistedOutboundPayload } from '../../src/domain/outbound.js';
+import type { ChatMessage } from '../../src/types.js';
 import { getServiceSupabase } from '../supabase.js';
 import { getInstanceForEmpresa } from '../instanceManager.js';
 import { fetchInstanceConnectionState } from '../whatsapp.js';
@@ -142,6 +143,7 @@ export interface OutboundWorkerDependencies {
   send?: (phone: string, text: string, empresaId: string) => Promise<string | undefined>;
   validate?: (job: OutboundJob) => Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }>;
   getRolloutFlags?: (empresaId: string) => Promise<Awaited<ReturnType<typeof getCrmRolloutFlags>>>;
+  broadcastStatus?: (empresaId: string, messageId: string | null | undefined, status: ChatMessage['status']) => void | Promise<void>;
 }
 
 export class OutboundWorker {
@@ -157,6 +159,20 @@ export class OutboundWorker {
           return id ? { state: 'sent', providerMessageId: id } : { state: 'delivery_uncertain', reason: 'PROVIDER_MESSAGE_ID_MISSING' };
         } }
       : createProviderAdapter());
+  }
+
+  private executionKey(job: OutboundJob, instance: string): string {
+    return job.conversationControlId ? `conversation:${job.conversationControlId}` : `instance:${instance}`;
+  }
+
+  private async broadcastStatus(job: OutboundJob, status: ChatMessage['status']): Promise<void> {
+    if (!job.messageId) return;
+    if (this.deps.broadcastStatus) {
+      await this.deps.broadcastStatus(job.empresaId, job.messageId, status);
+      return;
+    }
+    const { broadcastAssistantMessageStatus } = await import('../messageHandler.js');
+    broadcastAssistantMessageStatus(job.empresaId, job.messageId, status);
   }
 
   async runOnce(workerId = `outbound-worker-${process.pid}`): Promise<boolean> {
@@ -183,11 +199,12 @@ export class OutboundWorker {
     }
 
     const instance = job.instanceKey || await (this.deps.resolveInstance ?? getInstanceForEmpresa)(job.empresaId);
-    if (this.locks.has(instance)) {
+    const executionKey = this.executionKey(job, instance);
+    if (this.locks.has(executionKey)) {
       await this.deps.queue.defer(job, 'Outra mensagem desta conexão está sendo enviada.');
       return false;
     }
-    this.locks.add(instance);
+    this.locks.add(executionKey);
     let transportStarted = false;
     try {
       const status = await (this.deps.getStatus ?? fetchInstanceConnectionState)(instance);
@@ -204,31 +221,49 @@ export class OutboundWorker {
         prepared = await this.transport.prepare({ ...job, instanceKey: instance });
       } catch (cause) {
         await this.deps.queue.failBeforeDispatch(job, cause instanceof Error ? cause.message : 'Payload inválido para envio.');
+        await this.broadcastStatus(job, 'failed_before_dispatch');
         return false;
       }
       transportStarted = await this.deps.queue.startTransport(job);
       if (!transportStarted) return false;
+      await this.broadcastStatus(job, 'dispatch_started');
       const dispatchJob: OutboundJob = { ...job, instanceKey: instance, status: 'dispatch_started' };
       const result = await this.transport.send({ ...prepared, job: dispatchJob } as typeof prepared);
       if (result.state === 'delivery_uncertain') {
         await this.deps.queue.deliveryUncertain(dispatchJob, result.reason);
+        await this.broadcastStatus(job, 'delivery_uncertain');
         return true;
       }
-      return this.deps.queue.complete(dispatchJob, result.providerMessageId);
+      const completed = await this.deps.queue.complete(dispatchJob, result.providerMessageId);
+      if (completed) await this.broadcastStatus(job, 'sent');
+      return completed;
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : 'Falha ao enviar.';
-      if (transportStarted) await this.deps.queue.deliveryUncertain({ ...job, status: 'dispatch_started' }, reason);
-      else await this.deps.queue.fail(job, reason);
+      if (transportStarted) {
+        await this.deps.queue.deliveryUncertain({ ...job, status: 'dispatch_started' }, reason);
+        await this.broadcastStatus(job, 'delivery_uncertain');
+      } else {
+        await this.deps.queue.fail(job, reason);
+        await this.broadcastStatus(job, 'failed_before_dispatch');
+      }
       return false;
     } finally {
-      this.locks.delete(instance);
+      this.locks.delete(executionKey);
     }
   }
 
-  start(intervalMs = 1_000): void {
+  async runBatch(workerId = `outbound-worker-${process.pid}`, limit = 1): Promise<number> {
+    const concurrency = Math.max(1, Math.floor(limit));
+    const results = await Promise.all(
+      Array.from({ length: concurrency }, (_, index) => this.runOnce(`${workerId}-${index + 1}`)),
+    );
+    return results.filter(Boolean).length;
+  }
+
+  start(intervalMs = 1_000, concurrency = Number.parseInt(process.env.OUTBOUND_WORKER_CONCURRENCY || '1', 10)): void {
     if (this.running) return;
     this.running = true;
-    const tick = () => { if (!this.running) return; void this.runOnce().catch((error) => console.error('[outbound] worker tick failed', error instanceof Error ? error.message : 'unknown')).finally(() => setTimeout(tick, intervalMs)); };
+    const tick = () => { if (!this.running) return; void this.runBatch(`outbound-worker-${process.pid}`, concurrency).catch((error) => console.error('[outbound] worker tick failed', error instanceof Error ? error.message : 'unknown')).finally(() => setTimeout(tick, intervalMs)); };
     void tick();
   }
   stop(): void { this.running = false; }
