@@ -1,4 +1,4 @@
-import type { OutboundOrigin, OutboundPayload, OutboundState, PersistedOutboundPayload } from '../../src/domain/outbound.js';
+import { validateOutboundPayload, type OutboundOrigin, type OutboundPayload, type OutboundState, type PersistedOutboundPayload } from '../../src/domain/outbound.js';
 import { nextRetryAt } from './policy.js';
 
 /** `failed` remains readable while old replicas drain; new writers never emit it. */
@@ -85,8 +85,10 @@ export interface OutboundJobStore {
 
 const succeeded = (result: boolean | void): boolean => result !== false;
 const mediaKeys = new Set(['kind','storagePath','mimeType','fileName','sizeBytes','checksum','caption','ptt','quoted']);
-export function assertQueueablePayload(payload: OutboundPayload | PersistedOutboundPayload): void {
-  const record = payload as unknown as Record<string, unknown>;
+export function assertQueueablePayload(payload: unknown): asserts payload is OutboundPayload | PersistedOutboundPayload {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('OUTBOUND_PAYLOAD_INVALID');
+  const record = payload as Record<string, unknown>;
+  if (typeof record.kind !== 'string') throw new Error('OUTBOUND_PAYLOAD_INVALID');
   if (['media','audio','sticker'].includes(String(record.kind)) && (
     typeof record.storagePath !== 'string' || typeof record.mimeType !== 'string' || typeof record.fileName !== 'string'
     || typeof record.sizeBytes !== 'number' || typeof record.checksum !== 'string'
@@ -96,6 +98,10 @@ export function assertQueueablePayload(payload: OutboundPayload | PersistedOutbo
     || (record.kind !== 'media' && 'caption' in record)
     || ('caption' in record && typeof record.caption !== 'string')
   )) throw new Error('OUTBOUND_MEDIA_NOT_QUEUEABLE');
+  if (!['media','audio','sticker'].includes(record.kind)) {
+    const error = validateOutboundPayload(payload);
+    if (error) throw new Error(error);
+  }
 }
 export function assertOutboundJobShape(job: OutboundJob): void {
   if (job.jobType === 'conversation') {
@@ -111,11 +117,12 @@ export function assertOutboundJobShape(job: OutboundJob): void {
 }
 const normalizeJob = (job: OutboundJob | LegacyStoredJob): OutboundJob => {
   const jobType = job.jobType ?? 'campaign';
+  if (job.payload == null) throw new Error('OUTBOUND_PAYLOAD_INVALID');
   const normalized = {
     ...job,
     jobType,
     origin: job.origin ?? (jobType === 'automation' ? 'automation' : 'campaign'),
-    payload: job.payload ?? { kind: 'text', text: job.text },
+    payload: job.payload,
     payloadFingerprint: job.payloadFingerprint ?? '',
   } as OutboundJob;
   assertOutboundJobShape(normalized);
@@ -130,14 +137,25 @@ export class OutboundQueue {
     const dedupeKey = `${input.empresaId}:${input.idempotencyKey}`;
     const existing = this.seen.get(dedupeKey);
     if (existing) return existing;
-    const job = normalizeJob(await this.store.insert({ ...input, text: input.text.trim() }));
+    const text = input.text.trim();
+    const payload = input.jobType === 'conversation' ? input.payload : input.payload ?? { kind: 'text' as const, text };
+    assertQueueablePayload(payload);
+    const job = normalizeJob(await this.store.insert({ ...input, text, payload } as OutboundJobInput));
     this.seen.set(dedupeKey, job);
     return job;
   }
 
   async claim(workerId: string, leaseMs = 120_000): Promise<OutboundJob | null> {
     const job = await this.store.claim(workerId, leaseMs);
-    return job ? normalizeJob(job) : null;
+    if (!job) return null;
+    try {
+      return normalizeJob(job);
+    } catch {
+      if (!job.leaseOwner) throw new Error('OUTBOUND_INVALID_CLAIM_WITHOUT_LEASE');
+      const finalized = succeeded(await this.store.markFailed(job.id, 'Payload inválido para envio.', null, job.empresaId, job.leaseOwner));
+      if (!finalized) throw new Error('OUTBOUND_INVALID_CLAIM_FINALIZE_FAILED');
+      return null;
+    }
   }
 
   async startTransport(job: OutboundJob): Promise<boolean> {

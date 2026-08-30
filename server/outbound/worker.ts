@@ -32,7 +32,7 @@ function mapRow(row: Record<string, any>): OutboundJob {
     conversationJid: row.conversation_jid ?? undefined,
     messageId: row.message_id ?? undefined,
     origin: originFor(jobType, row.outbound_origin),
-    payload: (row.payload ?? { kind: 'text', text }) as OutboundPayload | PersistedOutboundPayload,
+    payload: row.payload as OutboundPayload | PersistedOutboundPayload,
     payloadFingerprint: row.payload_fingerprint ?? '',
     controlEpoch: row.control_epoch == null ? undefined : String(row.control_epoch),
     status: row.status,

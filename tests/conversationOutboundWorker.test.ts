@@ -70,7 +70,8 @@ class SharedLeaseStore implements OutboundJobStore {
       const control = this.controls.get(row.conversationControlId);
       const held = Boolean(control?.holdJobId);
       const staleAi = (row.origin === 'ai_auto' || row.origin === 'ai_followup') && (!control || control.mode !== 'ai' || control.epoch !== row.controlEpoch);
-      if (held || staleAi) { Object.assign(row, { status: 'cancelled', suppressionReason: held ? 'delivery_uncertain_hold' : control?.mode !== 'ai' ? 'paused' : 'stale_epoch', leaseOwner: null, leaseExpiresAt: null }); return false; }
+      if (staleAi) { Object.assign(row, { status: 'cancelled', suppressionReason: control?.mode !== 'ai' ? 'paused' : 'stale_epoch', leaseOwner: null, leaseExpiresAt: null }); return false; }
+      if (held) { Object.assign(row, { status: 'queued', suppressionReason: null, leaseOwner: null, leaseExpiresAt: null }); return false; }
     }
     row.status = 'dispatch_started'; row.attempts += 1; this.observeActive(row.conversationControlId); return true;
   }
@@ -169,6 +170,23 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert.equal(store.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(store.rows.get('j1')?.attempts, 0);
 }
 
+// A hold installed after claim/preflight returns the same intent to queued.
+{
+  phase = 'hold during preflight';
+  const store = new SharedLeaseStore([conversationJob()], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null } });
+  let posts = 0; let installHold = true;
+  const transport = {
+    async prepare(job: OutboundJob) { if (installHold) { store.controls.get('control-1')!.holdJobId = 'uncertain-before-j1'; installHold = false; } return { job, request: { url: 'https://provider.test/send', body: '{}', headers: {} } }; },
+    async send(): Promise<ProviderDispatchResult> { posts++; return { state: 'sent', providerMessageId: 'must-not-send' }; },
+  };
+  const heldWorker = new OutboundWorker({ queue: new OutboundQueue(store), transport, getStatus: async () => 'connected', validate: async () => ({ action: 'send' }) });
+  assert.equal(await heldWorker.runOnce('held'), false); assert.equal(posts, 0);
+  assert.equal(store.rows.get('j1')?.status, 'queued'); assert.equal(store.rows.get('j1')?.attempts, 0); assert.equal(store.rows.get('j1')?.leaseOwner, null);
+  assert.equal(await heldWorker.runOnce('still-held'), false); assert.equal(posts, 0);
+  store.controls.get('control-1')!.holdJobId = null;
+  assert.equal(await heldWorker.runOnce('released'), true); assert.equal(posts, 1); assert.equal(store.rows.get('j1')?.status, 'sent');
+}
+
 // A takeover committed while deterministic preflight runs is revalidated by startTransport.
 {
   phase = 'takeover during preflight';
@@ -197,6 +215,21 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   const missingStore = new SharedLeaseStore([missing]);
   assert.equal(await worker(missingStore, new RecordingTransport()).runOnce('missing-recipient'), false);
   assert.equal(missingStore.rows.get('j1')?.status, 'failed_before_dispatch'); assert.equal(missingStore.rows.get('j1')?.attempts, 0);
+}
+
+// Claimed rows with null/raw media payloads terminalize before provider prepare/send.
+{
+  phase = 'invalid claimed payload boundary';
+  for (const [id, payload] of [
+    ['null-payload', null],
+    ['raw-media', { kind: 'media', attachment: { dataUrl: 'data:image/png;base64,eA==' } }],
+  ] as const) {
+    const invalid = conversationJob({ id, idempotencyKey: `e1:${id}`, payload } as unknown as Partial<OutboundJob>);
+    const invalidStore = new SharedLeaseStore([invalid], { 'control-1': { mode: 'human', epoch: '8', holdJobId: null } });
+    const invalidTransport = new RecordingTransport();
+    assert.equal(await worker(invalidStore, invalidTransport).runOnce(`worker-${id}`), false);
+    assert.equal(invalidStore.rows.get(id)?.status, 'failed_before_dispatch'); assert.equal(invalidTransport.calls.length, 0);
+  }
 }
 
 // Only pre-transport expiry retries; post-linearization becomes uncertain without a second POST.
@@ -325,11 +358,17 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   const start = sql.slice(sql.indexOf('create or replace function public.start_zelochat_outbound_transport'), sql.indexOf('create or replace function public.complete_zelochat_outbound_job'));
   assert(start.includes('v_control.hold_job_id is not null'));
   assert(start.includes("v_control.mode <> 'ai' or v_job.control_epoch is distinct from v_control.epoch"));
+  assert(start.includes("set status = 'queued'"));
+  assert(start.includes("set outbound_status = 'queued', outbound_error = null"));
   const mediaSource = readFileSync('server/outbound/mediaStore.ts', 'utf8');
   assert(mediaSource.includes(".in('payload->>kind', ['media','audio','sticker'])"));
   const integrationSource = readFileSync('tests/conversationOutboundRpc.integration.test.ts', 'utf8');
   assert(!integrationSource.includes('pg_sleep')); assert(!integrationSource.includes('setTimeout'));
   assert(integrationSource.includes("wait_event_type='Lock'"));
+  const workerSource = readFileSync('server/outbound/worker.ts', 'utf8');
+  const queueSource = readFileSync('server/outbound/queue.ts', 'utf8');
+  assert(!workerSource.includes('row.payload ??'));
+  assert(!queueSource.includes('payload: job.payload ??'));
 }
 
 console.log('conversationOutboundWorker: ok');

@@ -447,9 +447,7 @@ begin
    for update;
   if not found then return false; end if;
 
-  if v_job.job_type = 'conversation' and v_control.hold_job_id is not null then
-    v_suppression := 'delivery_uncertain_hold';
-  elsif v_job.job_type = 'conversation' and v_job.outbound_origin in ('ai_auto','ai_followup')
+  if v_job.job_type = 'conversation' and v_job.outbound_origin in ('ai_auto','ai_followup')
     and (v_control.mode <> 'ai' or v_job.control_epoch is distinct from v_control.epoch) then
     v_suppression := case when v_control.mode <> 'ai' then 'paused' else 'stale_epoch' end;
   end if;
@@ -467,6 +465,16 @@ begin
         'outbound_start', v_job.message_id, v_job.id
       );
     end if;
+    return false;
+  end if;
+
+  if v_job.job_type = 'conversation' and v_control.hold_job_id is not null then
+    update public.zelochat_outbound_jobs
+       set status = 'queued', suppression_reason = null, last_error = null, lease_owner = null,
+           lease_expires_at = null, next_attempt_at = v_now, updated_at = v_now
+     where id = v_job.id and empresa_id = p_empresa_id;
+    update public.zelochat_messages set outbound_status = 'queued', outbound_error = null
+     where id = v_job.message_id and empresa_id = p_empresa_id;
     return false;
   end if;
 

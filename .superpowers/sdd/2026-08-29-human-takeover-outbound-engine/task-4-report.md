@@ -177,6 +177,44 @@ exit 0
 
 O teste RPC real permaneceu em skip explícito porque não havia credencial Postgres local. Nenhuma migration foi aplicada, e nenhum provider, deploy ou ambiente de produção foi chamado.
 
+## Fix round 3/5
+
+Os dois P1s foram corrigidos sem alterar o escopo da Task 5+:
+
+- Se um hold for instalado depois do claim/preflight, `start_zelochat_outbound_transport` agora reverte atomicamente job e mensagem para `queued`, limpa lease/erro/supressão, mantém `attempts` intacto e retorna `false`; o worker não faz POST. Enquanto o hold existe o claim não o seleciona; depois de `release_zelochat_outbound_hold`, a mesma intenção pode ser reclamada e enviada. Cancelamento no fence ficou restrito à IA stale por modo/epoch.
+- `worker.mapRow` e `queue.normalizeJob` não sintetizam mais `{kind:'text'}` para payload ausente. O boundary valida todo payload, incluindo mídia persistida, e um row claimado nulo/malformado é finalizado com o mesmo lease como `failed_before_dispatch`; provider prepare/send não é chamado e o job não volta infinitamente para `queued`.
+
+### RED/GREEN e verificação
+
+RED antes da implementação:
+
+```text
+conversationOutboundWorker.test.ts: false !== true (hold cancelava/não liberava a mesma intenção)
+outboundQueue.test.ts: payload nulo retornou job sending com payload text sintetizado
+worker_exit=1 queue_exit=1
+```
+
+Comandos GREEN:
+
+```powershell
+npx tsx tests/conversationOutboundWorker.test.ts
+npx tsx tests/outboundQueue.test.ts
+npx tsx tests/auditFixGuardrails.test.ts
+npm run lint
+git diff --check
+```
+
+Saída:
+
+```text
+conversationOutboundWorker: ok
+outboundQueue: ok
+Audit fix guardrails: 34 pass, 0 fail
+> tsc --noEmit
+exit 0
+git diff --check: exit 0
+```
+
 ## Concerns
 
 - No `LOCAL_OUTBOUND_TEST_DATABASE_URL` or local `psql` was available, so migration 065 was not applied and the opt-in real-Postgres interleaving test skipped explicitly. Structural lock-order/RPC guardrails are green, but rollout still requires that local transaction test before migration application.

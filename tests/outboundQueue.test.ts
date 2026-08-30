@@ -8,7 +8,7 @@ const store: OutboundJobStore = {
   async claim(workerId, _leaseMs) { const row = [...jobs.values()].find((item) => item.status === 'queued'); if (!row) return null; row.status = 'sending'; row.leaseOwner = workerId; row.leaseExpiresAt = new Date(Date.now() + 60_000).toISOString(); return row; },
   async startTransport(id, empresaId, leaseOwner) { const row = jobs.get(id); if (!row || row.empresaId !== empresaId || row.leaseOwner !== leaseOwner || row.status !== 'sending') return false; row.status = 'dispatch_started'; return true; },
   async markSent(id, messageId, empresaId, leaseOwner) { const row = jobs.get(id); if (!row || row.empresaId !== empresaId || row.leaseOwner !== leaseOwner) return false; row.status = 'sent'; row.providerMessageId = messageId; row.leaseOwner = null; return true; },
-  async markFailed(id, reason, retryAt) { const row = jobs.get(id); row.status = retryAt ? 'queued' : 'failed'; row.lastError = reason; row.nextAttemptAt = retryAt?.toISOString() ?? null; },
+  async markFailed(id, reason, retryAt) { const row = jobs.get(id); row.status = retryAt ? 'queued' : 'failed_before_dispatch'; row.lastError = reason; row.nextAttemptAt = retryAt?.toISOString() ?? null; row.leaseOwner = null; row.leaseExpiresAt = null; },
   async releaseExpired() { for (const row of jobs.values()) if (row.status === 'sending' && row.leaseExpiresAt < new Date().toISOString()) row.status = 'queued'; },
 };
 const queue = new OutboundQueue(store);
@@ -24,6 +24,24 @@ assert.equal(await queue.complete({ ...claimed!, status: 'dispatch_started' }, '
 
 await queue.enqueue({ empresaId: 'e2', instanceKey: 'i2', recipientId: 'p2', campaignId: 'c2', idempotencyKey: 'c1:p1', text: 'Outro tenant' });
 assert.equal(jobs.size, 2, 'idempotência em memória é tenant-scoped');
+jobs.get('job-2').status = 'sent';
+
+const nullPayload = {
+  ...jobs.get(claimed!.id), id: 'invalid-null', idempotencyKey: 'invalid-null', status: 'queued', jobType: 'conversation',
+  conversationControlId: 'control-null', conversationJid: '5511999999999@s.whatsapp.net', origin: 'human_zelochat', payloadFingerprint: 'fingerprint', payload: null,
+};
+jobs.set(nullPayload.id, nullPayload);
+assert.equal(await queue.claim('invalid-null-worker'), null, 'payload nulo nunca atravessa o boundary como job enviável');
+assert.equal(jobs.get(nullPayload.id)?.status, 'failed_before_dispatch');
+
+const malformedMedia = {
+  ...jobs.get(claimed!.id), id: 'invalid-media', idempotencyKey: 'invalid-media', status: 'queued', jobType: 'conversation',
+  conversationControlId: 'control-invalid', conversationJid: '5511999999999@s.whatsapp.net', origin: 'human_zelochat', payloadFingerprint: 'fingerprint',
+  payload: { kind: 'media', attachment: { dataUrl: 'data:image/png;base64,eA==' } },
+};
+jobs.set(malformedMedia.id, malformedMedia);
+assert.equal(await queue.claim('invalid-media-worker'), null, 'mídia malformada terminaliza no claim');
+assert.equal(jobs.get(malformedMedia.id)?.status, 'failed_before_dispatch');
 
 assert.equal(canStartCampaign({ activeStartsLastMinute: 11, dailySent: 49, requested: 1 }), true);
 assert.equal(canStartCampaign({ activeStartsLastMinute: 12, dailySent: 0, requested: 1 }), false);
