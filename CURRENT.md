@@ -43,8 +43,8 @@
 ## Pedido canônico por WhatsApp — tracer Task 6 (2026-08-30)
 
 - Fluxo isolado para buscar o cardápio e montar/consultar o carrinho canônico do ZeloMenu sem enviar link. Confirmação e cancelamento são determinísticos; o modelo recebe somente `buscar_cardapio`, `alterar_carrinho` e `consultar_carrinho`.
-- Rollout fail-closed: kill switch explícito, shadow global somente leitura e ativação global independente. O fluxo legado de `zelochat_pending_orders` continua prioritário e isolado.
-- **Operação pendente:** configurar URL/chave internas, manter `ACTIVE=0`, liberar primeiro `KILL_SWITCH=0 + SHADOW=1` e observar métricas agregadas sem PII.
+- Ativação global fail-closed: o kill switch precisa ser explicitamente liberado; `shadow` continua disponível somente como diagnóstico interno. O fluxo legado de `zelochat_pending_orders` continua prioritário e isolado.
+- **Operação pendente:** configurar URL/chave internas, concluir a verificação do banco e então usar `KILL_SWITCH=0 + ACTIVE=1`. O primeiro tenant será acompanhado manualmente, sem rollout por empresa.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)
 
@@ -109,7 +109,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
-- **Task 6 rollout:** executar shadow global com a integração interna configurada; ativação real continua desligada até revisão operacional e teste ponta a ponta em tenant controlado. O deploy depende do ZeloMenu conter as rotas internas dos commits `719ee33` e `eaeaae0`; elas pertencem ao repo ZeloMenu, não a este backend.
+- **Task 6 ativação global:** não há rollout por empresa. Com as rotas internas do ZeloMenu (`719ee33` e `eaeaae0`) publicadas e o banco verificado, a configuração global pode ficar ativa para todos os atendimentos do ZeloChat; o primeiro tenant será acompanhado manualmente.
 - **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**

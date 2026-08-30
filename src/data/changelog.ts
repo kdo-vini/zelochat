@@ -19,7 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-08-30',
     category: 'big',
     title: 'Pedido completo direto na conversa',
-    description: 'O atendimento ganhou uma forma segura de consultar o cardápio, montar e revisar o pedido pelo WhatsApp, com resumo e confirmação antes de enviar para a loja. A liberação será gradual e acompanhada pela equipe.',
+    description: 'O atendimento ganhou uma forma segura de consultar o cardápio, montar e revisar o pedido pelo WhatsApp, com resumo e confirmação antes de enviar para a loja. O cliente confirma tudo na própria conversa, sem precisar abrir um link.',
   },
   {
     date: '2026-08-30',

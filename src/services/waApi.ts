@@ -39,6 +39,10 @@ export interface AiHealthReport {
   blockedDatesCount: number;
   safeSummaryStatus: AiHealthSummaryStatus;
 }
+
+export interface AiWhatsAppOrderingStatus {
+  enabled: boolean;
+}
 export interface ZeloMenuReviewSession {
   id: string;
   orderingId: string;
@@ -501,6 +505,13 @@ export async function getAiEnabled(token: string): Promise<boolean> {
   });
   const body = await parseResponse<{ enabled: boolean }>(response);
   return body.enabled !== false;
+}
+
+export async function getAiWhatsAppOrderingStatus(token: string): Promise<AiWhatsAppOrderingStatus> {
+  const response = await apiFetch(apiUrl('/api/ai-ordering-status'), {
+    headers: authHeaders(token),
+  });
+  return parseResponse<AiWhatsAppOrderingStatus>(response);
 }
 
 export async function getAiSettings(token: string): Promise<AiSettings> {

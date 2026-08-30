@@ -71,7 +71,7 @@ import {
 } from './ai.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
-import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton } from '../src/domain/aiWhatsAppOrdering.js';
+import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton, getAiWhatsAppOrderingMode } from '../src/domain/aiWhatsAppOrdering.js';
 import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
@@ -81,6 +81,7 @@ import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstr
 import { recordAiUsage } from './aiUsage.js';
 import { buildAiHealthReport } from './aiHealth.js';
 import { tryHandleAiWhatsAppOrderingButton } from './aiWhatsAppOrdering.js';
+import { ZeloMenuInternalClient } from './zeloMenuInternalClient.js';
 import { runManagerAssistant, validateManagerRequest } from './managerAssistant.js';
 import { createDriver, deleteDriver, listDrivers, updateDriver } from './drivers.js';
 import {
@@ -1623,6 +1624,26 @@ router.get('/api/ai-enabled', async (req: Request, res: Response) => {
     await ensureAiSettingsHydrated(empresaId);
     const settings = readAiSettingsFromConfig(empresaId);
     res.json({ enabled: settings.mode !== 'always_off' });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
+ * GET /api/ai-ordering-status — authenticated product status for the operator UI.
+ *
+ * The rollout mode itself is intentionally not exposed. `shadow` is an
+ * internal observation state and is presented as unavailable until the live
+ * flow is active.
+ */
+router.get('/api/ai-ordering-status', async (req: Request, res: Response) => {
+  try {
+    await requireEmpresaId(req);
+    const modeIsActive = getAiWhatsAppOrderingMode() === 'active';
+    // Match the runtime's fail-closed configuration check so the UI never
+    // promises autonomous ordering while every request would be transferred
+    // to a human because the private ZeloMenu client is not configured.
+    res.json({ enabled: modeIsActive && ZeloMenuInternalClient.fromEnv() !== null });
   } catch (error) {
     sendAuthError(res, error);
   }
