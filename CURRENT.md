@@ -13,7 +13,7 @@
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Tasks 3–10 locais concluídas em 2026-08-30: além do controle/worker/dispatcher e fences de IA/humano ZeloChat, `fromMe` distingue eco por ID persistente, grava takeover atomicamente e reprocessa raw events; transportes especiais usam origem/lifecycle canônicos. A UI agora consome modo/epoch por família, deriva `autoReply`, representa o lifecycle manual e trata entrega incerta somente por nova cópia confirmada. `FROM_ME_NATIVE_MODE` continua `shadow`; ainda não ativar `enforce`: fixtures reais, integração final e rollout coordenado (Tasks 11–12) continuam pendentes.
+- Tasks 3–11 locais concluídas em 2026-08-30: além do controle/worker/dispatcher e fences de IA/humano ZeloChat, `fromMe` distingue eco por ID persistente, grava takeover atomicamente e reprocessa raw events; transportes especiais usam origem/lifecycle canônicos. A UI consome modo/epoch por família e a Task 11 adiciona probe SQL transacional, matriz integrada e E2E opt-in no endpoint por instância. `FROM_ME_NATIVE_MODE` continua `shadow`; ainda não ativar `enforce`: executar probe/E2E com fixtures reais em ambiente isolado e fazer o rollout coordenado da Task 12 continuam pendentes.
 
 ## Rollout CRM (2026-08-26)
 
