@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Layout da aplicação (2026-08-31)
+
+- ✅ SIDEBAR-LAYER-001 — Novidades, Configurações e Zelo Impressão ficavam em um bloco fixo separado e podiam sobrepor a navegação ao faltar altura → a sidebar agora usa um único contêiner de rolagem, mantendo todos os itens na mesma camada visual — `src/components/Sidebar.tsx:112`, `tests/sidebarLayout.test.ts:1`
+
 ### Conexão do WhatsApp (2026-08-31)
 
 - ✅ WA-CONNECTION-001 — a leitura do QR aceitava o pareamento e logo reiniciava a sessão porque cada consulta reconfigurava a instância → o registro agora é idempotente por instância/processo, preservando o pareamento enquanto a tela consulta o status — `server/whatsapp.ts:777`, `tests/whatsappWebhookRegistration.test.ts:1`
