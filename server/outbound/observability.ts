@@ -7,8 +7,6 @@ export type ConversationOutboundMetric =
   | 'from_me_echo'
   | 'from_me_native'
   | 'from_me_pending_correlation'
-  | 'from_me_would_takeover'
-  | 'from_me_would_correlate'
   | 'delivery_uncertain'
   | 'queue_depth'
   | 'queue_oldest_seconds'

@@ -183,21 +183,21 @@ async function testNativeFromMeRequiresStrongEvidence() {
   const unauthenticated = await processor({
     empresaId: 'empresa-1', data: event('native-without-token'), authStatus: 'token_missing',
   });
-  assert.equal(unauthenticated.kind, 'shadow_unauthenticated');
+  assert.equal(unauthenticated.kind, 'unauthenticated');
   assert.equal(takeoverWrites, 0);
 
-  const echo = await processor({ empresaId: 'empresa-1', data: event('echo-1'), authStatus: 'token_match', mode: 'enforce' });
+  const echo = await processor({ empresaId: 'empresa-1', data: event('echo-1'), authStatus: 'token_match' });
   assert.equal(echo.kind, 'server_echo');
   assert.equal(takeoverWrites, 0);
 
   await assert.rejects(
-    processor({ empresaId: 'empresa-1', data: event('pending-1'), authStatus: 'token_match', mode: 'enforce' }),
+    processor({ empresaId: 'empresa-1', data: event('pending-1'), authStatus: 'token_match' }),
     /FROM_ME_PENDING_CORRELATION/,
   );
   assert.equal(correlationHolds, 1);
   assert.equal(takeoverWrites, 0);
 
-  const native = await processor({ empresaId: 'empresa-1', data: event('native-1'), authStatus: 'token_match', mode: 'enforce' });
+  const native = await processor({ empresaId: 'empresa-1', data: event('native-1'), authStatus: 'token_match' });
   assert.equal(native.kind, 'native_human');
   assert.equal(takeoverWrites, 1);
 }

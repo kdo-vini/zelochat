@@ -387,12 +387,12 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert.deepEqual(await adapter.send(await adapter.prepare(conversationJob({ payloadFingerprint: '' }))), { state: 'delivery_uncertain', reason: 'PROVIDER_MESSAGE_ID_MISSING' });
 }
 
-// Migration guardrails freeze the rollout lock order and lease fencing contract.
+// Migration guardrails freeze the global lock order and lease fencing contract.
 {
   phase = 'migration guardrails';
   const sql = readFileSync('supabase/migrations/065_conversation_outbound_claims.sql', 'utf8');
   const claim = sql.slice(sql.indexOf('create or replace function public.claim_zelochat_outbound_job'), sql.indexOf('create or replace function public.begin_zelochat_human_outbound'));
-  assert(claim.indexOf('zelochat_conversation_control_rollout_gate()') < claim.indexOf('select j.id, j.conversation_control_id'));
+  assert(claim.indexOf('zelochat_conversation_control_lock_gate()') < claim.indexOf('select j.id, j.conversation_control_id'));
   assert(claim.indexOf('from public.zelochat_conversation_ai_control c') < claim.indexOf('for update skip locked'));
   assert.match(claim, /order by j\.next_attempt_at, j\.created_at, j\.id/);
   for (const name of ['begin_zelochat_human_outbound', 'start_zelochat_outbound_transport', 'complete_zelochat_outbound_job', 'fail_zelochat_outbound_job', 'suppress_zelochat_outbound_job']) {
@@ -444,7 +444,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert(sql.indexOf('attempts = j.attempts + 1') > sql.indexOf('create or replace function public.start_zelochat_outbound_transport'));
   for (const name of ['start_zelochat_outbound_transport', 'complete_zelochat_outbound_job', 'fail_zelochat_outbound_job', 'suppress_zelochat_outbound_job']) {
     const body = sql.slice(sql.indexOf(`create or replace function public.${name}`));
-    assert(body.indexOf('zelochat_conversation_control_rollout_gate()') < body.indexOf('update public.zelochat_outbound_jobs'));
+    assert(body.indexOf('zelochat_conversation_control_lock_gate()') < body.indexOf('update public.zelochat_outbound_jobs'));
     assert(body.indexOf('for update') < body.indexOf('update public.zelochat_outbound_jobs'));
   }
   const mergeSql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');

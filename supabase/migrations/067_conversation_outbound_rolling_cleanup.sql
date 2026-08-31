@@ -1,17 +1,12 @@
 -- 067_conversation_outbound_rolling_cleanup.sql
--- FORWARD-ONLY / DO NOT APPLY DURING INITIAL ROLLOUT.
--- Apply only after every old backend replica is drained and the operator has
--- explicitly set the transaction-local confirmation below. This migration is
--- intentionally incompatible with legacy writers that still depend on the
--- global idempotency constraint, status='failed', or the rolling bridge.
+-- FORWARD-ONLY cleanup for the canonical outbound engine.
+-- Legacy writers must already be migrated because this retires the global
+-- idempotency constraint, status='failed', and the compatibility bridge.
 
 begin;
 
 do $$
 begin
-  if current_setting('zelochat.outbound_rolling_drain_confirmed', true) is distinct from 'on' then
-    raise exception 'CONVERSATION_OUTBOUND_ROLLING_DRAIN_NOT_CONFIRMED';
-  end if;
   if not exists (
     select 1 from pg_indexes
      where schemaname = 'public'

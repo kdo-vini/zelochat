@@ -13,7 +13,7 @@
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Tasks 3–12 locais concluídas em 2026-08-30, com correção transversal final em 2026-08-31: controle/worker/dispatcher, fences de IA/humano, reconciliação `fromMe`, transportes especiais, UI e gates estão versionados. A Task 12 mantém shadow como default server-side, classifica `fromMe` sem mutações, adiciona métricas redigidas, runbook/rollback e a migration 067 protegida para cleanup somente pós-drain. Nada foi aplicado ou publicado; ainda não ativar `enforce`: probe PostgreSQL, E2Es e fixtures reais precisam passar em ambiente isolado antes do rollout coordenado.
+- Tasks 3–12 locais concluídas em 2026-08-30, com correção transversal final em 2026-08-31: controle/worker/dispatcher, fences de IA/humano, reconciliação `fromMe`, transportes especiais, UI e gates estão versionados. A engine agora é sempre ativa para envios autenticados; o módulo de rollout foi removido, e a migration 067 aposenta a compatibilidade legada. Migrations e backend ainda precisam ser aplicados/publicados no ambiente autorizado.
 
 ## Rollout CRM (2026-08-26)
 
@@ -105,7 +105,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
-- **Rollout takeover/outbound:** aplicar `063–066` somente com restore point, executar os gates reais isolados e seguir `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md`; `067` fica proibida até todas as réplicas antigas drenarem.
+- **Takeover/outbound — aplicação operacional:** aplicar `063–067` em ordem, executar o probe SQL e os gates reais isolados e seguir `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md`; não configurar flags de rollout.
 - **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**

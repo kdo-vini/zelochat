@@ -32,7 +32,7 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
     persisted += 1;
     return { inserted: true, takeoverApplied: true, messageId: 'm1', jobId: 'j1', conversationControlId: 'c1', mode: 'human', epoch: '2', remoteJids: [jid] };
   } });
-  const result = await process({ empresaId: 'empresa-1', data: event('native-auth'), authStatus: 'token_match', rawEventId: 'raw-1', mode: 'enforce' });
+  const result = await process({ empresaId: 'empresa-1', data: event('native-auth'), authStatus: 'token_match', rawEventId: 'raw-1' });
   assert.equal(result.kind, 'native_human');
   assert.equal(persisted, 1);
   assert.deepEqual(calls, ['cancel', 'broadcast:message_sent', 'broadcast:conversation_mode_changed']);
@@ -45,7 +45,7 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
     recordNativeTakeover: async () => { writes += 1; throw new Error('must not persist'); },
   });
   const result = await process({ empresaId: 'empresa-1', data: event('forged'), authStatus: 'token_missing', rawEventId: 'raw-2' });
-  assert.deepEqual(result, { kind: 'shadow_unauthenticated' });
+  assert.deepEqual(result, { kind: 'unauthenticated' });
   assert.equal(writes, 0);
 }
 
@@ -54,7 +54,7 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
     pendingJob: { id: 'pending-1', payloadFingerprint: input.fingerprint, providerMessageId: null },
   }) });
   await assert.rejects(
-    () => process({ empresaId: 'empresa-1', data: event('same-content'), authStatus: 'token_match', rawEventId: 'raw-3', mode: 'enforce' }),
+    () => process({ empresaId: 'empresa-1', data: event('same-content'), authStatus: 'token_match', rawEventId: 'raw-3' }),
     /FROM_ME_PENDING_CORRELATION/,
   );
   assert.deepEqual(calls, ['hold']);
@@ -66,7 +66,7 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
     lookupEvidence: async () => ({ providerJob: { id: 'job-a', messageId: 'message-a' } }),
     recordNativeTakeover: async () => { nativeWrites += 1; throw new Error('must not persist'); },
   });
-  const result = await process({ empresaId: 'empresa-1', data: event('echo-a'), authStatus: 'token_match', rawEventId: 'raw-4', mode: 'enforce' });
+  const result = await process({ empresaId: 'empresa-1', data: event('echo-a'), authStatus: 'token_match', rawEventId: 'raw-4' });
   assert.equal(result.kind, 'server_echo');
   assert.equal(nativeWrites, 0);
   assert.deepEqual(calls, ['repair']);
@@ -74,23 +74,14 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
 
 {
   let writes = 0;
-  const { calls, process } = harness({ recordNativeTakeover: async () => { writes += 1; throw new Error('must stay shadow'); } });
-  const result = await process({ empresaId: 'empresa-1', data: event('shadow-default'), authStatus: 'token_match', rawEventId: 'raw-5' });
-  assert.deepEqual(result, { kind: 'shadow_rollout' });
-  assert.equal(writes, 0);
-  assert.deepEqual(calls, [], 'shadow must not reconcile, hold, cancel timers or broadcast');
-}
-
-{
-  for (const lookupEvidence of [
-    async () => ({ providerJob: { id: 'job-shadow-echo', messageId: 'message-shadow-echo' } }),
-    async (input: Parameters<FromMeProcessorDependencies['lookupEvidence']>[0]) => ({ pendingJob: { id: 'job-shadow-pending', payloadFingerprint: input.fingerprint, providerMessageId: null } }),
-  ]) {
-    const { calls, process } = harness({ lookupEvidence });
-    const result = await process({ empresaId: 'empresa-1', data: event('shadow-evidence'), authStatus: 'token_match', rawEventId: 'raw-shadow' });
-    assert.deepEqual(result, { kind: 'shadow_rollout' });
-    assert.deepEqual(calls, [], 'shadow evidence classification must remain read-only');
-  }
+  const { calls, process } = harness({ recordNativeTakeover: async () => {
+    writes += 1;
+    return { inserted: true, takeoverApplied: true, messageId: 'm-always-on', jobId: 'j-always-on', conversationControlId: 'c1', mode: 'human', epoch: '6', remoteJids: [jid] };
+  } });
+  const result = await process({ empresaId: 'empresa-1', data: event('always-on'), authStatus: 'token_match', rawEventId: 'raw-5' });
+  assert.equal(result.kind, 'native_human');
+  assert.equal(writes, 1, 'authenticated native human sends are always reconciled');
+  assert.deepEqual(calls, ['cancel', 'broadcast:message_sent', 'broadcast:conversation_mode_changed']);
 }
 
 console.log('fromMeProcessor: ok');
@@ -123,13 +114,13 @@ const holdRpc = sql.slice(
   sql.indexOf('create or replace function public.hold_zelochat_from_me_correlation'),
   sql.indexOf('create or replace function public.reconcile_zelochat_from_me_server_echo'),
 );
-const holdGate = holdRpc.indexOf('perform public.zelochat_conversation_control_rollout_gate();');
+const holdGate = holdRpc.indexOf('perform public.zelochat_conversation_control_lock_gate();');
 const holdControlLock = holdRpc.indexOf('from public.zelochat_conversation_ai_control c\n   where c.id = v_control_id and c.empresa_id = p_empresa_id for update;');
 const holdJobLock = holdRpc.indexOf('select * into v_job from public.zelochat_outbound_jobs j\n   where j.id = p_job_id and j.empresa_id = p_empresa_id\n     and j.conversation_control_id = v_control_id for update;');
 assert.ok(holdGate >= 0 && holdControlLock > holdGate && holdJobLock > holdControlLock, 'pending-correlation hold locks gate then control then job');
 assert.match(holdRpc, /select j\.conversation_control_id into v_control_id[\s\S]*where j\.id = p_job_id and j\.empresa_id = p_empresa_id;[\s\S]*conversation_control_id = v_control_id for update/i);
 
-const nativeGate = nativeRpc.indexOf('perform public.zelochat_conversation_control_rollout_gate();');
+const nativeGate = nativeRpc.indexOf('perform public.zelochat_conversation_control_lock_gate();');
 const nativeControlLock = nativeRpc.indexOf('where c.empresa_id = p_empresa_id and c.id = v_snapshot.conversation_control_id for update;');
 const nativeJobLock = nativeRpc.indexOf('and j.id = v_control.hold_job_id\n     for update;');
 assert.ok(nativeGate >= 0 && nativeControlLock > nativeGate && nativeJobLock > nativeControlLock, 'native takeover cleanup locks gate then control then correlated job');
@@ -138,7 +129,7 @@ const reconcileRpc = sql.slice(
   sql.indexOf('create or replace function public.reconcile_zelochat_from_me_server_echo'),
   sql.indexOf('create or replace function public.claim_zelochat_webhook_replay'),
 );
-const reconcileGate = reconcileRpc.indexOf('perform public.zelochat_conversation_control_rollout_gate();');
+const reconcileGate = reconcileRpc.indexOf('perform public.zelochat_conversation_control_lock_gate();');
 const reconcileControlLock = reconcileRpc.indexOf('where c.id = v_control_id and c.empresa_id = p_empresa_id for update;');
 const reconcileJobLock = reconcileRpc.indexOf('where j.id = p_job_id and j.empresa_id = p_empresa_id\n       and j.conversation_control_id = v_control_id for update;');
 assert.ok(reconcileGate >= 0 && reconcileControlLock > reconcileGate && reconcileJobLock > reconcileControlLock, 'server-echo reconciliation locks gate then control then job');

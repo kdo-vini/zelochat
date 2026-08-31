@@ -327,10 +327,6 @@ let startedWorker: OutboundWorker | null = null;
 let cleanupTimer: NodeJS.Timeout | null = null;
 export function startOutboundWorker(): OutboundWorker | null {
   if (!startedWorker) {
-    if (/^(1|true|yes)$/i.test(process.env.CONVERSATION_OUTBOUND_WORKER_DISABLED ?? '')) {
-      console.warn('[outbound] worker disabled by emergency rollout switch; ledger preserved');
-      return null;
-    }
     startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) });
     startedWorker.start();
     void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown'));

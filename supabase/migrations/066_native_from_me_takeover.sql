@@ -51,7 +51,7 @@ declare
   v_correlated_provider_message_id text;
   v_now timestamptz := now();
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if p_empresa_id is null
      or nullif(trim(coalesce(p_remote_jid, '')), '') is null
      or nullif(trim(coalesce(p_wa_message_id, '')), '') is null
@@ -201,7 +201,7 @@ declare
   v_job public.zelochat_outbound_jobs%rowtype;
   v_control_id uuid;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   -- Read only enough to discover the canonical mutex. The effective lock order
   -- stays gate -> control -> job, matching claims, completion and native cleanup.
   select j.conversation_control_id into v_control_id
@@ -240,7 +240,7 @@ language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare v_job public.zelochat_outbound_jobs%rowtype; v_snapshot record; v_session_id uuid; v_message_id uuid; v_control_id uuid;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if p_job_id is not null then
     select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j
      where j.id = p_job_id and j.empresa_id = p_empresa_id;

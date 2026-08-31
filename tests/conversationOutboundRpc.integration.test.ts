@@ -75,7 +75,7 @@ try {
   reset();
   assert.equal(run(`select count(*) from public.claim_zelochat_outbound_job('integration-b',30)`), '1');
   const takeoverBeforeStart = openSession(`takeover-before-start-${suffix}`);
-  takeoverBeforeStart.write(`begin; select public.zelochat_conversation_control_rollout_gate(); select 1 from public.zelochat_conversation_ai_control where id='${controlId}' for update; update public.zelochat_conversation_ai_control set mode='human',epoch=8 where id='${controlId}'; select 'TAKEOVER_BEFORE_START';`);
+  takeoverBeforeStart.write(`begin; select public.zelochat_conversation_control_lock_gate(); select 1 from public.zelochat_conversation_ai_control where id='${controlId}' for update; update public.zelochat_conversation_ai_control set mode='human',epoch=8 where id='${controlId}'; select 'TAKEOVER_BEFORE_START';`);
   await takeoverBeforeStart.waitFor('TAKEOVER_BEFORE_START');
   const staleStart = openSession(`stale-start-${suffix}`);
   staleStart.write(`select 'START_PID:' || pg_backend_pid(); select 'START_RESULT:' || public.start_zelochat_outbound_transport('${jobId}','${empresaId}','integration-b');`);
@@ -91,7 +91,7 @@ try {
   startFirst.write(`begin; select 'START_FIRST_RESULT:' || public.start_zelochat_outbound_transport('${jobId}','${empresaId}','integration-c'); select 'START_FIRST_LOCKED';`);
   await startFirst.waitFor('START_FIRST_LOCKED'); assert((await startFirst.waitFor('START_FIRST_RESULT:true')).includes('START_FIRST_RESULT:true'));
   const takeoverBlocked = openSession(`takeover-blocked-${suffix}`);
-  takeoverBlocked.write(`select 'TAKEOVER_PID:' || pg_backend_pid(); begin; select public.zelochat_conversation_control_rollout_gate(); update public.zelochat_conversation_ai_control set mode='human',epoch=8 where id='${controlId}'; commit; select 'TAKEOVER_DONE';`);
+  takeoverBlocked.write(`select 'TAKEOVER_PID:' || pg_backend_pid(); begin; select public.zelochat_conversation_control_lock_gate(); update public.zelochat_conversation_ai_control set mode='human',epoch=8 where id='${controlId}'; commit; select 'TAKEOVER_DONE';`);
   await takeoverBlocked.waitFor('TAKEOVER_PID:'); await waitForDatabaseLock(`takeover-blocked-${suffix}`);
   startFirst.write('commit;'); await takeoverBlocked.waitFor('TAKEOVER_DONE');
   await Promise.all([startFirst.close(), takeoverBlocked.close()]);

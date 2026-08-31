@@ -59,7 +59,6 @@ import {
 } from './ai.js';
 import { beginAiTurn } from './conversationControl.js';
 import { dispatchConversationOutbound, type DispatchResult } from './conversationOutbound.js';
-import { resolveConversationOutboundEngineMode } from './outbound/rollout.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
 import { isRetryableOutboundFailure, type OutboundPayload } from '../src/domain/outbound.js';
@@ -552,14 +551,13 @@ async function processWebhookEvent(
     // Messages sent from the operator's phone (not via the app). Save them so the
     // conversation history stays complete. Persistent provider-id evidence wins;
     // an equal fingerprint without an id is held for replay, never accepted as echo.
-    // FIX 2026-08-30: outbounds humanos não invalidavam respostas automáticas em corrida → takeover e dispatch são serializados por epoch/fila durável; shadow classifica sem mutação.
+    // FIX 2026-08-30: outbounds humanos não invalidavam respostas automáticas em corrida → takeover e dispatch são serializados por epoch/fila durável.
     if (data.key?.fromMe) {
       const result = await processFromMeUpsert({
         empresaId,
         data,
         authStatus: context.authStatus,
         rawEventId: context.rawEventId,
-        mode: resolveConversationOutboundEngineMode(empresaId),
       });
       console.log(`[WebhookTrace] from_me_decision empresa=${empresaId} decision=${result.kind}`);
       return;
@@ -971,7 +969,7 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     if (!safeEqualString(headerToken, webhookToken)) {
       console.warn(`[WebhookTrace] reject instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} reason=token_mismatch`);
       const forgedRawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, 'token_mismatch');
-      await markWebhookEventProcessed(forgedRawEventId, 'shadow_unauthenticated');
+      await markWebhookEventProcessed(forgedRawEventId, 'unauthenticated');
       res.status(401).json({ error: 'invalid webhook token' });
       return;
     }

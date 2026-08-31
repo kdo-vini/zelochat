@@ -1,8 +1,8 @@
 begin;
 
 -- Task 4: one leased sender per canonical conversation across replicas.
--- Migration 064's rollout gate remains the first lock while legacy session
--- writers coexist; do not narrow/remove it until the rolling-deploy bridge is retired.
+-- Migration 064's global lock gate remains the first lock while the legacy
+-- session projection and compatibility bridge remain in schema.
 
 alter table public.zelochat_outbound_jobs
   drop constraint if exists zelochat_outbound_jobs_payload_no_data_url;
@@ -20,7 +20,7 @@ alter table public.zelochat_outbound_jobs
     )
   );
 
--- Temporary rolling-deploy bridge: replicas predating Task 4 still insert
+-- Temporary compatibility bridge: older writers may still insert
 -- campaign/automation rows without the new origin/payload columns. Keep the
 -- strict CHECK below while deriving only those legacy shapes. Conversation
 -- jobs are never defaulted and therefore remain fail-closed.
@@ -48,7 +48,7 @@ on public.zelochat_outbound_jobs
 for each row execute function public.zelochat_outbound_job_rolling_bridge();
 
 comment on function public.zelochat_outbound_job_rolling_bridge() is
-  'Temporary Task 4 rolling bridge for legacy campaign/automation writers; remove only after old replicas drain.';
+  'Temporary compatibility bridge for legacy campaign/automation writers; removed by migration 067.';
 
 alter table public.zelochat_outbound_jobs drop constraint if exists zelochat_outbound_jobs_conversation_shape_check;
 alter table public.zelochat_outbound_jobs add constraint zelochat_outbound_jobs_conversation_shape_check check (
@@ -103,7 +103,7 @@ declare
   v_now timestamptz := now();
   v_control_id uuid;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
 
   for v_control_id in
     select distinct j.conversation_control_id from public.zelochat_outbound_jobs j
@@ -214,7 +214,7 @@ declare
   v_now timestamptz := now();
 begin
   if nullif(trim(p_worker), '') is null then raise exception 'INVALID_LEASE_OWNER'; end if;
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   perform public.release_zelochat_expired_leases();
 
   loop
@@ -390,7 +390,7 @@ declare
   v_initial_status text;
   v_takeover_applied boolean := false;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if p_source not in ('zelochat_operator','explicit_manual_toggle') then raise exception 'INVALID_TAKEOVER_SOURCE'; end if;
   if nullif(trim(p_idempotency_key), '') is null then raise exception 'INVALID_IDEMPOTENCY_KEY'; end if;
   if nullif(trim(p_payload_fingerprint), '') is null then raise exception 'INVALID_PAYLOAD_FINGERPRINT'; end if;
@@ -478,7 +478,7 @@ declare
   v_job public.zelochat_outbound_jobs%rowtype;
   v_now timestamptz := now();
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if nullif(trim(p_owner), '') is null then raise exception 'INVALID_MEDIA_PREPARATION_OWNER'; end if;
   update public.zelochat_outbound_jobs j
      set media_preparation_owner = p_owner,
@@ -523,7 +523,7 @@ declare
   v_job public.zelochat_outbound_jobs%rowtype;
   v_now timestamptz := now();
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if nullif(trim(p_owner), '') is null then raise exception 'INVALID_MEDIA_PREPARATION_OWNER'; end if;
   if nullif(trim(p_intent_payload_fingerprint), '') is null then raise exception 'INVALID_PAYLOAD_FINGERPRINT'; end if;
   update public.zelochat_outbound_jobs j
@@ -576,7 +576,7 @@ declare
   v_job public.zelochat_outbound_jobs%rowtype;
   v_now timestamptz := now();
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if nullif(trim(p_payload_fingerprint), '') is null then raise exception 'INVALID_PAYLOAD_FINGERPRINT'; end if;
   if p_payload is null or jsonb_path_exists(p_payload, '$.** ? (@.type() == "string" && @ like_regex "^data:[^,]+," flag "i")') then raise exception 'OUTBOUND_PAYLOAD_DATA_URL_FORBIDDEN'; end if;
   update public.zelochat_outbound_jobs j
@@ -616,7 +616,7 @@ declare
   v_job public.zelochat_outbound_jobs%rowtype;
   v_now timestamptz := now();
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   update public.zelochat_outbound_jobs j
      set status = 'failed_before_dispatch',
          last_error = left(coalesce(p_reason, 'Mensagem não enviada.'), 1000),
@@ -671,7 +671,7 @@ declare
   v_now timestamptz := now();
   v_initial_status text;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if p_origin not in ('ai_auto','ai_followup') then raise exception 'INVALID_AI_ORIGIN'; end if;
   if nullif(trim(p_idempotency_key), '') is null then raise exception 'INVALID_IDEMPOTENCY_KEY'; end if;
   if nullif(trim(p_payload_fingerprint), '') is null then raise exception 'INVALID_PAYLOAD_FINGERPRINT'; end if;
@@ -781,7 +781,7 @@ declare
   v_control public.zelochat_conversation_ai_control%rowtype;
   v_now timestamptz := now();
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if p_expected_conversation_control_id is null or p_expected_epoch is null or p_trigger_message_id is null then
     return;
   end if;
@@ -875,7 +875,7 @@ declare
   v_total_quantity numeric;
   v_result jsonb;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if p_pending_order_id is null or p_expected_conversation_control_id is null
      or p_expected_epoch is null or p_trigger_message_id is null then
     return null;
@@ -1008,7 +1008,7 @@ declare
   v_now timestamptz := now();
   v_initial_status text;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   if p_origin not in ('system_handoff','system_transactional','campaign','automation','internal_system') then raise exception 'INVALID_SYSTEM_ORIGIN'; end if;
   if nullif(trim(p_remote_jid), '') is null then raise exception 'INVALID_REMOTE_JID'; end if;
   if nullif(trim(p_idempotency_key), '') is null then raise exception 'INVALID_IDEMPOTENCY_KEY'; end if;
@@ -1115,7 +1115,7 @@ create or replace function public.start_zelochat_outbound_transport(p_id uuid, p
 returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_job public.zelochat_outbound_jobs%rowtype; v_control public.zelochat_conversation_ai_control%rowtype; v_now timestamptz := now(); v_control_id uuid; v_suppression text;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
   if v_control_id is not null then
     select * into v_control from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update;
@@ -1169,7 +1169,7 @@ returns boolean language plpgsql security definer set search_path = public, pg_t
 declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_control_id uuid;
 begin
   if nullif(trim(p_provider_message_id), '') is null then return false; end if;
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
   if v_control_id is not null then perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update; end if;
   update public.zelochat_outbound_jobs j set status = 'sent', provider_message_id = p_provider_message_id, sent_at = v_now,
@@ -1195,7 +1195,7 @@ returns boolean language plpgsql security definer set search_path = public, pg_t
 declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_status text; v_control_id uuid;
 begin
   v_status := case when p_delivery_uncertain then 'delivery_uncertain' when p_retry_at is not null then 'queued' else 'failed_before_dispatch' end;
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
   if v_control_id is not null then perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update; end if;
   update public.zelochat_outbound_jobs j set status = v_status, last_error = left(coalesce(p_reason, 'Falha ao enviar.'), 1000),
@@ -1224,7 +1224,7 @@ create or replace function public.release_zelochat_outbound_hold(
 returns uuid language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_control public.zelochat_conversation_ai_control%rowtype; v_next_job_id uuid; v_now timestamptz := now();
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   select * into v_control from public.zelochat_conversation_ai_control c
    where c.id = p_conversation_control_id and c.empresa_id = p_empresa_id for update;
   if not found then return null; end if;
@@ -1243,7 +1243,7 @@ create or replace function public.suppress_zelochat_outbound_job(p_id uuid, p_em
 returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_job public.zelochat_outbound_jobs%rowtype; v_now timestamptz := now(); v_control_id uuid;
 begin
-  perform public.zelochat_conversation_control_rollout_gate();
+  perform public.zelochat_conversation_control_lock_gate();
   select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j where j.id = p_id and j.empresa_id = p_empresa_id;
   if v_control_id is not null then perform 1 from public.zelochat_conversation_ai_control c where c.id = v_control_id and c.empresa_id = p_empresa_id for update; end if;
   update public.zelochat_outbound_jobs j set status = 'cancelled', suppression_reason = left(coalesce(p_reason, 'suppressed'), 200),

@@ -27,7 +27,7 @@ export interface FromMeProcessorDependencies {
 }
 
 export type FromMeProcessingResult =
-  | { kind: 'duplicate' | 'ignore_protocol_artifact' | 'shadow_unauthenticated' | 'shadow_rollout' }
+  | { kind: 'duplicate' | 'ignore_protocol_artifact' | 'unauthenticated' }
   | { kind: 'server_echo'; jobId: string }
   | { kind: 'native_human'; messageId: string; jobId: string; takeoverApplied: boolean };
 
@@ -138,25 +138,16 @@ function defaults(): FromMeProcessorDependencies {
 }
 
 export function createFromMeProcessor(dependencies: FromMeProcessorDependencies = defaults()) {
-  return async function processFromMeUpsert(input: { empresaId: string; data: any; authStatus: WebhookAuthStatus; rawEventId?: string | null; mode?: 'shadow' | 'enforce' }): Promise<FromMeProcessingResult> {
+  return async function processFromMeUpsert(input: { empresaId: string; data: any; authStatus: WebhookAuthStatus; rawEventId?: string | null }): Promise<FromMeProcessingResult> {
     const extracted = await extractFromMeMessage(input.data);
     if (extracted.protocolArtifact) return { kind: 'ignore_protocol_artifact' };
-    // Native-human enforcement is security-sensitive. Known instances without
-    // the stable token remain observable in raw/shadow state only.
-    if (input.authStatus !== 'token_match') return { kind: 'shadow_unauthenticated' };
+    // A native send is a human takeover only when the webhook authentication
+    // proves it came from the configured WhatsApp instance. This is an
+    // authorization boundary, not a rollout mode.
+    if (input.authStatus !== 'token_match') return { kind: 'unauthenticated' };
 
-    // Shadow performs only evidence reads and pure classification. It never
-    // calls a reconciliation/takeover RPC, cancels a timer or broadcasts state.
     const evidence = await dependencies.lookupEvidence({ empresaId: input.empresaId, remoteJid: extracted.remoteJid, waMessageId: extracted.waMessageId, fingerprint: extracted.fingerprint });
     const decision = classifyFromMe(extracted, evidence);
-    if (input.mode !== 'enforce') {
-      if (decision.kind === 'native_human') {
-        recordConversationOutboundMetric('from_me_would_takeover', { source: 'human_native_whatsapp' }, { empresaId: input.empresaId, remoteJid: extracted.remoteJid });
-      } else if (decision.kind === 'server_echo' || decision.kind === 'pending_correlation') {
-        recordConversationOutboundMetric('from_me_would_correlate', { decision: decision.kind }, { empresaId: input.empresaId, remoteJid: extracted.remoteJid, jobId: decision.jobId });
-      }
-      return { kind: 'shadow_rollout' };
-    }
 
     if (decision.kind === 'ignore_protocol_artifact' || decision.kind === 'duplicate') return { kind: decision.kind };
     if (decision.kind === 'pending_correlation') {
