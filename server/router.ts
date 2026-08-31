@@ -11,7 +11,6 @@ import {
   fetchQR,
   disconnectWhatsApp,
   reconnectWhatsApp,
-  sendTextMessage,
   sendPresence,
   sendMediaMessage,
   sendWhatsAppAudio,
@@ -32,11 +31,7 @@ import {
 import {
   getSessionsPage,
   getSession,
-  addAssistantMessage,
-  createAssistantMessageIntent,
   deleteFailedAssistantMessage,
-  markAssistantMessageSendFailed,
-  markAssistantMessageSendSucceeded,
   updateMessageReaction,
   deleteMessageByWhatsAppId,
   updateSessionProfilePic,
@@ -439,19 +434,24 @@ router.post('/internal/whatsapp/send-text', async (req: Request, res: Response) 
       return;
     }
 
-    const intent = await createAssistantMessageIntent(jid, text, empresaId);
     try {
-      const waMessageId = await sendTextMessage(jid, text, empresaId);
-      await markAssistantMessageSendSucceeded(empresaId, intent.id, waMessageId).catch((markError) => {
-        console.warn('[Router] Internal WhatsApp sent, but failed to mark DB message as sent:', markError);
+      const result = await dispatchConversationOutbound({
+        empresaId,
+        remoteJid: jid,
+        actorUserId: null,
+        origin: 'internal_system',
+        takeoverPolicy: 'preserve_ai',
+        idempotencyKey: req.header('idempotency-key')?.trim() || `internal-outreach:${randomUUID()}`,
+        payload: { kind: 'text', text },
       });
-      res.json({ ok: true, empresaId, to: jid, messageId: waMessageId ?? null, dbMessageId: intent.id });
+      if (result.state === 'failed_before_dispatch' || result.state === 'delivery_uncertain') {
+        res.status(502).json({ error: 'SEND_FAILED', message: result.friendlyMessage });
+        return;
+      }
+      res.json({ ok: true, empresaId, to: jid, messageId: result.messageId, jobId: result.jobId, status: result.state });
     } catch (sendError) {
       const payload = serializeInternalSendError(sendError);
-      await markAssistantMessageSendFailed(empresaId, intent.id, payload.message).catch((markError) => {
-        console.warn('[Router] Failed to mark internal WhatsApp send as failed:', markError);
-      });
-      console.error('[Router] Internal WhatsApp provider send error:', sendError);
+      console.error('[Router] Internal WhatsApp enqueue error:', sendError);
       res.status(502).json(payload);
     }
   } catch (error: any) {
@@ -1979,10 +1979,20 @@ router.post('/api/drivers/:id/dispatch', async (req: Request, res: Response) => 
     const driverPhone = driver.phone.replace(/\D/g, '');
     const jid = `${driverPhone}@s.whatsapp.net`;
 
-    const waMessageId = await sendTextMessage(jid, text, empresaId);
-    await addAssistantMessage(jid, text, undefined, empresaId, undefined, { waMessageId });
+    const dispatch = await dispatchConversationOutbound({
+      empresaId,
+      remoteJid: jid,
+      actorUserId: null,
+      origin: 'system_transactional',
+      takeoverPolicy: 'preserve_ai',
+      idempotencyKey: req.header('idempotency-key')?.trim() || `driver-dispatch:${orderId}:${driverId}`,
+      payload: { kind: 'text', text },
+    });
+    if (dispatch.state === 'failed_before_dispatch' || dispatch.state === 'delivery_uncertain') {
+      throw new Error(dispatch.friendlyMessage);
+    }
 
-    res.json({ ok: true });
+    res.json({ ok: true, status: dispatch.state, jobId: dispatch.jobId });
   } catch (error) {
     sendDriverError(res, error);
   }
@@ -2172,8 +2182,15 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
             const phoneWithDdi = customerPhoneRaw.startsWith('55') ? customerPhoneRaw : `55${customerPhoneRaw}`;
             const jid = `${phoneWithDdi}@s.whatsapp.net`;
 
-            const waMessageId = await sendTextMessage(jid, text, empresaId);
-            await addAssistantMessage(jid, text, undefined, empresaId, undefined, { waMessageId });
+            await dispatchConversationOutbound({
+              empresaId,
+              remoteJid: jid,
+              actorUserId: null,
+              origin: 'system_transactional',
+              takeoverPolicy: 'preserve_ai',
+              idempotencyKey: `order-status:${orderId}:${updated.revision}:${status}`,
+              payload: { kind: 'text', text },
+            });
           }
         }
       } catch (err) {

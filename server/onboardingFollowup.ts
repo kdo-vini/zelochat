@@ -161,7 +161,7 @@ export async function sendWelcomePack(userId: string): Promise<{ email: boolean;
   }
 
   if (ctx.contato && (await claimWhatsAppSend(ctx.userId, 0, ctx.contato))) {
-    const result = await sendOutreachMessage(ctx.contato, dayZeroWhatsApp(ctx.firstName));
+    const result = await sendOutreachMessage(ctx.contato, dayZeroWhatsApp(ctx.firstName), `onboarding-whatsapp:${ctx.userId}:0`);
     if (!result.ok) {
       await unclaimWhatsAppSend(ctx.userId, 0);
     } else {
@@ -258,7 +258,7 @@ async function sendStep(ctx: UserContext, day: number): Promise<{ email: boolean
   const whatsappBody = pickWhatsAppBody(day, ctx.firstName);
   if (whatsappBody && ctx.contato) {
     if (await claimWhatsAppSend(ctx.userId, day, ctx.contato)) {
-      const result = await sendOutreachMessage(ctx.contato, whatsappBody);
+      const result = await sendOutreachMessage(ctx.contato, whatsappBody, `onboarding-whatsapp:${ctx.userId}:${day}`);
       if (result.ok) whatsapp = true;
       else await unclaimWhatsAppSend(ctx.userId, day);
     }

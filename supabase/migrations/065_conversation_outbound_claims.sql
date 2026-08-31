@@ -61,7 +61,7 @@ alter table public.zelochat_outbound_jobs add constraint zelochat_outbound_jobs_
       and payload_fingerprint is not null and nullif(trim(payload_fingerprint), '') is not null
       and outbound_origin in ('human_zelochat','human_native_whatsapp','ai_auto','ai_followup','system_handoff','system_transactional','internal_system')
       and (outbound_origin not in ('ai_auto','ai_followup') or control_epoch is not null)
-    )) or (job_type = 'campaign' and conversation_control_id is null and outbound_origin in ('campaign','internal_system'))
+    )) or (job_type = 'campaign' and conversation_control_id is null and outbound_origin in ('campaign','system_transactional','internal_system'))
        or (job_type = 'automation' and conversation_control_id is null and outbound_origin in ('automation','internal_system'))
   )
 );
@@ -218,7 +218,8 @@ begin
   loop
     -- Candidate discovery is deliberately non-locking. For conversation jobs,
     -- the canonical control row is locked before the job row is selected FOR UPDATE.
-    select j.id, j.conversation_control_id, j.empresa_id
+    select j.id, j.conversation_control_id, j.empresa_id,
+           coalesce(nullif(j.conversation_jid, ''), nullif(j.phone_snapshot, '')) as destination_key
       into v_candidate
       from public.zelochat_outbound_jobs j
       left join public.zelochat_campaigns c on c.id = j.campaign_id and c.empresa_id = j.empresa_id
@@ -270,6 +271,18 @@ begin
         update public.zelochat_outbound_jobs set status = 'cancelled', suppression_reason = 'control_missing', updated_at = v_now where id = v_candidate.id and empresa_id = v_candidate.empresa_id and status = 'queued';
         continue;
       end if;
+    elsif v_candidate.destination_key is not null then
+      -- Jobs sem conversa (campanha, automação, interno e transacional para
+      -- JID novo) usam o destino tenant-scoped como mutex cross-replica.
+      perform pg_advisory_xact_lock(hashtextextended(v_candidate.empresa_id::text || ':' || v_candidate.destination_key, 0));
+      if exists (
+        select 1 from public.zelochat_outbound_jobs active
+         where active.empresa_id = v_candidate.empresa_id
+           and active.id <> v_candidate.id
+           and active.conversation_control_id is null
+           and coalesce(nullif(active.conversation_jid, ''), nullif(active.phone_snapshot, '')) = v_candidate.destination_key
+           and active.status in ('sending','dispatch_started')
+      ) then return; end if;
     end if;
 
     select * into v_claimed
@@ -988,13 +1001,14 @@ declare
   v_initial_status text;
 begin
   perform public.zelochat_conversation_control_rollout_gate();
-  if p_origin not in ('system_handoff','system_transactional','internal_system') then raise exception 'INVALID_SYSTEM_ORIGIN'; end if;
+  if p_origin not in ('system_handoff','system_transactional','campaign','automation','internal_system') then raise exception 'INVALID_SYSTEM_ORIGIN'; end if;
   if nullif(trim(p_remote_jid), '') is null then raise exception 'INVALID_REMOTE_JID'; end if;
   if nullif(trim(p_idempotency_key), '') is null then raise exception 'INVALID_IDEMPOTENCY_KEY'; end if;
   if nullif(trim(p_payload_fingerprint), '') is null then raise exception 'INVALID_PAYLOAD_FINGERPRINT'; end if;
   if p_payload is null or jsonb_path_exists(p_payload, '$.** ? (@.type() == "string" && @ like_regex "^data:[^,]+," flag "i")') then raise exception 'OUTBOUND_PAYLOAD_DATA_URL_FORBIDDEN'; end if;
 
   perform pg_advisory_xact_lock(hashtextextended(p_empresa_id::text || ':' || p_idempotency_key, 0));
+  perform pg_advisory_xact_lock(hashtextextended(p_empresa_id::text || ':' || p_remote_jid, 0));
   select * into v_existing from public.zelochat_outbound_jobs j
    where j.empresa_id = p_empresa_id and j.idempotency_key = p_idempotency_key;
   if found then
@@ -1012,13 +1026,21 @@ begin
 
   v_initial_status := case when p_payload->>'kind' in ('media','audio','sticker') then 'preparing' else 'queued' end;
 
-  if p_origin = 'internal_system' then
+  select s.id into v_session_id
+    from public.zelochat_sessions s
+   where s.empresa_id = p_empresa_id and s.remote_jid = p_remote_jid
+   order by s.updated_at desc, s.id
+   limit 1;
+
+  if p_origin in ('campaign','automation','internal_system')
+     or (p_origin = 'system_transactional' and v_session_id is null) then
     insert into public.zelochat_outbound_jobs (
       empresa_id, job_type, idempotency_key, phone_snapshot, message, status, next_attempt_at,
       conversation_jid, outbound_origin, takeover_policy, payload, payload_fingerprint,
       intent_payload_fingerprint
     ) values (
-      p_empresa_id, 'campaign', p_idempotency_key, split_part(p_remote_jid, '@', 1),
+      p_empresa_id, case when p_origin = 'automation' then 'automation' else 'campaign' end,
+      p_idempotency_key, split_part(p_remote_jid, '@', 1),
       coalesce(nullif(p_message_text, ''), '[' || coalesce(p_payload->>'kind', 'mensagem') || ']'),
       v_initial_status, v_now, p_remote_jid, p_origin, 'preserve_ai', p_payload,
       p_payload_fingerprint, p_payload_fingerprint

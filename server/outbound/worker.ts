@@ -76,7 +76,7 @@ export function createSupabaseOutboundJobStore(): OutboundJobStore {
         control_epoch: input.controlEpoch ?? null,
         status: 'queued',
         next_attempt_at: new Date().toISOString(),
-      }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('*').maybeSingle();
+      }, { onConflict: 'empresa_id,idempotency_key', ignoreDuplicates: true }).select('*').maybeSingle();
       if (error || !data) throw error ?? new Error('JOB_INSERT_FAILED');
       return mapRow(data);
     },
@@ -162,7 +162,9 @@ export class OutboundWorker {
   }
 
   private executionKey(job: OutboundJob, instance: string): string {
-    return job.conversationControlId ? `conversation:${job.conversationControlId}` : `instance:${instance}`;
+    return job.conversationControlId
+      ? `conversation:${job.conversationControlId}`
+      : `destination:${job.empresaId}:${job.conversationJid ?? job.phone ?? instance}`;
   }
 
   private async broadcastStatus(job: OutboundJob, status: ChatMessage['status']): Promise<void> {

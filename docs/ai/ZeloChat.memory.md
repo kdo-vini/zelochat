@@ -473,3 +473,8 @@
 - Preserve idempotency for webhooks, messages, and AI replies.
 - Treat `/api/sync-config` as a risky runtime path until stale browser mirroring is removed.
 - Keep audit findings evidence-based; if the code does not prove it, mark it as hypothesis.
+
+## Confirmed 2026-08-30: system outbound boundary
+- Mensagens visíveis do backend não podem chamar helpers `send*Message` fora de `server/whatsapp.ts` e `server/outbound/providerAdapter.ts`; presença, leitura, conexão/QR e revoke continuam efeitos de protocolo permitidos.
+- `system_transactional`, `campaign`, `automation` e `internal_system` sempre usam `preserve_ai`. Um transacional para JID sem sessão vira job não vinculado e é serializado cross-replica por `empresa_id + destino`; ele não cria `conversation_control` nem toma uma conversa de cliente.
+- Writers de campanha/automação persistem `outbound_origin`, `takeover_policy`, payload canônico e fingerprint, e usam `onConflict: 'empresa_id,idempotency_key'`. A remoção da unique global legada continua reservada à migration 067/Task 12 após drenar réplicas antigas.

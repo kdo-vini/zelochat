@@ -2,6 +2,7 @@ import { getServiceSupabase } from '../supabase.js';
 import { evaluateAutomationCandidate, type AutomationCandidate, type EvaluatedDispatch } from './evaluator.js';
 import { getDefaultAutomationRule, type AutomationKind, type AutomationRule } from './rules.js';
 import { getCrmRolloutFlags } from '../customers/rollout.js';
+import { fingerprintOutboundPayload } from '../outbound/providerAdapter.js';
 
 export type AutomationSweepDependencies = {
   listRules: () => Promise<AutomationRule[]>;
@@ -36,7 +37,8 @@ export async function persistAutomationDispatch(rule: AutomationRule, dispatch: 
   if (error) throw error;
   if (!data || dispatch.status !== 'eligible' || !dispatch.phone) return;
   const { data: profile } = await db.from('empresa_perfil').select('whatsmiau_instance').eq('id', rule.empresaId).maybeSingle();
-  const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({ empresa_id: rule.empresaId, automation_dispatch_id: data.id, pessoa_id: dispatch.pessoaId, job_type: 'automation', idempotency_key: dispatch.eventKey, instance_key: profile?.whatsmiau_instance ?? '', phone_snapshot: dispatch.phone, message: dispatch.message, status: 'queued', next_attempt_at: new Date().toISOString() }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
+  const payload = { kind: 'text' as const, text: dispatch.message };
+  const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({ empresa_id: rule.empresaId, automation_dispatch_id: data.id, pessoa_id: dispatch.pessoaId, job_type: 'automation', idempotency_key: dispatch.eventKey, instance_key: profile?.whatsmiau_instance ?? '', phone_snapshot: dispatch.phone, message: dispatch.message, outbound_origin: 'automation', takeover_policy: 'preserve_ai', payload, payload_fingerprint: await fingerprintOutboundPayload(payload), status: 'queued', next_attempt_at: new Date().toISOString() }, { onConflict: 'empresa_id,idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
   if (jobError) throw jobError;
   if (job?.id) await db.from('zelochat_automation_dispatches').update({ status: 'queued', outbound_job_id: job.id, queued_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', data.id);
 }

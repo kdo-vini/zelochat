@@ -749,10 +749,9 @@ export async function confirmPendingOrder(jid: string, empresaId: string, permit
   // o pedido criado mas não sabia que o cliente NUNCA recebeu a confirmação.
   // Customer pensava "será que meu pedido foi?" e ligava reclamando.
   //
-  // Agora: persiste a tentativa com prefixo [FALHA NO ENVIO] caso o send
-  // falhe. Operador vê no chat history "tentei mandar isso mas falhou —
-  // me deixa retentar manualmente". Pedido continua válido (createOrderInDb
-  // já rolou). justConfirmedMap também é setado pra evitar que o próximo
+  // Agora: o dispatcher persiste o lifecycle failed_before_dispatch ou
+  // delivery_uncertain com copy amigável e permite retentativa segura. Pedido
+  // continua válido (createOrderInDb já rolou). justConfirmedMap evita que o próximo
   // "obrigado" do cliente vire criar_pedido novamente.
   const dispatch = await enqueueAutomatedText({ permit, text: reply, origin: 'ai_auto', purpose: `pending-confirmed:${orderId}` });
 

@@ -1,6 +1,8 @@
-import { sendTextMessage, fetchInstanceConnectionState } from './whatsapp.js';
+import { randomUUID } from 'node:crypto';
+import { fetchInstanceConnectionState } from './whatsapp.js';
 import { getOrCreateOwnInstanceForEmpresa } from './instanceManager.js';
 import { getServiceSupabase } from './supabase.js';
+import { dispatchConversationOutbound } from './conversationOutbound.js';
 
 /**
  * Outreach WhatsApp — server-to-server messaging from the Téchne empresa
@@ -78,7 +80,7 @@ export interface OutreachResult {
  * user. Returns ok=false (with a reason) on any failure — caller decides
  * whether to log/retry. Never throws.
  */
-export async function sendOutreachMessage(phone: string, body: string): Promise<OutreachResult> {
+export async function sendOutreachMessage(phone: string, body: string, idempotencyKey?: string): Promise<OutreachResult> {
   const jid = toJid(phone);
   if (!jid) {
     console.warn(`[whatsappOutreach] invalid phone, skipping: ${phone}`);
@@ -103,10 +105,22 @@ export async function sendOutreachMessage(phone: string, body: string): Promise<
   }
 
   try {
-    await sendTextMessage(jid, body, empresaId);
+    const result = await dispatchConversationOutbound({
+      empresaId,
+      remoteJid: jid,
+      actorUserId: null,
+      origin: 'internal_system',
+      takeoverPolicy: 'preserve_ai',
+      idempotencyKey: idempotencyKey?.trim() || `internal-outreach:${randomUUID()}`,
+      payload: { kind: 'text', text: body },
+    });
+    if (result.state === 'failed_before_dispatch' || result.state === 'delivery_uncertain') {
+      console.error(`[whatsappOutreach] durable send failed to ${jid}:`, result.friendlyMessage);
+      return { ok: false, reason: 'SEND_FAILED' };
+    }
     return { ok: true };
   } catch (err) {
-    console.error(`[whatsappOutreach] sendTextMessage failed to ${jid}:`, err instanceof Error ? err.message : err);
+    console.error(`[whatsappOutreach] enqueue failed to ${jid}:`, err instanceof Error ? err.message : err);
     return { ok: false, reason: 'SEND_FAILED' };
   }
 }

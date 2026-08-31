@@ -2,7 +2,7 @@ import { broadcast } from './ws.js';
 import { getEmpresaUserId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import { ensureCustomerForSession } from './customers/identity.js';
 import { transcribeAudio } from './transcription.js';
-import { sendTextMessage } from './whatsapp.js';
+import { dispatchConversationOutbound } from './conversationOutbound.js';
 import { redactJid } from './redact.js';
 import {
   claimHumanTakeover,
@@ -168,8 +168,15 @@ async function transcribeAudioWithFailureTracking(
       });
 
       const audioEscalationMsg = 'Tive dificuldade em ouvir seus áudios. Um atendente vai te ajudar agora.';
-      const waMessageId = await sendTextMessage(jid, audioEscalationMsg, empresaId);
-      await addAssistantMessage(jid, audioEscalationMsg, undefined, empresaId, undefined, { waMessageId });
+      await dispatchConversationOutbound({
+        empresaId,
+        remoteJid: jid,
+        actorUserId: null,
+        origin: 'system_handoff',
+        takeoverPolicy: 'preserve_ai',
+        idempotencyKey: `transcription-handoff:${params.messageId}`,
+        payload: { kind: 'text', text: audioEscalationMsg },
+      });
     } catch (escalateErr) {
       console.error('[transcription] Auto-escalation after Whisper failures threw:', escalateErr);
     }

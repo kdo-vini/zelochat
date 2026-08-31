@@ -83,7 +83,7 @@ type EnqueueAiOutbound = (params: {
   origin: 'ai_auto' | 'ai_followup';
 }) => Promise<ConversationOutboundJobSnapshot | null>;
 
-type SystemOutboundOrigin = 'system_handoff' | 'system_transactional' | 'internal_system';
+type SystemOutboundOrigin = 'system_handoff' | 'system_transactional' | 'campaign' | 'automation' | 'internal_system';
 
 type EnqueueSystemOutbound = (params: {
   empresaId: string;
@@ -582,7 +582,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
         return waitForTerminal(job, deps, deps.sendWaitMs);
       }
 
-      if (request.origin === 'system_handoff' || request.origin === 'system_transactional' || request.origin === 'internal_system') {
+      if (request.origin === 'system_handoff' || request.origin === 'system_transactional' || request.origin === 'campaign' || request.origin === 'automation' || request.origin === 'internal_system') {
         if (request.takeoverPolicy !== 'preserve_ai') throw new Error(FRIENDLY_PREPARE_FAILED);
         let job = await deps.enqueueSystemOutbound({
           empresaId: request.empresaId,

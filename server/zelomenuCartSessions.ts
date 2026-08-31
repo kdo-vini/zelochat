@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { getConfig, isAiGloballyEnabledNow, loadAiSettingsFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { evaluateCreateOrderScheduleGuard, getPublicAppBaseUrl } from './ai.js';
 import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
-import { addAssistantMessage } from './messageHandler.js';
 import { selectOrderCreatedNotifyTriggers } from '../src/domain/orderEventTriggers.js';
 import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { getCrmRolloutFlags } from './customers/rollout.js';
-import { sendTextMessage } from './whatsapp.js';
+import { dispatchConversationOutbound } from './conversationOutbound.js';
+import { fingerprintOutboundPayload } from './outbound/providerAdapter.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
 import {
@@ -1081,6 +1081,7 @@ async function decrementAcceptedOrderStockBestEffort(
 
 async function notifyManagerForAcceptedOrder(input: {
   empresaId: string;
+  idempotencyScope: string;
   customer: ZeloMenuCustomerSnapshot;
   cart: ZeloMenuCartSnapshot;
   fulfillment: ZeloMenuFulfillmentSnapshot;
@@ -1126,17 +1127,22 @@ async function notifyManagerForAcceptedOrder(input: {
     : '';
 
   for (const match of matches) {
-    await sendTextMessage(
-      managerJid,
-      `🔔 *${match.trigger.name}*\n` +
+    const text = `🔔 *${match.trigger.name}*\n` +
         `Cliente: ${input.customer.name || 'Cliente'}${input.customer.phone ? ` (${input.customer.phone})` : ''}\n` +
         `Pedido: ${itemsList || 'Itens a revisar'}\n` +
         `Retirada/entrega: ${schedule}${deliveryFeeLine}\n` +
         `Pagamento: ${input.payment.declaredMethod || 'Não informado'}\n` +
         `Total: R$ ${input.pricing.total.toFixed(2)}\n` +
-        `Motivo: ${match.reason}`,
-      input.empresaId,
-    );
+        `Motivo: ${match.reason}`;
+    await dispatchConversationOutbound({
+      empresaId: input.empresaId,
+      remoteJid: managerJid,
+      actorUserId: null,
+      origin: 'internal_system',
+      takeoverPolicy: 'preserve_ai',
+      idempotencyKey: `manager-order:${input.idempotencyScope}:${match.trigger.id}`,
+      payload: { kind: 'text', text },
+    });
   }
 }
 
@@ -1639,6 +1645,7 @@ export async function acceptWhatsAppCartReviewSession(input: {
 
   void notifyManagerForAcceptedOrder({
     empresaId: sessionRow.empresa_id,
+    idempotencyScope: orderId,
     customer: nextCustomer,
     cart: revalidation.previewCart,
     fulfillment: nextFulfillment,
@@ -1681,22 +1688,22 @@ export async function acceptWhatsAppCartReviewSession(input: {
     payment: revalidation.previewPayment,
   });
 
-  let waMessageId: string | undefined;
   let sendOk = true;
   try {
-    waMessageId = await sendTextMessage(acceptedRow.source_ref, customerMessage, acceptedRow.empresa_id);
+    const dispatch = await dispatchConversationOutbound({
+      empresaId: acceptedRow.empresa_id,
+      remoteJid: acceptedRow.source_ref,
+      actorUserId: input.acceptedByUserId,
+      origin: 'system_transactional',
+      takeoverPolicy: 'preserve_ai',
+      idempotencyKey: `zmenu-cart-accepted:${acceptedRow.id}`,
+      payload: { kind: 'text', text: customerMessage },
+    });
+    sendOk = dispatch.state !== 'failed_before_dispatch' && dispatch.state !== 'delivery_uncertain';
   } catch (sendErr) {
     sendOk = false;
-    console.error('[ZeloMenu] acceptWhatsAppCartReviewSession: customer message failed after accept:', sendErr);
+    console.error('[ZeloMenu] acceptWhatsAppCartReviewSession: customer enqueue failed after accept:', sendErr);
   }
-  await addAssistantMessage(
-    acceptedRow.source_ref,
-    sendOk ? customerMessage : `[FALHA NO ENVIO — reenviar manualmente]\n${customerMessage}`,
-    undefined,
-    acceptedRow.empresa_id,
-    undefined,
-    { waMessageId },
-  );
 
   return {
     ...buildReviewResponse(acceptedRow, revalidation),
@@ -1853,23 +1860,23 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
     payment: revalidation.previewPayment,
   });
 
-  let waMessageId: string | undefined;
   let sendOk = true;
   if (confirmedRow.context === 'whatsapp_order') {
     try {
-      waMessageId = await sendTextMessage(confirmedRow.source_ref, customerMessage, confirmedRow.empresa_id);
+      const dispatch = await dispatchConversationOutbound({
+        empresaId: confirmedRow.empresa_id,
+        remoteJid: confirmedRow.source_ref,
+        actorUserId: null,
+        origin: 'system_transactional',
+        takeoverPolicy: 'preserve_ai',
+        idempotencyKey: `zmenu-cart-confirmed:${confirmedRow.id}:${confirmedRow.revision}`,
+        payload: { kind: 'text', text: customerMessage },
+      });
+      sendOk = dispatch.state !== 'failed_before_dispatch' && dispatch.state !== 'delivery_uncertain';
     } catch (sendErr) {
       sendOk = false;
-      console.error('[ZeloMenu] confirmPublicCartSession: customer message failed after confirmation:', sendErr);
+      console.error('[ZeloMenu] confirmPublicCartSession: customer enqueue failed after confirmation:', sendErr);
     }
-    await addAssistantMessage(
-      confirmedRow.source_ref,
-      sendOk ? customerMessage : `[FALHA NO ENVIO — reenviar manualmente]\n${customerMessage}`,
-      undefined,
-      confirmedRow.empresa_id,
-      undefined,
-      { waMessageId },
-    );
   } else if (confirmedRow.context === 'public_order') {
     // Público não tem thread de chat para "aceite": o pedido confirmado cai
     // direto na tela de Pedidos (D-037). Materializa zelochat_orders, baixa
@@ -1903,6 +1910,7 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
       }).catch((err) => console.error('[ZeloMenu] public_order pedidos materialization failed:', err));
       void notifyManagerForAcceptedOrder({
         empresaId: confirmedRow.empresa_id,
+        idempotencyScope: orderId,
         customer,
         cart: revalidation.previewCart,
         fulfillment: current.fulfillment,
@@ -1916,9 +1924,17 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
     if (phone) {
       const customerJid = `${phone.startsWith('55') ? phone : `55${phone}`}@s.whatsapp.net`;
       try {
-        await sendTextMessage(customerJid, customerMessage, confirmedRow.empresa_id);
+        await dispatchConversationOutbound({
+          empresaId: confirmedRow.empresa_id,
+          remoteJid: customerJid,
+          actorUserId: null,
+          origin: 'system_transactional',
+          takeoverPolicy: 'preserve_ai',
+          idempotencyKey: `zmenu-public-confirmed:${confirmedRow.id}:${confirmedRow.revision}`,
+          payload: { kind: 'text', text: customerMessage },
+        });
       } catch (sendErr) {
-        console.error('[ZeloMenu] public_order: customer WhatsApp notice failed:', sendErr);
+        console.error('[ZeloMenu] public_order: customer WhatsApp enqueue failed:', sendErr);
       }
     }
   }
@@ -2076,33 +2092,36 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
     }, { onConflict: 'rule_id,event_key', ignoreDuplicates: true }).select('id').maybeSingle();
     if (dispatchError) throw dispatchError;
     if (!dispatch) return 'skipped';
+    const recoveryMessage = rule.message || message;
+    const payload = { kind: 'text' as const, text: recoveryMessage };
     const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({
       empresa_id: claimedRow.empresa_id, automation_dispatch_id: dispatch.id, job_type: 'automation',
-      idempotency_key: eventKey, phone_snapshot: claimedRow.source_ref, message: rule.message || message,
-      status: 'queued', next_attempt_at: new Date().toISOString(),
-    }, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
+      idempotency_key: eventKey, phone_snapshot: claimedRow.source_ref, message: recoveryMessage,
+      outbound_origin: 'automation', takeover_policy: 'preserve_ai', payload,
+      payload_fingerprint: await fingerprintOutboundPayload(payload), status: 'queued', next_attempt_at: new Date().toISOString(),
+    }, { onConflict: 'empresa_id,idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
     if (jobError) throw jobError;
     if (job?.id) await db.from('zelochat_automation_dispatches').update({ status: 'queued', outbound_job_id: job.id, queued_at: now, updated_at: now }).eq('id', dispatch.id);
-    await addAssistantMessage(claimedRow.source_ref, rule.message || message, undefined, claimedRow.empresa_id, undefined);
     return 'sent';
   }
 
-  let waMessageId: string | undefined;
   let sendOk = true;
   try {
-    waMessageId = await sendTextMessage(claimedRow.source_ref, automationRule.message || message, claimedRow.empresa_id);
+    const recoveryMessage = automationRule.message || message;
+    const dispatch = await dispatchConversationOutbound({
+      empresaId: claimedRow.empresa_id,
+      remoteJid: claimedRow.source_ref,
+      actorUserId: null,
+      origin: 'automation',
+      takeoverPolicy: 'preserve_ai',
+      idempotencyKey: `abandoned-cart-legacy:${claimedRow.id}`,
+      payload: { kind: 'text', text: recoveryMessage },
+    });
+    sendOk = dispatch.state !== 'failed_before_dispatch' && dispatch.state !== 'delivery_uncertain';
   } catch (sendErr) {
     sendOk = false;
-    console.error('[ZeloMenu] recoverAbandonedCart: recovery message failed:', sendErr);
+    console.error('[ZeloMenu] recoverAbandonedCart: recovery enqueue failed:', sendErr);
   }
-  await addAssistantMessage(
-    claimedRow.source_ref,
-    sendOk ? (automationRule.message || message) : `[FALHA NO ENVIO — reenviar manualmente]\n${automationRule.message || message}`,
-    undefined,
-    claimedRow.empresa_id,
-    undefined,
-    { waMessageId },
-  );
 
   return sendOk ? 'sent' : 'failed';
 }
