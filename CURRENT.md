@@ -105,6 +105,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
+- **Pedido canônico por WhatsApp:** migrations compartilhadas aplicadas; falta configurar a integração privada no Dokploy, publicar ZeloMenu e concluir o merge/testes do ZeloChat antes do primeiro teste ponta a ponta.
 - **Takeover/outbound — aplicação operacional:** aplicar `063–067` em ordem, executar o probe SQL e os gates reais isolados e seguir `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md`; não configurar flags de rollout.
 - **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.

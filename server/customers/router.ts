@@ -9,6 +9,7 @@ import type { ChatAttachment } from '../../src/types.js';
 import { parseCustomerFilters } from './filters.js';
 import { getCustomerDetail, listCustomerMessages, listCustomerOrders, listCustomerTimeline, listCustomers } from './service.js';
 import { createCustomersRouter, type CustomerMutationAccess, type CustomerWriteStore } from './mutations.js';
+import { createCustomerOrderingContextRouter } from './orderingContextRouter.js';
 
 export const customerRouter = Router();
 async function actor(req: Request): Promise<ActorAccessContext> { await requireCrmFeature(req, 'crm'); return requireActorPermission(req, 'pessoas.visualizar'); }
@@ -86,6 +87,7 @@ const mutationStore: CustomerWriteStore = {
 };
 
 const writeRouter = createCustomersRouter({ resolveAccess: async (req) => { await requireCrmFeature(req, 'crm'); return requireActorPermission(req, 'pessoas.gerenciar').then(mutationAccess); }, store: mutationStore, toCanonical: (access, personId) => getCustomerDetail(access.empresaId, access.ownerUserId ?? '', personId) });
+customerRouter.use('/api/customers', createCustomerOrderingContextRouter());
 customerRouter.use('/api/customers', writeRouter);
 
 customerRouter.post('/api/customers/:personId/messages', async (req, res) => {

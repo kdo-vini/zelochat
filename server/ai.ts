@@ -75,6 +75,9 @@ import {
   type WeeklyHours,
 } from '../src/domain/businessHours.js';
 import { autoAcceptCanonicalOrderIfConfigured, LEGACY_CANONICAL_ORDER_SELECT } from './canonicalOrders.js';
+import { resolveCustomerForOrder } from './customers/identity.js';
+import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
+import { tryHandleAiWhatsAppOrdering } from './aiWhatsAppOrdering.js';
 
 export const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 export const OPENAI_CHAT_TEMPERATURE = 0.3;

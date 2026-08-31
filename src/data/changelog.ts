@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-08-31',
+    category: 'big',
+    title: 'Pedido completo direto na conversa',
+    description: 'O atendimento pode consultar o cardápio, montar o pedido e pedir confirmação pelo WhatsApp, sem exigir link.',
+  },
+  {
     date: '2026-08-30',
     category: 'medium',
     title: 'Atendimento manual pausa a IA com mais segurança',

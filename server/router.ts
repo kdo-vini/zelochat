@@ -63,6 +63,8 @@ import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
 import { isRetryableOutboundFailure, type OutboundPayload } from '../src/domain/outbound.js';
 import { buildFailedMessageRetryPayload } from './failedMessageRetry.js';
+import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton } from '../src/domain/aiWhatsAppOrdering.js';
+import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventFailed, markWebhookEventProcessed, type WebhookAuthStatus } from './webhookLog.js';
 import { processFromMeUpsert } from './fromMeProcessor.js';
