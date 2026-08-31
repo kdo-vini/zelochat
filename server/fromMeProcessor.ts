@@ -4,6 +4,7 @@ import { broadcast, type ConversationModeChanged } from './ws.js';
 import { wasSentByServer } from './whatsapp.js';
 import { classifyFromMe, extractFromMeMessage, type FromMeEvidence } from './fromMe.js';
 import type { WebhookAuthStatus } from './webhookLog.js';
+import { recordConversationOutboundMetric } from './outbound/observability.js';
 
 export interface NativeTakeoverRecord {
   inserted: boolean;
@@ -143,21 +144,34 @@ export function createFromMeProcessor(dependencies: FromMeProcessorDependencies 
     // Native-human enforcement is security-sensitive. Known instances without
     // the stable token remain observable in raw/shadow state only.
     if (input.authStatus !== 'token_match') return { kind: 'shadow_unauthenticated' };
-    if (input.mode !== 'enforce') return { kind: 'shadow_rollout' };
 
+    // Shadow performs only evidence reads and pure classification. It never
+    // calls a reconciliation/takeover RPC, cancels a timer or broadcasts state.
     const evidence = await dependencies.lookupEvidence({ empresaId: input.empresaId, remoteJid: extracted.remoteJid, waMessageId: extracted.waMessageId, fingerprint: extracted.fingerprint });
     const decision = classifyFromMe(extracted, evidence);
+    if (input.mode !== 'enforce') {
+      if (decision.kind === 'native_human') {
+        recordConversationOutboundMetric('from_me_would_takeover', { source: 'human_native_whatsapp' }, { empresaId: input.empresaId, remoteJid: extracted.remoteJid });
+      } else if (decision.kind === 'server_echo' || decision.kind === 'pending_correlation') {
+        recordConversationOutboundMetric('from_me_would_correlate', { decision: decision.kind }, { empresaId: input.empresaId, remoteJid: extracted.remoteJid, jobId: decision.jobId });
+      }
+      return { kind: 'shadow_rollout' };
+    }
+
     if (decision.kind === 'ignore_protocol_artifact' || decision.kind === 'duplicate') return { kind: decision.kind };
     if (decision.kind === 'pending_correlation') {
+      recordConversationOutboundMetric('from_me_pending_correlation', {}, { empresaId: input.empresaId, remoteJid: extracted.remoteJid, jobId: decision.jobId });
       await dependencies.holdPendingCorrelation({ empresaId: input.empresaId, remoteJid: extracted.remoteJid, waMessageId: extracted.waMessageId, jobId: decision.jobId, fingerprint: extracted.fingerprint, rawEventId: input.rawEventId ?? null });
       throw new Error('FROM_ME_PENDING_CORRELATION');
     }
     if (decision.kind === 'server_echo') {
+      recordConversationOutboundMetric('from_me_echo', {}, { empresaId: input.empresaId, remoteJid: extracted.remoteJid, jobId: decision.jobId });
       await dependencies.repairServerEcho({ empresaId: input.empresaId, remoteJid: extracted.remoteJid, waMessageId: extracted.waMessageId, jobId: decision.jobId, payload: extracted.payload, preview: extracted.preview, sentAt: extracted.sentAt });
       return { kind: 'server_echo', jobId: decision.jobId };
     }
 
     const recorded = await dependencies.recordNativeTakeover({ empresaId: input.empresaId, remoteJid: extracted.remoteJid, waMessageId: extracted.waMessageId, payload: extracted.payload, preview: extracted.preview, sentAt: extracted.sentAt });
+    recordConversationOutboundMetric('from_me_native', { takeover_applied: recorded.takeoverApplied }, { empresaId: input.empresaId, remoteJid: extracted.remoteJid, jobId: recorded.jobId, messageId: recorded.messageId });
     if (recorded.inserted) {
       dependencies.cancelPendingReply(input.empresaId, extracted.remoteJid);
       dependencies.broadcast('message_sent', {

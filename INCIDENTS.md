@@ -1,5 +1,25 @@
 # Incidentes e padrões conhecidos
 
+## XXIV. Rollback parcial podia reabrir a corrida entre humano e IA (risco cercado em 2026-08-30)
+
+### Sintoma possível
+
+Após um rollback, uma resposta automática poderia voltar a ser enviada depois de atuação humana, ou um eco do servidor poderia ser interpretado como takeover nativo.
+
+### Causa-raiz
+
+Não havia um modo server-side fail-safe, telemetria redigida nem sequência única para pausar IA/worker preservando o ledger durante rollback e rolling deploy.
+
+### Fix
+
+// FIX 2026-08-30: rollout/rollback não distinguiam observação de mutação → shadow agora só classifica e mede, enforce é explícito, worker tem kill switch e o cleanup 067 exige confirmação pós-drain — `server/outbound/rollout.ts:1`, `server/fromMeProcessor.ts:140`, `server/outbound/observability.ts:1`, `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md:1`.
+
+### Recovery / rollout
+
+Seguir o runbook: voltar a `shadow`, desligar auto-respostas, parar o worker com o kill switch, preservar ledger/modos humanos e nunca reverter migrations ou reativar IA em massa. A migration 067 não entra no rollout inicial e falha fechado sem confirmação explícita de que as réplicas antigas drenaram.
+
+---
+
 ## XXIII. Eco `fromMe` podia ser confundido com atuação humana nativa (risco corrigido em 2026-08-30)
 
 ### Sintoma possível

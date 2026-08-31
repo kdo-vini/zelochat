@@ -3097,6 +3097,7 @@ async function isAutoReplyStillAllowed(
   permit: AiTurnPermit,
   context: string,
 ): Promise<boolean> {
+  // FIX 2026-08-30: uma checagem local podia envelhecer durante modelo/tools → o permit persistente falha fechado antes de todo outbound automático.
   try {
     if (!(await isAiPermitCurrent(permit))) {
       console.log(`[ai] aborted ${context}: stale AI permit for empresa=${empresaId} jid=${jid}`);

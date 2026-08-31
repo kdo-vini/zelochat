@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-08-30',
+    category: 'medium',
+    title: 'Atendimento manual pausa a IA com mais segurança',
+    description: 'Quando sua equipe responde uma conversa, o atendimento automático agora respeita essa tomada e evita responder por cima do operador.',
+  },
+  {
     date: '2026-08-26',
     category: 'medium',
     title: 'Clientes chega com ativação gradual',

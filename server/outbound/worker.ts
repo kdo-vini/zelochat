@@ -7,6 +7,7 @@ import { OutboundQueue, assertQueueablePayload, type OutboundJob, type OutboundJ
 import { getCrmRolloutFlags, isOutboundJobAllowed } from '../customers/rollout.js';
 import { createProviderAdapter, type ProviderAdapter, type ProviderDispatchResult } from './providerAdapter.js';
 import { cleanupTerminalOutboundMedia } from './mediaStore.js';
+import { recordConversationOutboundMetric } from './observability.js';
 
 const originFor = (jobType: OutboundJob['jobType'], value?: string | null): OutboundOrigin => {
   if (value) return value as OutboundOrigin;
@@ -241,6 +242,7 @@ export class OutboundWorker {
       const result = await this.transport.send({ ...prepared, job: dispatchJob } as typeof prepared);
       if (result.state === 'delivery_uncertain') {
         await this.deps.queue.deliveryUncertain(dispatchJob, result.reason);
+        recordConversationOutboundMetric('delivery_uncertain', { origin: job.origin }, { empresaId: job.empresaId, remoteJid: job.conversationJid, jobId: job.id, messageId: job.messageId });
         await this.broadcastStatus(job, 'delivery_uncertain');
         return true;
       }
@@ -251,6 +253,7 @@ export class OutboundWorker {
       const reason = cause instanceof Error ? cause.message : 'Falha ao enviar.';
       if (transportStarted) {
         await this.deps.queue.deliveryUncertain({ ...job, status: 'dispatch_started' }, reason);
+        recordConversationOutboundMetric('delivery_uncertain', { origin: job.origin }, { empresaId: job.empresaId, remoteJid: job.conversationJid, jobId: job.id, messageId: job.messageId });
         await this.broadcastStatus(job, 'delivery_uncertain');
       } else {
         await this.deps.queue.fail(job, reason);
@@ -322,8 +325,12 @@ async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' |
 
 let startedWorker: OutboundWorker | null = null;
 let cleanupTimer: NodeJS.Timeout | null = null;
-export function startOutboundWorker(): OutboundWorker {
+export function startOutboundWorker(): OutboundWorker | null {
   if (!startedWorker) {
+    if (/^(1|true|yes)$/i.test(process.env.CONVERSATION_OUTBOUND_WORKER_DISABLED ?? '')) {
+      console.warn('[outbound] worker disabled by emergency rollout switch; ledger preserved');
+      return null;
+    }
     startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) });
     startedWorker.start();
     void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown'));

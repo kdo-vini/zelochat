@@ -16,6 +16,7 @@ import {
   type PersistedOutboundPayload,
   type TakeoverPolicy,
 } from '../src/domain/outbound.js';
+import { recordConversationOutboundMetric } from './outbound/observability.js';
 
 const parsedConversationSendWaitMs = Number.parseInt(process.env.CONVERSATION_SEND_WAIT_MS || '10000', 10);
 export const CONVERSATION_SEND_WAIT_MS = Number.isFinite(parsedConversationSendWaitMs) && parsedConversationSendWaitMs >= 0
@@ -557,9 +558,11 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
 
       if (request.origin === 'ai_auto' || request.origin === 'ai_followup') {
         if (!request.aiPermit) {
+          recordConversationOutboundMetric('ai_stale_suppressed', { reason: 'missing_permit' }, { empresaId: request.empresaId, remoteJid: request.remoteJid });
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
         if (request.aiPermit.empresaId !== request.empresaId || request.aiPermit.remoteJid !== request.remoteJid) {
+          recordConversationOutboundMetric('ai_stale_suppressed', { reason: 'permit_scope' }, { empresaId: request.empresaId, remoteJid: request.remoteJid });
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
         let job = await deps.enqueueAiOutbound({
@@ -573,9 +576,11 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
           origin: request.origin,
         });
         if (!job) {
+          recordConversationOutboundMetric('ai_stale_suppressed', { reason: 'stale_epoch' }, { empresaId: request.empresaId, remoteJid: request.remoteJid });
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
         if (!isExpectedAiJob(job, request as ConversationOutboundRequest & { origin: 'ai_auto' | 'ai_followup'; aiPermit: AiTurnPermit }, initialPayload, initialFingerprint, legacyMediaFingerprint)) {
+          recordConversationOutboundMetric('ai_stale_suppressed', { reason: 'idempotency_mismatch' }, { empresaId: request.empresaId, remoteJid: request.remoteJid, jobId: job.id });
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
         job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);
@@ -620,6 +625,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
       }
 
       if (job.takeoverApplied) {
+        recordConversationOutboundMetric('human_takeover', { source: request.origin }, { empresaId: request.empresaId, remoteJid: request.remoteJid, jobId: job.id, messageId: job.messageId });
         await deps.cancelPendingReply(request.empresaId, request.remoteJid);
       }
 

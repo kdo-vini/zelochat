@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { getServiceSupabase } from './supabase.js';
 import { processFromMeUpsert } from './fromMeProcessor.js';
 import type { WebhookAuthStatus } from './webhookLog.js';
+import { resolveConversationOutboundEngineMode } from './outbound/rollout.js';
 
 export interface WebhookReplayEvent {
   id: string;
@@ -51,7 +52,7 @@ function defaultDependencies(): WebhookReplayWorkerDependencies {
       const row = Array.isArray(data) ? data[0] : data;
       return row ? mapEvent(row) : null;
     },
-    process: (event) => processFromMeUpsert({ empresaId: event.empresaId, data: event.payload?.data, authStatus: event.authStatus, rawEventId: event.id, mode: process.env.FROM_ME_NATIVE_MODE === 'enforce' ? 'enforce' : 'shadow' }),
+    process: (event) => processFromMeUpsert({ empresaId: event.empresaId, data: event.payload?.data, authStatus: event.authStatus, rawEventId: event.id, mode: resolveConversationOutboundEngineMode(event.empresaId) }),
     async complete(event) {
       const { data, error } = await db.rpc('complete_zelochat_webhook_replay', { p_id: event.id, p_worker: event.leaseOwner });
       if (error) throw new Error(error.message);
@@ -95,7 +96,8 @@ export class WebhookReplayWorker {
 let timer: ReturnType<typeof setInterval> | null = null;
 export function startWebhookReplayWorker(intervalMs = 5_000): void {
   if (timer) return;
-  if (process.env.FROM_ME_NATIVE_MODE !== 'enforce') return;
+  const hasEnforcedTenant = Boolean(process.env.CONVERSATION_OUTBOUND_ENGINE_ENFORCE_EMPRESAS?.trim());
+  if (resolveConversationOutboundEngineMode('global') !== 'enforce' && !hasEnforcedTenant) return;
   const worker = new WebhookReplayWorker();
   const workerId = `webhook-replay:${process.pid}:${randomUUID()}`;
   let running = false;

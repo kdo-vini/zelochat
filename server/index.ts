@@ -34,6 +34,7 @@ import { redactJid } from './redact.js';
 import { startOutboundWorker } from './outbound/worker.js';
 import { startWebhookReplayWorker } from './webhookReplayWorker.js';
 import { beginAiTurn, type AiTurnPermit } from './conversationControl.js';
+import { startConversationOutboundQueueObserver } from './outbound/observability.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -244,6 +245,7 @@ async function scheduleAutoReplyIfAllowed(params: {
   messageId?: string;
   reason: 'inbound' | 'audio_transcription_settled';
 }): Promise<void> {
+  // FIX 2026-08-30: outbounds humanos não invalidavam respostas automáticas em corrida → o permit/epoch acompanha o debounce e o claim durável decide o envio.
   const { empresaId, jid, permit, messageId } = params;
   console.log(`[AutoReplyTrace] evaluate empresa=${empresaId} jid=${redactJid(jid)} reason=${params.reason} messageId=${messageId ?? '<none>'}`);
   const session = await getSession(jid, empresaId);
@@ -501,5 +503,6 @@ httpServer.listen(PORT, () => {
   // concorrência local é limitada por OUTBOUND_WORKER_CONCURRENCY; o mutex
   // autoritativo entre réplicas e por conversa fica nas RPCs do banco.
   startOutboundWorker();
+  startConversationOutboundQueueObserver();
   startWebhookReplayWorker();
 });

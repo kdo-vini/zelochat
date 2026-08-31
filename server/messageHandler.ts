@@ -1300,6 +1300,7 @@ export async function createAssistantMessageIntent(
     outboundJobId?: string | null;
   } = {},
 ): Promise<ChatMessage> {
+  // FIX 2026-08-30: persistência e transporte paralelos perdiam origem/lifecycle → toda intenção recebe origem e job canônicos antes do envio.
   if (!empresaId) throw new Error('empresaId is required');
 
   return serializeForJid(jid, async () => {

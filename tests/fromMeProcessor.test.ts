@@ -74,10 +74,23 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
 
 {
   let writes = 0;
-  const { process } = harness({ recordNativeTakeover: async () => { writes += 1; throw new Error('must stay shadow'); } });
+  const { calls, process } = harness({ recordNativeTakeover: async () => { writes += 1; throw new Error('must stay shadow'); } });
   const result = await process({ empresaId: 'empresa-1', data: event('shadow-default'), authStatus: 'token_match', rawEventId: 'raw-5' });
   assert.deepEqual(result, { kind: 'shadow_rollout' });
   assert.equal(writes, 0);
+  assert.deepEqual(calls, [], 'shadow must not reconcile, hold, cancel timers or broadcast');
+}
+
+{
+  for (const lookupEvidence of [
+    async () => ({ providerJob: { id: 'job-shadow-echo', messageId: 'message-shadow-echo' } }),
+    async (input: Parameters<FromMeProcessorDependencies['lookupEvidence']>[0]) => ({ pendingJob: { id: 'job-shadow-pending', payloadFingerprint: input.fingerprint, providerMessageId: null } }),
+  ]) {
+    const { calls, process } = harness({ lookupEvidence });
+    const result = await process({ empresaId: 'empresa-1', data: event('shadow-evidence'), authStatus: 'token_match', rawEventId: 'raw-shadow' });
+    assert.deepEqual(result, { kind: 'shadow_rollout' });
+    assert.deepEqual(calls, [], 'shadow evidence classification must remain read-only');
+  }
 }
 
 console.log('fromMeProcessor: ok');

@@ -15,7 +15,7 @@
     "lint": "tsc --noEmit",
     "test": "npm run test:unit",
     "test:unit": "tsx tests/run-unit-tests.ts",
-    "test:takeover": "tsx tests/conversationControl.test.ts && tsx tests/conversationOutbound.test.ts && tsx tests/conversationOutboundWorker.test.ts && tsx tests/aiTakeoverRace.test.ts && tsx tests/fromMeProcessor.test.ts && tsx tests/conversationOutboundRpc.integration.test.ts && tsx tests/conversationOutboundIntegration.test.ts",
+    "test:takeover": "tsx tests/conversationControl.test.ts && tsx tests/conversationOutbound.test.ts && tsx tests/conversationOutboundWorker.test.ts && tsx tests/aiTakeoverRace.test.ts && tsx tests/fromMeProcessor.test.ts && tsx tests/conversationOutboundRollout.test.ts && tsx tests/conversationOutboundRpc.integration.test.ts && tsx tests/conversationOutboundIntegration.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:takeover": "playwright test tests/qa-human-takeover.spec.ts tests/qa-native-from-me.spec.ts",
     "test:e2e:ui": "playwright test --ui",
