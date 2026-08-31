@@ -95,13 +95,17 @@ export class WebhookReplayWorker {
 let timer: ReturnType<typeof setInterval> | null = null;
 export function startWebhookReplayWorker(intervalMs = 5_000): void {
   if (timer) return;
-  const worker = new WebhookReplayWorker();
   const workerId = `webhook-replay:${process.pid}:${randomUUID()}`;
+  let worker: WebhookReplayWorker | null = null;
   let running = false;
   const tick = async () => {
     if (running) return;
     running = true;
     try {
+      // Keep the scheduler alive even when a local process has no database
+      // credentials yet. The first configured tick creates the worker; this is
+      // a configuration failure, not a feature rollout decision.
+      if (!worker) worker = new WebhookReplayWorker();
       for (let count = 0; count < 20 && await worker.runOnce(workerId); count += 1) { /* drain bounded batch */ }
     } catch (error) {
       console.error('[WebhookReplay] worker cycle failed:', error instanceof Error ? error.message : String(error));
