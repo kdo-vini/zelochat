@@ -4,6 +4,9 @@
 
 ## Purpose
 
+### Pedido canônico pelo WhatsApp (2026-08-30)
+- O tracer `server/aiWhatsAppOrdering.ts` usa catálogo/carrinho canônicos do ZeloMenu; confirmação é determinística por texto/botão, com token opaco, revisão e idempotência. Catálogo ambíguo nunca chega ao planejador. A integração indisponível transfere ao humano.
+
 ### Human takeover/outbound engine (confirmed 2026-08-30)
 - Task 3 introduced `server/conversationControl.ts` as the canonical seam for AI/manual conversation control. Public callers use `beginAiTurn`, `claimHumanTakeover`, `resumeAiConversation`, `ensureConversationControl`, and `isAiPermitCurrent`; `AiTurnPermit.epoch` is exposed to TypeScript as a string so Postgres `bigint` is never lossy in JS.
 - Migration `064_conversation_control_rpcs.sql` is the database authority for conversation mode and epoch. RPC callers pass only `empresa_id + remote_jid` plus actor/message metadata; the database resolves the canonical control, takes advisory/row locks, merges duplicate controls with human mode winning, projects legacy `zelochat_sessions.auto_reply`, and cancels only queued `ai_auto|ai_followup` jobs on takeover.

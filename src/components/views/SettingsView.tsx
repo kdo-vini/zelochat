@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import { useToast } from '../../contexts/ToastContext';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Sparkles, Settings2, ChevronDown } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Sparkles, Settings2, ChevronDown, ShoppingCart } from 'lucide-react';
 import { ConfirmModal } from '../ConfirmModal';
 import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
@@ -36,8 +36,10 @@ import {
   parseScheduleDescription,
   setAiEnabled as setAiEnabledApi,
   setAiSettings as setAiSettingsApi,
+  getAiWhatsAppOrderingStatus,
   type AiSettings,
 } from '../../services/waApi';
+import { describeAiWhatsAppOrdering } from '../../domain/aiWhatsAppOrderingUi';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useSubscription, type ZeloChatSubscription } from '../../hooks/useSubscription';
 import { PlanChangeModal } from './PlanChangeModal';
@@ -469,6 +471,59 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
         {error && (
           <p className="text-[12px] text-[var(--color-alert)]">{error}</p>
         )}
+      </div>
+    </SectionCard>
+  );
+};
+
+/**
+ * Product-facing status for the canonical WhatsApp ordering flow.
+ * It is informational and must not reuse the general AI toggle above.
+ */
+const AiWhatsAppOrderingCard = ({ token }: { token: string | null }) => {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [statusError, setStatusError] = useState(false);
+
+  useEffect(() => {
+    if (!token) { setEnabled(null); setStatusError(false); return; }
+    let cancelled = false;
+    setStatusError(false);
+    getAiWhatsAppOrderingStatus(token)
+      .then((status) => { if (!cancelled) setEnabled(status.enabled === true); })
+      .catch(() => { if (!cancelled) { setEnabled(null); setStatusError(true); } });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const ui = enabled === null ? null : describeAiWhatsAppOrdering(enabled);
+
+  return (
+    <SectionCard icon={ShoppingCart} title="Pedidos pelo WhatsApp com IA">
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-[13.5px] font-semibold">
+              {enabled === null ? (statusError ? 'Status indisponível no momento' : 'Verificando configuração…') : ui.title}
+            </p>
+            <p className="text-[12.5px] text-[var(--color-ink-muted)] mt-0.5">
+              {enabled === null
+                ? (statusError ? 'Tente atualizar a página daqui a pouco.' : 'Aguarde um instante.')
+                : ui.description}
+            </p>
+          </div>
+          <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold flex-shrink-0 ${
+            enabled === true
+              ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+              : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'
+          }`}>
+            {enabled === true && <Check className="w-3 h-3" strokeWidth={2.5} />}
+            {enabled === null ? (statusError ? 'Indisponível' : 'Verificando') : ui.badge}
+          </span>
+        </div>
+        <p className="text-[11.5px] text-[var(--color-ink-faint)]">
+          {enabled === true
+            ? 'O cliente confirma o pedido sem precisar abrir um link.'
+            : 'Quando a integração estiver pronta, o cliente confirma o pedido na própria conversa.'}
+        </p>
       </div>
     </SectionCard>
   );
@@ -1666,6 +1721,8 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
               blockedDates={state.blockedDates}
               onUpdateBlockedDates={(next) => setState((prev) => ({ ...prev, blockedDates: next }))}
             />
+
+            <AiWhatsAppOrderingCard token={token} />
 
             <SectionCard icon={Clock} title="Horários e atendimento">
               <div className="space-y-3">

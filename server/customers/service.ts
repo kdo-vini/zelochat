@@ -2,6 +2,7 @@ import type { CustomerDetail, CustomerFilters, CustomerSummary, CustomerTimeline
 import { decodeCustomerCursor, decodeTimelineCursor, encodeCustomerCursor, encodeTimelineCursor, resolveCustomerActivity } from './filters.js';
 import { getServiceSupabase } from '../supabase.js';
 import { parseStructuredMessage } from '../../src/domain/chat.js';
+import { CustomerOrderingContext } from './orderingContextAdapter.js';
 
 export interface CustomerListResult { customers: CustomerSummary[]; nextCursor: string | null; hasMore: boolean; }
 export interface CustomerRelationshipSummary { blocked: boolean; blockReason: string | null; optedOut: boolean; campaigns: number; automations: number; }
@@ -77,9 +78,12 @@ export async function getCustomerDetail(empresaId: string, ownerUserId: string, 
   const primaryJid = sessions.find((session) => /^\d{10,15}@s\.whatsapp\.net$/u.test(session.remoteJid))?.remoteJid ?? null;
   const birthday = row.aniversario_mes ? { day: Number(row.aniversario_dia ?? 0), month: Number(row.aniversario_mes), year: row.aniversario_ano ? Number(row.aniversario_ano) : null } : null;
   const relationshipDto = buildCustomerRelationship({ blockedAt: relationship?.whatsapp_blocked_at, blockReason: relationship?.whatsapp_block_reason, optedOut: Boolean(optOut), campaigns: campaignCount, automations: automationCount });
-  const orderPage = await listCustomerOrders(empresaId, personId, null, 30);
+  const [orderPage, orderingContext] = await Promise.all([
+    listCustomerOrders(empresaId, personId, null, 30),
+    CustomerOrderingContext.get({ empresaId, pessoaId: personId }),
+  ]);
   const orders = orderPage.items.map((order) => ({ id: order.id, createdAt: order.created_at, status: order.status, total: Number(order.total ?? 0) }));
-  return { ...summary, tags, birthday, aniversario: birthday, notes: relationship?.internal_notes ?? null, internalNotes: relationship?.internal_notes ?? null, automaticSummary: relationship?.ai_summary ?? null, aiSummary: relationship?.ai_summary ?? null, relationship: relationshipDto, whatsappBlockedAt: relationship?.whatsapp_blocked_at ?? null, whatsappBlockReason: relationship?.whatsapp_block_reason ?? null, lastManualContactAt: relationship?.last_manual_contact_at ?? null, orders, sessions, primaryJid };
+  return { ...summary, tags, birthday, aniversario: birthday, notes: relationship?.internal_notes ?? null, internalNotes: relationship?.internal_notes ?? null, automaticSummary: relationship?.ai_summary ?? null, aiSummary: relationship?.ai_summary ?? null, relationship: relationshipDto, whatsappBlockedAt: relationship?.whatsapp_blocked_at ?? null, whatsappBlockReason: relationship?.whatsapp_block_reason ?? null, lastManualContactAt: relationship?.last_manual_contact_at ?? null, orders, sessions, primaryJid, orderingContext };
 }
 
 export function customerReadRepository(): CustomerReadRepository { return defaultRepository; }

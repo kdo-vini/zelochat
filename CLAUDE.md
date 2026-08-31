@@ -121,6 +121,13 @@ server/
   drivers.ts      # Driver CRUD against Supabase
 ```
 
+### CustomerOrderingContext — contexto de pedido do cliente
+
+- `server/customers/orderingContext.ts` é o módulo profundo e determinístico; seu adapter de produção fica em `orderingContextAdapter.ts`. A leitura do histórico usa exclusivamente `zelo_orders` com `zelo_order_items` aninhados, sempre filtrada por `empresa_id` + `pessoa_id`, limitada aos 20 pedidos mais recentes nos estados comprometidos `accepted|preparing|ready|out_for_delivery|delivered`.
+- Nunca inclua `pending_payment`, `pending_review`, `rejected` ou `cancelled` nos hábitos, nunca leia nem copie de `zelochat_orders` e nunca materialize um novo pedido para formar contexto.
+- Tipo de atendimento, endereço e pagamento seguem a precedência `override fixado > último pedido > ausente`. Horário habitual usa mediana **circular** determinística (23:50 + 00:10 = 00:00); recorrência usa mediana linear dos intervalos. Itens frequentes são calculados por `product_id` canônico, servem só como sugestão e **nunca** viram itens padrão automaticamente. `lastOrder` preserva `customer` e todos os campos originais de fulfillment/payment (incluindo `asap`), além das projeções normalizadas e dos itens/modificadores.
+- Overrides vivem em `zelochat_customer_relationships.ordering_overrides`. O PATCH aceita somente `fulfillmentType`, `deliveryAddress`, `paymentMethod` e `habitualTime`, permite `null` para remover um campo e exige `pessoas.gerenciar`. O ZeloChat **nunca** faz read/merge/upsert do JSON: `orderingContextAdapter.ts` chama o RPC service-role `patch_zelochat_customer_ordering_overrides`, cujo DDL pertence ao stream compartilhado do ZeloPDV e faz validação empresa/owner/pessoa mais merge atômico no banco.
+
 ## Stack
 
 - **Frontend**: React + Vite + TypeScript + Tailwind + Motion (framer)
@@ -204,6 +211,7 @@ These functions are CRITICAL for product correctness. Each one has caused (or ha
 | Function | Location | Why it's critical |
 |---|---|---|
 | `generateAndSendReply` | `server/ai.ts` | The AI dispatch entry point. Bad changes here = duplicate orders, wrong-confirms, prompt-injection. The 3-layer trap from §"Order confirmation flow" lives here. |
+| `tryHandleAiWhatsAppOrdering` / `tryHandleAiWhatsAppOrderingButton` | `server/aiWhatsAppOrdering.ts` | Fluxo canônico permanente: confirmação é determinística e orderingId/revision sempre voltam ao ZeloMenu. |
 | `confirmPendingOrder` / `cancelPendingOrder` / `clearPendingOrder` | `server/ai.ts` | The pending-order lifecycle. The order between insert/clear/send is load-bearing — see "FIX H1" comment in `confirmPendingOrder`. |
 | `dispatchIncomingMessage` and the hard-button short-circuit | `server/router.ts` | Layer 3 of the order-flow trap. Every customer reply path passes through here. |
 | `processWebhookEvent` and `/webhook/:instance` | `server/router.ts` | Auth boundary for inbound WhatsApp. Currently relies on instance name as secret (P0.1) — rotation/dedup decisions land here. |
@@ -231,6 +239,9 @@ VITE_SUPABASE_URL   # Supabase project URL (frontend)
 VITE_SUPABASE_ANON_KEY  # Supabase anon key (frontend)
 SUPABASE_URL        # Supabase project URL (server)
 SUPABASE_SERVICE_KEY    # Supabase service role key (server)
+ZELOMENU_INTERNAL_BASE_URL       # URL privada do ZeloMenu (default local http://127.0.0.1:3101)
+ZELO_INTERNAL_API_KEY            # segredo compartilhado, nunca expor em log/copy
+ZELOMENU_INTERNAL_TIMEOUT_MS     # timeout do client interno (default 4000)
 ```
 
 ## Whatsmiau API (Evolution API v2 wrapper)

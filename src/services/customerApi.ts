@@ -1,4 +1,20 @@
 import { apiFetch, apiUrl } from '../config';
+import type {
+  CustomerOrderingAddress,
+  CustomerOrderingContextField,
+  CustomerOrderingContextSnapshot,
+  CustomerOrderingContextSource,
+  CustomerOrderingFrequentItem,
+  CustomerOrderingHabitualTime,
+  CustomerOrderingLastOrder,
+  CustomerOrderingOverrides,
+} from '../types';
+
+export type {
+  CustomerOrderingAddress,
+  CustomerOrderingContextSnapshot,
+  CustomerOrderingOverrides,
+} from '../types';
 
 export type CustomerActivityState = 'active' | 'inactive' | 'never';
 export type CustomerStatusFilter = 'all' | CustomerActivityState;
@@ -50,6 +66,7 @@ export interface CustomerDetail extends CustomerSummary {
   orders: Array<{ id: string; createdAt: string; status: string; total: number }>;
   primaryJid: string | null;
   sessions: Array<{ id: string; remoteJid: string; lastMessageTime: string; status: string }>;
+  orderingContext: CustomerOrderingContextSnapshot;
 }
 
 export interface CustomerListQuery extends CustomerFilters {
@@ -102,6 +119,116 @@ function normalizeCustomerSummary(value: Partial<CustomerSummary> & Record<strin
   return { id: String(value.id ?? ''), name: String(value.name ?? 'Cliente'), phone: (value.phone as string | null | undefined) ?? null, whatsapp: (value.whatsapp as string | null | undefined) ?? (hasWhatsApp ? (value.phone as string | null | undefined) ?? null : null), lastActivityAt: (value.lastActivityAt as string | null | undefined) ?? null, activityState: value.activityState === 'active' ? 'active' : value.activityState === 'never' ? 'never' : 'inactive', orderCount: Number(value.orderCount ?? value.totalOrders ?? 0), totalValue: Number(value.totalValue ?? 0), openBalance: (value.openBalance as number | null | undefined) ?? null, tags: Array.isArray(value.tags) ? value.tags as string[] : [] };
 }
 
+const orderingContextSources = new Set<CustomerOrderingContextSource>(['fixed', 'last_order', 'derived', 'none']);
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function orderingSource(value: unknown): CustomerOrderingContextSource | null {
+  return typeof value === 'string' && orderingContextSources.has(value as CustomerOrderingContextSource)
+    ? value as CustomerOrderingContextSource
+    : null;
+}
+
+function normalizeOrderingField<T>(
+  value: unknown,
+  normalize: (candidate: unknown) => T | null,
+): CustomerOrderingContextField<T> {
+  const source = objectValue(value);
+  const normalizedSource = orderingSource(source.source);
+  const normalizedValue = normalize(source.value);
+  return normalizedSource && normalizedValue !== null
+    ? { value: normalizedValue, source: normalizedSource }
+    : { value: null, source: 'none' };
+}
+
+function normalizeOrderingAddress(value: unknown): CustomerOrderingAddress | null {
+  const source = objectValue(value);
+  if (typeof source.address !== 'string' || !source.address.trim()) return null;
+  const nullableText = (candidate: unknown): string | null => typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+  const address = source.address.trim();
+  const neighborhood = nullableText(source.neighborhood);
+  const city = nullableText(source.city);
+  const state = nullableText(source.state);
+  return {
+    address,
+    neighborhood,
+    complement: nullableText(source.complement),
+    city,
+    state,
+    postalCode: nullableText(source.postalCode),
+    reference: nullableText(source.reference),
+    display: typeof source.display === 'string' && source.display.trim()
+      ? source.display.trim()
+      : [address, neighborhood, city && state ? `${city}/${state}` : city ?? state].filter(Boolean).join(' — '),
+  };
+}
+
+function normalizeHabitualTime(value: unknown): CustomerOrderingHabitualTime | null {
+  const source = objectValue(value);
+  const minutes = Number(source.minutes);
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes >= 1440 || typeof source.label !== 'string' || !/^\d{2}:\d{2}$/u.test(source.label)) return null;
+  return { minutes, label: source.label };
+}
+
+function normalizeFrequentItems(value: unknown): CustomerOrderingFrequentItem[] | null {
+  if (!Array.isArray(value)) return null;
+  const items = value.flatMap((candidate) => {
+    const source = objectValue(candidate);
+    const orderFrequency = Number(source.orderFrequency);
+    const totalQuantity = Number(source.totalQuantity);
+    if (typeof source.productId !== 'string' || !source.productId || typeof source.name !== 'string' || !source.name.trim()
+      || !Number.isFinite(orderFrequency) || orderFrequency < 1 || !Number.isFinite(totalQuantity) || totalQuantity < 1) return [];
+    return [{ productId: source.productId, name: source.name.trim(), orderFrequency, totalQuantity }];
+  });
+  return items;
+}
+
+function normalizeLastOrder(value: unknown): CustomerOrderingLastOrder | null {
+  const source = objectValue(value);
+  const statuses = new Set(['accepted', 'preparing', 'ready', 'out_for_delivery', 'delivered']);
+  if (typeof source.id !== 'string' || typeof source.createdAt !== 'string' || typeof source.status !== 'string'
+    || !statuses.has(source.status) || !Array.isArray(source.items)) return null;
+  return value as CustomerOrderingLastOrder;
+}
+
+function normalizeOrderingOverrides(value: unknown): CustomerOrderingOverrides {
+  const source = objectValue(value);
+  const overrides: CustomerOrderingOverrides = {};
+  if (source.fulfillmentType === 'delivery' || source.fulfillmentType === 'pickup') overrides.fulfillmentType = source.fulfillmentType;
+  const address = normalizeOrderingAddress(source.deliveryAddress);
+  if (address) {
+    const { display: _display, ...storedAddress } = address;
+    overrides.deliveryAddress = storedAddress;
+  }
+  if (typeof source.paymentMethod === 'string' && source.paymentMethod.trim()) overrides.paymentMethod = source.paymentMethod.trim();
+  if (typeof source.habitualTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/u.test(source.habitualTime)) overrides.habitualTime = source.habitualTime;
+  return overrides;
+}
+
+export function normalizeCustomerOrderingContext(value: unknown): CustomerOrderingContextSnapshot {
+  const source = objectValue(value);
+  const fulfillmentType = normalizeOrderingField(source.fulfillmentType, (candidate) => candidate === 'delivery' || candidate === 'pickup' ? candidate : null);
+  const frequentItemsSource = objectValue(source.frequentItems);
+  const frequentItemsOrigin = orderingSource(frequentItemsSource.source);
+  const frequentItems = normalizeFrequentItems(frequentItemsSource.value);
+  return {
+    fulfillmentType,
+    deliveryAddress: normalizeOrderingField(source.deliveryAddress, normalizeOrderingAddress),
+    paymentMethod: normalizeOrderingField(source.paymentMethod, (candidate) => typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null),
+    habitualTime: normalizeOrderingField(source.habitualTime, normalizeHabitualTime),
+    medianRecurrenceDays: normalizeOrderingField(source.medianRecurrenceDays, (candidate) => {
+      return typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0 ? candidate : null;
+    }),
+    frequentItems: frequentItemsOrigin && frequentItems !== null
+      ? { value: frequentItems, source: frequentItemsOrigin }
+      : { value: [], source: 'none' },
+    lastOrder: normalizeOrderingField(source.lastOrder, normalizeLastOrder),
+    overrides: normalizeOrderingOverrides(source.overrides),
+  };
+}
+
 function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
@@ -139,10 +266,20 @@ export async function fetchCustomer(token: string, personId: string): Promise<Cu
   const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { headers: authHeaders(token) });
   const body = await parseCustomerResponse<Partial<CustomerDetail> & Record<string, unknown>>(response);
   const summary = normalizeCustomerSummary(body);
-  return { ...summary, birthday: (body.birthday ?? body.aniversario ?? null) as CustomerDetail['birthday'], origin: (body.origin as string | null | undefined) ?? null, notes: (body.notes ?? body.internalNotes ?? null) as string | null, automaticSummary: (body.automaticSummary ?? body.aiSummary ?? null) as string | null, relationship: (body.relationship ?? { blocked: Boolean(body.whatsappBlockedAt), blockReason: body.whatsappBlockReason ?? null, campaigns: 0, automations: 0 }) as CustomerDetail['relationship'], orders: Array.isArray(body.orders) ? body.orders as CustomerDetail['orders'] : [], primaryJid: (body.primaryJid as string | null | undefined) ?? null, sessions: Array.isArray(body.sessions) ? body.sessions as CustomerDetail['sessions'] : [] };
+  return { ...summary, birthday: (body.birthday ?? body.aniversario ?? null) as CustomerDetail['birthday'], origin: (body.origin as string | null | undefined) ?? null, notes: (body.notes ?? body.internalNotes ?? null) as string | null, automaticSummary: (body.automaticSummary ?? body.aiSummary ?? null) as string | null, relationship: (body.relationship ?? { blocked: Boolean(body.whatsappBlockedAt), blockReason: body.whatsappBlockReason ?? null, campaigns: 0, automations: 0 }) as CustomerDetail['relationship'], orders: Array.isArray(body.orders) ? body.orders as CustomerDetail['orders'] : [], primaryJid: (body.primaryJid as string | null | undefined) ?? null, sessions: Array.isArray(body.sessions) ? body.sessions as CustomerDetail['sessions'] : [], orderingContext: normalizeCustomerOrderingContext(body.orderingContext) };
 }
 
 export type CustomerPatch = Partial<Pick<CustomerDetail, 'name' | 'tags' | 'notes'>> & { birthday?: CustomerDetail['birthday']; phones?: string[]; whatsappBlocked?: boolean };
+export type CustomerOrderingOverridesPatch = Partial<{ [Key in keyof CustomerOrderingOverrides]: CustomerOrderingOverrides[Key] | null }>;
+
+export async function updateCustomerOrderingOverrides(token: string, personId: string, patch: CustomerOrderingOverridesPatch): Promise<CustomerOrderingContextSnapshot> {
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/ordering-overrides`), {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(patch),
+  });
+  return normalizeCustomerOrderingContext(await parseCustomerResponse<unknown>(response));
+}
 
 export async function updateCustomer(token: string, personId: string, patch: CustomerPatch): Promise<CustomerDetail> {
   const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { method: 'PATCH', headers: authHeaders(token), body: JSON.stringify(patch) });

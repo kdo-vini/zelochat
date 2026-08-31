@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Pedido canônico por WhatsApp (2026-08-30)
+
+- ✅ IA-WA-006 — carrinho canônico por texto/botão, catálogo somente online e hábitos CRM; ambiguidade recebe pergunta antes do planejador e marmita do dia lista mistura/proteína + tamanho — `server/aiWhatsAppOrdering.ts`, `src/domain/aiWhatsAppOrdering.ts`
+
 ### Engine de tomada humana e outbound (2026-08-30)
 
 - ✅ TAKEOVER-012 — o plano de rollout não tinha modo único fail-safe, rollback repetível nem cleanup pós-drain cercado → a revisão deixou os gates explícitos e a decisão posterior (TAKEOVER-014) removeu o rollout da engine, tornando o takeover autenticado sempre ativo — `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md:1`, `supabase/migrations/067_conversation_outbound_rolling_cleanup.sql:1`

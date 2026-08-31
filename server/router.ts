@@ -63,6 +63,10 @@ import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
 import { isRetryableOutboundFailure, type OutboundPayload } from '../src/domain/outbound.js';
 import { buildFailedMessageRetryPayload } from './failedMessageRetry.js';
+import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton } from '../src/domain/aiWhatsAppOrdering.js';
+import { retryFailedAssistantMessage } from './failedMessageRetry.js';
+import { tryHandleAiWhatsAppOrderingButton } from './aiWhatsAppOrdering.js';
+import { ZeloMenuInternalClient } from './zeloMenuInternalClient.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventFailed, markWebhookEventProcessed, type WebhookAuthStatus } from './webhookLog.js';
 import { processFromMeUpsert } from './fromMeProcessor.js';
@@ -398,12 +402,15 @@ async function requireInternalApiKey(req: Request): Promise<string> {
 // JIDs that recently had a button action handled — used to suppress duplicate text events
 // that WhatsApp/Whatsmiau sends for the same button click (within 5-second window)
 const recentlyHandled = new Map<string, number>();
+const canonicalButtonMessageIds = new Map<string, number>();
 
 setInterval(() => {
   const cutoff = Date.now() - 10_000;
+  const canonicalButtonCutoff = Date.now() - 10 * 60_000;
   for (const [jid, ts] of recentlyHandled) {
     if (ts < cutoff) recentlyHandled.delete(jid);
   }
+  for (const [messageKey, ts] of canonicalButtonMessageIds) if (ts < canonicalButtonCutoff) canonicalButtonMessageIds.delete(messageKey);
 }, 30_000);
 
 /**
@@ -625,6 +632,20 @@ async function processWebhookEvent(
       buttonDisplayText ??
       interactiveText ?? ''
     ).trim();
+
+    if (buttonId && parseOrderingButton(buttonId)) {
+      const messageId = data.key?.id ?? '';
+      const exactKey = canonicalButtonMessageKey({ empresaId, jid: remoteJid, messageId });
+      const canonicalButton = await serializeForJid(remoteJid, () => handleCanonicalButtonOnce(
+        canonicalButtonMessageIds, exactKey,
+        () => tryHandleAiWhatsAppOrderingButton({ jid: remoteJid, empresaId, buttonId, messageId: messageId || `button-${Date.now()}` }),
+      ));
+      if (canonicalButton.handled) {
+        await canonicalButton.complete?.();
+        cancelPendingReply(empresaId, remoteJid);
+        return;
+      }
+    }
 
     // "Hard" button click: an explicit button-id from Whatsmiau OR plain text that
     // matches a button label we sent. These MUST short-circuit the AI even
