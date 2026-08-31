@@ -15,6 +15,7 @@
 ### Pedido canônico por WhatsApp (2026-08-30)
 
 - ✅ IA-WA-006 — carrinho canônico por texto/botão, catálogo somente online e hábitos CRM; ambiguidade recebe pergunta antes do planejador e marmita do dia lista mistura/proteína + tamanho — `server/aiWhatsAppOrdering.ts`, `src/domain/aiWhatsAppOrdering.ts`
+- 🟨 IA-E2E-001 — faltava um gate que atravessasse atendimento, link público, checkout, pedido, CRM e notificação de status → harness Playwright opt-in implementado com serviços reais, conferência exata de projeto/tenant, entrega `sent` e vínculo `pessoa_id`/pedido; primeira execução segue bloqueada até existir ambiente descartável — `tests/e2e-ai-customer-journey.spec.ts:1`, `tests/support/customerJourney.ts:1`, `docs/runbooks/AI_CUSTOMER_JOURNEY_E2E.md:1`
 
 ### Engine de tomada humana e outbound (2026-08-30)
 

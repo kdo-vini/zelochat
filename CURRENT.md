@@ -105,7 +105,7 @@
 - **Docs corrigidos** — 014 migration header (`DRAFT` → `✅ APPLIED`), CODE_REVIEW.md P0.5 (trade-off do bucket documentado), CURRENT.md (stale entries removidas), `ai.ts:1778` removido de "Em aberto" (já resolvido).
 
 ## Em aberto
-- **Pedido canônico por WhatsApp:** migrations compartilhadas aplicadas; falta configurar a integração privada no Dokploy, publicar ZeloMenu e concluir o merge/testes do ZeloChat antes do primeiro teste ponta a ponta.
+- **Pedido canônico por WhatsApp:** harness ponta a ponta implementado em `tests/e2e-ai-customer-journey.spec.ts`, com bloqueio de produção, conferência exata de projeto/tenant e runbook em `docs/runbooks/AI_CUSTOMER_JOURNEY_E2E.md`; a execução real continua pendente até provisionar Supabase/tenant/instância/número E2E descartáveis. A conta autenticada de teste passou apenas no smoke publicado; o projeto CLI ligado é o banco compartilhado `ZeloPDV` e não serve como sandbox.
 - **Takeover/outbound — aplicação operacional:** aplicar `063–067` em ordem, executar o probe SQL e os gates reais isolados e seguir `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md`; não configurar flags de rollout.
 - **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
@@ -124,7 +124,7 @@ Issues identificados, avaliados, e **explicitamente aceitos** por ora. Uma IA n�
 | P1.4 — instance names aparecem em logs                   | Auth boundary é o sufixo de 64 bits, não o nome; logs são internos                                                          | Logs ficarem públicos ou acessíveis externamente            |
 | `dailyContext` sem `safeForPrompt`                       | Operador controla o próprio `dailyContext`; risco de prompt injection é auto-infligido                                      | Multitenancy expandir ou campo virar editável por terceiros |
 | `zelochat-media` bucket público                          | Whatsmiau exige URL pública para baixar mídia; paths não-enumeráveis mitigam enumeração (128-bit slug por arquivo)         | Whatsmiau suportar download autenticado ou proxy próprio     |
-| Sem teste integrado do pipeline crítico de pedido        | Caminho webhook→IA→confirmação→Kanban nunca falhou em prod pós-fix; hard-button normalization já coberta por `orderConfirmationPipeline.test.ts` (77 testes); teste full pipeline exigiria mock Whatsmiau | Próxima alteração no `server/ai.ts` ou `server/router.ts`    |
+| Gate completo ainda não executado                        | Harness real cobre webhook→IA→ZeloMenu→pedido→CRM→notificação, mas exige sandbox descartável para não contaminar o banco/WhatsApp compartilhados | Provisionar o ambiente E2E isolado e executar o primeiro gate |
 | `AppShell.tsx` ainda concentra estado global             | Já teve lazy-loading + otimizações + −31% por extração de Sidebar/MainContent/MobileBottomNav/useAutoPrint; ZeloState monolítico continua por decisão (separar é risco sem testes) | Mudança no ZeloState ou performance mensurável               |
 
 ## Próximas fatias recomendadas
