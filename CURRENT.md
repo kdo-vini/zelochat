@@ -44,6 +44,7 @@
 
 - Fluxo isolado para buscar o cardápio e montar/consultar o carrinho canônico do ZeloMenu sem enviar link. Confirmação e cancelamento são determinísticos; o modelo recebe somente `buscar_cardapio`, `alterar_carrinho` e `consultar_carrinho`.
 - Fluxo permanente: não há rollout, modo de teste ou kill switch. Com URL/chave internas configuradas, a IA usa o carrinho canônico em todos os atendimentos do ZeloChat; o fluxo legado de `zelochat_pending_orders` continua prioritário e isolado.
+- Ambiguidades do catálogo sempre recebem pergunta antes do planejamento do carrinho; consultas de mistura, proteína, cardápio de hoje ou marmita do dia mostram as escolhas publicadas, incluindo tamanho quando aplicável.
 - **Operação pendente:** configurar URL/chave internas e concluir a verificação do banco. Se a integração privada ficar indisponível, o atendimento chama um humano e nunca cria pedido sem revalidação.
 
 ## Contrato de visibilidade do catálogo (2026-08-24)

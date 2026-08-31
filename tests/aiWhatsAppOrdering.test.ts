@@ -176,8 +176,39 @@ const catalogReply = renderCatalogReply({
 assert.match(catalogReply, /Marmita do dia/);
 assert.match(catalogReply, /Frango/);
 assert.match(catalogReply, /Carne/);
+assert.match(catalogReply, /Qual você quer\?/);
+
+const dailyMealReply = renderCatalogReply({
+  total: 2,
+  ambiguous: false,
+  results: [{
+    productId: 10,
+    publicName: 'Marmita do dia',
+    currentPrice: 20,
+    matchReason: 'modifier_option',
+    ambiguous: false,
+    modifierGroups: [
+      { id: 4, name: 'Escolha a proteína', options: [{ id: 7, name: 'Frango', priceDelta: 0 }] },
+      { id: 5, name: 'Tamanho', options: [{ id: 9, name: 'Pequena', priceDelta: 0 }, { id: 10, name: 'Grande', priceDelta: 5 }] },
+    ],
+  }, {
+    productId: 10,
+    publicName: 'Marmita do dia',
+    currentPrice: 20,
+    matchReason: 'product',
+    ambiguous: false,
+    modifierGroups: [],
+  }],
+}, 'qual proteína tem no cardápio de hoje');
+assert.match(dailyMealReply, /Frango/);
+assert.match(dailyMealReply, /Pequena/);
+assert.match(dailyMealReply, /Grande/);
+assert.equal((dailyMealReply.match(/Marmita do dia/g) ?? []).length, 1, 'the same parent product is listed once');
 assert.match(renderCatalogReply({ total: 20, ambiguous: false, results: [] }, 'lanche'), /filtrar/i);
 assert.match(renderCatalogReply({ total: 2, ambiguous: true, results: [] }, 'x'), /qual/i);
+
+const orderingHandlerSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
+assert.match(orderingHandlerSource, /wantsOrder\s*&&\s*!catalog\.ambiguous/, 'ambiguous catalog candidates never reach cart planning');
 
 const defaults = applyOrderingDefaults(
   { items: [{ productId: 10, quantity: 1 }] },

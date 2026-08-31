@@ -261,12 +261,22 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string): s
   if (result.ambiguous) return 'Encontrei mais de uma opção parecida. Qual delas você quer?';
   if (result.total > 12 || (!result.results.length && result.total > 0)) return 'Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?';
   if (!result.results.length) return 'Não encontrei uma opção disponível com esse nome. Quer tentar de outro jeito?';
-  const wantsModifier = /mistura/i.test(query);
-  const choices = result.results.slice(0, 12).map((item) => {
-    const group = wantsModifier
-      ? item.modifierGroups?.find((candidate) => /mistura/i.test(candidate.name))
-      : undefined;
-    if (group?.options.length) return `${customerText(item.publicName)}: ${group.options.map((option) => customerText(option.name)).join(', ')}`;
+  const wantsDailyMealChoices = /mistura|prote[ií]na|card[aá]pio(?:\s+de)?\s+hoje|marmita(?:\s+do)?\s+dia/i.test(query);
+  const productsById = new Map<number, CatalogReplyResult['results'][number]>();
+  for (const item of result.results) {
+    const current = productsById.get(item.productId);
+    if (!current || (item.modifierGroups?.length ?? 0) > (current.modifierGroups?.length ?? 0)) productsById.set(item.productId, item);
+  }
+  const uniqueProducts = [...productsById.values()].slice(0, 12);
+  const choices = uniqueProducts.map((item) => {
+    const groups = wantsDailyMealChoices
+      ? (item.modifierGroups ?? []).filter((candidate) => /mistura|prote[ií]na|tamanho/i.test(candidate.name))
+      : [];
+    const groupChoices = groups.flatMap((group) => {
+      const options = group.options.slice(0, 12).map((option) => customerText(option.name)).join(', ');
+      return options ? [`${customerText(group.name)}: ${options}`] : [];
+    });
+    if (groupChoices.length) return `${customerText(item.publicName)} — ${groupChoices.join('; ')}`;
     return `${customerText(item.publicName)} por ${money(item.currentPrice)}`;
   }).join('; ');
   return `Hoje tem ${choices}. Qual você quer?`;

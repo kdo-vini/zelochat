@@ -10,6 +10,7 @@
 - ✅ AI-WA-LEGACY-006 — botões/textos novos podiam cair na rede dormente de pendências → botões opacos são interceptados antes do hard-button legado, enquanto `generateAndSendReply` mantém `zelochat_pending_orders` primeiro — `server/router.ts:574`, `server/ai.ts:3558`
 - ✅ AI-WA-TEST-006 — regressões cobrem ausência de flags de rollout, classificação conservadora, token opaco, mistura, ambiguidade/limite, defaults sem itens automáticos, tools e autenticação/redação — `tests/aiWhatsAppOrdering.test.ts:1`
 - ✅ AI-WA-R1-006 — resposta curta após opções saía do fluxo e dedupe de 5s por contato podia engolir outro botão → perguntas determinísticas agora preservam a busca canônica anterior; botões são identificados/serializados e deduplicados somente pelo `messageId` exato, com envio após a fila — `src/domain/aiWhatsAppOrdering.ts:1`, `server/aiWhatsAppOrdering.ts:1`, `server/router.ts:581`
+- ✅ AI-WA-R2-006 — o modelo ainda podia escolher uma opção ambígua e “mistura/proteína hoje” não exibia todos os dados necessários → candidatos ambíguos recebem pergunta determinística antes do planejador; marmita do dia reúne mistura/proteína e tamanho sem duplicar o produto-pai — `server/aiWhatsAppOrdering.ts:313`, `src/domain/aiWhatsAppOrdering.ts:260`
 
 ### Clientes CRM — hábitos de pedido (2026-08-30)
 

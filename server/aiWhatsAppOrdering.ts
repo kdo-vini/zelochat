@@ -312,7 +312,10 @@ export async function tryHandleAiWhatsAppOrdering(
     if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
     const catalog = await client.searchCatalog({ empresaId, query, limit: 12 });
     const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp;
-    if (!draft && wantsOrder) draft = await planDraft(session, text, catalog, current);
+    // Candidate ambiguity is resolved in the conversation, never delegated to
+    // the model: a valid ID is not enough to prove which sellable item the
+    // customer meant.
+    if (!draft && wantsOrder && !catalog.ambiguous) draft = await planDraft(session, text, catalog, current);
     if (!draft) {
       const response = renderCatalogReply(catalog, query);
       await sendText(jid, empresaId, response);
