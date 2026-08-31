@@ -10,6 +10,7 @@ import { cleanupTerminalOutboundMedia } from './mediaStore.js';
 
 const originFor = (jobType: OutboundJob['jobType'], value?: string | null): OutboundOrigin => {
   if (value) return value as OutboundOrigin;
+  if (jobType === 'transactional') return 'system_transactional';
   if (jobType === 'automation') return 'automation';
   if (jobType === 'campaign') return 'campaign';
   throw new Error('OUTBOUND_ORIGIN_MISSING');
@@ -193,7 +194,7 @@ export class OutboundWorker {
     // `internal_system` is an operational notification (for example, the
     // manager side of an escalation), not a CRM campaign/automation. It must
     // still use the durable worker but is deliberately outside CRM rollout.
-    if (job.jobType !== 'conversation' && job.origin !== 'internal_system') {
+    if (job.jobType !== 'conversation' && job.jobType !== 'transactional' && job.origin !== 'internal_system') {
       try {
         const rollout = await (this.deps.getRolloutFlags ?? getCrmRolloutFlags)(job.empresaId);
         if (!isOutboundJobAllowed(rollout, { jobType: job.jobType })) {
@@ -282,7 +283,7 @@ export const canUseAutomationPhoneSnapshot = (job: OutboundJob, pessoaId: string
   job.jobType === 'automation' && !pessoaId && Boolean(job.phone);
 
 async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' | 'defer' | 'suppress'; reason?: string }> {
-  if (job.jobType === 'conversation') return { action: 'send' };
+  if (job.jobType === 'conversation' || job.jobType === 'transactional') return { action: 'send' };
   const db = getServiceSupabase();
   if (job.campaignId) {
     const { data, error } = await db.from('zelochat_campaigns').select('status,scheduled_at').eq('id', job.campaignId).eq('empresa_id', job.empresaId).maybeSingle();

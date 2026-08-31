@@ -61,7 +61,9 @@ alter table public.zelochat_outbound_jobs add constraint zelochat_outbound_jobs_
       and payload_fingerprint is not null and nullif(trim(payload_fingerprint), '') is not null
       and outbound_origin in ('human_zelochat','human_native_whatsapp','ai_auto','ai_followup','system_handoff','system_transactional','internal_system')
       and (outbound_origin not in ('ai_auto','ai_followup') or control_epoch is not null)
-    )) or (job_type = 'campaign' and conversation_control_id is null and outbound_origin in ('campaign','system_transactional','internal_system'))
+    )) or (job_type = 'transactional' and conversation_control_id is null and outbound_origin = 'system_transactional'
+           and conversation_jid is not null and nullif(trim(conversation_jid), '') is not null)
+       or (job_type = 'campaign' and conversation_control_id is null and outbound_origin in ('campaign','internal_system'))
        or (job_type = 'automation' and conversation_control_id is null and outbound_origin in ('automation','internal_system'))
   )
 );
@@ -249,6 +251,7 @@ begin
        )
        and (
          j.job_type = 'conversation'
+         or j.job_type = 'transactional'
          or (
            j.job_type = 'campaign'
            and (j.campaign_id is null or (c.status in ('running','scheduled') and (c.status = 'running' or c.scheduled_at <= v_now)))
@@ -1032,8 +1035,22 @@ begin
    order by s.updated_at desc, s.id
    limit 1;
 
-  if p_origin in ('campaign','automation','internal_system')
-     or (p_origin = 'system_transactional' and v_session_id is null) then
+  if p_origin = 'system_transactional' and v_session_id is null then
+    insert into public.zelochat_outbound_jobs (
+      empresa_id, job_type, idempotency_key, phone_snapshot, message, status, next_attempt_at,
+      conversation_jid, outbound_origin, takeover_policy, payload, payload_fingerprint,
+      intent_payload_fingerprint
+    ) values (
+      p_empresa_id, 'transactional', p_idempotency_key, split_part(p_remote_jid, '@', 1),
+      coalesce(nullif(p_message_text, ''), '[' || coalesce(p_payload->>'kind', 'mensagem') || ']'),
+      v_initial_status, v_now, p_remote_jid, p_origin, 'preserve_ai', p_payload,
+      p_payload_fingerprint, p_payload_fingerprint
+    ) returning * into v_job;
+    return next v_job;
+    return;
+  end if;
+
+  if p_origin in ('campaign','automation','internal_system') then
     insert into public.zelochat_outbound_jobs (
       empresa_id, job_type, idempotency_key, phone_snapshot, message, status, next_attempt_at,
       conversation_jid, outbound_origin, takeover_policy, payload, payload_fingerprint,

@@ -287,7 +287,7 @@ alter table public.zelochat_outbound_jobs
 
 alter table public.zelochat_outbound_jobs
   add constraint zelochat_outbound_jobs_job_type_check
-  check (job_type in ('campaign', 'automation', 'conversation'));
+  check (job_type in ('campaign', 'automation', 'conversation', 'transactional'));
 
 alter table public.zelochat_outbound_jobs
   drop constraint if exists zelochat_outbound_jobs_status_check;

@@ -160,6 +160,38 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
   assert.equal(await outboundWorker.runOnce('defer'), false); assert.equal(store.rows.get('j1')?.attempts, 0); assert.equal(store.rows.get('j1')?.status, 'queued');
 }
 
+// Transactional messages without a session bypass campaign rollout, while the
+// same destination remains independent across tenants.
+{
+  phase = 'tenant-scoped transactional destination';
+  const jid = '5511777777777@s.whatsapp.net';
+  const transactional = (id: string, empresaId: string): OutboundJob => ({
+    ...conversationJob({ id, empresaId, idempotencyKey: `${empresaId}:${id}` }),
+    jobType: 'transactional',
+    origin: 'system_transactional',
+    conversationControlId: undefined,
+    conversationJid: jid,
+    messageId: undefined,
+  } as unknown as OutboundJob);
+  const store = new SharedLeaseStore([transactional('j1', 'e1'), transactional('j2', 'e2')]);
+  const transport = new RecordingTransport();
+  transport.block('j1');
+  const outboundWorker = new OutboundWorker({
+    queue: new OutboundQueue(store),
+    transport,
+    getStatus: async () => 'connected',
+    getRolloutFlags: async () => ({ crm: true, campaigns: false, automations: false }),
+    validate: async () => ({ action: 'send' }),
+    broadcastStatus: async () => undefined,
+  });
+  const first = outboundWorker.runOnce('transactional-e1');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(await outboundWorker.runOnce('transactional-e2'), true);
+  transport.release('j1');
+  assert.equal(await first, true);
+  assert.deepEqual(transport.calls.sort(), ['e1:j1', 'e2:j2']);
+}
+
 // Only pre-transport expiry retries; post-linearization becomes uncertain without a second POST.
 {
   phase = 'preflight failure';

@@ -25,6 +25,7 @@ interface OutboundJobInputBase {
 export type OutboundJobInput =
   | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: 'ai_auto' | 'ai_followup'; payload: PersistedOutboundPayload; payloadFingerprint: string; controlEpoch: string })
   | (OutboundJobInputBase & { jobType: 'conversation'; conversationControlId: string; conversationJid: string; origin: Exclude<OutboundOrigin, 'campaign' | 'automation' | 'ai_auto' | 'ai_followup'>; payload: PersistedOutboundPayload; payloadFingerprint: string; controlEpoch?: string })
+  | (OutboundJobInputBase & { jobType: 'transactional'; conversationJid: string; origin: 'system_transactional'; payload: PersistedOutboundPayload; payloadFingerprint: string })
   | (OutboundJobInputBase & { jobType?: 'campaign'; origin?: 'campaign' | 'internal_system' })
   | (OutboundJobInputBase & { jobType: 'automation'; origin?: 'automation' | 'internal_system' });
 
@@ -35,7 +36,7 @@ interface StoredOutboundJobBase {
   recipientId?: string;
   automationDispatchId?: string;
   campaignId?: string;
-  jobType: 'conversation' | 'campaign' | 'automation';
+  jobType: 'conversation' | 'transactional' | 'campaign' | 'automation';
   idempotencyKey: string;
   phone?: string | null;
   text: string;
@@ -66,7 +67,8 @@ export type ConversationOutboundJob =
   | (ConversationJobBase & { origin: Exclude<ConversationJobBase['origin'], 'ai_auto' | 'ai_followup'>; controlEpoch?: string });
 export type CampaignOutboundJob = StoredOutboundJobBase & { jobType: 'campaign'; origin: 'campaign' | 'internal_system'; campaignId?: string };
 export type AutomationOutboundJob = StoredOutboundJobBase & { jobType: 'automation'; origin: 'automation' | 'internal_system'; automationDispatchId?: string };
-export type OutboundJob = ConversationOutboundJob | CampaignOutboundJob | AutomationOutboundJob;
+export type TransactionalOutboundJob = StoredOutboundJobBase & { jobType: 'transactional'; origin: 'system_transactional'; conversationJid: string };
+export type OutboundJob = ConversationOutboundJob | TransactionalOutboundJob | CampaignOutboundJob | AutomationOutboundJob;
 
 type LegacyStoredJob = Omit<OutboundJob, 'jobType' | 'origin' | 'payload' | 'payloadFingerprint'>
   & Partial<Pick<OutboundJob, 'jobType' | 'origin' | 'payload' | 'payloadFingerprint'>>;
@@ -113,6 +115,7 @@ export function assertOutboundJobShape(job: OutboundJob): void {
   }
   if (job.jobType === 'campaign' && !['campaign','internal_system'].includes(job.origin)) throw new Error('OUTBOUND_CAMPAIGN_ORIGIN_INVALID');
   if (job.jobType === 'automation' && !['automation','internal_system'].includes(job.origin)) throw new Error('OUTBOUND_AUTOMATION_ORIGIN_INVALID');
+  if (job.jobType === 'transactional' && (job.origin !== 'system_transactional' || !job.conversationJid)) throw new Error('OUTBOUND_TRANSACTIONAL_SHAPE_INVALID');
   assertQueueablePayload(job.payload);
 }
 const normalizeJob = (job: OutboundJob | LegacyStoredJob): OutboundJob => {
@@ -121,7 +124,7 @@ const normalizeJob = (job: OutboundJob | LegacyStoredJob): OutboundJob => {
   const normalized = {
     ...job,
     jobType,
-    origin: job.origin ?? (jobType === 'automation' ? 'automation' : 'campaign'),
+    origin: job.origin ?? (jobType === 'automation' ? 'automation' : jobType === 'transactional' ? 'system_transactional' : 'campaign'),
     payload: job.payload,
     payloadFingerprint: job.payloadFingerprint ?? '',
   } as OutboundJob;

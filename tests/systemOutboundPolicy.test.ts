@@ -62,6 +62,16 @@ assert.match(
 );
 assert.match(
   systemEnqueueMigration,
+  /p_empresa_id, 'transactional', p_idempotency_key/,
+  'entregador ou confirmação sem sessão usa job_type transacional explícito',
+);
+assert.match(
+  systemEnqueueMigration,
+  /job_type = 'campaign' and conversation_control_id is null and outbound_origin in \('campaign','internal_system'\)/,
+  'campanha mantém somente suas origens próprias e internas',
+);
+assert.match(
+  systemEnqueueMigration,
   /hashtextextended\(p_empresa_id::text \|\| ':' \|\| p_remote_jid/,
   'destino sem sessão recebe lock tenant-scoped próprio',
 );
@@ -72,6 +82,7 @@ assert.match(
 );
 const worker = read('server/outbound/worker.ts');
 assert.match(worker, /`destination:\$\{job\.empresaId\}:\$\{/, 'worker local serializa jobs não vinculados por tenant e destino');
+assert.match(worker, /job\.jobType !== 'transactional'[\s\S]*?getRolloutFlags/, 'transacional não consulta rollout de campanha');
 
 const ai = read('server/ai.ts');
 const escalation = read('server/escalation.ts');
