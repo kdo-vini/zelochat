@@ -1,5 +1,25 @@
 # Incidentes e padrões conhecidos
 
+## XXIII. Eco `fromMe` podia ser confundido com atuação humana nativa (risco corrigido em 2026-08-30)
+
+### Sintoma possível
+
+Uma mensagem enviada pelo servidor podia ser duplicada no histórico, enquanto uma resposta enviada pelo celular do operador não pausava a IA e permitia resposta automática posterior.
+
+### Causa-raiz
+
+A decisão dependia de um `Map` local de IDs e persistência fire-and-forget; não havia correlação cross-replica, takeover transacional nem replay durável do raw event.
+
+### Fix
+
+// FIX 2026-08-30: `fromMe` dependia de memória local/fire-and-forget → ID persistente decide eco, fingerprint abre hold e a RPC 066 grava envio nativo + takeover atomicamente — `server/router.ts:523`, `server/fromMeProcessor.ts:1`, `supabase/migrations/066_native_from_me_takeover.sql:1`.
+
+### Recovery / rollout
+
+Aplicar a migration 066 antes deste backend. Manter `FROM_ME_NATIVE_MODE=shadow` até validar fixtures sanitizadas de mídia e concluir Task 9/rollout; em `enforce`, somente raw event com `auth_status='token_match'` pode executar takeover.
+
+---
+
 ## XXII. Resposta automática podia ultrapassar takeover humano (risco corrigido em 2026-08-30)
 
 ### Sintoma possível

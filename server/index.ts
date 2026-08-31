@@ -32,6 +32,7 @@ import { scheduleReply } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
 import { redactJid } from './redact.js';
 import { startOutboundWorker } from './outbound/worker.js';
+import { startWebhookReplayWorker } from './webhookReplayWorker.js';
 import { beginAiTurn, type AiTurnPermit } from './conversationControl.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
@@ -500,4 +501,5 @@ httpServer.listen(PORT, () => {
   // concorrência local é limitada por OUTBOUND_WORKER_CONCURRENCY; o mutex
   // autoritativo entre réplicas e por conversa fica nas RPCs do banco.
   startOutboundWorker();
+  startWebhookReplayWorker();
 });

@@ -2478,6 +2478,11 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   return shouldTriggerAutoReply ? { messageId: storedMsg.id } : false;
 }
 
+/**
+ * Rolling-deploy compatibility for legacy non-webhook callers only.
+ * `messages.upsert` with fromMe must use the awaited `fromMeProcessor`, whose
+ * RPC makes persistence and native-human takeover atomic.
+ */
 export async function handleOutboundMessage(data: any, empresaId: string): Promise<void> {
   const jid: string = data.key?.remoteJid ?? '';
   const msgId: string = data.key?.id ?? '';

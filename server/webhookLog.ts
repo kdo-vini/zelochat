@@ -121,18 +121,18 @@ export async function recordRawWebhookEvent(
  */
 export async function markWebhookEventProcessed(
   rawEventId: string | null,
-  error: unknown = null,
+  correlationState: string | null = null,
 ): Promise<void> {
   if (!rawEventId) return;
-  const errorText = error
-    ? (error instanceof Error ? error.message : String(error)).slice(0, 2000)
-    : null;
   try {
     const { error: updateError } = await getServiceSupabase()
       .from('zelochat_webhook_events_raw')
       .update({
         processed_at: new Date().toISOString(),
-        processing_error: errorText,
+        processing_error: null,
+        lease_owner: null,
+        lease_expires_at: null,
+        ...(correlationState ? { correlation_state: correlationState } : {}),
       })
       .eq('id', rawEventId);
     if (updateError) {
@@ -140,5 +140,26 @@ export async function markWebhookEventProcessed(
     }
   } catch (err) {
     console.error('[webhook-log] mark-processed threw:', err);
+  }
+}
+
+/** Keep a failed event replayable; processed_at is success-only. */
+export async function markWebhookEventFailed(rawEventId: string | null, error: unknown): Promise<void> {
+  if (!rawEventId) return;
+  const errorText = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+  try {
+    const { error: updateError } = await getServiceSupabase()
+      .from('zelochat_webhook_events_raw')
+      .update({
+        processed_at: null,
+        processing_error: errorText,
+        next_attempt_at: new Date(Date.now() + 5_000).toISOString(),
+        lease_owner: null,
+        lease_expires_at: null,
+      })
+      .eq('id', rawEventId);
+    if (updateError) console.error('[webhook-log] mark-failed failed:', updateError.message);
+  } catch (failure) {
+    console.error('[webhook-log] mark-failed threw:', failure);
   }
 }

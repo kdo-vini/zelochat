@@ -27,7 +27,6 @@ import {
   fetchInstanceQR,
   logoutInstance,
   setWebhookForInstance,
-  wasSentByServer,
   type QuotedContext,
 } from './whatsapp.js';
 import {
@@ -35,8 +34,6 @@ import {
   getSession,
   addAssistantMessage,
   createAssistantMessageIntent,
-  handleOutboundMessage,
-  messageExistsByWhatsAppId,
   deleteFailedAssistantMessage,
   markAssistantMessageSendFailed,
   markAssistantMessageSendSucceeded,
@@ -72,7 +69,8 @@ import { normalizeLoose } from '../src/domain/conversationState.js';
 import { isRetryableOutboundFailure, type OutboundPayload } from '../src/domain/outbound.js';
 import { buildFailedMessageRetryPayload } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
-import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
+import { recordRawWebhookEvent, markWebhookEventFailed, markWebhookEventProcessed, type WebhookAuthStatus } from './webhookLog.js';
+import { processFromMeUpsert } from './fromMeProcessor.js';
 import { redactInstance, redactJid } from './redact.js';
 import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
@@ -520,7 +518,11 @@ function safeJsonParse<T = any>(value: string): T | null {
  *
  * Always test the full webhook → handler → AI chain after changes here.
  */
-async function processWebhookEvent(empresaId: string, body: any): Promise<void> {
+async function processWebhookEvent(
+  empresaId: string,
+  body: any,
+  context: { authStatus: WebhookAuthStatus; rawEventId: string | null },
+): Promise<void> {
   const event: string = (body?.event ?? '').toLowerCase().replace(/_/g, '.');
   const data = body?.data;
 
@@ -547,27 +549,18 @@ async function processWebhookEvent(empresaId: string, body: any): Promise<void> 
     }
 
     // Messages sent from the operator's phone (not via the app). Save them so the
-    // conversation history stays complete. Skip multi-device protocol artifacts and
-    // any message already saved by /api/send (identified by its Whatsmiau key id).
+    // conversation history stays complete. Persistent provider-id evidence wins;
+    // an equal fingerprint without an id is held for replay, never accepted as echo.
+    // FIX 2026-08-30: fromMe dependia de memória local/fire-and-forget → processor aguardado usa ID persistente, auth e takeover atômico.
     if (data.key?.fromMe) {
-      if (data.message?.deviceSentMessage) {
-        console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=from_me_device_sent`);
-        return;
-      }
-      const msgId: string = data.key?.id ?? '';
-      if (msgId && wasSentByServer(msgId) && await messageExistsByWhatsAppId(empresaId, msgId)) {
-        console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} reason=from_me_echo_known messageId=${msgId}`);
-        return;
-      }
-      const remoteJid: string = data.key?.remoteJid ?? '';
-      if (!remoteJid.endsWith('@s.whatsapp.net')) {
-        console.log(`[WebhookTrace] skip empresa=${empresaId} event=${event} jid=${redactJid(remoteJid)} reason=from_me_non_individual`);
-        return;
-      }
-      console.log(`[WebhookTrace] from_me_persist empresa=${empresaId} jid=${redactJid(remoteJid)} messageId=${msgId || '<missing>'}`);
-      handleOutboundMessage(data, empresaId).catch((err) =>
-        console.error('[Webhook] fromMe persist failed:', err),
-      );
+      const result = await processFromMeUpsert({
+        empresaId,
+        data,
+        authStatus: context.authStatus,
+        rawEventId: context.rawEventId,
+        mode: process.env.FROM_ME_NATIVE_MODE === 'enforce' ? 'enforce' : 'shadow',
+      });
+      console.log(`[WebhookTrace] from_me_decision empresa=${empresaId} decision=${result.kind}`);
       return;
     }
 
@@ -976,6 +969,8 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   if (headerToken) {
     if (!safeEqualString(headerToken, webhookToken)) {
       console.warn(`[WebhookTrace] reject instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} reason=token_mismatch`);
+      const forgedRawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, 'token_mismatch');
+      await markWebhookEventProcessed(forgedRawEventId, 'shadow_unauthenticated');
       res.status(401).json({ error: 'invalid webhook token' });
       return;
     }
@@ -989,13 +984,6 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     authStatus = 'token_missing';
   }
 
-  // Ack the webhook FIRST — Whatsmiau's retry timer starts the moment we
-  // accept the body, and the work below (raw log + AI dispatch) can take
-  // hundreds of ms. Holding the response open here is what triggered prior
-  // double-deliveries.
-  res.json({ ok: true });
-  console.log(`[WebhookTrace] ack instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} auth=${authStatus}`);
-
   // Defense layer: persist the raw payload BEFORE processing. If
   // processWebhookEvent (or any helper it calls) regresses again like the
   // 2026-04-29 P0.14 incident, we can replay from this log instead of losing
@@ -1007,14 +995,18 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus);
   console.log(`[WebhookTrace] raw_event_saved empresa=${empresaId} rawEventId=${rawEventId ?? '<none>'}`);
 
-  let processingError: unknown = null;
+  // ACK immediately after the replay source is durable. AI/media processing
+  // remains outside the response latency and its failures are retried by lease.
+  res.json({ ok: true });
+  console.log(`[WebhookTrace] ack instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} auth=${authStatus}`);
+
   try {
-    await processWebhookEvent(empresaId, req.body);
+    await processWebhookEvent(empresaId, req.body, { authStatus, rawEventId });
+    await markWebhookEventProcessed(rawEventId);
   } catch (err) {
-    processingError = err;
     console.error(`[Webhook] processWebhookEvent threw for instance "${redactInstance(instance)}":`, err);
+    await markWebhookEventFailed(rawEventId, err);
   }
-  await markWebhookEventProcessed(rawEventId, processingError);
 });
 
 

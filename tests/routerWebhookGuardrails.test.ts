@@ -19,6 +19,17 @@ await runSuite('Router webhook/order guardrails', [
     },
   },
   {
+    name: 'raw event is durable before ACK and fromMe processing is awaited with auth context',
+    run: () => {
+      const raw = indexOfOrFail('const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus);');
+      const ack = indexOfOrFail('res.json({ ok: true });');
+      const process = indexOfOrFail('await processWebhookEvent(empresaId, req.body, { authStatus, rawEventId });');
+      assert(raw < ack && ack < process, 'raw insert precedes fast ACK and async processing follows it');
+      assertIncludes(router, 'await processFromMeUpsert({', 'fromMe processor is awaited instead of fire-and-forget persistence');
+      assert(!router.includes('handleOutboundMessage(data, empresaId).catch'), 'legacy fire-and-forget fromMe persistence is removed');
+    },
+  },
+  {
     name: 'hard button path returns before dispatching to AI',
     run: () => {
       const hardStart = indexOfOrFail('const isHardConfirm = buttonId ===');

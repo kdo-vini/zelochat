@@ -13,7 +13,7 @@
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Tasks 3–7 locais concluídas em 2026-08-30: além do controle/worker/dispatcher, todo inbound respondível agora cria `AiTurnPermit`, debounce/model/tools/fallbacks revalidam epoch, todo customer-facing AI é enfileirado e todos os envios humanos do ZeloChat/CRM/payloads especiais/retry passam pelo dispatcher como `human_zelochat` com `take_over`. Ainda não ativar `enforce`: reconciliação `fromMe`, transacionais/campanhas/automações e rollout coordenado continuam pendentes.
+- Tasks 3–8 locais concluídas em 2026-08-30: além do controle/worker/dispatcher e fences de IA/humano ZeloChat, `fromMe` agora distingue eco por ID persistente de envio humano nativo, grava takeover atomicamente e reprocessa raw events com lease/backoff/dead-letter. `FROM_ME_NATIVE_MODE` continua `shadow` por padrão; ainda não ativar `enforce`: transacionais/campanhas/automações, fixtures reais de mídia e rollout coordenado continuam pendentes.
 
 ## Rollout CRM (2026-08-26)
 

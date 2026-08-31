@@ -35,19 +35,17 @@ function broadcastLegacyLifecycleEvent(event: WsEvent): void {
 const BASE_URL = (process.env.WHATSMIAU_BASE_URL || 'https://api.whatsmiau.dev').replace(/\/$/, '');
 const API_KEY = process.env.WHATSMIAU_API_KEY || '';
 
-// Whatsmiau message IDs sent by this server process — used to skip the fromMe
-// webhook echo that Whatsmiau fires for every outbound API send.
+// Provider message IDs observed by this process. This is only rolling-deploy
+// evidence for the persistent fromMe reconciler; it never proves an echo by
+// fingerprint/JID and is not the cross-replica source of truth.
 //
 // P1.7 — TTL ampliado de 30s → 10min. Redeploys demoram ~2-3min
 // e Whatsmiau às vezes atrasa o echo (queue lag). Com 30s, qualquer atraso
 // >30s fazia o echo ser tratado como mensagem orgânica do operador →
 // duplicate row em zelochat_messages.
 //
-// LIMITAÇÃO: este Map não sobrevive a restart do processo. Após redeploy,
-// outbounds enviados ANTES do restart cujo echo chega DEPOIS são persistidos
-// duplicado. Solução completa seria persistir wa_message_id em
-// zelochat_messages (UNIQUE index já existe da migration 015) e dedupar
-// no DB layer — fica pra próximo sprint.
+// IDs/job/message no banco (migrations 015/065/066) são autoritativos após
+// restart e entre réplicas. Este mapa cobre somente a janela de writers legados.
 const SENT_DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const recentSentIds = new Map<string, number>();
 const sentDedupCleanupTimer = setInterval(() => {
