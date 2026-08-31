@@ -213,6 +213,9 @@ function testTaskElevenArtifactsAndRaceMatrix() {
   assert.match(sql, /claim_zelochat_outbound_job/i);
   assert.match(sql, /record_zelochat_native_outbound_takeover/i);
   assert.match(sql, /ACTOR_NOT_IN_TENANT/i);
+  assert.match(sql, /exception when unique_violation/i);
+  assert.match(sql, /WA_MESSAGE_ID_SAME_TENANT_DUPLICATE_ACCEPTED/i);
+  assert.match(sql, /WA_MESSAGE_ID_CROSS_TENANT_SCOPE_FAILED/i);
 
   const requiredEvidence: Array<[string, RegExp[]]> = [
     ['tests/aiTakeoverRace.test.ts', [/native_whatsapp/i, /modelCalls/i, /jobWrites/i]],
@@ -221,6 +224,8 @@ function testTaskElevenArtifactsAndRaceMatrix() {
     ['tests/fromMeProcessor.test.ts', [/server_echo/i, /pendingJob/i, /token_missing/i]],
     ['tests/conversationOutboundRpc.integration.test.ts', [/Order 1/i, /Order 2/i, /Opposite order/i]],
     ['tests/manualOutboundRoutes.test.ts', [/same-http-intent/i, /idempotency/i]],
+    ['tests/qa-human-takeover.spec.ts', [/autoReply: false/i, /messageJobId/i, /\[200, 202\]/i]],
+    ['tests/qa-native-from-me.spec.ts', [/human_native_whatsapp/i, /beforeMessageIds/i, /status: 'active'/i]],
   ];
 
   for (const [relativePath, patterns] of requiredEvidence) {

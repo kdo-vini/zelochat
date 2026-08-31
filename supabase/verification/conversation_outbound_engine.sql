@@ -7,6 +7,9 @@ begin;
 do $$
 declare
   v_empresa uuid;
+  v_session uuid;
+  v_other_empresa uuid;
+  v_other_session uuid;
   v_actor uuid;
   v_jid text;
   v_control uuid;
@@ -15,6 +18,7 @@ declare
   v_job uuid;
   v_native_first jsonb;
   v_native_second jsonb;
+  v_duplicate_rejected boolean := false;
   v_key text := 'verify-task11-' || txid_current()::text;
 begin
   if exists (
@@ -24,8 +28,8 @@ begin
     raise exception 'ISOLATED_DATABASE_REQUIRED: claimable outbound jobs already exist';
   end if;
 
-  select s.empresa_id, ep.user_id, s.remote_jid, s.conversation_control_id
-    into v_empresa, v_actor, v_jid, v_control
+  select s.empresa_id, s.id, ep.user_id, s.remote_jid, s.conversation_control_id
+    into v_empresa, v_session, v_actor, v_jid, v_control
     from public.zelochat_sessions s
     join public.empresa_perfil ep on ep.id = s.empresa_id
    where s.conversation_control_id is not null
@@ -34,6 +38,42 @@ begin
    limit 1;
   if v_empresa is null then
     raise exception 'FIXTURE_REQUIRED: one mapped session with an empresa owner is required';
+  end if;
+
+  select s.empresa_id, s.id
+    into v_other_empresa, v_other_session
+    from public.zelochat_sessions s
+   where s.empresa_id <> v_empresa
+   order by s.updated_at desc, s.id
+   limit 1;
+  if v_other_empresa is null then
+    raise exception 'FIXTURE_REQUIRED: sessions in two tenants are required for wa_message_id scope verification';
+  end if;
+
+  insert into public.zelochat_messages (
+    empresa_id, session_id, wa_message_id, role, content, sent_at
+  ) values (
+    v_empresa, v_session, v_key || '-shared-wa-id', 'assistant', 'probe tenant A', now()
+  );
+  begin
+    insert into public.zelochat_messages (
+      empresa_id, session_id, wa_message_id, role, content, sent_at
+    ) values (
+      v_empresa, v_session, v_key || '-shared-wa-id', 'assistant', 'probe duplicate', now()
+    );
+  exception when unique_violation then
+    v_duplicate_rejected := true;
+  end;
+  if not v_duplicate_rejected then
+    raise exception 'WA_MESSAGE_ID_SAME_TENANT_DUPLICATE_ACCEPTED';
+  end if;
+  insert into public.zelochat_messages (
+    empresa_id, session_id, wa_message_id, role, content, sent_at
+  ) values (
+    v_other_empresa, v_other_session, v_key || '-shared-wa-id', 'assistant', 'probe tenant B', now()
+  );
+  if (select count(*) from public.zelochat_messages where wa_message_id = v_key || '-shared-wa-id') <> 2 then
+    raise exception 'WA_MESSAGE_ID_CROSS_TENANT_SCOPE_FAILED';
   end if;
 
   if has_function_privilege('anon', 'public.pause_zelochat_ai_for_human(uuid,text,uuid,text,uuid)', 'EXECUTE')
