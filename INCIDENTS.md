@@ -16,6 +16,8 @@ A decisão dependia de um `Map` local de IDs e persistência fire-and-forget; n�
 
 Review R1 fechou duas janelas adicionais: sucesso HTTP agora exige raw event realmente persistido, e o takeover nativo após correlação divergente libera somente o hold `from_me_pending_correlation` do job correspondente, sob os mesmos locks; holds independentes permanecem intactos — `server/router.ts:995`, `supabase/migrations/066_native_from_me_takeover.sql:83`.
 
+Review R2 eliminou a inversão `job→control` nas RPCs de hold/reconciliação: todas as mutações de correlação seguem `gate→control→job`, com lookup inicial sem lock e revalidação tenant-scoped do job após adquirir o mutex canônico — `supabase/migrations/066_native_from_me_takeover.sql:197`.
+
 ### Recovery / rollout
 
 Aplicar a migration 066 antes deste backend. Manter `FROM_ME_NATIVE_MODE=shadow` até validar fixtures sanitizadas de mídia e concluir Task 9/rollout; em `enforce`, somente raw event com `auth_status='token_match'` pode executar takeover.

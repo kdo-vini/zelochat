@@ -105,3 +105,28 @@ assert.ok(
   nativeRpc.indexOf("if found then\n    if v_job_id is null") < nativeRpc.indexOf("v_release_correlation_hold :="),
   'idempotent redelivery returns before evaluating or clearing a correlation hold',
 );
+
+const holdRpc = sql.slice(
+  sql.indexOf('create or replace function public.hold_zelochat_from_me_correlation'),
+  sql.indexOf('create or replace function public.reconcile_zelochat_from_me_server_echo'),
+);
+const holdGate = holdRpc.indexOf('perform public.zelochat_conversation_control_rollout_gate();');
+const holdControlLock = holdRpc.indexOf('from public.zelochat_conversation_ai_control c\n   where c.id = v_control_id and c.empresa_id = p_empresa_id for update;');
+const holdJobLock = holdRpc.indexOf('select * into v_job from public.zelochat_outbound_jobs j\n   where j.id = p_job_id and j.empresa_id = p_empresa_id\n     and j.conversation_control_id = v_control_id for update;');
+assert.ok(holdGate >= 0 && holdControlLock > holdGate && holdJobLock > holdControlLock, 'pending-correlation hold locks gate then control then job');
+assert.match(holdRpc, /select j\.conversation_control_id into v_control_id[\s\S]*where j\.id = p_job_id and j\.empresa_id = p_empresa_id;[\s\S]*conversation_control_id = v_control_id for update/i);
+
+const nativeGate = nativeRpc.indexOf('perform public.zelochat_conversation_control_rollout_gate();');
+const nativeControlLock = nativeRpc.indexOf('where c.empresa_id = p_empresa_id and c.id = v_snapshot.conversation_control_id for update;');
+const nativeJobLock = nativeRpc.indexOf('and j.id = v_control.hold_job_id\n     for update;');
+assert.ok(nativeGate >= 0 && nativeControlLock > nativeGate && nativeJobLock > nativeControlLock, 'native takeover cleanup locks gate then control then correlated job');
+
+const reconcileRpc = sql.slice(
+  sql.indexOf('create or replace function public.reconcile_zelochat_from_me_server_echo'),
+  sql.indexOf('create or replace function public.claim_zelochat_webhook_replay'),
+);
+const reconcileGate = reconcileRpc.indexOf('perform public.zelochat_conversation_control_rollout_gate();');
+const reconcileControlLock = reconcileRpc.indexOf('where c.id = v_control_id and c.empresa_id = p_empresa_id for update;');
+const reconcileJobLock = reconcileRpc.indexOf('where j.id = p_job_id and j.empresa_id = p_empresa_id\n       and j.conversation_control_id = v_control_id for update;');
+assert.ok(reconcileGate >= 0 && reconcileControlLock > reconcileGate && reconcileJobLock > reconcileControlLock, 'server-echo reconciliation locks gate then control then job');
+assert.match(reconcileRpc, /hold_reason = 'from_me_pending_correlation' and hold_job_id = p_job_id/i);

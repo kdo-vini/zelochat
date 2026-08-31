@@ -197,15 +197,27 @@ create or replace function public.hold_zelochat_from_me_correlation(
 returns boolean
 language plpgsql security definer set search_path = public, pg_temp
 as $$
-declare v_job public.zelochat_outbound_jobs%rowtype;
+declare
+  v_job public.zelochat_outbound_jobs%rowtype;
+  v_control_id uuid;
 begin
   perform public.zelochat_conversation_control_rollout_gate();
+  -- Read only enough to discover the canonical mutex. The effective lock order
+  -- stays gate -> control -> job, matching claims, completion and native cleanup.
+  select j.conversation_control_id into v_control_id
+    from public.zelochat_outbound_jobs j
+   where j.id = p_job_id and j.empresa_id = p_empresa_id;
+  if v_control_id is null then return false; end if;
+
+  perform 1 from public.zelochat_conversation_ai_control c
+   where c.id = v_control_id and c.empresa_id = p_empresa_id for update;
+  if not found then return false; end if;
+
   select * into v_job from public.zelochat_outbound_jobs j
-   where j.id = p_job_id and j.empresa_id = p_empresa_id for update;
+   where j.id = p_job_id and j.empresa_id = p_empresa_id
+     and j.conversation_control_id = v_control_id for update;
   if not found or v_job.status <> 'dispatch_started' or v_job.provider_message_id is not null
      or v_job.payload_fingerprint is distinct from p_payload_fingerprint then return false; end if;
-  perform 1 from public.zelochat_conversation_ai_control c
-   where c.id = v_job.conversation_control_id and c.empresa_id = p_empresa_id for update;
   update public.zelochat_conversation_ai_control c
      set hold_reason = 'from_me_pending_correlation', hold_job_id = v_job.id
    where c.id = v_job.conversation_control_id and c.empresa_id = p_empresa_id
@@ -226,12 +238,20 @@ create or replace function public.reconcile_zelochat_from_me_server_echo(
 returns boolean
 language plpgsql security definer set search_path = public, pg_temp
 as $$
-declare v_job public.zelochat_outbound_jobs%rowtype; v_snapshot record; v_session_id uuid; v_message_id uuid;
+declare v_job public.zelochat_outbound_jobs%rowtype; v_snapshot record; v_session_id uuid; v_message_id uuid; v_control_id uuid;
 begin
   perform public.zelochat_conversation_control_rollout_gate();
   if p_job_id is not null then
+    select j.conversation_control_id into v_control_id from public.zelochat_outbound_jobs j
+     where j.id = p_job_id and j.empresa_id = p_empresa_id;
+    if v_control_id is null then return false; end if;
+    -- FIX 2026-08-30: job->control invertia a ordem do hold e podia deadlockar -> gate->control->job em todas as RPCs de correlacao.
+    perform 1 from public.zelochat_conversation_ai_control c
+     where c.id = v_control_id and c.empresa_id = p_empresa_id for update;
+    if not found then return false; end if;
     select * into v_job from public.zelochat_outbound_jobs j
-     where j.id = p_job_id and j.empresa_id = p_empresa_id for update;
+     where j.id = p_job_id and j.empresa_id = p_empresa_id
+       and j.conversation_control_id = v_control_id for update;
     if not found or (v_job.provider_message_id is not null and v_job.provider_message_id <> p_wa_message_id) then return false; end if;
     update public.zelochat_outbound_jobs set provider_message_id = p_wa_message_id,
       status = case when status = 'dispatch_started' then 'sent' else status end,
@@ -241,7 +261,8 @@ begin
       outbound_status = case when outbound_status = 'dispatch_started' then 'sent' else outbound_status end,
       outbound_error = null where id = v_job.message_id and empresa_id = p_empresa_id;
     update public.zelochat_conversation_ai_control set hold_reason = null, hold_job_id = null
-     where empresa_id = p_empresa_id and id = v_job.conversation_control_id and hold_job_id = p_job_id;
+     where empresa_id = p_empresa_id and id = v_control_id
+       and hold_reason = 'from_me_pending_correlation' and hold_job_id = p_job_id;
     return true;
   end if;
 
