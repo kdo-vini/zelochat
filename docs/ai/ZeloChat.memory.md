@@ -10,6 +10,7 @@
 - The flow is permanent: it has no rollout flags or test mode. It is available whenever the private ZeloMenu client is configured; otherwise the customer is transferred to a human. Metrics log only event/outcome/duration, never JID, content, customer data, cart or token.
 - The old `zelochat_pending_orders` path remains isolated and runs first. Task 6 button IDs are consumed before legacy `CONFIRM_ORDER`; ZeloMenu owns message-id idempotency and optimistic revision checks.
 - Follow-ups to deterministic catalog questions (`Qual você quer?`, size/option prompts) reuse the prior ordering query and freshly search canonical candidates. Button commands run inside the shared JID queue, dedupe only an exact provider messageId, and defer customer sends until after the queue releases.
+- A catalog result marked ambiguous never reaches the model planner, even when every candidate ID is valid. Daily-menu aliases (`mistura`, `proteína`, `cardápio de hoje`, `marmita do dia`) render the published protein/mix and size groups from the unique parent product.
 - Deployment dependency: internal catalog/ordering routes are owned by ZeloMenu commits `719ee33` and `eaeaae0` and must be deployed there before this flow can operate here. The local ZeloMenu default is `http://127.0.0.1:3101`.
 
 ### CRM rollout (confirmed 2026-08-26)
