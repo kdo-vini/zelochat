@@ -1,6 +1,6 @@
 # Operação — tomada humana e engine de outbound
 
-Status: engine sempre ativa; as migrations `063–067` devem estar aplicadas antes de publicar o backend que contém este contrato.
+Status: engine sempre ativa; migrations `063–067` aplicadas em 2026-08-31 no projeto Supabase `ZeloPDV`. O backend correspondente está no commit `d7f3ceb`.
 
 ## Invariantes
 

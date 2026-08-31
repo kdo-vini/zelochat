@@ -13,7 +13,7 @@
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Tasks 3–12 locais concluídas em 2026-08-30, com correção transversal final em 2026-08-31: controle/worker/dispatcher, fences de IA/humano, reconciliação `fromMe`, transportes especiais, UI e gates estão versionados. A engine agora é sempre ativa para envios autenticados; o módulo de rollout foi removido, e a migration 067 aposenta a compatibilidade legada. Migrations e backend ainda precisam ser aplicados/publicados no ambiente autorizado.
+- Tasks 3–12 locais concluídas em 2026-08-30, com correção transversal final em 2026-08-31: controle/worker/dispatcher, fences de IA/humano, reconciliação `fromMe`, transportes especiais, UI e gates estão versionados. A engine agora é sempre ativa para envios autenticados; o módulo de rollout foi removido, e a migration 067 aposenta a compatibilidade legada. As migrations `063–067` já foram aplicadas no Supabase `ZeloPDV`; o backend está consolidado no commit `d7f3ceb` e pronto para publicação coordenada.
 
 ## Rollout CRM (2026-08-26)
 
