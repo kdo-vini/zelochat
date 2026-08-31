@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import type { Server } from 'http';
 import { resolveEmpresaIdFromToken } from './supabase.js';
+import type { TakeoverSource } from './conversationControl.js';
 
 export type WsEventType =
   | 'qr'
@@ -22,10 +23,21 @@ export type WsEventType =
   | 'session_tags_updated'
   | 'reaction_update';
 
-export interface WsEvent {
-  type: WsEventType;
-  data: unknown;
+export interface ConversationModeChanged {
+  type: 'conversation_mode_changed';
+  data: {
+    sessionIds: string[];
+    mode: 'ai' | 'human';
+    epoch: string;
+    source: TakeoverSource | 'resume';
+    changedAt: string;
+  };
 }
+
+export type WsEvent = ConversationModeChanged | {
+  type: Exclude<WsEventType, 'conversation_mode_changed'>;
+  data: unknown;
+};
 
 let wss: WebSocketServer | null = null;
 

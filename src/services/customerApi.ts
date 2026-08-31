@@ -184,7 +184,7 @@ export async function sendCustomerMessage(token: string, personId: string, prima
   return parseCustomerResponse(response);
 }
 
-export async function retryCustomerMessage(token: string, dbMessageId: string, idempotencyKey = crypto.randomUUID()): Promise<void> {
+export async function retryCustomerMessage(token: string, dbMessageId: string, idempotencyKey = crypto.randomUUID()): Promise<{ dbMessageId: string; messageId: string | null; jobId: string; status: CustomerSendStatus }> {
   const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(dbMessageId)}/retry`), { method: 'POST', headers: { ...authHeaders(token), 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ idempotencyKey }) });
-  await parseCustomerResponse(response);
+  return parseCustomerResponse(response);
 }

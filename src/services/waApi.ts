@@ -123,6 +123,15 @@ type SendMessagePayload = {
   idempotencyKey?: string;
 };
 
+export type ManualSendStatus = 'sent' | 'queued' | 'failed_before_dispatch' | 'delivery_uncertain';
+export interface ManualSendResult {
+  status: ManualSendStatus;
+  messageId: string;
+  dbMessageId: string;
+  jobId: string;
+  message?: string;
+}
+
 export async function bindEmpresa(token: string): Promise<void> {
   const response = await apiFetch(apiUrl('/api/bind-empresa'), {
     method: 'POST',
@@ -277,7 +286,7 @@ export async function sendMessage(
   token: string,
   to: string,
   payload: SendMessagePayload,
-): Promise<void> {
+): Promise<ManualSendResult> {
   const idempotencyKey = payload.idempotencyKey ?? crypto.randomUUID();
   const response = await apiFetch(apiUrl('/api/send'), {
     method: 'POST',
@@ -285,7 +294,7 @@ export async function sendMessage(
     body: JSON.stringify({ to, ...payload, idempotencyKey }),
   });
 
-  await parseResponse(response);
+  return parseResponse<ManualSendResult>(response);
 }
 
 export async function sendPresence(
@@ -333,13 +342,13 @@ export async function deleteMessage(
   await parseResponse(response);
 }
 
-export async function retryFailedMessage(token: string, messageId: string, idempotencyKey = crypto.randomUUID()): Promise<void> {
+export async function retryFailedMessage(token: string, messageId: string, idempotencyKey = crypto.randomUUID()): Promise<ManualSendResult> {
   const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(messageId)}/retry`), {
     method: 'POST',
     headers: { ...authHeaders(token), 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ idempotencyKey }),
   });
-  await parseResponse(response);
+  return parseResponse<ManualSendResult>(response);
 }
 
 export async function deleteFailedMessage(token: string, messageId: string): Promise<void> {

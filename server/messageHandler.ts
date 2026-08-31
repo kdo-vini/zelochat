@@ -2727,13 +2727,10 @@ export async function setAutoReply(
     {
       type: 'conversation_mode_changed',
       data: {
-        empresaId,
-        sessionId: jid,
-        conversationControlId: snapshot.conversationControlId,
+        sessionIds: snapshot.remoteJids.length ? snapshot.remoteJids : [jid],
         mode: snapshot.mode,
-        autoReply: snapshot.mode === 'ai',
         epoch: snapshot.epoch,
-        remoteJids: snapshot.remoteJids,
+        source: enabled ? 'resume' : 'explicit_manual_toggle',
         changedAt: snapshot.changedAt,
       },
     },

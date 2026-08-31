@@ -10,6 +10,12 @@ export interface Product {
 }
 
 export type SessionStatus = 'active' | 'escalated' | 'resolved' | 'archived';
+export type ConversationMode = 'ai' | 'human';
+export type TakeoverSource =
+  | 'zelochat_operator'
+  | 'native_whatsapp'
+  | 'explicit_manual_toggle'
+  | 'escalation';
 
 export interface Tag {
   id: string;
@@ -33,6 +39,12 @@ export interface ChatSession {
   status: SessionStatus;
   alerts?: string[];
   autoReply?: boolean;
+  /** Durable conversation mode. `autoReply` remains a derived compatibility projection. */
+  conversationMode?: ConversationMode;
+  /** Postgres bigint transported losslessly as a string. */
+  conversationEpoch?: string;
+  takeoverSource?: TakeoverSource | null;
+  takeoverAt?: string | null;
   profilePicUrl?: string;
   escalatedAt?: string | null;
   acknowledgedAt?: string | null;
@@ -411,6 +423,7 @@ export interface ChatMessage {
   outboundOrigin?: import('./domain/outbound.js').OutboundOrigin;
   /** Detailed outbound lifecycle; kept separate from the legacy UI status. */
   outboundState?: import('./domain/outbound.js').OutboundState;
+  outboundJobId?: string | null;
   tool_calls?: any[];
   tool_call_id?: string;
   audio_transcript?: string | null;

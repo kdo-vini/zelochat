@@ -25,6 +25,7 @@ import { isRetryableOutboundFailure } from '../../domain/outbound';
 import { normalizeWhatsAppTextFormatting, parseStructuredMessage } from '../../domain/chat';
 import { parseChatEventCard, type ChatEventCardData, type ChatEventTone } from '../../domain/chatFeedback';
 import type { OrderFocusRequest } from '../../domain/orderFocus';
+import { ConfirmModal } from '../ConfirmModal';
 import { Modal, useModalTitleId } from '../Modal';
 import { PDFViewer } from './PDFViewer';
 
@@ -521,6 +522,8 @@ export interface MessageBubbleProps {
   onDelete?: (message: ChatMessage) => void | Promise<void>;
   isDeleting?: boolean;
   onRetry?: (message: ChatMessage) => void | Promise<void>;
+  onSendNewCopy?: (message: ChatMessage) => void | Promise<void>;
+  hasDeliveryHold?: boolean;
   isRetrying?: boolean;
   onOpenOrder?: (request: OrderFocusRequest) => void;
   onReply?: (message: ChatMessage) => void;
@@ -538,6 +541,8 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   onDelete,
   isDeleting = false,
   onRetry,
+  onSendNewCopy,
+  hasDeliveryHold = false,
   isRetrying = false,
   onOpenOrder,
   onReply,
@@ -545,6 +550,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   const isOutgoing = message.role === 'assistant';
   const [lightbox, setLightbox] = useState<{ type: 'image' | 'video' | 'document'; src: string; fileName?: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmNewCopy, setConfirmNewCopy] = useState(false);
   const [menuOpenUp, setMenuOpenUp] = useState(false);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const [dragX, setDragX] = useState(0);
@@ -565,9 +571,10 @@ const MessageBubbleInner = React.memo(function MessageBubble({
   });
 
   const canRetry = isOutgoing && isRetryableOutboundFailure(message.status) && !!onRetry;
+  const canSendNewCopy = isOutgoing && message.status === 'delivery_uncertain' && !!onSendNewCopy;
   const canDelete = isOutgoing && !!onDelete && (!!message.waMessageId || isRetryableOutboundFailure(message.status));
   const isUpdating = isDeleting || isRetrying;
-  const deleteMenuButton = canDelete ? (
+  const deleteMenuButton = canDelete || canSendNewCopy ? (
     <div className="absolute right-1 top-1 z-30">
       <button
         ref={menuTriggerRef}
@@ -633,7 +640,21 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                 <span>Tentar novamente</span>
               </button>
             )}
-            <button
+            {canSendNewCopy && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  setConfirmNewCopy(true);
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-medium text-[var(--color-brand)] transition-colors hover:bg-emerald-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
+                <span>Enviar uma nova cópia</span>
+              </button>
+            )}
+            {canDelete && <button
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
@@ -644,7 +665,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
             >
               <Trash2 className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
               <span>{isRetryableOutboundFailure(message.status) ? 'Excluir mensagem' : 'Apagar mensagem para todos'}</span>
-            </button>
+            </button>}
           </div>
         </>
       )}
@@ -1020,6 +1041,19 @@ const MessageBubbleInner = React.memo(function MessageBubble({
               isOutgoing={isOutgoing}
               status={message.status}
             />
+            {isOutgoing && ['preparing', 'queued', 'sending', 'dispatch_started'].includes(message.status ?? '') && (
+              <p className="mt-1 text-[11px] text-[#667781]">
+                {message.status === 'queued' && hasDeliveryHold
+                  ? 'Estamos confirmando um envio anterior.'
+                  : 'Enviando…'}
+              </p>
+            )}
+            {isOutgoing && message.status === 'failed_before_dispatch' && (
+              <p className="mt-1 text-[11px] font-medium text-[var(--color-alert)]">Mensagem não enviada.</p>
+            )}
+            {isOutgoing && message.status === 'delivery_uncertain' && (
+              <p className="mt-1 text-[11px] font-medium text-[var(--color-warn)]">Não foi possível confirmar a entrega.</p>
+            )}
           </div>
 
           {/* Reaction badge — small ball on bottom corner */}
@@ -1048,6 +1082,18 @@ const MessageBubbleInner = React.memo(function MessageBubble({
           </button>
         )}
       </div>
+      <ConfirmModal
+        open={confirmNewCopy}
+        title="Enviar uma nova cópia?"
+        message="A entrega anterior não foi confirmada e pode ter acontecido. Esta ação envia outra mensagem; ela não cancela a anterior."
+        onClose={() => setConfirmNewCopy(false)}
+        onConfirm={async () => {
+          await onSendNewCopy?.(message);
+          setConfirmNewCopy(false);
+        }}
+        confirmLabel="Enviar nova cópia"
+        confirmLoadingLabel="Enviando..."
+      />
     </>
   );
 });

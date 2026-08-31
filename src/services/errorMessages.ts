@@ -10,6 +10,13 @@ export function getFriendlyErrorMessage(err: unknown): string {
 
   const msg = raw.toLowerCase();
 
+  if (msg.includes('delivery_uncertain')) {
+    return 'Não foi possível confirmar a entrega. Antes de enviar novamente, confira a conversa.';
+  }
+  if (msg.includes('failed_before_dispatch')) {
+    return 'Mensagem não enviada. Tente novamente.';
+  }
+
   if (msg.includes('invalid login credentials') || msg.includes('invalid_credentials')) {
     return 'E-mail ou senha incorretos.';
   }

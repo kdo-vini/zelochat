@@ -6,10 +6,13 @@ import type {
   ChatSession,
   ChatSessionsQuery,
   EscalationEvent,
+  MessageStatus,
   SessionStatus,
+  TakeoverSource,
 } from '../types';
 import { WS_URL } from '../config';
 import { isRetryableOutboundFailure } from '../domain/outbound';
+import { serializeStructuredMessage } from '../domain/chat';
 import {
   acknowledgeSession as acknowledgeSessionApi,
   archiveSessions as archiveSessionsApi,
@@ -95,6 +98,14 @@ type ReactionUpdatePayload = {
   reactions: Array<{ emoji: string; fromMe: boolean }>;
 };
 
+export type ConversationModeChangedPayload = {
+  sessionIds: string[];
+  mode: 'ai' | 'human';
+  epoch: string;
+  source: TakeoverSource | 'resume';
+  changedAt: string;
+};
+
 type WsEvent =
   | { type: 'auth_ok'; data: { empresaId: string } }
   | { type: 'message'; data: SessionEventPayload }
@@ -107,6 +118,7 @@ type WsEvent =
   | { type: 'escalation_triggered'; data: EscalationTriggeredPayload }
   | { type: 'escalation_resolved'; data: EscalationResolvedPayload }
   | { type: 'session_status_changed'; data: SessionStatusChangedPayload }
+  | { type: 'conversation_mode_changed'; data: ConversationModeChangedPayload }
   | { type: 'session_read'; data: { sessionId: string; unreadCount: number } }
   | { type: 'session_pinned'; data: { sessionId: string; pinned: boolean } }
   | { type: 'session_tags_updated'; data: { sessionId: string; tags: { id: string; name: string; color: string; aiInstructions: string | null; empresaId: string; createdAt: string }[] } }
@@ -119,12 +131,14 @@ export interface EscalationNotice {
   receivedAt: number;
 }
 
-function upsertMessage(messages: ChatMessage[], next: ChatMessage): ChatMessage[] {
-  if (messages.some((message) => message.id === next.id)) {
+export function upsertMessage(messages: ChatMessage[], next: ChatMessage): ChatMessage[] {
+  const index = messages.findIndex((message) => message.id === next.id);
+  if (index < 0) return [...messages, next];
+  const merged = { ...messages[index], ...next };
+  if (Object.keys(merged).every((key) => merged[key as keyof ChatMessage] === messages[index][key as keyof ChatMessage])) {
     return messages;
   }
-
-  return [...messages, next];
+  return messages.map((message, messageIndex) => messageIndex === index ? merged : message);
 }
 
 function removeMessage(messages: ChatMessage[], payload: Pick<MessageDeletedPayload, 'messageId' | 'dbMessageId'>): ChatMessage[] {
@@ -135,13 +149,47 @@ function removeMessage(messages: ChatMessage[], payload: Pick<MessageDeletedPayl
   );
 }
 
-function normalizeMessageStatus(status: string): ChatMessage['status'] | null {
+export function normalizeMessageStatus(status: string): ChatMessage['status'] | null {
   const value = status.toLowerCase();
   if (value === 'read' || value === 'read_ack') return 'read';
   if (value === 'delivered' || value === 'delivery_ack') return 'delivered';
   if (value === 'sent' || value === 'server_ack') return 'sent';
-  if (value === 'queued' || value === 'sending' || value === 'failed' || value === 'failed_before_dispatch') return value;
+  if (value === 'failed') return 'failed_before_dispatch';
+  if (
+    value === 'preparing' || value === 'queued' || value === 'sending' ||
+    value === 'dispatch_started' || value === 'failed_before_dispatch' ||
+    value === 'delivery_uncertain' || value === 'cancelled'
+  ) return value as MessageStatus;
   return null;
+}
+
+function toOutboundState(status: ChatMessage['status']): ChatMessage['outboundState'] | undefined {
+  if (
+    status === 'preparing' || status === 'queued' || status === 'sending' ||
+    status === 'dispatch_started' || status === 'sent' ||
+    status === 'failed_before_dispatch' || status === 'delivery_uncertain' ||
+    status === 'cancelled'
+  ) return status;
+  return undefined;
+}
+
+export function applyConversationModeChanged(
+  sessions: ChatSession[],
+  payload: ConversationModeChangedPayload,
+): ChatSession[] {
+  const family = new Set(payload.sessionIds);
+  return sessions.map((session) => {
+    if (!family.has(session.id)) return session;
+    const resumed = payload.source === 'resume' && payload.mode === 'ai';
+    return {
+      ...session,
+      conversationMode: payload.mode,
+      conversationEpoch: payload.epoch,
+      autoReply: payload.mode === 'ai',
+      takeoverSource: resumed ? null : payload.source as TakeoverSource,
+      takeoverAt: resumed ? null : payload.changedAt,
+    };
+  });
 }
 
 function isVisibleConversationMessage(message: ChatMessage): boolean {
@@ -196,7 +244,12 @@ function mergeSessions(previous: ChatSession[], incoming: ChatSession[]): ChatSe
     const existing = previousById.get(session.id);
     return {
       ...session,
-      messages: existing?.messages ?? session.messages ?? [],
+      conversationMode: session.conversationMode ?? (session.autoReply === false ? 'human' : 'ai'),
+      autoReply: (session.conversationMode ?? (session.autoReply === false ? 'human' : 'ai')) === 'ai',
+      messages: (existing?.messages ?? session.messages ?? []).map((message) => {
+        const status = message.status ? normalizeMessageStatus(message.status) : null;
+        return status ? { ...message, status, outboundState: toOutboundState(status) ?? message.outboundState } : message;
+      }),
       alerts: existing?.alerts ?? session.alerts,
     };
   }));
@@ -359,12 +412,41 @@ export function useWhatsAppSessions(token: string | null) {
     pendingSendIntentKeysRef.current.set(intentSignature, idempotencyKey);
 
     try {
-      await sendMessage(token, jid, {
+      const result = await sendMessage(token, jid, {
         message: params.text,
         attachment: params.attachment,
         quoted: params.quoted,
         idempotencyKey,
       });
+      const status = normalizeMessageStatus(result.status) ?? 'queued';
+      const timestamp = new Date().toISOString();
+      const content = serializeStructuredMessage({ text: params.text, attachment: params.attachment });
+      const optimistic: ChatMessage = {
+        id: result.messageId,
+        role: 'assistant',
+        content,
+        preview: params.text?.trim() || (params.attachment ? `[${params.attachment.fileName}]` : ''),
+        timestamp,
+        kind: params.attachment?.type ?? 'text',
+        attachment: params.attachment,
+        status,
+        outboundState: toOutboundState(status),
+        outboundOrigin: 'human_zelochat',
+        outboundJobId: result.jobId,
+        quotedWaId: params.quoted?.waMessageId,
+        quotedFromMe: params.quoted?.fromMe,
+        quotedPreview: params.quoted?.previewText,
+      };
+      setSessions((previous) => previous.map((session) => session.id === jid ? {
+        ...session,
+        conversationMode: 'human',
+        autoReply: false,
+        takeoverSource: 'zelochat_operator',
+        takeoverAt: timestamp,
+        lastMessage: optimistic.preview,
+        lastMessageTime: timestamp,
+        messages: upsertMessage(session.messages ?? [], optimistic),
+      } : session));
       pendingSendIntentKeysRef.current.delete(intentSignature);
     } catch (error) {
       throw error;
@@ -632,6 +714,11 @@ export function useWhatsAppSessions(token: string | null) {
             return;
           }
 
+          if (parsed.type === 'conversation_mode_changed') {
+            setSessions((previous) => applyConversationModeChanged(previous, parsed.data));
+            return;
+          }
+
           if (parsed.type === 'escalation_triggered') {
             const data = parsed.data;
             setSessions((previous) => {
@@ -746,7 +833,7 @@ export function useWhatsAppSessions(token: string | null) {
                     message.id === parsed.data.dbMessageId ||
                     message.id === parsed.data.messageId ||
                     message.waMessageId === parsed.data.messageId;
-                  return matches ? { ...message, status: nextStatus } : message;
+                  return matches ? { ...message, status: nextStatus, outboundState: toOutboundState(nextStatus) ?? message.outboundState } : message;
                 }),
               })),
             );
@@ -795,6 +882,10 @@ export function useWhatsAppSessions(token: string | null) {
           }
 
           const payload = parsed.data;
+          const payloadStatus = payload.message.status ? normalizeMessageStatus(payload.message.status) : null;
+          const nextMessage = payloadStatus
+            ? { ...payload.message, status: payloadStatus, outboundState: toOutboundState(payloadStatus) ?? payload.message.outboundState }
+            : payload.message;
           const nextLastMessage = payload.lastMessage ?? payload.message.content;
           const nextLastMessageTime = payload.lastMessageTime ?? payload.message.timestamp;
 
@@ -812,7 +903,7 @@ export function useWhatsAppSessions(token: string | null) {
                       ? payload.unreadCount ?? existing.unreadCount + 1
                       : existing.unreadCount,
                   autoReply: payload.autoReply ?? existing.autoReply,
-                  messages: upsertMessage(existing.messages ?? [], payload.message),
+                  messages: upsertMessage(existing.messages ?? [], nextMessage),
                 }
               : {
                   id: payload.sessionId,
@@ -821,9 +912,10 @@ export function useWhatsAppSessions(token: string | null) {
                   lastMessage: nextLastMessage,
                   lastMessageTime: nextLastMessageTime,
                   unreadCount: parsed.type === 'message' ? payload.unreadCount ?? 1 : 0,
-                  messages: [payload.message],
+                  messages: [nextMessage],
                   status: 'active',
                   autoReply: payload.autoReply ?? true,
+                  conversationMode: payload.autoReply === false ? 'human' : 'ai',
                 };
 
             const merged = existing

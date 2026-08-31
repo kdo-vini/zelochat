@@ -1,6 +1,6 @@
 import { getServiceSupabase } from './supabase.js';
 import { cancelPendingReply } from './replyDebouncer.js';
-import { broadcast } from './ws.js';
+import { broadcast, type ConversationModeChanged } from './ws.js';
 import { wasSentByServer } from './whatsapp.js';
 import { classifyFromMe, extractFromMeMessage, type FromMeEvidence } from './fromMe.js';
 import type { WebhookAuthStatus } from './webhookLog.js';
@@ -126,7 +126,13 @@ function defaults(): FromMeProcessorDependencies {
     repairServerEcho: defaultRepairServerEcho,
     holdPendingCorrelation: defaultHoldPendingCorrelation,
     cancelPendingReply: (empresaId, remoteJid) => { cancelPendingReply(empresaId, remoteJid); },
-    broadcast: (type, data, empresaId) => broadcast({ type, data }, empresaId),
+    broadcast: (type, data, empresaId) => {
+      if (type === 'conversation_mode_changed') {
+        broadcast({ type, data: data as ConversationModeChanged['data'] }, empresaId);
+        return;
+      }
+      broadcast({ type, data }, empresaId);
+    },
   };
 }
 
@@ -161,10 +167,11 @@ export function createFromMeProcessor(dependencies: FromMeProcessorDependencies 
         lastMessageTime: extracted.sentAt,
       }, input.empresaId);
       dependencies.broadcast('conversation_mode_changed', {
-        conversationControlId: recorded.conversationControlId,
+        sessionIds: recorded.remoteJids.length ? recorded.remoteJids : [extracted.remoteJid],
         mode: recorded.mode,
         epoch: recorded.epoch,
-        remoteJids: recorded.remoteJids,
+        source: 'native_whatsapp',
+        changedAt: extracted.sentAt,
       }, input.empresaId);
     }
     return { kind: 'native_human', messageId: recorded.messageId, jobId: recorded.jobId, takeoverApplied: recorded.takeoverApplied };

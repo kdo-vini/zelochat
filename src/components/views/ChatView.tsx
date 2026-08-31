@@ -47,6 +47,7 @@ import {
   buildContactKey,
   maskBrazilianPhone,
   maskTime24h,
+  parseStructuredMessage,
 } from '../../domain/chat';
 import { isRetryableOutboundFailure } from '../../domain/outbound';
 import { MessageDateSeparator } from './MessageDateSeparator';
@@ -1572,6 +1573,30 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
     }
   };
 
+  const handleSendNewCopy = async (message: ChatMessage) => {
+    if (!activeSession) return;
+    const parsed = parseStructuredMessage(message.content ?? '');
+    setRetryingMessageId(message.id);
+    setChatActionError(null);
+    try {
+      await send(activeSession.id, {
+        text: parsed.text ?? undefined,
+        attachment: parsed.attachment,
+        quoted: message.quotedWaId ? {
+          waMessageId: message.quotedWaId,
+          fromMe: message.quotedFromMe ?? false,
+          remoteJid: activeSession.id,
+          previewText: message.quotedPreview,
+        } : null,
+      });
+    } catch (error) {
+      setChatActionError(error instanceof Error ? error.message : 'Não foi possível enviar uma nova cópia.');
+      throw error;
+    } finally {
+      setRetryingMessageId(null);
+    }
+  };
+
   const handleConfirmDeleteMessage = async () => {
     const message = deleteMessagePending;
     if (!activeSession || !message) return;
@@ -2251,6 +2276,12 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                 </div>
               </div>
 
+              {activeSession.conversationMode === 'human' && activeSession.takeoverSource === 'zelochat_operator' && (
+                <div className="border-b border-[var(--color-line)] bg-[var(--color-brand-soft)]/50 px-4 py-1.5 text-center text-[11.5px] text-[var(--color-brand-deep)]">
+                  Conversa assumida automaticamente após sua mensagem.
+                </div>
+              )}
+
               <AnimatePresence initial={false}>
                 {chatSearchOpen && (
                   <motion.div
@@ -2402,6 +2433,8 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                             onDelete={handleDeleteMessage}
                             isDeleting={deletingMessageId === message.id}
                             onRetry={handleRetryFailedMessage}
+                            onSendNewCopy={handleSendNewCopy}
+                            hasDeliveryHold={activeSession.messages.some((candidate) => candidate.status === 'delivery_uncertain')}
                             isRetrying={retryingMessageId === message.id}
                             onOpenOrder={handleOpenOrderRequest}
                             onReply={message.waMessageId ? setReplyingTo : undefined}

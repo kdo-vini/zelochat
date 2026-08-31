@@ -297,13 +297,10 @@ export async function escalateSession(
     {
       type: 'conversation_mode_changed',
       data: {
-        empresaId,
-        sessionId: jid,
-        conversationControlId: controlSnapshot.conversationControlId,
+        sessionIds: controlSnapshot.remoteJids.length ? controlSnapshot.remoteJids : [jid],
         mode: controlSnapshot.mode,
-        autoReply: controlSnapshot.mode === 'ai',
         epoch: controlSnapshot.epoch,
-        remoteJids: controlSnapshot.remoteJids,
+        source: 'escalation',
         changedAt: controlSnapshot.changedAt,
       },
     },
