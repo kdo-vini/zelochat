@@ -16,7 +16,7 @@ test.describe('Live auth smoke (opt-in)', () => {
     await page.goto('/auth');
     await page.locator('#login-email').fill(email!);
     await page.locator('#login-password').fill(password!);
-    await page.getByRole('button', { name: /^Entrar$/ }).click();
+    await page.locator('form').getByRole('button', { name: /^Entrar$/ }).click();
 
     await page.waitForURL(/\/(app|onboarding)/, { timeout: 20_000 });
     await expect(page).not.toHaveURL(/\/auth/);
