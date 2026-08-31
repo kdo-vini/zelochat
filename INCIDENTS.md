@@ -14,9 +14,11 @@ O inbound, debounce, modelos e helpers não carregavam o mesmo epoch durável, e
 
 O `AiTurnPermit` agora acompanha a execução inteira; modelos/helpers falham fechado, jobs AI validam epoch no banco, escalação usa claim condicional atômica, confirmação pending compara epoch/trigger na mesma transação do pedido e validação Pix é cercada antes/depois do modelo — `server/ai.ts:132`, `server/conversationControl.ts:229`, `server/escalation.ts:200`, `supabase/migrations/065_conversation_outbound_claims.sql:740`.
 
+As rotas humanas do ZeloChat também deixam de chamar transporte direto: `/api/send`, CRM, contato/lista/localização/reação/enquete e retry reservam o dispatcher como `human_zelochat` com política `take_over`, ator autenticado e resposta de lifecycle discriminada — `server/router.ts:1523`, `server/customers/router.ts:91`, `tests/manualOutboundRoutes.test.ts:1`.
+
 ### Recovery / rollout
 
-Aplicar a migration 065 antes deste backend e manter enforcement desligado até concluir Task 7 e a reconciliação `fromMe`; não reintroduzir sends customer-facing diretos em `server/ai.ts`.
+Aplicar a migration 065 antes deste backend e manter enforcement desligado até concluir a reconciliação `fromMe` e a migração de transacionais/campanhas/automações; não reintroduzir sends customer-facing diretos em `server/ai.ts` nem nas rotas humanas do operador.
 
 ---
 

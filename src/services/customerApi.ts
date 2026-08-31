@@ -176,12 +176,15 @@ export async function fetchCustomerMessages(token: string, personId: string, cur
   return parseCustomerResponse<CustomerMessagesPage>(response);
 }
 
-export async function sendCustomerMessage(token: string, personId: string, primaryJid: string, payload: { message?: string; attachment?: import('../types').ChatAttachment }): Promise<{ dbMessageId: string; messageId: string | null; status: 'sent' | 'failed' }> {
-  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/messages`), { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ primaryJid, ...payload }) });
+export type CustomerSendStatus = 'sent' | 'queued' | 'failed_before_dispatch' | 'delivery_uncertain';
+
+export async function sendCustomerMessage(token: string, personId: string, primaryJid: string, payload: { message?: string; attachment?: import('../types').ChatAttachment; idempotencyKey?: string }): Promise<{ dbMessageId: string; messageId: string | null; jobId: string; status: CustomerSendStatus }> {
+  const idempotencyKey = payload.idempotencyKey ?? crypto.randomUUID();
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/messages`), { method: 'POST', headers: { ...authHeaders(token), 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ primaryJid, ...payload, idempotencyKey }) });
   return parseCustomerResponse(response);
 }
 
-export async function retryCustomerMessage(token: string, dbMessageId: string): Promise<void> {
-  const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(dbMessageId)}/retry`), { method: 'POST', headers: authHeaders(token) });
+export async function retryCustomerMessage(token: string, dbMessageId: string, idempotencyKey = crypto.randomUUID()): Promise<void> {
+  const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(dbMessageId)}/retry`), { method: 'POST', headers: { ...authHeaders(token), 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ idempotencyKey }) });
   await parseCustomerResponse(response);
 }

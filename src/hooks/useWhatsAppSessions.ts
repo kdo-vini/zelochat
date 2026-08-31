@@ -225,6 +225,8 @@ export function useWhatsAppSessions(token: string | null) {
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const connectedAtRef = useRef(0);
+  const pendingSendIntentKeysRef = useRef(new Map<string, string>());
+  const pendingRetryIntentKeysRef = useRef(new Map<string, string>());
 
   const refresh = useCallback(async (query: ChatSessionsQuery = {}) => {
     if (!token) {
@@ -341,11 +343,32 @@ export function useWhatsAppSessions(token: string | null) {
       throw new Error('Faça login para enviar mensagens.');
     }
 
-    await sendMessage(token, jid, {
-      message: params.text,
-      attachment: params.attachment,
-      quoted: params.quoted,
+    const intentSignature = JSON.stringify({
+      jid,
+      text: params.text?.trim() ?? '',
+      attachment: params.attachment ? {
+        type: params.attachment.type,
+        mimeType: params.attachment.mimeType,
+        fileName: params.attachment.fileName,
+        sizeBytes: params.attachment.sizeBytes ?? null,
+        dataUrl: params.attachment.dataUrl ?? null,
+      } : null,
+      quoted: params.quoted ?? null,
     });
+    const idempotencyKey = pendingSendIntentKeysRef.current.get(intentSignature) ?? crypto.randomUUID();
+    pendingSendIntentKeysRef.current.set(intentSignature, idempotencyKey);
+
+    try {
+      await sendMessage(token, jid, {
+        message: params.text,
+        attachment: params.attachment,
+        quoted: params.quoted,
+        idempotencyKey,
+      });
+      pendingSendIntentKeysRef.current.delete(intentSignature);
+    } catch (error) {
+      throw error;
+    }
   }, [token]);
 
   const toggleAutoReply = useCallback(async (jid: string, enabled: boolean) => {
@@ -432,7 +455,10 @@ export function useWhatsAppSessions(token: string | null) {
     );
 
     try {
-      await retryFailedMessageApi(token, message.id);
+      const idempotencyKey = pendingRetryIntentKeysRef.current.get(message.id) ?? crypto.randomUUID();
+      pendingRetryIntentKeysRef.current.set(message.id, idempotencyKey);
+      await retryFailedMessageApi(token, message.id, idempotencyKey);
+      pendingRetryIntentKeysRef.current.delete(message.id);
     } catch (error) {
       void hydrateSession(jid);
       throw error;

@@ -1,9 +1,11 @@
 import { Router, type Request, type Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { AccessControlError, requireActorPermission, type ActorAccessContext } from '../accessControl.js';
 import { crmFeatureErrorStatus, requireCrmFeature } from './rollout.js';
-import { getServiceSupabase, uploadMediaForSend } from '../supabase.js';
-import { sendTextMessage, sendMediaMessage, sendWhatsAppAudio } from '../whatsapp.js';
-import { createAssistantMessageIntent, markAssistantMessageSendFailed, markAssistantMessageSendSucceeded } from '../messageHandler.js';
+import { getServiceSupabase } from '../supabase.js';
+import { dispatchConversationOutbound, type DispatchResult } from '../conversationOutbound.js';
+import type { OutboundPayload } from '../../src/domain/outbound.js';
+import type { ChatAttachment } from '../../src/types.js';
 import { parseCustomerFilters } from './filters.js';
 import { getCustomerDetail, listCustomerMessages, listCustomerOrders, listCustomerTimeline, listCustomers } from './service.js';
 import { createCustomersRouter, type CustomerMutationAccess, type CustomerWriteStore } from './mutations.js';
@@ -23,6 +25,35 @@ customerRouter.get('/api/customers/:personId/orders', async (req, res) => { try 
 customerRouter.get('/api/customers/:personId/timeline', async (req, res) => { try { const access = await actor(req); if (!await getCustomerDetail(access.empresaId, access.ownerUserId, req.params.personId)) { res.status(404).json({ code: 'NOT_FOUND', message: 'Cliente não encontrado.' }); return; } res.json(await listCustomerTimeline(access.empresaId, access.ownerUserId, req.params.personId, typeof req.query.cursor === 'string' ? req.query.cursor : null, Number(req.query.limit) || 30)); } catch (cause) { sendCustomerReadError(res, cause); } });
 
 function mutationAccess(context: ActorAccessContext): CustomerMutationAccess { return { isOwner: context.isOwner, permissions: context.permissions, empresaId: context.empresaId, ownerUserId: context.ownerUserId }; }
+
+function getRequestIdempotencyKey(req: Request): string {
+  const fromBody = typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey.trim() : '';
+  if (fromBody) return fromBody;
+  const fromHeader = req.header('Idempotency-Key')?.trim() || req.header('X-Idempotency-Key')?.trim() || '';
+  return fromHeader || `legacy:${randomUUID()}`;
+}
+
+function toManualOutboundPayload(message: string, attachment?: ChatAttachment | null): OutboundPayload {
+  if (!attachment) return { kind: 'text', text: message };
+  if (attachment.type === 'audio') return { kind: 'audio', attachment, ptt: true };
+  if (attachment.type === 'sticker') return { kind: 'sticker', attachment };
+  return { kind: 'media', attachment, caption: message || undefined };
+}
+
+function sendManualOutboundResult(res: Response, result: DispatchResult): void {
+  if (result.state === 'suppressed') {
+    res.status(409).json({ status: 'failed_before_dispatch', messageId: result.messageId, dbMessageId: result.messageId, jobId: result.jobId, message: 'A mensagem não pôde ser enviada agora.' });
+    return;
+  }
+  const status = result.state;
+  res.status(status === 'queued' || status === 'delivery_uncertain' ? 202 : 200).json({
+    status,
+    messageId: result.messageId,
+    dbMessageId: result.messageId,
+    jobId: result.jobId,
+    ...(status === 'failed_before_dispatch' || status === 'delivery_uncertain' ? { message: result.friendlyMessage } : {}),
+  });
+}
 
 async function persistRelationship(empresaId: string, personId: string, patch: Record<string, unknown>): Promise<void> {
   const db = getServiceSupabase();
@@ -67,18 +98,15 @@ customerRouter.post('/api/customers/:personId/messages', async (req, res) => {
     const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
     const attachment = req.body?.attachment;
     if (!detail || !session || (!message && !attachment)) { res.status(400).json({ code: 'CUSTOMER_SEND_INVALID', message: 'Selecione um WhatsApp válido e informe uma mensagem ou anexo.' }); return; }
-    let outboundAttachment = attachment;
-    if (attachment?.dataUrl) outboundAttachment = { ...attachment, dataUrl: await uploadMediaForSend(attachment.dataUrl, attachment.fileName, attachment.mimeType, access.empresaId) };
-    const intent = await createAssistantMessageIntent(jid, message, access.empresaId, outboundAttachment);
-    try {
-      const waId = outboundAttachment?.dataUrl
-        ? outboundAttachment.type === 'audio' ? await sendWhatsAppAudio(jid, outboundAttachment.dataUrl, access.empresaId) : await sendMediaMessage(jid, { mediatype: outboundAttachment.type === 'image' ? 'image' : outboundAttachment.type === 'video' ? 'video' : 'document', mimetype: outboundAttachment.mimeType, media: outboundAttachment.dataUrl, caption: message || undefined, fileName: outboundAttachment.fileName }, access.empresaId)
-        : await sendTextMessage(jid, message, access.empresaId);
-      await markAssistantMessageSendSucceeded(access.empresaId, intent.id, waId ?? null);
-      res.json({ ok: true, dbMessageId: intent.id, messageId: waId ?? null, status: 'sent' });
-    } catch {
-      await markAssistantMessageSendFailed(access.empresaId, intent.id, 'Falha ao enviar a mensagem.').catch(() => undefined);
-      res.status(502).json({ code: 'CUSTOMER_SEND_FAILED', message: 'Não foi possível enviar a mensagem. Tente novamente.' , dbMessageId: intent.id, status: 'failed' });
-    }
+    const result = await dispatchConversationOutbound({
+      empresaId: access.empresaId,
+      remoteJid: jid,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: toManualOutboundPayload(message, attachment),
+    });
+    sendManualOutboundResult(res, result);
   } catch (error) { const code = error instanceof Error ? error.message : 'CUSTOMER_SEND_FAILED'; const status = crmFeatureErrorStatus(error) !== 400 ? crmFeatureErrorStatus(error) : (code === 'FORBIDDEN' ? 403 : 400); res.status(status).json({ code, message: code === 'FORBIDDEN' ? 'Você não tem permissão para enviar mensagens.' : 'Não foi possível enviar a mensagem.' }); }
 });

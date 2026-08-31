@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import express from 'express';
 import axios from 'axios';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions.js';
 import { broadcast } from './ws.js';
@@ -15,17 +15,12 @@ import {
   sendPresence,
   sendMediaMessage,
   sendWhatsAppAudio,
-  sendContactMessage,
   fetchProfilePicture,
   handleConnectionUpdate,
   dispatchIncomingMessage,
   getOwnJid,
   markWhatsAppMessageAsRead,
   validateWhatsAppNumbers,
-  sendListMessage,
-  sendLocationMessage,
-  sendReaction,
-  sendPollMessage,
   revokeMessage,
   syncStatusFromUpstream,
   fetchInstanceConnectionState,
@@ -42,7 +37,6 @@ import {
   createAssistantMessageIntent,
   handleOutboundMessage,
   messageExistsByWhatsAppId,
-  claimFailedAssistantMessageForRetry,
   deleteFailedAssistantMessage,
   markAssistantMessageSendFailed,
   markAssistantMessageSendSucceeded,
@@ -72,10 +66,11 @@ import {
   getPublicAppBaseUrl,
 } from './ai.js';
 import { beginAiTurn } from './conversationControl.js';
+import { dispatchConversationOutbound, type DispatchResult } from './conversationOutbound.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
-import { isRetryableOutboundFailure } from '../src/domain/outbound.js';
-import { retryFailedAssistantMessage } from './failedMessageRetry.js';
+import { isRetryableOutboundFailure, type OutboundPayload } from '../src/domain/outbound.js';
+import { buildFailedMessageRetryPayload } from './failedMessageRetry.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventProcessed } from './webhookLog.js';
 import { redactInstance, redactJid } from './redact.js';
@@ -115,7 +110,7 @@ import {
   resolveSession,
 } from './escalation.js';
 import { extractBearerToken } from './supabase.js';
-import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, uploadMediaForSend, getServiceSupabase } from './supabase.js';
+import { requireEmpresaId, requireActiveZelochatSubscription, isEmpresaSubscriptionActive, setBoundEmpresaId, getServiceSupabase } from './supabase.js';
 import { requireActorAccess, requireActorPermission, requireOwnerAccess } from './accessControl.js';
 import { sendAuthError } from './authErrors.js';
 import { sendWelcomePack, runDailyOnboardingFollowup } from './onboardingFollowup.js';
@@ -309,6 +304,57 @@ function sendFriendlyOutboundRouteError(res: Response, context: string, error: u
     : { code: error instanceof Error ? error.name : 'UNKNOWN_ERROR' };
   console.error(`[Router] ${context}:`, safeLog);
   res.status(502).json({ error: 'Não foi possível enviar essa mensagem agora. Tente novamente em alguns instantes.' });
+}
+
+function getRequestIdempotencyKey(req: Request): string {
+  const fromBody = typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey.trim() : '';
+  if (fromBody) return fromBody;
+  const fromHeader = req.header('Idempotency-Key')?.trim() || req.header('X-Idempotency-Key')?.trim() || '';
+  return fromHeader || `legacy:${randomUUID()}`;
+}
+
+function toManualOutboundPayload(
+  message: string,
+  attachment?: ChatAttachment | null,
+  quoted?: QuotedContext | null,
+): OutboundPayload {
+  const validQuoted = quoted?.waMessageId ? quoted : null;
+  if (!attachment) return { kind: 'text', text: message, quoted: validQuoted };
+  if (attachment.type === 'audio') return { kind: 'audio', attachment, ptt: true, quoted: validQuoted };
+  if (attachment.type === 'sticker') return { kind: 'sticker', attachment, quoted: validQuoted };
+  return { kind: 'media', attachment, caption: message || undefined, quoted: validQuoted };
+}
+
+function safeVcardValue(value: string): string {
+  return value.replace(/[\r\n]+/g, ' ').trim();
+}
+
+function contactPayload(contact: { fullName: string; phoneNumber: string; organization?: string }): OutboundPayload {
+  const lines = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    `FN:${safeVcardValue(contact.fullName)}`,
+    contact.organization ? `ORG:${safeVcardValue(contact.organization)}` : null,
+    `TEL;TYPE=CELL:${safeVcardValue(contact.phoneNumber)}`,
+    'END:VCARD',
+  ].filter((line): line is string => Boolean(line));
+  return { kind: 'contact', displayName: contact.fullName, vcard: lines.join('\n') };
+}
+
+function sendManualOutboundResult(res: Response, result: DispatchResult): void {
+  if (result.state === 'suppressed') {
+    res.status(409).json({ status: 'failed_before_dispatch', messageId: result.messageId, dbMessageId: result.messageId, jobId: result.jobId, message: 'A mensagem não pôde ser enviada agora.' });
+    return;
+  }
+  const status = result.state;
+  const body = {
+    status,
+    messageId: result.messageId,
+    dbMessageId: result.messageId,
+    jobId: result.jobId,
+    ...(status === 'failed_before_dispatch' || status === 'delivery_uncertain' ? { message: result.friendlyMessage } : {}),
+  };
+  res.status(status === 'queued' || status === 'delivery_uncertain' ? 202 : 200).json(body);
 }
 
 async function resolveTechneEmpresaProfile(): Promise<{ id: string; internalKeyHash: string | null }> {
@@ -1488,67 +1534,26 @@ router.post('/api/send', express.json({ limit: '50mb' }), async (req: Request, r
   }
 
   try {
-    const empresaId = (await requireActorPermission(req, 'clientes.comunicar')).empresaId;
+    const access = await requireActorPermission(req, 'clientes.comunicar');
+    const empresaId = access.empresaId;
     const trimmedMessage = message?.trim() ?? '';
-    const validQuoted = quoted?.waMessageId ? quoted : null;
-    let waMessageId: string | undefined;
-    let outboundAttachment = attachment;
-
-    if (attachment?.dataUrl) {
-      const mediaUrl = await uploadMediaForSend(
-        attachment.dataUrl,
-        attachment.fileName,
-        attachment.mimeType,
-        empresaId,
-      );
-      outboundAttachment = { ...attachment, dataUrl: mediaUrl };
-    }
-
-    const intent = await createAssistantMessageIntent(to, trimmedMessage, empresaId, outboundAttachment, {
-      quotedWaId: validQuoted?.waMessageId ?? null,
-      quotedFromMe: validQuoted?.fromMe ?? null,
-      quotedPreview: validQuoted?.previewText ?? null,
+    const result = await dispatchConversationOutbound({
+      empresaId,
+      remoteJid: to,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: toManualOutboundPayload(trimmedMessage, attachment, quoted ?? null),
     });
-
-    try {
-      if (outboundAttachment?.dataUrl) {
-        if (outboundAttachment.type === 'audio') {
-          // Audio PTT uses a dedicated endpoint with different params (no mediatype/caption)
-          waMessageId = await sendWhatsAppAudio(to, outboundAttachment.dataUrl, empresaId, validQuoted);
-        } else {
-          waMessageId = await sendMediaMessage(to, {
-            mediatype: outboundAttachment.type === 'image' ? 'image' : outboundAttachment.type === 'video' ? 'video' : 'document',
-            mimetype: outboundAttachment.mimeType,
-            media: outboundAttachment.dataUrl,
-            caption: trimmedMessage || undefined,
-            fileName: outboundAttachment.fileName,
-          }, empresaId, validQuoted);
-        }
-      } else {
-        waMessageId = await sendTextMessage(to, trimmedMessage, empresaId, validQuoted);
-      }
-      await markAssistantMessageSendSucceeded(empresaId, intent.id, waMessageId ?? null).catch((markError) => {
-        console.warn('[Router] WhatsApp sent, but failed to mark DB message as sent:', markError);
-      });
-      res.json({ ok: true, messageId: waMessageId ?? null, dbMessageId: intent.id });
-    } catch (sendError) {
-      const payload = serializeManualSendError(sendError);
-      await markAssistantMessageSendFailed(empresaId, intent.id, payload.message).catch((markError) => {
-        console.warn('[Router] Failed to mark WhatsApp send as failed:', markError);
-      });
-      console.error('[Router] WhatsApp provider send error:', sendError);
-      res.status(502).json({
-        error: payload.message,
-        code: payload.error,
-      });
-    }
+    sendManualOutboundResult(res, result);
   } catch (error: any) {
     if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
     console.error('[Router] Send error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Não foi possível enviar essa mensagem agora. Tente novamente em alguns instantes.' });
   }
 });
 
@@ -1570,12 +1575,19 @@ router.post('/api/send-contact', express.json({ limit: '50kb' }), async (req: Re
   }
 
   try {
-    const empresaId = await requireEmpresaId(req);
-    await sendContactMessage(to, { fullName: fullName.trim(), phoneNumber: phoneNumber.trim(), organization: organization?.trim() || undefined }, empresaId);
-    await addAssistantMessage(to, `[Contato enviado] ${fullName.trim()}`, undefined, empresaId);
-    res.json({ ok: true });
+    const access = await requireActorPermission(req, 'clientes.comunicar');
+    const result = await dispatchConversationOutbound({
+      empresaId: access.empresaId,
+      remoteJid: to,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: contactPayload({ fullName: fullName.trim(), phoneNumber: phoneNumber.trim(), organization: organization?.trim() || undefined }),
+    });
+    sendManualOutboundResult(res, result);
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
@@ -3375,11 +3387,19 @@ router.post('/api/send/list', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const empresaId = await requireEmpresaId(req);
-    await sendListMessage(to, { title, description, buttonText, footerText, sections }, empresaId);
-    res.json({ ok: true });
+    const access = await requireActorPermission(req, 'clientes.comunicar');
+    const result = await dispatchConversationOutbound({
+      empresaId: access.empresaId,
+      remoteJid: to,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: { kind: 'list', body: description, buttonText, sections },
+    });
+    sendManualOutboundResult(res, result);
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
@@ -3396,11 +3416,19 @@ router.post('/api/send/location', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const empresaId = await requireEmpresaId(req);
-    await sendLocationMessage(to, { latitude, longitude, name, address }, empresaId);
-    res.json({ ok: true });
+    const access = await requireActorPermission(req, 'clientes.comunicar');
+    const result = await dispatchConversationOutbound({
+      empresaId: access.empresaId,
+      remoteJid: to,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: { kind: 'location', latitude: Number(latitude), longitude: Number(longitude), name, address },
+    });
+    sendManualOutboundResult(res, result);
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
@@ -3417,11 +3445,19 @@ router.post('/api/send/reaction', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const empresaId = await requireEmpresaId(req);
-    await sendReaction(to, messageId, reaction, fromMe ?? false, empresaId);
-    res.json({ ok: true });
+    const access = await requireActorPermission(req, 'clientes.comunicar');
+    const result = await dispatchConversationOutbound({
+      empresaId: access.empresaId,
+      remoteJid: to,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: { kind: 'reaction', targetMessageId: messageId, emoji: reaction, targetFromMe: fromMe ?? false },
+    });
+    sendManualOutboundResult(res, result);
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
@@ -3438,11 +3474,19 @@ router.post('/api/send/poll', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const empresaId = await requireEmpresaId(req);
-    await sendPollMessage(to, { name, values, selectableCount }, empresaId);
-    res.json({ ok: true });
+    const access = await requireActorPermission(req, 'clientes.comunicar');
+    const result = await dispatchConversationOutbound({
+      empresaId: access.empresaId,
+      remoteJid: to,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: { kind: 'poll', name, options: values, selectableCount: Number(selectableCount ?? 1) },
+    });
+    sendManualOutboundResult(res, result);
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }
@@ -3481,7 +3525,8 @@ router.delete('/api/messages/:id', async (req: Request, res: Response) => {
 // the persisted intent, always scoped to the authenticated empresa.
 router.post('/api/messages/:id/retry', async (req: Request, res: Response) => {
   try {
-    const empresaId = (await requireActorPermission(req, 'clientes.comunicar')).empresaId;
+    const access = await requireActorPermission(req, 'clientes.comunicar');
+    const empresaId = access.empresaId;
     const supabase = getServiceSupabase();
     const { data: message, error: messageError } = await supabase
       .from('zelochat_messages')
@@ -3507,48 +3552,24 @@ router.post('/api/messages/:id/retry', async (req: Request, res: Response) => {
       return;
     }
 
-    const result = await retryFailedAssistantMessage(message, session.remote_jid, {
-      claim: (messageId) => claimFailedAssistantMessageForRetry(empresaId, messageId),
-      send: async ({ jid, text, attachment, quoted }) => {
-        if (!attachment?.dataUrl) return sendTextMessage(jid, text, empresaId, quoted);
-        if (attachment.type === 'audio') return sendWhatsAppAudio(jid, attachment.dataUrl, empresaId, quoted);
-        return sendMediaMessage(jid, {
-          mediatype: attachment.type === 'image' ? 'image' : attachment.type === 'video' ? 'video' : 'document',
-          mimetype: attachment.mimeType,
-          media: attachment.dataUrl,
-          caption: text || undefined,
-          fileName: attachment.fileName,
-        }, empresaId, quoted);
-      },
-      markSucceeded: (messageId, waMessageId) => markAssistantMessageSendSucceeded(empresaId, messageId, waMessageId ?? null).catch((markError) => {
-        console.warn('[Router] WhatsApp retry sent, but failed to mark DB message as sent:', markError);
-      }),
-      markFailed: (messageId, errorMessage) => markAssistantMessageSendFailed(empresaId, messageId, errorMessage).catch((markError) => {
-        console.warn('[Router] Failed to mark WhatsApp retry as failed:', markError);
-      }),
-      getErrorMessage: (error) => {
-        const payload = serializeManualSendError(error);
-        return payload.message;
-      },
-    });
-
-    if (result.type === 'not_retryable') {
+    const retryPayload = buildFailedMessageRetryPayload(message, session.remote_jid);
+    if (!retryPayload) {
       res.status(400).json({ error: 'Esta mensagem não possui conteúdo para reenviar.' });
       return;
     }
-    if (result.type === 'already_sending') {
-      res.status(409).json({ error: 'Esta mensagem já está sendo enviada.' });
-      return;
-    }
-    if (result.type === 'send_failed') {
-      console.error('[Router] WhatsApp retry provider send error:', result.error);
-      res.status(502).json({ error: result.message });
-      return;
-    }
 
-    res.json({ ok: true, messageId: result.waMessageId ?? null, dbMessageId: message.id });
+    const result = await dispatchConversationOutbound({
+      empresaId,
+      remoteJid: session.remote_jid,
+      actorUserId: access.actorUserId,
+      origin: 'human_zelochat',
+      takeoverPolicy: 'take_over',
+      idempotencyKey: getRequestIdempotencyKey(req),
+      payload: toManualOutboundPayload(retryPayload.text, retryPayload.attachment, retryPayload.quoted),
+    });
+    sendManualOutboundResult(res, result);
   } catch (error: any) {
-    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND')) {
+    if (error instanceof Error && (error.message === 'UNAUTHORIZED' || error.message === 'EMPRESA_NOT_FOUND' || error.message === 'FORBIDDEN')) {
       sendAuthError(res, error);
       return;
     }

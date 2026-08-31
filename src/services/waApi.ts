@@ -120,6 +120,7 @@ type SendMessagePayload = {
   message?: string;
   attachment?: ChatAttachment;
   quoted?: { waMessageId: string; fromMe: boolean; remoteJid: string; previewText?: string } | null;
+  idempotencyKey?: string;
 };
 
 export async function bindEmpresa(token: string): Promise<void> {
@@ -277,10 +278,11 @@ export async function sendMessage(
   to: string,
   payload: SendMessagePayload,
 ): Promise<void> {
+  const idempotencyKey = payload.idempotencyKey ?? crypto.randomUUID();
   const response = await apiFetch(apiUrl('/api/send'), {
     method: 'POST',
-    headers: authHeaders(token),
-    body: JSON.stringify({ to, ...payload }),
+    headers: { ...authHeaders(token), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ to, ...payload, idempotencyKey }),
   });
 
   await parseResponse(response);
@@ -308,10 +310,11 @@ export async function sendContact(
   to: string,
   contact: { fullName: string; phoneNumber: string; organization?: string },
 ): Promise<void> {
+  const idempotencyKey = crypto.randomUUID();
   const response = await apiFetch(apiUrl('/api/send-contact'), {
     method: 'POST',
-    headers: authHeaders(token),
-    body: JSON.stringify({ to, ...contact }),
+    headers: { ...authHeaders(token), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ to, ...contact, idempotencyKey }),
   });
   await parseResponse(response);
 }
@@ -330,10 +333,11 @@ export async function deleteMessage(
   await parseResponse(response);
 }
 
-export async function retryFailedMessage(token: string, messageId: string): Promise<void> {
+export async function retryFailedMessage(token: string, messageId: string, idempotencyKey = crypto.randomUUID()): Promise<void> {
   const response = await apiFetch(apiUrl(`/api/messages/${encodeURIComponent(messageId)}/retry`), {
     method: 'POST',
-    headers: authHeaders(token),
+    headers: { ...authHeaders(token), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ idempotencyKey }),
   });
   await parseResponse(response);
 }
