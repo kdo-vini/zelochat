@@ -9,11 +9,11 @@
 
 ## Próximo foco — engine de tomada humana e outbound (2026-08-29)
 
-- Revisão concluída: envios humanos pelo ZeloChat e pelo WhatsApp nativo não pausam a IA automaticamente; debounce, resposta em voo, eco `fromMe` e caminhos especiais deixam corridas P1/P2 abertas.
+- Revisão concluída e engine implementada: envios humanos pelo ZeloChat e pelo WhatsApp nativo pausam a IA atomicamente por família de JIDs, com epoch, lifecycle, idempotência e reconciliação `fromMe`; o dispatcher também propaga a mudança de modo para todas as abas/sessões.
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Tasks 3–12 locais concluídas em 2026-08-30: controle/worker/dispatcher, fences de IA/humano, reconciliação `fromMe`, transportes especiais, UI e gates estão versionados. A Task 12 mantém shadow como default server-side, classifica `fromMe` sem mutações, adiciona métricas redigidas, runbook/rollback e a migration 067 protegida para cleanup somente pós-drain. Nada foi aplicado ou publicado; ainda não ativar `enforce`: probe PostgreSQL, E2Es e fixtures reais precisam passar em ambiente isolado antes do rollout coordenado.
+- Tasks 3–12 locais concluídas em 2026-08-30, com correção transversal final em 2026-08-31: controle/worker/dispatcher, fences de IA/humano, reconciliação `fromMe`, transportes especiais, UI e gates estão versionados. A Task 12 mantém shadow como default server-side, classifica `fromMe` sem mutações, adiciona métricas redigidas, runbook/rollback e a migration 067 protegida para cleanup somente pós-drain. Nada foi aplicado ou publicado; ainda não ativar `enforce`: probe PostgreSQL, E2Es e fixtures reais precisam passar em ambiente isolado antes do rollout coordenado.
 
 ## Rollout CRM (2026-08-26)
 
