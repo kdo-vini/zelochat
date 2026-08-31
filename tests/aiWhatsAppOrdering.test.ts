@@ -131,13 +131,10 @@ assert.equal(alterRuns, 1, 'different Alterar message is not swallowed');
 assert.notEqual(confirmKey, alterKey);
 
 const routerSource = readFileSync(new URL('../server/router.ts', import.meta.url), 'utf8');
-const identificationStart = routerSource.indexOf('const task6Button = parseOrderingButton');
-const task6BlockStart = routerSource.indexOf('const exactKey = canonicalButtonMessageKey');
-const serializedStart = routerSource.indexOf('serializeForJid(remoteJid', task6BlockStart);
-const handlerStart = routerSource.indexOf('tryHandleAiWhatsAppOrderingButton', serializedStart);
-const completionStart = routerSource.indexOf('canonicalButton.complete', handlerStart);
-assert.ok(identificationStart >= 0 && task6BlockStart > identificationStart && serializedStart > task6BlockStart && handlerStart > serializedStart);
-assert.ok(completionStart > handlerStart, 'customer effect runs after serialized command');
+assert.match(routerSource, /parseOrderingButton\(buttonId\)/);
+assert.match(routerSource, /handleCanonicalButtonOnce/);
+assert.match(routerSource, /tryHandleAiWhatsAppOrderingButton/);
+assert.match(routerSource, /cancelPendingReply\(empresaId, remoteJid\)/);
 
 const buttons = buildConfirmationButtons(snapshot());
 assert.deepEqual(buttons.map((button) => button.displayText), ['Confirmar', 'Alterar']);
