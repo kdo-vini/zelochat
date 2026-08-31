@@ -96,7 +96,7 @@ function setOwnJid(raw: string): void {
   ownJid = raw.includes('@') ? raw : `${raw}@s.whatsapp.net`;
 }
 
-export type ConnectionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected';
+export type ConnectionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected' | 'unknown';
 
 let connectionStatus: ConnectionStatus = 'disconnected';
 let currentQR: string | null = null;
@@ -699,7 +699,10 @@ export async function fetchInstanceConnectionState(instanceName: string): Promis
     return 'disconnected';
   } catch (err) {
     console.warn(`[WhatsApp] fetchInstanceConnectionState(${redactInstance(instanceName)}) failed:`, err instanceof Error ? err.message : err);
-    return 'disconnected';
+    // A provider timeout is not proof that the customer's WhatsApp session
+    // ended. Keep callers from rendering a false disconnect alert; the next
+    // status poll will resolve the real state.
+    return 'unknown';
   }
 }
 

@@ -106,6 +106,8 @@ type BroadcastConversationModeChanged = (params: {
   changedAt: string;
 }) => void;
 
+type BroadcastMessageIntent = (job: ConversationOutboundJobSnapshot) => void | Promise<void>;
+
 export interface ConversationOutboundDependencies {
   sendWaitMs?: number;
   beginHumanOutbound?: BeginHumanOutbound;
@@ -142,6 +144,8 @@ export interface ConversationOutboundDependencies {
     binding?: { empresaId: string; jobId: string },
   ) => Promise<string>;
   broadcastConversationModeChanged?: BroadcastConversationModeChanged;
+  /** Announces the message row created atomically with a conversation job. */
+  broadcastMessageIntent?: BroadcastMessageIntent;
 }
 
 const MEDIA_KINDS = new Set(['media', 'audio', 'sticker']);
@@ -263,6 +267,13 @@ function defaultBroadcastConversationModeChanged(params: Parameters<BroadcastCon
       changedAt: params.changedAt,
     },
   }, params.empresaId);
+}
+
+async function defaultBroadcastMessageIntent(job: ConversationOutboundJobSnapshot): Promise<void> {
+  if (!job.messageId) return;
+  // messageHandler imports this dispatcher for legacy paths, so keep this lazy.
+  const { broadcastAssistantMessageIntent } = await import('./messageHandler.js');
+  await broadcastAssistantMessageIntent(job.empresaId, job.remoteJid, job.messageId);
 }
 
 function isExpectedAiJob(
@@ -542,6 +553,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
     }),
     fingerprintPayload: dependencies.fingerprintPayload ?? defaultFingerprintPayload,
     broadcastConversationModeChanged: dependencies.broadcastConversationModeChanged ?? defaultBroadcastConversationModeChanged,
+    broadcastMessageIntent: dependencies.broadcastMessageIntent ?? defaultBroadcastMessageIntent,
   };
 
   const prepareMediaIfNeeded = async (
@@ -612,6 +624,11 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
           recordConversationOutboundMetric('ai_stale_suppressed', { reason: 'idempotency_mismatch' }, { empresaId: request.empresaId, remoteJid: request.remoteJid, jobId: job.id });
           return { state: 'suppressed', jobId: null, messageId: null, reason: 'stale_epoch' };
         }
+        // FIX 2026-08-31: a RPC cria a bolha da IA junto com o job, mas antes só
+        // o worker emitia mudanças de status. Anuncie a nova mensagem já na fila.
+        void Promise.resolve(deps.broadcastMessageIntent(job)).catch((error) => {
+          console.warn('[outbound] message intent broadcast skipped', error instanceof Error ? error.message : 'unknown');
+        });
         job = await prepareMediaIfNeeded(job, request.payload, initialFingerprint);
         return waitForTerminal(job, deps, deps.sendWaitMs);
       }

@@ -1352,6 +1352,44 @@ export async function createAssistantMessageIntent(
   });
 }
 
+/** Broadcasts the exact persisted assistant message created by the durable outbound RPC. */
+export async function broadcastAssistantMessageIntent(
+  empresaId: string,
+  jid: string,
+  messageId: string,
+): Promise<void> {
+  const { data, error } = await getServiceSupabase()
+    .from('zelochat_messages')
+    .select(MESSAGE_COLUMNS)
+    .eq('empresa_id', empresaId)
+    .eq('id', messageId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return;
+
+  const storedMsg = mapMessage(data as MessageRow);
+  const family = await fetchSessionFamily(empresaId, jid);
+  const mappedSession = family ? mapSession(family) : null;
+
+  broadcast(
+    {
+      type: 'message_sent',
+      data: {
+        // Keep the caller JID: aliases in the same family must update the
+        // conversation the operator actually has open.
+        sessionId: jid,
+        customerName: mappedSession?.customerName,
+        customerPhone: mappedSession?.customerPhone,
+        message: storedMsg,
+        autoReply: mappedSession?.autoReply,
+        lastMessage: storedMsg.preview,
+        lastMessageTime: storedMsg.timestamp,
+      },
+    },
+    empresaId,
+  );
+}
+
 export async function markAssistantMessageSendSucceeded(
   empresaId: string,
   messageId: string,

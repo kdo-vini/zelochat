@@ -10,9 +10,10 @@ import type {
   SessionStatus,
   TakeoverSource,
 } from '../types';
-import { WS_URL } from '../config';
+import { API_BASE, WS_URL, apiFetch } from '../config';
 import { isRetryableOutboundFailure } from '../domain/outbound';
 import { serializeStructuredMessage } from '../domain/chat';
+import { toWhatsAppConnectivity } from '../domain/whatsappConnection';
 import {
   acknowledgeSession as acknowledgeSessionApi,
   archiveSessions as archiveSessionsApi,
@@ -680,6 +681,40 @@ export function useWhatsAppSessions(token: string | null) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // The global disconnect alert must not depend on the operator visiting
+  // Configurações or receiving a WebSocket lifecycle event. Poll the
+  // authenticated per-empresa status from the application shell and retain the
+  // previous value if the request or response is temporarily unavailable.
+  useEffect(() => {
+    if (!token) {
+      setWaConnected(null);
+      return;
+    }
+
+    let disposed = false;
+    const checkWhatsAppConnection = async () => {
+      try {
+        const response = await apiFetch(`${API_BASE}/api/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const payload = await response.json() as { status?: unknown };
+        const connectivity = toWhatsAppConnectivity(payload.status);
+        if (!disposed && connectivity !== null) setWaConnected(connectivity);
+      } catch {
+        // Keep the last known state — a temporary backend/network failure is
+        // not evidence that the customer's WhatsApp was disconnected.
+      }
+    };
+
+    void checkWhatsAppConnection();
+    const interval = setInterval(() => { void checkWhatsAppConnection(); }, 30_000);
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!token) {

@@ -6,6 +6,11 @@
 ### Conexão do WhatsApp (2026-08-31)
 
 - ✅ WA-CONNECTION-001 — a leitura do QR aceitava o pareamento e logo reiniciava a sessão porque cada consulta reconfigurava a instância → o registro agora é idempotente por instância/processo, preservando o pareamento enquanto a tela consulta o status — `server/whatsapp.ts:777`, `tests/whatsappWebhookRegistration.test.ts:1`
+- ✅ WA-CONNECTION-002 — o alerta global de desconexão só mudava por evento em tempo real ou ao abrir Configurações, e falha de consulta podia parecer desconexão → o ciclo principal consulta o status autenticado da própria empresa ao entrar e a cada 30 s; resposta desconhecida preserva o último estado — `src/hooks/useWhatsAppSessions.ts:685`, `src/domain/whatsappConnection.ts:1`, `server/whatsapp.ts:701`, `tests/whatsappConnectionStatus.test.ts:1`, `tests/whatsappConnectionStateFailure.test.ts:1`
+
+### Conversas em tempo real (2026-08-31)
+
+- ✅ WS-REALTIME-001 — respostas automáticas já persistidas só emitiam atualizações de status do envio, então a bolha aparecia somente após recarregar a página → o dispatcher agora anuncia a mensagem persistida assim que a fila é criada, endereçando a conversa aberta pelo JID original e preservando deduplicação pelo ID da mensagem — `server/conversationOutbound.ts:624`, `server/messageHandler.ts:1355`, `tests/conversationOutbound.test.ts:569`
 
 ### Pedido canônico por WhatsApp (2026-08-30)
 

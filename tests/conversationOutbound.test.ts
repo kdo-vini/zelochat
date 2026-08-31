@@ -281,6 +281,7 @@ function dispatcher(repo: FakeRepo, waitMs = 30) {
       };
     },
     fingerprintPayload: async (payload) => `${payload.kind}-fingerprint`,
+    broadcastMessageIntent: async () => undefined,
   } as any);
 }
 
@@ -569,7 +570,23 @@ for (const retryKind of ['exact', 'divergent'] as const) {
 {
   const repo = new FakeRepo();
   const permit = aiPermit();
-  const first = await dispatcher(repo, 1).dispatchConversationOutbound({
+  const intents: Array<{ empresaId: string; remoteJid: string; messageId: string | null }> = [];
+  const dispatch = createConversationOutboundDispatcher({
+    sendWaitMs: 1,
+    beginHumanOutbound: repo.beginHumanOutbound.bind(repo),
+    enqueueAiOutbound: repo.enqueueAiOutbound.bind(repo),
+    enqueueSystemOutbound: repo.enqueueSystemOutbound.bind(repo),
+    claimMediaPreparation: repo.claimMediaPreparation.bind(repo),
+    markPrepared: repo.markPrepared.bind(repo),
+    markFailedBeforeDispatch: repo.markFailedBeforeDispatch.bind(repo),
+    readJob: repo.readJob.bind(repo),
+    cancelPendingReply: async () => undefined,
+    fingerprintPayload: async (payload) => `${payload.kind}-fingerprint`,
+    broadcastMessageIntent: async (job) => {
+      intents.push({ empresaId: job.empresaId, remoteJid: job.remoteJid, messageId: job.messageId });
+    },
+  });
+  const first = await dispatch.dispatchConversationOutbound({
     empresaId: 'e1',
     remoteJid: 'j1',
     actorUserId: null,
@@ -579,7 +596,7 @@ for (const retryKind of ['exact', 'divergent'] as const) {
     payload: textPayload,
     aiPermit: permit,
   });
-  const retry = await dispatcher(repo, 1).dispatchConversationOutbound({
+  const retry = await dispatch.dispatchConversationOutbound({
     empresaId: 'e1',
     remoteJid: 'j1',
     actorUserId: null,
@@ -592,6 +609,10 @@ for (const retryKind of ['exact', 'divergent'] as const) {
   assert.equal(first.state, 'queued');
   assert.deepEqual(retry, first);
   assert.equal(repo.jobs.size, 1);
+  assert.deepEqual(intents, [
+    { empresaId: 'e1', remoteJid: 'j1', messageId: [...repo.jobs.values()][0].messageId },
+    { empresaId: 'e1', remoteJid: 'j1', messageId: [...repo.jobs.values()][0].messageId },
+  ], 'a resposta automática persistida precisa gerar um evento de nova mensagem para a conversa aberta; a tela deduplica tentativas idempotentes pelo ID da mensagem');
 }
 
 {

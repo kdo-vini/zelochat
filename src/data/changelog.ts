@@ -17,6 +17,18 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-08-31',
+    category: 'hotfix',
+    title: 'Respostas aparecem sem atualizar a página',
+    description: 'As respostas automáticas agora entram na conversa assim que são preparadas, sem precisar recarregar o atendimento.',
+  },
+  {
+    date: '2026-08-31',
+    category: 'hotfix',
+    title: 'Aviso de WhatsApp desconectado mais confiável',
+    description: 'O ZeloChat agora acompanha a conexão mesmo fora das Configurações e avisa sua equipe assim que o WhatsApp precisar ser reconectado.',
+  },
+  {
+    date: '2026-08-31',
     category: 'big',
     title: 'Pedido completo direto na conversa',
     description: 'O atendimento pode consultar o cardápio, montar o pedido e pedir confirmação pelo WhatsApp, sem exigir link.',

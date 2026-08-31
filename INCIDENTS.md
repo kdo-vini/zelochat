@@ -14,9 +14,21 @@ Durante o pareamento, a tela consulta o QR em intervalo curto e cada consulta re
 
 // FIX 2026-08-31: a consulta do QR repetia a reconfiguração da instância após o pareamento → `setWebhookForInstance` memoriza cada registro concluído no processo e não repete a atualização — `server/whatsapp.ts:777`, `tests/whatsappWebhookRegistration.test.ts:1`.
 
+// FIX 2026-08-31: o alerta dependia apenas de evento em tempo real ou da tela de Configurações, e timeout podia virar “desconectado” → o app consulta periodicamente o status da empresa e mantém o último estado quando o provedor responde como desconhecido — `src/hooks/useWhatsAppSessions.ts:685`, `src/domain/whatsappConnection.ts:1`, `server/whatsapp.ts:701`.
+
 ### Recovery
 
 Publicar o backend e gerar um novo QR Code. O próximo pareamento mantém a configuração inicial e as consultas seguintes não reiniciam a sessão.
+
+---
+
+## XXVI. Resposta automática só aparecia após atualizar a conversa (corrigido em 2026-08-31)
+
+**Sintoma:** o cliente recebia a resposta automática no WhatsApp, mas a bolha não surgia no atendimento até a página ser recarregada.
+
+**Causa-raiz:** a criação atômica da resposta e do job de envio não publicava a nova mensagem; apenas o worker emitia mudanças de lifecycle, que não inserem uma bolha ausente no frontend.
+
+**Fix:** o dispatcher publica a mensagem persistida no instante em que a fila é criada, usando o JID que o operador tem aberto e o ID de mensagem para deduplicar tentativas — `server/conversationOutbound.ts:624`, `server/messageHandler.ts:1355`.
 
 ---
 
