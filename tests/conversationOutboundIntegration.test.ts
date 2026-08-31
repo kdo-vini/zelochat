@@ -224,7 +224,7 @@ function testTaskElevenArtifactsAndRaceMatrix() {
     ['tests/fromMeProcessor.test.ts', [/server_echo/i, /pendingJob/i, /token_missing/i]],
     ['tests/conversationOutboundRpc.integration.test.ts', [/Order 1/i, /Order 2/i, /Opposite order/i]],
     ['tests/manualOutboundRoutes.test.ts', [/same-http-intent/i, /idempotency/i]],
-    ['tests/qa-human-takeover.spec.ts', [/autoReply: false/i, /messageJobId/i, /\[200, 202\]/i]],
+    ['tests/qa-human-takeover.spec.ts', [/autoReply: false/i, /status: 'active'/i, /escalatedAt: null/i, /messageJobId/i, /\[200, 202\]/i]],
     ['tests/qa-native-from-me.spec.ts', [/human_native_whatsapp/i, /beforeMessageIds/i, /status: 'active'/i]],
   ];
 

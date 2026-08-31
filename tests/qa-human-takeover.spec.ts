@@ -64,8 +64,18 @@ test('composer muda causalmente IA para Manual e cria mensagem/job novos', async
       if (!response.ok()) return null;
       const session = (await response.json()).session;
       const message = (session.messages ?? []).find((item: any) => item.id === sent.messageId);
-      return { autoReply: session.autoReply, messageJobId: message?.outboundJobId ?? null };
-    }).toEqual({ autoReply: false, messageJobId: sent.jobId });
+      return {
+        autoReply: session.autoReply,
+        status: session.status,
+        escalatedAt: session.escalatedAt ?? null,
+        messageJobId: message?.outboundJobId ?? null,
+      };
+    }).toEqual({
+      autoReply: false,
+      status: 'active',
+      escalatedAt: null,
+      messageJobId: sent.jobId,
+    });
 
     const resume = await api.post(`/api/sessions/${encodeURIComponent(jid)}/auto-reply`, { data: { enabled: true } });
     expect(resume.ok()).toBe(true);
