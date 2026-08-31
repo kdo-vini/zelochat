@@ -1,18 +1,21 @@
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
 import type { StoredSession } from './messageHandler.js';
-import { addAssistantMessage, addToolMessage, getSession } from './messageHandler.js';
-import { sendButtonMessage, sendTextMessage } from './whatsapp.js';
+import { addToolMessage, getSession } from './messageHandler.js';
 import { getOpenAIClient } from './openaiClient.js';
 import { CustomerOrderingContext } from './customers/orderingContextAdapter.js';
 import { escalateSession } from './escalation.js';
+import { dispatchConversationOutbound } from './conversationOutbound.js';
+import { isAiPermitCurrent, type AiTurnPermit } from './conversationControl.js';
 import {
   applyOrderingDefaults,
+  buildOrderingEntryReply,
   buildConfirmationButtons,
   type CanonicalButtonHandling,
   classifyOrderingTurn,
   findPriorOrderingQuery,
   findLatestOrderingState,
   isOrderingFollowUp,
+  isOrderingEntryTurn,
   parseOrderingButton,
   renderCatalogReply,
   renderOrderingSummary,
@@ -30,6 +33,7 @@ import {
 
 const MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 const STATE_TOOL_CALL_ID = 'zelo_ai_ordering_state';
+class OrderingSuppressedError extends Error {}
 
 export interface AiOrderingHandleResult {
   handled: boolean;
@@ -41,30 +45,52 @@ function metric(event: string, outcome: string, startedAt = Date.now()): void {
   console.info('[AiOrderingMetric]', JSON.stringify({ event, outcome, durationMs: Date.now() - startedAt }));
 }
 
-async function sendText(jid: string, empresaId: string, text: string): Promise<void> {
-  const waMessageId = await sendTextMessage(jid, text, empresaId);
-  await addAssistantMessage(jid, text, undefined, empresaId, undefined, { responseSource: 'ai_auto', waMessageId });
+async function dispatchAiPayload(
+  permit: AiTurnPermit,
+  payload: { kind: 'text'; text: string } | { kind: 'buttons'; text: string; buttons: Array<{ id: string; label: string }> },
+  purpose: string,
+): Promise<void> {
+  const result = await dispatchConversationOutbound({
+    empresaId: permit.empresaId,
+    remoteJid: permit.remoteJid,
+    actorUserId: null,
+    origin: 'ai_auto',
+    takeoverPolicy: 'preserve_ai',
+    idempotencyKey: `ai-ordering:${permit.triggerMessageId}:${purpose}`,
+    payload,
+    aiPermit: permit,
+  });
+  if (result.state === 'suppressed') throw new OrderingSuppressedError();
+  if (result.state === 'failed_before_dispatch') throw new Error('AI_ORDERING_SEND_FAILED');
 }
 
-async function persistPointer(jid: string, empresaId: string, snapshot: OrderingSnapshot): Promise<void> {
+async function sendText(permit: AiTurnPermit, text: string, purpose: string): Promise<void> {
+  await dispatchAiPayload(permit, { kind: 'text', text }, purpose);
+}
+
+async function persistPointer(permit: AiTurnPermit, snapshot: OrderingSnapshot): Promise<void> {
+  if (!(await isAiPermitCurrent(permit))) throw new OrderingSuppressedError();
   await addToolMessage(
-    jid,
+    permit.remoteJid,
     serializeOrderingState({ orderingId: snapshot.orderingId, revision: snapshot.revision }),
     STATE_TOOL_CALL_ID,
-    empresaId,
+    permit.empresaId,
   );
 }
 
-async function sendSummary(jid: string, empresaId: string, snapshot: OrderingSnapshot): Promise<string> {
-  await persistPointer(jid, empresaId, snapshot);
+async function sendSummary(permit: AiTurnPermit, snapshot: OrderingSnapshot): Promise<string> {
   const text = renderOrderingSummary(snapshot);
   const buttons = buildConfirmationButtons(snapshot);
   if (buttons.length) {
-    await sendButtonMessage(jid, 'Resumo do pedido', text, '', buttons, empresaId);
-    await addAssistantMessage(jid, text, undefined, empresaId, undefined, { responseSource: 'ai_auto' });
+    await dispatchAiPayload(permit, {
+      kind: 'buttons',
+      text,
+      buttons: buttons.map((button) => ({ id: button.id, label: button.displayText })),
+    }, `summary:${snapshot.orderingId}:${snapshot.revision}`);
   } else {
-    await sendText(jid, empresaId, text);
+    await sendText(permit, text, `summary:${snapshot.orderingId}:${snapshot.revision}`);
   }
+  await persistPointer(permit, snapshot);
   return text;
 }
 
@@ -116,8 +142,8 @@ function draftMissingQuestion(draft: OrderingDraft): string | null {
 
 function allowedCatalogIds(result: CatalogReplyResult, current: OrderingSnapshot | null) {
   const products = new Set<number>();
-  const groups = new Set<number>();
-  const options = new Set<number>();
+  const groups = new Set<string>();
+  const options = new Set<string>();
   for (const candidate of result.results) {
     products.add(candidate.productId);
     for (const group of candidate.modifierGroups ?? []) {
@@ -187,8 +213,8 @@ function lastOrderDraft(context: Awaited<ReturnType<typeof customerContext>>): O
       productId,
       quantity: Math.max(1, item.quantity),
       selectedOptions: item.modifiers.map((group) => ({
-        groupId: Number(group.id),
-        optionSelections: group.options.map((option) => ({ optionId: Number(option.id), quantity: option.quantity })),
+        groupId: String(group.id),
+        optionSelections: group.options.map((option) => ({ optionId: String(option.id), quantity: option.quantity })),
       })),
     }];
   });
@@ -196,18 +222,18 @@ function lastOrderDraft(context: Awaited<ReturnType<typeof customerContext>>): O
   return applyOrderingDefaults({ items }, context);
 }
 
-async function transferOnFailure(jid: string, empresaId: string): Promise<string> {
+async function transferOnFailure(permit: AiTurnPermit): Promise<string> {
   const text = 'Não consegui conferir o pedido com segurança agora; vou chamar um atendente para ajudar.';
-  await escalateSession(empresaId, jid, {
+  await escalateSession(permit.empresaId, permit.remoteJid, {
+    aiPermit: permit,
     triggerId: null,
     triggerKind: 'escalate_human',
     triggerName: 'Falha no pedido pelo WhatsApp',
     reasonCategory: 'repeated_ai_failure',
     reasonText: 'Falha segura na integração interna de pedidos.',
     customerMessageExcerpt: null,
-    skipCustomerMessage: true,
+    customerHandoffMessage: text,
   });
-  await sendText(jid, empresaId, text);
   return text;
 }
 
@@ -244,14 +270,13 @@ async function resolveConfirmation(
 }
 
 async function completeConfirmation(
-  jid: string,
-  empresaId: string,
+  permit: AiTurnPermit,
   outcome: ConfirmationOutcome,
 ): Promise<string> {
-  if (outcome.kind === 'summary') return sendSummary(jid, empresaId, outcome.snapshot);
+  if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot);
   const text = 'Pedido confirmado e enviado para a loja. Aviso por aqui quando houver novidade.';
-  await persistPointer(jid, empresaId, outcome.snapshot);
-  await sendText(jid, empresaId, text);
+  await sendText(permit, text, `confirmed:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`);
+  await persistPointer(permit, outcome.snapshot);
   return text;
 }
 
@@ -259,9 +284,21 @@ export async function tryHandleAiWhatsAppOrdering(
   jid: string,
   empresaId: string,
   session: StoredSession,
+  permit: AiTurnPermit,
+  entry: { menuUrl: string | null; storeOpen: boolean | null },
 ): Promise<AiOrderingHandleResult> {
   const startedAt = Date.now();
   const text = lastUserText(session);
+  if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
+    const response = buildOrderingEntryReply(entry.menuUrl);
+    try {
+      await sendText(permit, response, 'entry');
+      return { handled: true, response };
+    } catch (error) {
+      if (error instanceof OrderingSuppressedError) return { handled: true };
+      throw error;
+    }
+  }
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(findLatestOrderingState(session.messages));
   const initialTurn = classifyOrderingTurn(text, hasPointer);
@@ -270,7 +307,7 @@ export async function tryHandleAiWhatsAppOrdering(
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
     metric('ordering_turn', 'configuration_missing', startedAt);
-    const response = await transferOnFailure(jid, empresaId);
+    const response = await transferOnFailure(permit);
     return { handled: true, response };
   }
   try {
@@ -283,26 +320,26 @@ export async function tryHandleAiWhatsAppOrdering(
       const response = canonical.order || canonical.state.startsWith('confirmed') || canonical.state === 'accepted'
         ? 'Esse pedido já foi confirmado. Se precisar, posso chamar um atendente.'
         : 'Esse pedido já foi finalizado. Quer começar um novo?';
-      await sendText(jid, empresaId, response);
+      await sendText(permit, response, 'already-closed');
       return { handled: true, response };
     }
 
     if (current && turn.kind === 'confirm') {
       const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId);
-      const response = await completeConfirmation(jid, empresaId, outcome);
+      const response = await completeConfirmation(permit, outcome);
       metric('ordering_confirm', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && turn.kind === 'cancel') {
       await client.cancelDraft({ empresaId, remoteJid: jid, messageId, orderingId: current.orderingId, expectedRevision: current.revision });
       const response = 'Pedido cancelado. Se quiser começar outro, é só me dizer.';
-      await sendText(jid, empresaId, response);
+      await sendText(permit, response, 'cancelled');
       metric('ordering_cancel', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && (turn.kind === 'ask_change' || (turn.kind === 'alter' && !turn.instruction.trim()))) {
       const response = 'Tudo bem. O que você quer alterar no pedido?';
-      await sendText(jid, empresaId, response);
+      await sendText(permit, response, 'ask-change');
       return { handled: true, response };
     }
 
@@ -318,14 +355,14 @@ export async function tryHandleAiWhatsAppOrdering(
     if (!draft && wantsOrder && !catalog.ambiguous) draft = await planDraft(session, text, catalog, current);
     if (!draft) {
       const response = renderCatalogReply(catalog, query);
-      await sendText(jid, empresaId, response);
+      await sendText(permit, response, 'catalog');
       metric('catalog_search', 'answered', startedAt);
       return { handled: true, response };
     }
     draft = applyOrderingDefaults(draft, context);
     const missing = draftMissingQuestion(draft);
     if (missing) {
-      await sendText(jid, empresaId, missing);
+      await sendText(permit, missing, 'missing-detail');
       return { handled: true, response: missing };
     }
     draft.customer = { name: session.customerName, phone: session.customerPhone };
@@ -334,12 +371,13 @@ export async function tryHandleAiWhatsAppOrdering(
       empresaId, remoteJid: jid, messageId,
       orderingId: current?.orderingId, expectedRevision: current?.revision, draft,
     });
-    const response = await sendSummary(jid, empresaId, updated);
+    const response = await sendSummary(permit, updated);
     metric('ordering_update', 'summary_sent', startedAt);
     return { handled: true, response };
-  } catch {
+  } catch (error) {
+    if (error instanceof OrderingSuppressedError) return { handled: true };
     metric('ordering_turn', 'failed_closed', startedAt);
-    const response = await transferOnFailure(jid, empresaId);
+    const response = await transferOnFailure(permit);
     return { handled: true, response };
   }
 }
@@ -349,12 +387,13 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
   empresaId: string;
   buttonId: string;
   messageId: string;
+  permit: AiTurnPermit;
 }): Promise<CanonicalButtonHandling> {
   const action = parseOrderingButton(input.buttonId);
   if (!action) return { handled: false };
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
-    return { handled: true, complete: async () => { await transferOnFailure(input.jid, input.empresaId); } };
+    return { handled: true, complete: async () => { await transferOnFailure(input.permit); } };
   }
   const session = await getSession(input.jid, input.empresaId);
   if (!session) return { handled: true };
@@ -365,20 +404,21 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
       const text = current.order || current.state.startsWith('confirmed') || current.state === 'accepted'
           ? 'Esse pedido já foi confirmado. Se precisar, posso chamar um atendente.'
           : 'Esse pedido já foi finalizado. Quer começar um novo?';
-      return { handled: true, complete: async () => { await sendText(input.jid, input.empresaId, text); } };
+      return { handled: true, complete: async () => { await sendText(input.permit, text, 'button-closed'); } };
     }
     if (action.kind === 'alter') {
       return {
         handled: true,
-        complete: async () => { await sendText(input.jid, input.empresaId, 'Tudo bem. O que você quer alterar no pedido?'); },
+        complete: async () => { await sendText(input.permit, 'Tudo bem. O que você quer alterar no pedido?', 'button-alter'); },
       };
     }
     const outcome = await resolveConfirmation(current, client, input.empresaId, input.jid, input.messageId, action.token);
     return {
       handled: true,
-      complete: async () => { await completeConfirmation(input.jid, input.empresaId, outcome); },
+      complete: async () => { await completeConfirmation(input.permit, outcome); },
     };
-  } catch {
-    return { handled: true, complete: async () => { await transferOnFailure(input.jid, input.empresaId); } };
+  } catch (error) {
+    if (error instanceof OrderingSuppressedError) return { handled: true };
+    return { handled: true, complete: async () => { await transferOnFailure(input.permit); } };
   }
 }

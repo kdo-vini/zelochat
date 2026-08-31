@@ -19,7 +19,7 @@ export interface NativeTakeoverRecord {
 
 export interface FromMeProcessorDependencies {
   lookupEvidence(input: { empresaId: string; remoteJid: string; waMessageId: string; fingerprint: string }): Promise<FromMeEvidence>;
-  recordNativeTakeover(input: { empresaId: string; remoteJid: string; waMessageId: string; payload: unknown; preview: string; sentAt: string }): Promise<NativeTakeoverRecord>;
+  recordNativeTakeover(input: { empresaId: string; remoteJid: string; waMessageId: string; jobPayload: unknown; payloadFingerprint: string; messageContent: string; preview: string; sentAt: string }): Promise<NativeTakeoverRecord>;
   repairServerEcho(input: { empresaId: string; remoteJid: string; waMessageId: string; jobId: string; payload: unknown; preview: string; sentAt: string }): Promise<void>;
   holdPendingCorrelation(input: { empresaId: string; remoteJid: string; waMessageId: string; jobId: string; fingerprint: string; rawEventId: string | null }): Promise<void>;
   cancelPendingReply(empresaId: string, remoteJid: string): void;
@@ -82,12 +82,14 @@ async function defaultLookupEvidence(input: { empresaId: string; remoteJid: stri
   };
 }
 
-async function defaultRecordNativeTakeover(input: { empresaId: string; remoteJid: string; waMessageId: string; payload: unknown; preview: string; sentAt: string }): Promise<NativeTakeoverRecord> {
+async function defaultRecordNativeTakeover(input: { empresaId: string; remoteJid: string; waMessageId: string; jobPayload: unknown; payloadFingerprint: string; messageContent: string; preview: string; sentAt: string }): Promise<NativeTakeoverRecord> {
   const { data, error } = await getServiceSupabase().rpc('record_zelochat_native_outbound_takeover', {
     p_empresa_id: input.empresaId,
     p_remote_jid: input.remoteJid,
     p_wa_message_id: input.waMessageId,
-    p_payload: input.payload,
+    p_payload: input.jobPayload,
+    p_payload_fingerprint: input.payloadFingerprint,
+    p_message_content: input.messageContent,
     p_preview: input.preview,
     p_sent_at: input.sentAt,
   });
@@ -161,13 +163,23 @@ export function createFromMeProcessor(dependencies: FromMeProcessorDependencies 
       return { kind: 'server_echo', jobId: decision.jobId };
     }
 
-    const recorded = await dependencies.recordNativeTakeover({ empresaId: input.empresaId, remoteJid: extracted.remoteJid, waMessageId: extracted.waMessageId, payload: extracted.payload, preview: extracted.preview, sentAt: extracted.sentAt });
+    // FIX 2026-08-31: o job nativo perdia fingerprint/conteúdo e a RPC revertia a transação → persistir os dois campos explicitamente.
+    const recorded = await dependencies.recordNativeTakeover({
+      empresaId: input.empresaId,
+      remoteJid: extracted.remoteJid,
+      waMessageId: extracted.waMessageId,
+      jobPayload: extracted.jobPayload,
+      payloadFingerprint: extracted.fingerprint,
+      messageContent: extracted.messageContent,
+      preview: extracted.preview,
+      sentAt: extracted.sentAt,
+    });
     recordConversationOutboundMetric('from_me_native', { takeover_applied: recorded.takeoverApplied }, { empresaId: input.empresaId, remoteJid: extracted.remoteJid, jobId: recorded.jobId, messageId: recorded.messageId });
     if (recorded.inserted) {
       dependencies.cancelPendingReply(input.empresaId, extracted.remoteJid);
       dependencies.broadcast('message_sent', {
         sessionId: extracted.remoteJid,
-        message: { id: recorded.messageId, role: 'assistant', content: extracted.preview, timestamp: extracted.sentAt, status: 'sent', outboundOrigin: 'human_native_whatsapp', waMessageId: extracted.waMessageId },
+        message: { id: recorded.messageId, role: 'assistant', content: extracted.messageContent, timestamp: extracted.sentAt, status: 'sent', outboundOrigin: 'human_native_whatsapp', waMessageId: extracted.waMessageId },
         lastMessage: extracted.preview,
         lastMessageTime: extracted.sentAt,
       }, input.empresaId);

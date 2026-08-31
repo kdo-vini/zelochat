@@ -1,5 +1,29 @@
 # Incidentes e padrões conhecidos
 
+## XXVIII. IA de restaurante improvisava o cardápio e interrompia o pedido (corrigido em 2026-08-31)
+
+**Sintoma:** no teste da Bem Servido, a IA não ofereceu o ZeloMenu nem pedido escrito, omitiu misturas e acompanhamentos, perguntou “arroz ou feijão?” embora ambos fossem opcionais e parou após a conexão entregar três mensagens atrasadas em lote.
+
+**Causa-raiz:** o handler canônico de pedidos estava implementado, mas não era invocado por `server/ai.ts`; o modelo genérico recebia um catálogo achatado e improvisava. Além disso, a conexão ficou sem entregar eventos por cerca de três minutos e o lote posterior foi corretamente interrompido pelo takeover de uma mensagem enviada no WhatsApp da loja.
+
+**Fix:** o turno de restaurante entra primeiro no fluxo canônico, oferece o link ou pedido por escrito, consulta grupos reais com IDs string, cardinalidade e todas as opções, e usa o dispatcher durável com `AiTurnPermit` para respostas, botões e handoff — `server/ai.ts`, `server/aiWhatsAppOrdering.ts`, `server/zeloMenuInternalClient.ts`, `src/domain/aiWhatsAppOrdering.ts`.
+
+**Recovery:** manter a IA da empresa desligada até publicar e validar a integração autenticada; depois testar em conversa controlada o primeiro contato, as sete misturas, duas bases opcionais e os doze acompanhamentos antes de reativar para clientes.
+
+---
+
+## XXVII. Mensagens enviadas pelo WhatsApp da loja não apareciam no ZeloChat (corrigido em 2026-08-31)
+
+**Sintoma:** textos e áudios enviados diretamente no WhatsApp da Bem Servido apareciam para o cliente, mas não entravam no histórico da conversa com Vinicius no ZeloChat.
+
+**Causa-raiz:** a RPC nativa gravava `payload_fingerprint=null` contra um constraint que exige fingerprint em jobs de conversa; para mídia, o parser também ignorava os campos reais `message.base64` e `message.mediaUrl`, impedindo processamento imediato e replay.
+
+**Fix:** a persistência separa payload terminal, fingerprint e conteúdo exibível, enquanto o parser aceita bytes inline ou baixa mídia somente de hosts HTTPS permitidos, com limite de tamanho — `server/fromMe.ts:1`, `server/fromMeProcessor.ts:86`, `supabase/migrations/20260831205926_fix_native_from_me_persistence.sql:1`.
+
+**Recovery:** publicar o backend corrigido e recolocar somente os oito eventos autenticados da conversa afetada na fila; confirmar mensagem/job `human_native_whatsapp`, controle Manual e ausência de erro/dead-letter.
+
+---
+
 ## XXV. Pareamento por QR reiniciava logo após conectar (corrigido em 2026-08-31)
 
 ### Sintoma

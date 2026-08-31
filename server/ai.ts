@@ -2570,19 +2570,18 @@ export function buildSystemInstruction(
     : null;
 
   const orderingBlock = storeMenuUrl
-    ? `REGRA MAIS IMPORTANTE — PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE:
-- O cliente faz o pedido completo pelo cardápio online (ZeloMenu): ${storeMenuUrl}
-- NUNCA colete produtos, quantidades, preços, endereço de entrega, forma de pagamento ou taxa de entrega.
-- NUNCA monte, calcule ou confirme pedidos.
-- NUNCA chame ferramenta de criar pedido — ela não existe mais.
+    ? `REGRA MAIS IMPORTANTE — O CLIENTE PODE PEDIR PELO CARDÁPIO OU POR ESCRITO:
+- Cardápio digital da loja: ${storeMenuUrl}
+- No primeiro contato, ofereça claramente as duas opções: abrir o cardápio digital ou fazer o pedido por escrito nesta conversa.
+- Perguntas de cardápio e pedidos escritos são tratadas pelo fluxo canônico antes desta resposta; não improvise opções, preços ou regras de seleção.
 - Quando o cliente pedir o cardápio: envie o link direto.
-- Quando o cliente quiser fazer um pedido: envie o link e oriente.
+- Quando o cliente quiser fazer um pedido e este turno chegar até você: envie o link e diga que ele também pode escrever o pedido aqui.
 - Quando o cliente perguntar preço: "Os preços estão no cardápio online, por lá você monta o pedido e vê o valor."
 - Quando o cliente pedir entrega/delivery: "A taxa de entrega é calculada no próprio cardápio online quando você informa o endereço."
 
 COMO ENVIAR O LINK DO CARDÁPIO:
 - O link da loja é: ${storeMenuUrl}
-- Envie de forma natural: "Faça seu pedido pelo nosso cardápio online: ${storeMenuUrl} — por lá você escolhe, monta e confirma direto."
+- Envie de forma natural: "Faça seu pedido pelo cardápio: ${storeMenuUrl}. Se preferir, pode fazer o pedido por escrito aqui comigo."
 - NUNCA invente, encurte ou altere esse link. Use exatamente como está acima.`
     : `REGRA MAIS IMPORTANTE — PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE:
 - Os pedidos são feitos por um cardápio online, mas a loja AINDA NÃO configurou o link público.
@@ -2810,10 +2809,10 @@ ${cfg.deliveryConfig?.enabled && cfg.deliveryConfig.neighborhoods.length > 0 ? `
 `}
 OBJETIVOS:
 1. Responder dúvidas sobre cardápio, horários e disponibilidade.
-2. Redirecionar para o cardápio online (ZeloMenu) quando o cliente quiser fazer pedido.
+2. Oferecer o cardápio digital e a opção de pedido por escrito quando o cliente quiser pedir.
 3. Acompanhar status de pedidos usando consultar_pedido quando o cliente perguntar.
 4. Oferecer suporte pós-venda: "Gostou do pedido? Precisa de algo mais?"
-5. Sugerir produtos com base no histórico (apenas como sugestão amigável, sem montar pedido).
+5. Sugerir produtos com base no histórico sem inventar disponibilidade ou regras de escolha.
 
 COMUNICAÇÃO TIER S:
 - Todas as mensagens para o cliente devem ser em português claro, natural e bem estruturado.
@@ -2821,7 +2820,7 @@ COMUNICAÇÃO TIER S:
 - Evite jargão técnico como "status", "código", "ID", "sistema", "plataforma". Use linguagem de atendente de lanchonete.
 - Organize as informações de forma legível: cada item em sua linha, dados de retirada/entrega agrupados.
 
-IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular. NUNCA tente criar, calcular ou confirmar pedidos. O cardápio online é a única ferramenta de pedido.`.trim();
+IMPORTANTE: Respostas curtas e objetivas, como quem digita no celular. A montagem por escrito só pode usar o fluxo canônico; nunca improvise um pedido no modelo geral.`.trim();
 }
 
 // ZLM-310: CREATE_ORDER_TOOL (criar_pedido) foi REMOVIDO. A IA não monta,
@@ -3766,6 +3765,22 @@ export async function generateAndSendReply(
   if (businessHoursIssueFromMessage) {
     console.log(`[AI] Blocking reply before OpenAI: requested outside business hours for empresa=${resolvedEmpresaId} jid=${jid}`);
     return sendBusinessHoursReply(jid, resolvedEmpresaId, permit, businessHoursIssueFromMessage);
+  }
+
+  if (!isGeneralMode) {
+    // FIX 2026-08-31: o fluxo canônico existia, mas nunca era chamado → perguntas
+    // de cardápio caíam no modelo genérico, que achatava grupos e inventava escolhas.
+    const ordering = await tryHandleAiWhatsAppOrdering(jid, resolvedEmpresaId, session, permit, {
+      menuUrl: aiConfig.zelomenuSlug
+        ? buildPublicStoreUrl(getZeloMenuPublicBaseUrl(), aiConfig.zelomenuSlug)
+        : null,
+      storeOpen: resolveWeeklyStatus(
+        resolvedEmpresaId,
+        new Date(),
+        getEmpresaTimezone(resolvedEmpresaId),
+      ).open,
+    });
+    if (ordering.handled) return ordering.response ?? null;
   }
 
   const [customerHistory, triggers, activeOrdersBlock, sessionTags, allTags] = await Promise.all([

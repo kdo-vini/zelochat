@@ -635,10 +635,18 @@ async function processWebhookEvent(
 
     if (buttonId && parseOrderingButton(buttonId)) {
       const messageId = data.key?.id ?? '';
+      const persistedAction = await handleIncomingMessage(data, empresaId);
+      if (!persistedAction) return;
+      const permit = await beginAiTurn({
+        empresaId,
+        remoteJid,
+        inboundMessageId: persistedAction.messageId,
+      });
+      if (!permit) return;
       const exactKey = canonicalButtonMessageKey({ empresaId, jid: remoteJid, messageId });
       const canonicalButton = await serializeForJid(remoteJid, () => handleCanonicalButtonOnce(
         canonicalButtonMessageIds, exactKey,
-        () => tryHandleAiWhatsAppOrderingButton({ jid: remoteJid, empresaId, buttonId, messageId: messageId || `button-${Date.now()}` }),
+        () => tryHandleAiWhatsAppOrderingButton({ jid: remoteJid, empresaId, buttonId, messageId: messageId || `button-${Date.now()}`, permit }),
       ));
       if (canonicalButton.handled) {
         await canonicalButton.complete?.();

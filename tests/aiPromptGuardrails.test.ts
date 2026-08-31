@@ -71,10 +71,9 @@ await runSuite('AI prompt guardrails', [
     },
   },
   {
-    // ZLM-310: a IA não cria mais pedidos — ela redireciona para o cardápio
-    // online (ZeloMenu). Este caso garante que o prompt de restaurante manda
-    // o link real da loja e proíbe a IA de montar/calcular/confirmar pedidos.
-    name: 'restaurant prompt redirects ordering to ZeloMenu instead of creating orders',
+    // O cliente escolhe entre o cardápio digital e o pedido escrito. O modelo
+    // genérico nunca improvisa o carrinho: o fluxo canônico trata esse caminho.
+    name: 'restaurant prompt offers menu link and canonical written ordering',
     run: () => {
       const empresaId = `prompt-rest-${Date.now()}`;
       setupRestaurantConfig(empresaId, { zelomenuSlug: 'casa-dos-testes' });
@@ -89,10 +88,10 @@ await runSuite('AI prompt guardrails', [
       assertIncludes(prompt, 'NÃO responda sobre status de pedido sem antes consultar', 'active-order status guard is present');
       assertIncludes(prompt, 'NUNCA diga que o pagamento foi validado', 'Pix receipt overclaim guard is present');
       // The ordering link must carry the empresa's real public slug URL.
-      assertIncludes(prompt, 'PEDIDOS SÃO FEITOS EXCLUSIVAMENTE PELO CARDÁPIO ONLINE', 'redirect-to-menu rule is present');
+      assertIncludes(prompt, 'O CLIENTE PODE PEDIR PELO CARDÁPIO OU POR ESCRITO', 'both ordering channels are explicit');
       assertIncludes(prompt, 'https://menu.zelopdv.com.br/casa-dos-testes', 'real per-store menu URL is injected into the prompt');
-      assertIncludes(prompt, 'NUNCA chame ferramenta de criar pedido — ela não existe mais', 'order-creation tool is declared gone');
-      assertIncludes(prompt, 'NUNCA monte, calcule ou confirme pedidos', 'AI is forbidden from assembling/confirming orders');
+      assertIncludes(prompt, 'fazer o pedido por escrito nesta conversa', 'written ordering is offered');
+      assertIncludes(prompt, 'não improvise opções, preços ou regras de seleção', 'generic model cannot improvise catalog rules');
       assertIncludes(prompt, 'Mini Kibe (R$ 1.50 por unidade; estoque atual: 3)', 'stock-limited products still expose the max quantity');
       assertIncludes(prompt, 'Monte sua Massa (R$ 20.00; opções: Escolha sua massa (obrigatório): Penne, Nhoque)', 'active modifier options are exposed to the AI');
       assertIncludes(prompt, 'Se for redirect_contact', 'redirect trigger rule is present');

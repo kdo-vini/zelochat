@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-08-31',
     category: 'hotfix',
+    title: 'Respostas do WhatsApp no histórico',
+    description: 'Mensagens e áudios enviados diretamente pelo WhatsApp da loja agora também aparecem na conversa do ZeloChat.',
+  },
+  {
+    date: '2026-08-31',
+    category: 'hotfix',
     title: 'Respostas aparecem sem atualizar a página',
     description: 'As respostas automáticas agora entram na conversa assim que são preparadas, sem precisar recarregar o atendimento.',
   },
@@ -31,7 +37,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-08-31',
     category: 'big',
     title: 'Pedido completo direto na conversa',
-    description: 'O atendimento pode consultar o cardápio, montar o pedido e pedir confirmação pelo WhatsApp, sem exigir link.',
+    description: 'No primeiro contato, o cliente escolhe entre abrir o cardápio digital ou fazer o pedido por escrito; na conversa, a IA consulta as opções reais antes de montar e confirmar.',
   },
   {
     date: '2026-08-30',

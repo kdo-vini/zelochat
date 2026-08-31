@@ -28,13 +28,18 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
 
 {
   let persisted = 0;
-  const { calls, process } = harness({ recordNativeTakeover: async () => {
+  let nativeInput: any = null;
+  const { calls, process } = harness({ recordNativeTakeover: async (input) => {
     persisted += 1;
+    nativeInput = input;
     return { inserted: true, takeoverApplied: true, messageId: 'm1', jobId: 'j1', conversationControlId: 'c1', mode: 'human', epoch: '2', remoteJids: [jid] };
   } });
   const result = await process({ empresaId: 'empresa-1', data: event('native-auth'), authStatus: 'token_match', rawEventId: 'raw-1' });
   assert.equal(result.kind, 'native_human');
   assert.equal(persisted, 1);
+  assert.equal(nativeInput.payloadFingerprint.length, 64);
+  assert.deepEqual(nativeInput.jobPayload, { kind: 'text', text: 'Resposta humana' });
+  assert.equal(nativeInput.messageContent, 'Resposta humana');
   assert.deepEqual(calls, ['cancel', 'broadcast:message_sent', 'broadcast:conversation_mode_changed']);
 }
 
@@ -86,7 +91,7 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
 
 console.log('fromMeProcessor: ok');
 
-const sql = readFileSync(new URL('../supabase/migrations/066_native_from_me_takeover.sql', import.meta.url), 'utf8');
+const sql = readFileSync(new URL('../supabase/migrations/066_native_from_me_takeover.sql', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 assert.match(sql, /record_zelochat_native_outbound_takeover/i);
 assert.match(sql, /on conflict \(empresa_id, wa_message_id\) where wa_message_id is not null do nothing/i);
 assert.match(sql, /'human_native_whatsapp'/i);

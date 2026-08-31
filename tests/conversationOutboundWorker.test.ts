@@ -390,7 +390,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
 // Migration guardrails freeze the global lock order and lease fencing contract.
 {
   phase = 'migration guardrails';
-  const sql = readFileSync('supabase/migrations/065_conversation_outbound_claims.sql', 'utf8');
+  const sql = readFileSync('supabase/migrations/065_conversation_outbound_claims.sql', 'utf8').replace(/\r\n/g, '\n');
   const claim = sql.slice(sql.indexOf('create or replace function public.claim_zelochat_outbound_job'), sql.indexOf('create or replace function public.begin_zelochat_human_outbound'));
   assert(claim.indexOf('zelochat_conversation_control_lock_gate()') < claim.indexOf('select j.id, j.conversation_control_id'));
   assert(claim.indexOf('from public.zelochat_conversation_ai_control c') < claim.indexOf('for update skip locked'));
@@ -447,7 +447,7 @@ function worker(store: SharedLeaseStore, transport: RecordingTransport): Outboun
     assert(body.indexOf('zelochat_conversation_control_lock_gate()') < body.indexOf('update public.zelochat_outbound_jobs'));
     assert(body.indexOf('for update') < body.indexOf('update public.zelochat_outbound_jobs'));
   }
-  const mergeSql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8');
+  const mergeSql = readFileSync('supabase/migrations/064_conversation_control_rpcs.sql', 'utf8').replace(/\r\n/g, '\n');
   assert(mergeSql.includes("hold_reason = 'delivery_uncertain', hold_job_id = v_uncertain_hold_job_id"));
   assert(mergeSql.includes('v_winner_hold_job_id'));
   assert(mergeSql.includes("set outbound_status = 'delivery_uncertain', outbound_error = 'Não foi possível confirmar a entrega.'"));

@@ -8,6 +8,8 @@ import {
   canonicalButtonMessageKey,
   findPriorOrderingQuery,
   handleCanonicalButtonOnce,
+  buildOrderingEntryReply,
+  isOrderingEntryTurn,
   isOrderingFollowUp,
   parseOrderingButton,
   renderCatalogReply,
@@ -34,10 +36,10 @@ function snapshot(overrides: Partial<OrderingSnapshot> = {}): OrderingSnapshot {
         productName: 'Marmita do dia',
         baseUnitPrice: 20,
         selectedModifiers: [{
-          groupId: 4,
+          groupId: 'group-4',
           groupName: 'Escolha a mistura',
           kind: 'single',
-          selectedOptions: [{ optionId: 7, optionName: 'Frango', priceDelta: 0, quantity: 1 }],
+          selectedOptions: [{ optionId: 'option-7', optionName: 'Frango', priceDelta: 0, quantity: 1 }],
         }],
         modifierDeltaTotal: 0,
         quantity: 2,
@@ -78,6 +80,12 @@ assert.deepEqual(classifyOrderingTurn('cancela o pedido', true), { kind: 'cancel
 assert.deepEqual(classifyOrderingTurn('quero cancelar meu pedido por favor', true), { kind: 'cancel' });
 assert.equal(classifyOrderingTurn('cancelar só a coca', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('não, prefiro retirar', true).kind, 'alter');
+assert.equal(classifyOrderingTurn('tem carne de porco?', false).kind, 'catalog_or_order');
+assert.equal(isOrderingEntryTurn('boa tarde, estão atendendo?'), true);
+assert.equal(isOrderingEntryTurn('quero uma marmita'), false);
+const entryReply = buildOrderingEntryReply('https://menu.zelopdv.com.br/bemservido');
+assert.match(entryReply, /https:\/\/menu\.zelopdv\.com\.br\/bemservido/);
+assert.match(entryReply, /pedido por escrito/i);
 
 // A deterministic catalog question keeps a bare option reply in the ordering flow.
 const optionSequence = [
@@ -161,11 +169,13 @@ const catalogReply = renderCatalogReply({
     matchReason: 'modifier_group',
     ambiguous: false,
     modifierGroups: [{
-      id: 4,
+      id: 'group-4',
       name: 'Escolha a mistura',
+      minSelections: 1,
+      maxSelections: 1,
       options: [
-        { id: 7, name: 'Frango', priceDelta: 0 },
-        { id: 8, name: 'Carne', priceDelta: 3 },
+        { id: 'option-7', name: 'Frango', priceDelta: 0 },
+        { id: 'option-8', name: 'Carne', priceDelta: 3 },
       ],
     }],
   }],
@@ -185,8 +195,8 @@ const dailyMealReply = renderCatalogReply({
     matchReason: 'modifier_option',
     ambiguous: false,
     modifierGroups: [
-      { id: 4, name: 'Escolha a proteína', options: [{ id: 7, name: 'Frango', priceDelta: 0 }] },
-      { id: 5, name: 'Tamanho', options: [{ id: 9, name: 'Pequena', priceDelta: 0 }, { id: 10, name: 'Grande', priceDelta: 5 }] },
+      { id: 'group-4', name: 'Escolha a proteína', minSelections: 1, maxSelections: 1, options: [{ id: 'option-7', name: 'Frango', priceDelta: 0 }] },
+      { id: 'group-5', name: 'Tamanho', minSelections: 1, maxSelections: 1, options: [{ id: 'option-9', name: 'Pequena', priceDelta: 0 }, { id: 'option-10', name: 'Grande', priceDelta: 5 }] },
     ],
   }, {
     productId: 10,
@@ -198,14 +208,94 @@ const dailyMealReply = renderCatalogReply({
   }],
 }, 'qual proteína tem no cardápio de hoje');
 assert.match(dailyMealReply, /Frango/);
-assert.match(dailyMealReply, /Pequena/);
-assert.match(dailyMealReply, /Grande/);
+assert.doesNotMatch(dailyMealReply, /Pequena|Grande/);
 assert.equal((dailyMealReply.match(/Marmita do dia/g) ?? []).length, 1, 'the same parent product is listed once');
 assert.match(renderCatalogReply({ total: 20, ambiguous: false, results: [] }, 'lanche'), /filtrar/i);
 assert.match(renderCatalogReply({ total: 2, ambiguous: true, results: [] }, 'x'), /qual/i);
+assert.match(renderCatalogReply({
+  total: 2,
+  ambiguous: true,
+  results: [{ productId: 1, publicName: 'X-Bacon', currentPrice: 20, matchReason: 'name', ambiguous: true }],
+}, 'quero x'), /qual delas/i);
+
+const bemServidoReply = renderCatalogReply({
+  total: 7,
+  ambiguous: true,
+  results: [{
+    productId: 879,
+    publicName: 'Marmita do dia',
+    currentPrice: 18,
+    matchReason: 'nome_do_grupo',
+    ambiguous: true,
+    modifierGroups: [{
+      id: '30ed0d91-f4b5-444a-8ed0-1a3a2f0dbfa4',
+      name: '4. Escolha a mistura',
+      minSelections: 1,
+      maxSelections: 1,
+      options: [
+        'Filé de frango empanado', 'Filé de frango acebolado', 'Bife à milanesa',
+        'Filé de corvina empanado e frito', 'Bife acebolado', 'Carne de panela suculenta',
+        'Almôndegas ao molho sugo',
+      ].map((name, index) => ({ id: `mistura-${index}`, name, priceDelta: 0 })),
+    }, {
+      id: 'base', name: '2. Escolha a base', minSelections: 0, maxSelections: 2,
+      options: [
+        { id: 'feijao', name: 'Feijão carioca', priceDelta: 0 },
+        { id: 'arroz', name: 'Arroz branco', priceDelta: 0 },
+      ],
+    }, {
+      id: 'acompanhamento', name: '5. Escolha 1 acompanhamento', minSelections: 0, maxSelections: 1,
+      options: Array.from({ length: 12 }, (_, index) => ({ id: `acomp-${index}`, name: `Acompanhamento ${index + 1}`, priceDelta: 0 })),
+    }],
+  }],
+}, 'oq tem de mistura hoje?');
+assert.match(bemServidoReply, /Filé de frango empanado/);
+assert.match(bemServidoReply, /Almôndegas ao molho sugo/);
+assert.doesNotMatch(bemServidoReply, /Escolha a base|Acompanhamento 1/);
+assert.match(bemServidoReply, /escolha 1/i);
+
+const baseReply = renderCatalogReply({
+  total: 1,
+  ambiguous: false,
+  results: [{
+    productId: 879, publicName: 'Marmita do dia', currentPrice: 18,
+    matchReason: 'nome_do_grupo', ambiguous: false,
+    modifierGroups: [{
+      id: 'base', name: '2. Escolha a base', minSelections: 0, maxSelections: 2,
+      options: [
+        { id: 'feijao', name: 'Feijão carioca', priceDelta: 0 },
+        { id: 'arroz', name: 'Arroz branco', priceDelta: 0 },
+      ],
+    }],
+  }],
+}, 'posso escolher arroz e feijão?');
+assert.match(baseReply, /opcional/i);
+assert.match(baseReply, /até 2/i);
+assert.match(baseReply, /Feijão carioca/);
+assert.match(baseReply, /Arroz branco/);
+assert.doesNotMatch(baseReply, /Arroz branco ou Feijão carioca|Feijão carioca ou Arroz branco/i);
+
+const accompanimentReply = renderCatalogReply({
+  total: 1,
+  ambiguous: false,
+  results: [{
+    productId: 879, publicName: 'Marmita do dia', currentPrice: 18,
+    matchReason: 'nome_do_grupo', ambiguous: false,
+    modifierGroups: [{
+      id: 'acompanhamento', name: '5. Escolha 1 acompanhamento', minSelections: 0, maxSelections: 1,
+      options: Array.from({ length: 12 }, (_, index) => ({ id: `acomp-${index}`, name: `Acompanhamento ${index + 1}`, priceDelta: 0 })),
+    }],
+  }],
+}, 'o que tem de acompanhamento?');
+assert.match(accompanimentReply, /Acompanhamento 1/);
+assert.match(accompanimentReply, /Acompanhamento 12/);
 
 const orderingHandlerSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
 assert.match(orderingHandlerSource, /wantsOrder\s*&&\s*!catalog\.ambiguous/, 'ambiguous catalog candidates never reach cart planning');
+assert.doesNotMatch(orderingHandlerSource, /sendTextMessage|sendButtonMessage/, 'canonical ordering must use the durable outbound dispatcher');
+const aiSource = readFileSync(new URL('../server/ai.ts', import.meta.url), 'utf8');
+assert.match(aiSource, /await tryHandleAiWhatsAppOrdering\(/, 'restaurant replies must invoke canonical ordering before the generic model');
+assert.match(aiSource, /pedido por escrito|pedido escrito/i, 'restaurant entry point offers written ordering');
 
 const defaults = applyOrderingDefaults(
   { items: [{ productId: 10, quantity: 1 }] },

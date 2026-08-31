@@ -136,11 +136,11 @@ begin
   perform public.resume_zelochat_ai(v_empresa, v_jid, v_actor);
   select result into v_native_first from public.record_zelochat_native_outbound_takeover(
     v_empresa, v_jid, v_key || '-native-wa', '{"kind":"text","text":"probe native"}'::jsonb,
-    'probe native', now()
+    repeat('c', 64), 'probe native', 'probe native', now()
   );
   select result into v_native_second from public.record_zelochat_native_outbound_takeover(
     v_empresa, v_jid, v_key || '-native-wa', '{"kind":"text","text":"probe native"}'::jsonb,
-    'probe native', now()
+    repeat('c', 64), 'probe native', 'probe native', now()
   );
   if coalesce((v_native_first->>'inserted')::boolean, false) is not true
      or coalesce((v_native_second->>'inserted')::boolean, true) is not false

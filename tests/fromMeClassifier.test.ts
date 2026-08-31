@@ -45,6 +45,57 @@ assert.deepEqual(classifyFromMe(media, {
   pendingJob: { id: 'pending-media', payloadFingerprint: media.fingerprint, providerMessageId: null },
 }), { kind: 'pending_correlation', jobId: 'pending-media' });
 
+const nativeInlineAudio = await extractFromMeMessage({
+  key: { id: 'native-audio-inline', remoteJid: jid, fromMe: true },
+  message: {
+    base64: Buffer.from('native-inline-audio').toString('base64'),
+    audioMessage: { ptt: true, mimetype: 'audio/ogg; codecs=opus', seconds: 4 },
+  },
+});
+assert.equal(nativeInlineAudio.payload.kind, 'audio');
+assert.equal(nativeInlineAudio.preview, '[Áudio]');
+assert.equal(nativeInlineAudio.fingerprint.length, 64);
+assert.match(nativeInlineAudio.messageContent, /^__ZELOCHAT_MEDIA__:/);
+
+const originalFetch = globalThis.fetch;
+globalThis.fetch = (async (input: string | URL | Request) => {
+  assert.equal(String(input), 'https://storage.googleapis.com/whatsmiau/native-audio.ogg');
+  return new Response(Buffer.from('native-audio-bytes'), {
+    status: 200,
+    headers: { 'content-type': 'audio/ogg' },
+  });
+}) as typeof fetch;
+try {
+  const nativeAudio = await extractFromMeMessage({
+    key: {
+      id: 'native-audio-media-url',
+      remoteJid: jid,
+      fromMe: true,
+      participant: '5511888888888@s.whatsapp.net',
+      addressingMode: 'lid',
+    },
+    message: {
+      mediaUrl: 'https://storage.googleapis.com/whatsmiau/native-audio.ogg',
+      audioMessage: {
+        ptt: true,
+        mimetype: 'audio/ogg; codecs=opus',
+        seconds: 7,
+        fileLength: String(Buffer.byteLength('native-audio-bytes')),
+      },
+    },
+    messageTimestamp: 1_788_209_153,
+  });
+  assert.equal(nativeAudio.payload.kind, 'audio');
+  assert.equal(nativeAudio.preview, '[Áudio]');
+  assert.equal((nativeAudio as any).jobPayload.kind, 'text');
+  assert.equal((nativeAudio as any).jobPayload.text, '[Áudio]');
+  assert.match((nativeAudio as any).messageContent, /^__ZELOCHAT_MEDIA__:/);
+  assert.match((nativeAudio as any).messageContent, /https:\/\/storage\.googleapis\.com\/whatsmiau\/native-audio\.ogg/);
+  assert.ok(nativeAudio.fingerprint);
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
 for (const ignored of [
   { key: { id: 'device', remoteJid: jid, fromMe: true }, message: { deviceSentMessage: { message: { conversation: 'eco multi-device' } } } },
   { key: { id: 'group', remoteJid: '120363@g.us', fromMe: true }, message: { conversation: 'grupo' } },

@@ -45,11 +45,11 @@ export const ORDERING_MODEL_TOOLS: ChatCompletionFunctionTool[] = [
                   items: {
                     type: 'object', additionalProperties: false, required: ['groupId', 'optionSelections'],
                     properties: {
-                      groupId: { type: 'integer', minimum: 1 },
+                      groupId: { type: 'string', minLength: 1, maxLength: 64 },
                       optionSelections: {
                         type: 'array', items: {
                           type: 'object', additionalProperties: false, required: ['optionId', 'quantity'],
-                          properties: { optionId: { type: 'integer', minimum: 1 }, quantity: { type: 'integer', minimum: 1, maximum: 99 } },
+                          properties: { optionId: { type: 'string', minLength: 1, maxLength: 64 }, quantity: { type: 'integer', minimum: 1, maximum: 99 } },
                         },
                       },
                     },

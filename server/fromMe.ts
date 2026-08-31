@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { OutboundPayload, PersistedOutboundPayload } from '../src/domain/outbound.js';
+import { serializeStructuredMessage } from '../src/domain/chat.js';
+import type { ChatAttachment } from '../src/types.js';
 import { fingerprintOutboundPayload } from './outbound/providerAdapter.js';
 
 export type FromMeDecision =
@@ -13,6 +15,8 @@ export interface ExtractedFromMeMessage {
   waMessageId: string;
   remoteJid: string;
   payload: OutboundPayload | PersistedOutboundPayload | Record<string, unknown>;
+  jobPayload: OutboundPayload | PersistedOutboundPayload | Record<string, unknown>;
+  messageContent: string;
   preview: string;
   sentAt: string;
   fingerprint: string;
@@ -27,6 +31,9 @@ export interface FromMeEvidence {
 }
 
 const WRAPPERS = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension', 'documentWithCaptionMessage', 'editedMessage'] as const;
+const MAX_FROM_ME_MEDIA_BYTES = 25 * 1024 * 1024;
+const FROM_ME_MEDIA_FETCH_TIMEOUT_MS = 10_000;
+const FROM_ME_MEDIA_HOSTS = ['storage.googleapis.com', 'lh3.googleusercontent.com', 'whatsmiau.dev', 'supabase.co', 'supabase.in'] as const;
 const clean = (value: unknown, max = 500): string => typeof value === 'string'
   ? value.replace(/[\r\n]+/g, ' ').replace(/[`<>]/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, max)
   : '';
@@ -54,9 +61,52 @@ function sentAt(value: unknown): string {
 }
 
 function bytesFrom(data: any, message: any): Uint8Array | null {
-  const raw = message?.base64 ?? data?.base64;
+  const raw = message?.base64 ?? data?.message?.base64 ?? data?.base64;
   if (typeof raw !== 'string' || !raw || raw.startsWith('[base64 stripped:')) return null;
   try { return Buffer.from(raw.replace(/^data:[^,]+,/, ''), 'base64'); } catch { return null; }
+}
+
+function safeMediaUrl(data: any, message: any): string | null {
+  const raw = [message?.mediaUrl, data?.message?.mediaUrl, data?.mediaUrl]
+    .find((value) => typeof value === 'string' && value.trim()) as string | undefined;
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || !FROM_ME_MEDIA_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))) return null;
+    return url.toString();
+  } catch { return null; }
+}
+
+async function fetchMediaBytes(url: string): Promise<Uint8Array> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(FROM_ME_MEDIA_FETCH_TIMEOUT_MS), redirect: 'error' });
+  if (!response.ok || !response.body) throw new Error('FROM_ME_MEDIA_SOURCE_UNAVAILABLE');
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_FROM_ME_MEDIA_BYTES) throw new Error('FROM_ME_MEDIA_TOO_LARGE');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_FROM_ME_MEDIA_BYTES) {
+      await reader.cancel();
+      throw new Error('FROM_ME_MEDIA_TOO_LARGE');
+    }
+    chunks.push(value);
+  }
+  return Uint8Array.from(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))));
+}
+
+async function resolveMediaSource(data: any, message: any, node: any): Promise<{ bytes: Uint8Array; displayUrl?: string }> {
+  const displayUrl = safeMediaUrl(data, message) ?? undefined;
+  const inline = bytesFrom(data, node);
+  if (inline) {
+    if (inline.byteLength > MAX_FROM_ME_MEDIA_BYTES) throw new Error('FROM_ME_MEDIA_TOO_LARGE');
+    return { bytes: inline, displayUrl };
+  }
+  if (!displayUrl) throw new Error('FROM_ME_FINGERPRINT_UNAVAILABLE');
+  return { bytes: await fetchMediaBytes(displayUrl), displayUrl };
 }
 
 function mediaPayload(kind: 'media' | 'audio' | 'sticker', node: any, bytes: Uint8Array): PersistedOutboundPayload {
@@ -66,6 +116,32 @@ function mediaPayload(kind: 'media' | 'audio' | 'sticker', node: any, bytes: Uin
   if (kind === 'audio') return { kind, ...common, ptt: Boolean(node?.ptt) };
   if (kind === 'media') return { kind, ...common, caption: clean(node?.caption, 1000) || undefined };
   return { kind, ...common };
+}
+
+function mediaAttachment(kind: 'media' | 'audio' | 'sticker', node: any, displayUrl?: string): ChatAttachment {
+  const mimeType = clean(node?.mimetype, 120) || (kind === 'audio' ? 'audio/ogg; codecs=opus' : kind === 'sticker' ? 'image/webp' : 'application/octet-stream');
+  const mediaType: ChatAttachment['type'] = kind === 'audio'
+    ? 'audio'
+    : kind === 'sticker'
+      ? 'sticker'
+      : mimeType.startsWith('image/')
+        ? 'image'
+        : mimeType.startsWith('video/')
+          ? 'video'
+          : 'document';
+  const fallbackName = mediaType === 'image' ? 'imagem-whatsapp.jpg'
+    : mediaType === 'video' ? 'video-whatsapp.mp4'
+      : mediaType === 'audio' ? 'audio-whatsapp.ogg'
+        : mediaType === 'sticker' ? 'figurinha-whatsapp.webp'
+          : 'documento-whatsapp';
+  return {
+    type: mediaType,
+    mimeType,
+    fileName: clean(node?.fileName, 200) || fallbackName,
+    sizeBytes: Number.isFinite(Number(node?.fileLength)) ? Number(node.fileLength) : undefined,
+    durationSeconds: Number.isFinite(Number(node?.seconds)) ? Number(node.seconds) : undefined,
+    dataUrl: displayUrl,
+  };
 }
 
 function safePreview(payload: OutboundPayload | PersistedOutboundPayload | Record<string, unknown>): string {
@@ -85,24 +161,31 @@ function safePreview(payload: OutboundPayload | PersistedOutboundPayload | Recor
   }
 }
 
-async function extractVisiblePayload(data: any, message: any): Promise<{ payload: any; fingerprint: string }> {
+async function extractVisiblePayload(data: any, message: any): Promise<{ payload: any; fingerprint: string; attachment?: ChatAttachment; text: string }> {
   let payload: any;
   let mediaBytes: Uint8Array | null = null;
+  let attachment: ChatAttachment | undefined;
+  let text = '';
   if (typeof message?.conversation === 'string' || typeof message?.extendedTextMessage?.text === 'string') {
     payload = { kind: 'text', text: message.conversation ?? message.extendedTextMessage.text };
+    text = payload.text;
   } else if (message?.imageMessage || message?.videoMessage || message?.documentMessage) {
     const node = message.imageMessage ?? message.videoMessage ?? message.documentMessage;
-    mediaBytes = bytesFrom(data, node);
-    if (!mediaBytes) throw new Error('FROM_ME_FINGERPRINT_UNAVAILABLE');
+    const source = await resolveMediaSource(data, message, node);
+    mediaBytes = source.bytes;
     payload = mediaPayload('media', node, mediaBytes);
+    text = clean(node?.caption, 1000);
+    attachment = mediaAttachment('media', node, source.displayUrl);
   } else if (message?.audioMessage) {
-    mediaBytes = bytesFrom(data, message.audioMessage);
-    if (!mediaBytes) throw new Error('FROM_ME_FINGERPRINT_UNAVAILABLE');
+    const source = await resolveMediaSource(data, message, message.audioMessage);
+    mediaBytes = source.bytes;
     payload = mediaPayload('audio', message.audioMessage, mediaBytes);
+    attachment = mediaAttachment('audio', message.audioMessage, source.displayUrl);
   } else if (message?.stickerMessage) {
-    mediaBytes = bytesFrom(data, message.stickerMessage);
-    if (!mediaBytes) throw new Error('FROM_ME_FINGERPRINT_UNAVAILABLE');
+    const source = await resolveMediaSource(data, message, message.stickerMessage);
+    mediaBytes = source.bytes;
     payload = mediaPayload('sticker', message.stickerMessage, mediaBytes);
+    attachment = mediaAttachment('sticker', message.stickerMessage, source.displayUrl);
   } else if (message?.buttonsMessage) {
     payload = { kind: 'buttons', text: message.buttonsMessage.contentText ?? message.buttonsMessage.text ?? '', buttons: (message.buttonsMessage.buttons ?? []).map((button: any) => ({ id: String(button.buttonId ?? button.id ?? ''), label: String(button.buttonText?.displayText ?? button.displayText ?? '') })) };
   } else if (message?.contactMessage || message?.contactsArrayMessage) {
@@ -123,7 +206,7 @@ async function extractVisiblePayload(data: any, message: any): Promise<{ payload
   const fingerprint = mediaBytes
     ? await fingerprintOutboundPayload(payload, { bytes: mediaBytes, mimeType: payload.mimeType, transportUrl: 'native://from-me' })
     : await fingerprintOutboundPayload(payload);
-  return { payload, fingerprint };
+  return { payload, fingerprint, attachment, text };
 }
 
 export async function extractFromMeMessage(data: any): Promise<ExtractedFromMeMessage> {
@@ -132,13 +215,16 @@ export async function extractFromMeMessage(data: any): Promise<ExtractedFromMeMe
   const { message, deviceSent } = unwrap(data?.message);
   const nonIndividual = !remoteJid.endsWith('@s.whatsapp.net') || remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast');
   const protocolOnly = deviceSent || nonIndividual || !data?.key?.fromMe || !message || Boolean(message.protocolMessage || message.senderKeyDistributionMessage || message.receiptMessage);
-  if (protocolOnly) return { waMessageId, remoteJid, payload: { kind: 'protocol' }, preview: '', sentAt: sentAt(data?.messageTimestamp), fingerprint: '', protocolArtifact: true };
+  if (protocolOnly) return { waMessageId, remoteJid, payload: { kind: 'protocol' }, jobPayload: { kind: 'protocol' }, messageContent: '', preview: '', sentAt: sentAt(data?.messageTimestamp), fingerprint: '', protocolArtifact: true };
   if (!waMessageId || !remoteJid) throw new Error('FROM_ME_IDENTITY_MISSING');
   try {
-    const { payload, fingerprint } = await extractVisiblePayload(data, message);
-    return { waMessageId, remoteJid, payload, preview: safePreview(payload), sentAt: sentAt(data?.messageTimestamp), fingerprint, protocolArtifact: false };
+    const { payload, fingerprint, attachment, text } = await extractVisiblePayload(data, message);
+    const preview = safePreview(payload);
+    const jobPayload = attachment ? { kind: 'text', text: preview } : payload;
+    const messageContent = attachment ? serializeStructuredMessage({ text, attachment }) : preview;
+    return { waMessageId, remoteJid, payload, jobPayload, messageContent, preview, sentAt: sentAt(data?.messageTimestamp), fingerprint, protocolArtifact: false };
   } catch (error) {
-    if (error instanceof Error && error.message === 'FROM_ME_PROTOCOL_ARTIFACT') return { waMessageId, remoteJid, payload: { kind: 'protocol' }, preview: '', sentAt: sentAt(data?.messageTimestamp), fingerprint: '', protocolArtifact: true };
+    if (error instanceof Error && error.message === 'FROM_ME_PROTOCOL_ARTIFACT') return { waMessageId, remoteJid, payload: { kind: 'protocol' }, jobPayload: { kind: 'protocol' }, messageContent: '', preview: '', sentAt: sentAt(data?.messageTimestamp), fingerprint: '', protocolArtifact: true };
     throw error;
   }
 }

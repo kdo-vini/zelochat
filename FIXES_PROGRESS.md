@@ -10,10 +10,12 @@
 
 ### Conversas em tempo real (2026-08-31)
 
+- ✅ NATIVE-WA-001 — mensagens enviadas diretamente pelo WhatsApp da loja chegavam autenticadas, mas textos revertiam por fingerprint ausente no job e áudios não liam `message.base64`/`mediaUrl` no replay → a RPC agora persiste fingerprint e conteúdo exibível separadamente, e o parser cobre os dois formatos reais com mídia estruturada — `server/fromMe.ts:1`, `server/fromMeProcessor.ts:86`, `supabase/migrations/20260831205926_fix_native_from_me_persistence.sql:1`, `tests/fromMeClassifier.test.ts:1`
 - ✅ WS-REALTIME-001 — respostas automáticas já persistidas só emitiam atualizações de status do envio, então a bolha aparecia somente após recarregar a página → o dispatcher agora anuncia a mensagem persistida assim que a fila é criada, endereçando a conversa aberta pelo JID original e preservando deduplicação pelo ID da mensagem — `server/conversationOutbound.ts:624`, `server/messageHandler.ts:1355`, `tests/conversationOutbound.test.ts:569`
 
 ### Pedido canônico por WhatsApp (2026-08-30)
 
+- ✅ IA-WA-007 — o fluxo canônico existia, mas `server/ai.ts` nunca o chamava; por isso o modelo improvisava opções, tratava grupos opcionais como escolha exclusiva e podia omitir misturas/acompanhamentos → atendimento de restaurante agora oferece link ou pedido escrito, consulta o catálogo canônico antes do modelo, respeita cardinalidade real, lista o grupo solicitado por completo e envia tudo pelo dispatcher cercado pelo turno da IA — `server/ai.ts`, `server/aiWhatsAppOrdering.ts`, `src/domain/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`
 - ✅ IA-WA-006 — carrinho canônico por texto/botão, catálogo somente online e hábitos CRM; ambiguidade recebe pergunta antes do planejador e marmita do dia lista mistura/proteína + tamanho — `server/aiWhatsAppOrdering.ts`, `src/domain/aiWhatsAppOrdering.ts`
 - 🟨 IA-E2E-001 — faltava um gate que atravessasse atendimento, link público, checkout, pedido, CRM e notificação de status → harness Playwright opt-in implementado com serviços reais, conferência exata de projeto/tenant, entrega `sent` e vínculo `pessoa_id`/pedido; primeira execução segue bloqueada até existir ambiente descartável — `tests/e2e-ai-customer-journey.spec.ts:1`, `tests/support/customerJourney.ts:1`, `docs/runbooks/AI_CUSTOMER_JOURNEY_E2E.md:1`
 

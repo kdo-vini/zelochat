@@ -24,6 +24,16 @@ const normalize = (value: string) => value
   .replace(/[.!?]+$/g, '')
   .trim();
 
+export function isOrderingEntryTurn(text: string): boolean {
+  const normalized = normalize(text);
+  return /^(?:oi|ola|bom dia|boa tarde|boa noite)(?:\b|$)/.test(normalized)
+    || /\b(?:estao|tao|esta|ta)\s+(?:atendendo|aberto|funcionando)\b/.test(normalized);
+}
+
+export function buildOrderingEntryReply(menuUrl: string): string {
+  return `Olá! Estamos atendendo. Você pode ver o cardápio e fazer o pedido por aqui: ${menuUrl}\n\nSe preferir, também pode fazer o pedido por escrito nesta conversa que eu monto com você.`;
+}
+
 export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): OrderingTurn {
   const normalized = normalize(text);
   if (hasOpenOrdering) {
@@ -34,7 +44,8 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
       return { kind: 'alter', instruction: text.trim() };
     }
   }
-  if (/\b(cardapio|menu|mistura|marmita|lanche|pedido|pedir|quero|tem hoje|o de sempre)\b/.test(normalized)) {
+  if (/\b(cardapio|menu|mistura|marmita|lanche|pedido|pedir|quero|tem hoje|o de sempre)\b/.test(normalized)
+    || /^(?:voces?\s+)?(?:tem|temos|vende|vendem)\s+\S+/.test(normalized)) {
     return { kind: 'catalog_or_order', query: text.trim() };
   }
   return { kind: 'none' };
@@ -90,10 +101,10 @@ export function parseOrderingButton(buttonId: string): { kind: 'confirm'; token:
 }
 
 export interface OrderingModifierSelection {
-  groupId: number;
+  groupId: string;
   groupName: string;
   kind: string;
-  selectedOptions: Array<{ optionId: number; optionName: string; priceDelta: number; quantity: number }>;
+  selectedOptions: Array<{ optionId: string; optionName: string; priceDelta: number; quantity: number }>;
 }
 
 export interface OrderingSnapshot {
@@ -143,7 +154,7 @@ export interface OrderingDraft {
     productId: number;
     quantity: number;
     notes?: string;
-    selectedOptions?: Array<{ groupId: number; optionSelections: Array<{ optionId: number; quantity: number }> }>;
+    selectedOptions?: Array<{ groupId: string; optionSelections: Array<{ optionId: string; quantity: number }> }>;
   }>;
   observations?: string;
   customer?: { name?: string; phone?: string };
@@ -250,18 +261,42 @@ export interface CatalogReplyResult {
     matchReason: string;
     ambiguous: boolean;
     modifierGroups?: Array<{
-      id: number;
+      id: string;
       name: string;
-      options: Array<{ id: number; name: string; priceDelta: number }>;
+      minSelections?: number;
+      maxSelections?: number | null;
+      options: Array<{ id: string; name: string; priceDelta: number }>;
     }>;
   }>;
 }
 
+function requestedModifierGroup(query: string): RegExp | null {
+  if (/acompanhamento/i.test(query)) return /acompanhamento/i;
+  if (/\b(base|arroz|feij[aã]o)\b/i.test(query)) return /\bbase\b/i;
+  if (/\b(opciona(?:l|is)|farofa|batata palha)\b/i.test(query)) return /opciona/i;
+  if (/\b(mistura|prote[ií]na)\b/i.test(query)) return /mistura|prote[ií]na/i;
+  if (/\btamanho\b/i.test(query)) return /tamanho/i;
+  return null;
+}
+
+function selectionRule(group: { minSelections?: number; maxSelections?: number | null }): string {
+  const min = Number.isFinite(group.minSelections) ? Math.max(0, Number(group.minSelections)) : null;
+  const max = group.maxSelections == null || !Number.isFinite(group.maxSelections)
+    ? null
+    : Math.max(0, Number(group.maxSelections));
+  if (min === 0 && max != null) return `opcional; escolha até ${max}`;
+  if (min === 0) return 'opcional';
+  if (min != null && max === min) return min === 1 ? 'escolha 1' : `escolha ${min}`;
+  if (min != null && max != null) return `escolha de ${min} a ${max}`;
+  if (min != null) return `escolha pelo menos ${min}`;
+  return '';
+}
+
 export function renderCatalogReply(result: CatalogReplyResult, query: string): string {
-  if (result.ambiguous) return 'Encontrei mais de uma opção parecida. Qual delas você quer?';
-  if (result.total > 12 || (!result.results.length && result.total > 0)) return 'Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?';
+  const requestedGroup = requestedModifierGroup(query);
+  if (result.ambiguous && !requestedGroup) return 'Encontrei mais de uma opção parecida. Qual delas você quer?';
+  if ((!requestedGroup && result.total > 12) || (!result.results.length && result.total > 0)) return 'Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?';
   if (!result.results.length) return 'Não encontrei uma opção disponível com esse nome. Quer tentar de outro jeito?';
-  const wantsDailyMealChoices = /mistura|prote[ií]na|card[aá]pio(?:\s+de)?\s+hoje|marmita(?:\s+do)?\s+dia/i.test(query);
   const productsById = new Map<number, CatalogReplyResult['results'][number]>();
   for (const item of result.results) {
     const current = productsById.get(item.productId);
@@ -269,17 +304,18 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string): s
   }
   const uniqueProducts = [...productsById.values()].slice(0, 12);
   const choices = uniqueProducts.map((item) => {
-    const groups = wantsDailyMealChoices
-      ? (item.modifierGroups ?? []).filter((candidate) => /mistura|prote[ií]na|tamanho/i.test(candidate.name))
+    const groups = requestedGroup
+      ? (item.modifierGroups ?? []).filter((candidate) => requestedGroup.test(candidate.name))
       : [];
     const groupChoices = groups.flatMap((group) => {
-      const options = group.options.slice(0, 12).map((option) => customerText(option.name)).join(', ');
-      return options ? [`${customerText(group.name)}: ${options}`] : [];
+      const options = group.options.map((option) => customerText(option.name)).join(', ');
+      const rule = selectionRule(group);
+      return options ? [`*${customerText(group.name)}*${rule ? ` (${rule})` : ''}: ${options}`] : [];
     });
-    if (groupChoices.length) return `${customerText(item.publicName)} — ${groupChoices.join('; ')}`;
+    if (groupChoices.length) return `${customerText(item.publicName)}:\n${groupChoices.join('\n')}`;
     return `${customerText(item.publicName)} por ${money(item.currentPrice)}`;
-  }).join('; ');
-  return `Hoje tem ${choices}. Qual você quer?`;
+  }).join('\n');
+  return `${requestedGroup ? 'As opções disponíveis são' : 'Encontrei'}:\n${choices}\nQual você quer?`;
 }
 
 export interface OrderingStatePointer { orderingId: string; revision: number }

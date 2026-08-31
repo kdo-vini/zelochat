@@ -13,7 +13,7 @@
 - Design aprovado: controle durável de modo/epoch, dispatcher único serializado por conversa, origem/lifecycle de todo outbound e reconciliação persistente de eco vs. envio nativo humano.
 - Especificação: `docs/superpowers/specs/2026-08-29-human-takeover-outbound-engine-design.md`.
 - Plano TDD: `docs/superpowers/plans/2026-08-29-human-takeover-outbound-engine.md`.
-- Tasks 3–12 locais concluídas em 2026-08-30, com correção transversal final em 2026-08-31: controle/worker/dispatcher, fences de IA/humano, reconciliação `fromMe`, transportes especiais, UI e gates estão versionados. A engine agora é sempre ativa para envios autenticados; o módulo de rollout foi removido, e a migration 067 aposenta a compatibilidade legada. As migrations `063–067` já foram aplicadas no Supabase `ZeloPDV`; o backend está consolidado no commit `d7f3ceb` e pronto para publicação coordenada.
+- Tasks 3–12 concluídas, com hotfix de produção em 2026-08-31: a reconciliação `fromMe` agora grava fingerprint/conteúdo compatíveis com o ledger e recupera texto/áudio tanto do webhook imediato quanto do replay por URL segura. A engine é sempre ativa para envios autenticados; as migrations `063–067` e a correção aditiva `20260831205926` estão aplicadas no Supabase `ZeloPDV`.
 
 ## Rollout CRM (2026-08-26)
 
@@ -99,6 +99,7 @@
 - **Hotfix: Cérebro IA travando após refactor** — referências de estado removidas junto com seções aposentadas causavam `qrSaveState is not defined` ao abrir a tela de configurações; bindings de respostas rápidas e instruções restaurados, com guardrail dedicado. `src/components/views/AIConfigsView.tsx`, `tests/aiConfigsViewGuardrails.test.ts`.
 
 - **Hotfix: IA reconhece complementos do cardápio** — opções como Nhoque, quando ficam dentro de um grupo de um produto configurável publicado, agora entram no contexto da IA junto com grupos ativos, obrigatoriedade e preços adicionais; produtos não publicados e seus complementos continuam fora da resposta ao cliente. `server/ai.ts`, `tests/aiPromptGuardrails.test.ts`.
+- **Hotfix: pedido por WhatsApp usa o catálogo canônico** — a IA de restaurante agora oferece o link do ZeloMenu ou pedido escrito logo na entrada, consulta o catálogo real antes do modelo e explicita grupos opcionais/obrigatórios sem omitir opções. O envio permanece cercado pelo turno da IA e pelo dispatcher durável. `server/ai.ts`, `server/aiWhatsAppOrdering.ts`, `src/domain/aiWhatsAppOrdering.ts`.
 
 - **AppShell refatorado (−31%)** — o monolito de 1543 linhas foi dividido em: `Sidebar.tsx` (nav desktop), `MobileBottomNav.tsx` (tab bar + bottom sheet mobile), `MainContent.tsx` (paywall + view switch), `useAutoPrint.ts` (hook de impressão). AppShell final: 1063 linhas. Navegação inativa em `Sidebar.tsx`, auto-print em `useAutoPrint.ts`. `server/router.ts` substituiu normalização inline por `normalizeLoose` (conversationState.ts). Nova suíte `tests/orderConfirmationPipeline.test.ts` (77 testes do hard-button/soft-confirm normalization). `diagnostico.html` — relatório estratégico. `APP_SHELL_PLAN.md` — plano do refactor.
 
@@ -106,7 +107,8 @@
 
 ## Em aberto
 - **Pedido canônico por WhatsApp:** harness ponta a ponta implementado em `tests/e2e-ai-customer-journey.spec.ts`, com bloqueio de produção, conferência exata de projeto/tenant e runbook em `docs/runbooks/AI_CUSTOMER_JOURNEY_E2E.md`; a execução real continua pendente até provisionar Supabase/tenant/instância/número E2E descartáveis. A conta autenticada de teste passou apenas no smoke publicado; o projeto CLI ligado é o banco compartilhado `ZeloPDV` e não serve como sandbox.
-- **Takeover/outbound — aplicação operacional:** aplicar `063–067` em ordem, executar o probe SQL e os gates reais isolados e seguir `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md`; não configurar flags de rollout.
+- **Bem Servido — reativação da IA:** manter `ai_enabled=false` até o novo backend estar publicado e a integração interna autenticada do ZeloMenu passar em conversa controlada; não validar com cliente real.
+- **Takeover/outbound — aplicação operacional:** migrations e probe transacional estão aplicados/verificados; manter observação do replay nativo e seguir `docs/runbooks/HUMAN_TAKEOVER_OUTBOUND.md` para regressões operacionais, sem flags de rollout.
 - **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
