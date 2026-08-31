@@ -1659,6 +1659,21 @@ router.get('/api/ai-enabled', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/ai-ordering-status — reports whether canonical written ordering is configured.
+ * FIX 2026-08-31: o frontend consultava uma rota inexistente e sempre mostrava
+ * "Status indisponível" → expõe o contrato autenticado sem revelar detalhes internos.
+ */
+router.get('/api/ai-ordering-status', async (req: Request, res: Response) => {
+  try {
+    await requireEmpresaId(req);
+    const client = ZeloMenuInternalClient.fromEnv();
+    res.json({ enabled: client !== null });
+  } catch (error) {
+    sendAuthError(res, error);
+  }
+});
+
+/**
  * GET /api/ai/health — safe per-empresa readiness snapshot for AI operations.
  */
 router.get('/api/ai-settings', async (req: Request, res: Response) => {

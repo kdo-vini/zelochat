@@ -1,5 +1,15 @@
 # Incidentes e padrões conhecidos
 
+## XXIX. Configurações mostrava pedido escrito como indisponível (corrigido em 2026-08-31)
+
+**Sintoma:** mesmo com o backend e a integração privada do ZeloMenu configurados, a seção “Pedidos pelo WhatsApp com IA” mostrava “Status indisponível no momento”.
+
+**Causa-raiz:** o frontend consultava `GET /api/ai-ordering-status`, mas a rota não existia no backend e retornava 404.
+
+**Fix:** o backend agora autentica a empresa e responde somente o booleano de disponibilidade derivado da configuração do cliente interno, sem expor URL ou chave — `server/router.ts:1662`, `tests/aiWhatsAppOrderingStatusRoute.test.ts:1`.
+
+---
+
 ## XXVIII. IA de restaurante improvisava o cardápio e interrompia o pedido (corrigido em 2026-08-31)
 
 **Sintoma:** no teste da Bem Servido, a IA não ofereceu o ZeloMenu nem pedido escrito, omitiu misturas e acompanhamentos, perguntou “arroz ou feijão?” embora ambos fossem opcionais e parou após a conexão entregar três mensagens atrasadas em lote.
