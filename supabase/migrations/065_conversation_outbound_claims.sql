@@ -451,7 +451,12 @@ begin
       p_empresa_id, v_control.id, p_remote_jid, 'human_takeover', v_control.epoch, p_actor_user_id, p_source, v_message_id, v_job.id
     );
   end if;
-  result := to_jsonb(v_job) || jsonb_build_object('takeover_applied', v_takeover_applied); return next;
+  result := to_jsonb(v_job) || jsonb_build_object(
+    'takeover_applied', v_takeover_applied,
+    'remote_jids', coalesce(v_snapshot.remote_jids, array[]::text[]),
+    'control_epoch', v_control.epoch::text,
+    'control_changed_at', v_control.changed_at
+  ); return next;
 end;
 $$;
 

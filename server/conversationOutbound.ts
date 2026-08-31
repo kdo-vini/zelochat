@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AiTurnPermit } from './conversationControl.js';
 import { getServiceSupabase } from './supabase.js';
 import { cancelPendingReply } from './replyDebouncer.js';
+import { broadcast } from './ws.js';
 import {
   createOutboundMediaStore,
   type OutboundMediaStore,
@@ -61,6 +62,8 @@ export interface ConversationOutboundJobSnapshot {
   providerMessageId?: string | null;
   suppressionReason?: 'paused' | 'stale_epoch' | string | null;
   takeoverApplied?: boolean;
+  remoteJids?: string[];
+  controlChangedAt?: string | null;
 }
 
 type BeginHumanOutbound = (params: {
@@ -95,6 +98,13 @@ type EnqueueSystemOutbound = (params: {
   messageText: string;
   origin: SystemOutboundOrigin;
 }) => Promise<ConversationOutboundJobSnapshot | null>;
+
+type BroadcastConversationModeChanged = (params: {
+  empresaId: string;
+  sessionIds: string[];
+  epoch: string;
+  changedAt: string;
+}) => void;
 
 export interface ConversationOutboundDependencies {
   sendWaitMs?: number;
@@ -131,6 +141,7 @@ export interface ConversationOutboundDependencies {
     payload: PersistedOutboundPayload,
     binding?: { empresaId: string; jobId: string },
   ) => Promise<string>;
+  broadcastConversationModeChanged?: BroadcastConversationModeChanged;
 }
 
 const MEDIA_KINDS = new Set(['media', 'audio', 'sticker']);
@@ -234,7 +245,24 @@ function mapRow(row: Record<string, any>): ConversationOutboundJobSnapshot {
     providerMessageId: source.provider_message_id ?? source.providerMessageId ?? null,
     suppressionReason: source.suppression_reason ?? source.suppressionReason ?? null,
     takeoverApplied: row.takeover_applied ?? row.takeoverApplied ?? source.takeover_applied ?? source.takeoverApplied ?? false,
+    remoteJids: Array.isArray(source.remote_jids ?? source.remoteJids)
+      ? (source.remote_jids ?? source.remoteJids).filter((jid: unknown): jid is string => typeof jid === 'string')
+      : undefined,
+    controlChangedAt: source.control_changed_at ?? source.controlChangedAt ?? null,
   };
+}
+
+function defaultBroadcastConversationModeChanged(params: Parameters<BroadcastConversationModeChanged>[0]): void {
+  broadcast({
+    type: 'conversation_mode_changed',
+    data: {
+      sessionIds: params.sessionIds,
+      mode: 'human',
+      epoch: params.epoch,
+      source: 'zelochat_operator',
+      changedAt: params.changedAt,
+    },
+  }, params.empresaId);
 }
 
 function isExpectedAiJob(
@@ -513,6 +541,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
       return mediaStore.persistPayload(params);
     }),
     fingerprintPayload: dependencies.fingerprintPayload ?? defaultFingerprintPayload,
+    broadcastConversationModeChanged: dependencies.broadcastConversationModeChanged ?? defaultBroadcastConversationModeChanged,
   };
 
   const prepareMediaIfNeeded = async (
@@ -627,6 +656,12 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
       if (job.takeoverApplied) {
         recordConversationOutboundMetric('human_takeover', { source: request.origin }, { empresaId: request.empresaId, remoteJid: request.remoteJid, jobId: job.id, messageId: job.messageId });
         await deps.cancelPendingReply(request.empresaId, request.remoteJid);
+        deps.broadcastConversationModeChanged({
+          empresaId: request.empresaId,
+          sessionIds: job.remoteJids?.length ? job.remoteJids : [request.remoteJid],
+          epoch: job.controlEpoch ?? '0',
+          changedAt: job.controlChangedAt ?? new Date().toISOString(),
+        });
       }
 
       // FIX 2026-08-30: mídia humana pre-R2 não prova os bytes da intenção → o dispatcher novo exige fingerprint forte e pede uma nova tentativa.

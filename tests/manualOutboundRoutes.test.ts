@@ -49,6 +49,7 @@ for (const source of [waApi, customerApi]) {
 const payload: OutboundPayload = { kind: 'text', text: 'Oi' };
 let beginCount = 0;
 let cancelCount = 0;
+const modeEvents: Array<{ empresaId: string; sessionIds: string[]; epoch: string }> = [];
 const jobs = new Map<string, any>();
 const dispatch = createConversationOutboundDispatcher({
   sendWaitMs: 0,
@@ -68,6 +69,8 @@ const dispatch = createConversationOutboundDispatcher({
       payloadFingerprint: params.payloadFingerprint,
       intentPayloadFingerprint: params.payloadFingerprint,
       providerMessageId: 'provider-1',
+      remoteJids: [params.remoteJid, '5511888888888@s.whatsapp.net'],
+      controlEpoch: '9',
       takeoverApplied: true,
     };
     jobs.set(params.idempotencyKey, job);
@@ -75,6 +78,7 @@ const dispatch = createConversationOutboundDispatcher({
   },
   readJob: async (jobId) => [...jobs.values()].find((job) => job.id === jobId) ?? null,
   cancelPendingReply: async () => { cancelCount += 1; },
+  broadcastConversationModeChanged: (event) => { modeEvents.push(event); },
 });
 
 const first = await dispatch.dispatchConversationOutbound({
@@ -98,6 +102,12 @@ const second = await dispatch.dispatchConversationOutbound({
 
 assert.deepEqual(second, first, 'lost HTTP response retry with the same key returns the same job/message');
 assert.equal(beginCount, 2, 'both HTTP attempts reach the idempotent reservation');
+assert.equal(modeEvents.length, 1, 'takeover emits one causal mode event');
+assert.deepEqual(
+  (({ empresaId, sessionIds, epoch }) => ({ empresaId, sessionIds, epoch }))(modeEvents[0]),
+  { empresaId: 'empresa-1', sessionIds: ['5511999999999@s.whatsapp.net', '5511888888888@s.whatsapp.net'], epoch: '9' },
+  'takeover event is scoped to the whole family',
+);
 assert.equal(jobs.size, 1, 'only one durable job is created for the repeated intent');
 assert.equal(cancelCount, 1, 'takeover side effect happens only on the first reservation');
 
