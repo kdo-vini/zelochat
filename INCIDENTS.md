@@ -1,5 +1,25 @@
 # Incidentes e padrões conhecidos
 
+## XXV. Pareamento por QR reiniciava logo após conectar (corrigido em 2026-08-31)
+
+### Sintoma
+
+Após ler o QR Code, a conta aparecia conectada e voltava para “Aguardando QR Code” poucos segundos depois.
+
+### Causa-raiz
+
+Durante o pareamento, a tela consulta o QR em intervalo curto e cada consulta reenviava a configuração da instância ao provedor; o evento real confirmou `open` e, em seguida, a sessão voltava a `connecting`.
+
+### Fix
+
+// FIX 2026-08-31: a consulta do QR repetia a reconfiguração da instância após o pareamento → `setWebhookForInstance` memoriza cada registro concluído no processo e não repete a atualização — `server/whatsapp.ts:777`, `tests/whatsappWebhookRegistration.test.ts:1`.
+
+### Recovery
+
+Publicar o backend e gerar um novo QR Code. O próximo pareamento mantém a configuração inicial e as consultas seguintes não reiniciam a sessão.
+
+---
+
 ## XXIV. Rollback parcial podia reabrir a corrida entre humano e IA (risco cercado em 2026-08-30)
 
 ### Sintoma possível

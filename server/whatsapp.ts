@@ -774,6 +774,14 @@ export async function logoutInstance(instanceName: string): Promise<void> {
   }
 }
 
+// FIX 2026-08-31: polling reconfigured the instance after `open` → keep a successful registration per backend process.
+// A QR screen polls this process every three seconds while pairing. Replaying
+// `/webhook/set` and the provider's instance update on each poll can restart a
+// session that has just emitted `connection.update: open`, so remember a
+// successful registration for this backend process. A backend restart starts
+// with an empty set and re-registers all instances normally.
+const registeredInstanceWebhooks = new Set<string>();
+
 /**
  * Per-instance webhook registration. Used when a brand-new empresa instance
  * is created so Whatsmiau knows where to deliver inbound events for that
@@ -782,6 +790,7 @@ export async function logoutInstance(instanceName: string): Promise<void> {
 export async function setWebhookForInstance(instanceName: string): Promise<void> {
   if (isWebhookRegisterDisabled()) return;
   if (!instanceName) return;
+  if (registeredInstanceWebhooks.has(instanceName)) return;
   const webhookUrl = await buildWebhookUrl(instanceName);
   console.log(`[WhatsmiauTrace] register_instance_start instance=${redactInstance(instanceName)} webhook=${redactWebhookUrl(webhookUrl)}`);
   if (isLocalWebhookUrl(webhookUrl) && !allowLocalWebhookRegister()) {
@@ -819,6 +828,7 @@ export async function setWebhookForInstance(instanceName: string): Promise<void>
       // Non-fatal — the /webhook/set call above already enables it. The /v2/instance/update
       // is a redundancy belt that's only needed for media base64 propagation.
     }
+    registeredInstanceWebhooks.add(instanceName);
     console.log(`[WhatsmiauTrace] register_instance_done instance=${redactInstance(instanceName)} webhook=${redactWebhookUrl(webhookUrl)}`);
   } catch (err) {
     console.error(`[WhatsmiauTrace] register_instance_error instance=${redactInstance(instanceName)} webhook=${redactWebhookUrl(webhookUrl)}:`, err instanceof Error ? err.message : err);
