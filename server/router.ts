@@ -987,13 +987,20 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   // Defense layer: persist the raw payload BEFORE processing. If
   // processWebhookEvent (or any helper it calls) regresses again like the
   // 2026-04-29 P0.14 incident, we can replay from this log instead of losing
-  // the data forever — Whatsmiau exposes no history endpoint. Failures are
-  // swallowed inside the helper; processing must continue even if the log
-  // insert fails. See server/webhookLog.ts and migration 016.
+  // the data forever — Whatsmiau exposes no history endpoint. A durable event
+  // is mandatory before success ACK; failure returns a controlled 503 so the
+  // sender retries. Delivery receipts remain the explicit no-log exception.
   // The auth_status column captures whether the apikey header was present
   // and matched, so we can verify Whatsmiau adoption before flipping strict.
   const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus);
   console.log(`[WebhookTrace] raw_event_saved empresa=${empresaId} rawEventId=${rawEventId ?? '<none>'}`);
+  // FIX 2026-08-30: falha do log raw ainda recebia ACK 200 e perdia replay → falhar fechado com 503 antes de qualquer processamento.
+  if (!rawEventId) {
+    if (bodyEvent !== 'messages.update') {
+      res.status(503).json({ error: 'Não foi possível receber esta atualização agora.' });
+      return;
+    }
+  }
 
   // ACK immediately after the replay source is durable. AI/media processing
   // remains outside the response latency and its failures are retried by lease.

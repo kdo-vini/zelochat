@@ -91,3 +91,17 @@ assert.match(sql, /auth_status text/i);
 assert.match(sql, /correlation_state text/i);
 assert.match(sql, /security definer[\s\S]*set search_path = public, pg_temp/i);
 assert.doesNotMatch(sql, /grant execute[^;]+to (anon|authenticated)/i);
+
+const nativeRpc = sql.slice(
+  sql.indexOf('create or replace function public.record_zelochat_native_outbound_takeover'),
+  sql.indexOf('create or replace function public.hold_zelochat_from_me_correlation'),
+);
+assert.match(nativeRpc, /hold_reason = 'from_me_pending_correlation'[\s\S]*hold_job_id is not null/i);
+assert.match(nativeRpc, /provider_message_id is not null[\s\S]*provider_message_id <> p_wa_message_id/i);
+assert.match(nativeRpc, /from public\.zelochat_outbound_jobs[\s\S]*for update/i);
+assert.match(nativeRpc, /hold_reason = case[\s\S]*v_release_correlation_hold[\s\S]*c\.hold_job_id = v_correlated_job_id then null[\s\S]*else c\.hold_reason/i);
+assert.match(nativeRpc, /hold_job_id = case[\s\S]*v_release_correlation_hold[\s\S]*c\.hold_job_id = v_correlated_job_id then null[\s\S]*else c\.hold_job_id/i);
+assert.ok(
+  nativeRpc.indexOf("if found then\n    if v_job_id is null") < nativeRpc.indexOf("v_release_correlation_hold :="),
+  'idempotent redelivery returns before evaluating or clearing a correlation hold',
+);

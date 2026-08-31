@@ -8,7 +8,8 @@ import { getServiceSupabase } from './supabase.js';
  *
  * Volume target: 10s of events/day at 1 customer, scales linearly. Keep the
  * write path cheap and never let it block or break the webhook ack — log
- * insert failures are logged and swallowed.
+ * insert failures are logged and returned as null. The webhook route treats
+ * null as a failed durability gate and returns a retryable controlled error.
  *
  * Migration: supabase/migrations/016_webhook_events_raw.sql
  */

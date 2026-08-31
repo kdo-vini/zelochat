@@ -14,6 +14,8 @@ A decisão dependia de um `Map` local de IDs e persistência fire-and-forget; n�
 
 // FIX 2026-08-30: `fromMe` dependia de memória local/fire-and-forget → ID persistente decide eco, fingerprint abre hold e a RPC 066 grava envio nativo + takeover atomicamente — `server/router.ts:523`, `server/fromMeProcessor.ts:1`, `supabase/migrations/066_native_from_me_takeover.sql:1`.
 
+Review R1 fechou duas janelas adicionais: sucesso HTTP agora exige raw event realmente persistido, e o takeover nativo após correlação divergente libera somente o hold `from_me_pending_correlation` do job correspondente, sob os mesmos locks; holds independentes permanecem intactos — `server/router.ts:995`, `supabase/migrations/066_native_from_me_takeover.sql:83`.
+
 ### Recovery / rollout
 
 Aplicar a migration 066 antes deste backend. Manter `FROM_ME_NATIVE_MODE=shadow` até validar fixtures sanitizadas de mídia e concluir Task 9/rollout; em `enforce`, somente raw event com `auth_status='token_match'` pode executar takeover.

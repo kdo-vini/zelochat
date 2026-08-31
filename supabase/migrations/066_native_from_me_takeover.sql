@@ -46,6 +46,9 @@ declare
   v_job_id uuid;
   v_inserted boolean := false;
   v_takeover_applied boolean := false;
+  v_release_correlation_hold boolean := false;
+  v_correlated_job_id uuid;
+  v_correlated_provider_message_id text;
   v_now timestamptz := now();
 begin
   perform public.zelochat_conversation_control_rollout_gate();
@@ -83,6 +86,20 @@ begin
   select * into v_snapshot from public.ensure_zelochat_conversation_control(p_empresa_id, p_remote_jid);
   select * into v_control from public.zelochat_conversation_ai_control c
    where c.empresa_id = p_empresa_id and c.id = v_snapshot.conversation_control_id for update;
+  -- FIX 2026-08-30: takeover nativo após ID divergente deixava hold preso → liberar somente o hold de correlação do job comprovadamente concluído com outro ID.
+  if v_control.hold_reason = 'from_me_pending_correlation'
+     and v_control.hold_job_id is not null then
+    select j.id, j.provider_message_id
+      into v_correlated_job_id, v_correlated_provider_message_id
+      from public.zelochat_outbound_jobs j
+     where j.empresa_id = p_empresa_id
+       and j.conversation_control_id = v_control.id
+       and j.id = v_control.hold_job_id
+     for update;
+    v_release_correlation_hold := found
+      and v_correlated_provider_message_id is not null
+      and v_correlated_provider_message_id <> p_wa_message_id;
+  end if;
   select s.id into v_session_id from public.zelochat_sessions s
    where s.empresa_id = p_empresa_id and s.conversation_control_id = v_control.id
    order by (s.remote_jid = p_remote_jid) desc, s.updated_at desc, s.id limit 1;
@@ -117,7 +134,19 @@ begin
          latest_takeover_message_id = v_message_id,
          changed_by_actor = null,
          changed_source = 'native_whatsapp',
-         changed_at = v_now
+         changed_at = v_now,
+         hold_reason = case
+           when v_release_correlation_hold
+            and c.hold_reason = 'from_me_pending_correlation'
+            and c.hold_job_id = v_correlated_job_id then null
+           else c.hold_reason
+         end,
+         hold_job_id = case
+           when v_release_correlation_hold
+            and c.hold_reason = 'from_me_pending_correlation'
+            and c.hold_job_id = v_correlated_job_id then null
+           else c.hold_job_id
+         end
    where c.empresa_id = p_empresa_id and c.id = v_control.id
    returning * into v_control;
   perform public.zelochat_project_conversation_control(p_empresa_id, v_control.id, false, v_now);
