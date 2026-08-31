@@ -20,7 +20,7 @@
 
 **Fix:** a persistência separa payload terminal, fingerprint e conteúdo exibível, enquanto o parser aceita bytes inline ou baixa mídia somente de hosts HTTPS permitidos, com limite de tamanho — `server/fromMe.ts:1`, `server/fromMeProcessor.ts:86`, `supabase/migrations/20260831205926_fix_native_from_me_persistence.sql:1`.
 
-**Recovery:** publicar o backend corrigido e recolocar somente os oito eventos autenticados da conversa afetada na fila; confirmar mensagem/job `human_native_whatsapp`, controle Manual e ausência de erro/dead-letter.
+**Recovery concluído (2026-08-31):** os oito eventos autenticados da conversa afetada foram recolocados na fila após o deploy; todos processaram na primeira tentativa, geraram mensagem/job `human_native_whatsapp` com fingerprint de 64 caracteres, os três áudios ficaram estruturados e o controle permaneceu Manual, sem erro ou dead-letter.
 
 ---
 
