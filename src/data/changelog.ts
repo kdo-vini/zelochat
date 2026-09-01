@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-01',
+    category: 'hotfix',
+    title: 'Link do cardápio nas respostas da IA',
+    description: 'Ao consultar opções, o cliente também recebe o link do cardápio digital e pode escolher entre pedir por lá ou continuar por escrito no WhatsApp.',
+  },
+  {
     date: '2026-08-31',
     category: 'hotfix',
     title: 'Respostas do WhatsApp no histórico',

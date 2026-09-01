@@ -310,11 +310,18 @@ function selectionRule(group: { minSelections?: number; maxSelections?: number |
   return '';
 }
 
-export function renderCatalogReply(result: CatalogReplyResult, query: string): string {
+export function renderCatalogReply(
+  result: CatalogReplyResult,
+  query: string,
+  menuUrl?: string | null,
+): string {
+  const finish = (text: string): string => menuUrl
+    ? `${text}\n\nCardápio digital: ${menuUrl}\nSe preferir, pode fazer o pedido por escrito aqui comigo.`
+    : text;
   const requestedGroup = requestedModifierGroup(query);
-  if (result.ambiguous && !requestedGroup) return 'Encontrei mais de uma opção parecida. Qual delas você quer?';
-  if ((!requestedGroup && result.total > 12) || (!result.results.length && result.total > 0)) return 'Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?';
-  if (!result.results.length) return 'Não encontrei uma opção disponível com esse nome. Quer tentar de outro jeito?';
+  if (result.ambiguous && !requestedGroup) return finish('Encontrei mais de uma opção parecida. Qual delas você quer?');
+  if ((!requestedGroup && result.total > 12) || (!result.results.length && result.total > 0)) return finish('Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?');
+  if (!result.results.length) return finish('Não encontrei uma opção disponível com esse nome. Quer tentar de outro jeito?');
   const productsById = new Map<number, CatalogReplyResult['results'][number]>();
   for (const item of result.results) {
     const current = productsById.get(item.productId);
@@ -333,7 +340,7 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string): s
     if (groupChoices.length) return `${customerText(item.publicName)}:\n${groupChoices.join('\n')}`;
     return `${customerText(item.publicName)} por ${money(item.currentPrice)}`;
   }).join('\n');
-  return `${requestedGroup ? 'As opções disponíveis são' : 'Encontrei'}:\n${choices}\nQual você quer?`;
+  return finish(`${requestedGroup ? 'As opções disponíveis são' : 'Encontrei'}:\n${choices}\nQual você quer?`);
 }
 
 /**

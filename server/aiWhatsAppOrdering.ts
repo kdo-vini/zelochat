@@ -407,7 +407,7 @@ export async function tryHandleAiWhatsAppOrdering(
       draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
     }
     if (!draft) {
-      const response = renderCatalogReply(catalog, query);
+      const response = renderCatalogReply(catalog, query, entry.menuUrl);
       await sendText(permit, response, 'catalog', dryRun);
       metric('catalog_search', 'answered', startedAt);
       return { handled: true, response };

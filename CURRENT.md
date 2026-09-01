@@ -12,6 +12,10 @@
 - Implementação concluída no branch `codex/issue-22-canonical-simulator`: o simulador de restaurante usa o fluxo canônico em dry-run, com catálogo real, cardinalidade dos grupos, preview de pedido e handoff determinístico; não envia WhatsApp, não grava conversa/carrinho e mantém `wouldCreateOrder=false`.
 - Regressões cobrem Bem Servido, entrada com link + pedido escrito, misturas/acompanhamentos, arroz e feijão opcionais, entrega, item indisponível, reclamação e pedido de atendente. O build foi publicado em 2026-09-01 (`/api/version=516899316987`); falta somente a validação controlada da conversa, e a IA da Bem Servido permanece desligada.
 
+### Conversas em produção — link do cardápio (2026-09-01)
+
+- Respostas canônicas que listam opções agora também exibem o link público do ZeloMenu e oferecem pedido por escrito; o fluxo de entrada já mantinha esse comportamento, mas consultas diretas ao catálogo não o faziam.
+
 ## Próximo foco — engine de tomada humana e outbound (2026-08-29)
 
 - Revisão concluída e engine implementada: envios humanos pelo ZeloChat e pelo WhatsApp nativo pausam a IA atomicamente por família de JIDs, com epoch, lifecycle, idempotência e reconciliação `fromMe`; o dispatcher também propaga a mudança de modo para todas as abas/sessões.
