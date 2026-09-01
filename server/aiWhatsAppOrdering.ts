@@ -314,6 +314,8 @@ async function completeConfirmation(
   return text;
 }
 
+// FIX 2026-08-31: o simulador precisava percorrer o mesmo roteador do WhatsApp
+// sem tocar dispatcher, carrinho ou sessão; opções dryRun/client isolam os efeitos.
 export async function tryHandleAiWhatsAppOrdering(
   jid: string,
   empresaId: string,
@@ -367,13 +369,20 @@ export async function tryHandleAiWhatsAppOrdering(
     }
 
     if (current && turn.kind === 'confirm') {
+      if (dryRun) {
+        const response = `${renderOrderingSummary(current)}\n\nSimulação: a confirmação não foi enviada.`;
+        await sendText(permit, response, `confirm-preview:${current.orderingId}:${current.revision}`, true);
+        return { handled: true, response };
+      }
       const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId);
       const response = await completeConfirmation(permit, outcome, dryRun);
       metric('ordering_confirm', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && turn.kind === 'cancel') {
-      await client.cancelDraft({ empresaId, remoteJid: jid, messageId, orderingId: current.orderingId, expectedRevision: current.revision });
+      if (!dryRun) {
+        await client.cancelDraft({ empresaId, remoteJid: jid, messageId, orderingId: current.orderingId, expectedRevision: current.revision });
+      }
       const response = 'Pedido cancelado. Se quiser começar outro, é só me dizer.';
       await sendText(permit, response, 'cancelled', dryRun);
       metric('ordering_cancel', 'handled', startedAt);

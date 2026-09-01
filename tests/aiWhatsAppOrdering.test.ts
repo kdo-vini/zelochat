@@ -14,6 +14,7 @@ import {
   parseOrderingButton,
   renderCatalogReply,
   renderOrderingSummary,
+  serializeOrderingState,
   type OrderingSnapshot,
 } from '../src/domain/aiWhatsAppOrdering.js';
 import {
@@ -118,6 +119,7 @@ assert.equal(classifyOrderingTurn('cancelar só a coca', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('não, prefiro retirar', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('tem carne de porco?', false).kind, 'catalog_or_order');
 assert.equal(classifyOrderingTurn('quero falar com um atendente humano', false).kind, 'none');
+assert.equal(classifyOrderingTurn('quero falar com alguém', false).kind, 'none');
 assert.equal(isOrderingEntryTurn('boa tarde, estão atendendo?'), true);
 assert.equal(isOrderingEntryTurn('quero uma marmita'), false);
 const entryReply = buildOrderingEntryReply('https://menu.zelopdv.com.br/bemservido');
@@ -165,6 +167,47 @@ assert.equal(dryRunCatalog.handled, true);
 assert.match(dryRunCatalog.response ?? '', /Carne de panela/);
 assert.match(dryRunCatalog.response ?? '', /Bisteca de porco/);
 assert.deepEqual(dryRunCalls, [], 'canonical dry-run never invokes mutation methods');
+
+// Even with an open canonical pointer, dry-run confirmation/cancellation must
+// only read the snapshot and preview the result; neither path may mutate it.
+const openDryRunClient: OrderingClient = {
+  ...dryRunClient,
+  getOrdering: async () => snapshot(),
+};
+const sessionWithPointer = (text: string): StoredSession => {
+  const session = sessionWith(text);
+  session.messages.push({
+    id: 'ordering-state',
+    waMessageId: 'ordering-state',
+    role: 'tool',
+    content: serializeOrderingState({ orderingId: snapshot().orderingId, revision: snapshot().revision }),
+    preview: null,
+    timestamp: new Date(0).toISOString(),
+    kind: 'text',
+  });
+  return session;
+};
+const confirmationPreview = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWithPointer('sim'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  { dryRun: true, client: openDryRunClient },
+);
+assert.equal(confirmationPreview.handled, true);
+assert.match(confirmationPreview.response ?? '', /a confirmação não foi enviada/i);
+const cancellationPreview = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWithPointer('cancela o pedido'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  { dryRun: true, client: openDryRunClient },
+);
+assert.equal(cancellationPreview.handled, true);
+assert.match(cancellationPreview.response ?? '', /pedido cancelado/i);
+assert.deepEqual(dryRunCalls, [], 'confirmation/cancellation dry-run never mutates the open ordering');
 
 // A deterministic catalog question keeps a bare option reply in the ordering flow.
 const optionSequence = [

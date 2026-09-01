@@ -56,7 +56,9 @@ const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 50000;
 
 /**
  * Dry-run the full AI pipeline for a given empresa and customer message.
- * No DB writes, no WhatsApp sends — only one real OpenAI call.
+ * No WhatsApp sends or conversation/order mutations — restaurant cases use
+ * the canonical catalog/planning path in dry-run; other cases use the generic
+ * model (which may record aggregate AI-usage metrics as before).
  */
 export async function simulateAtendimento(
   empresaId: string,

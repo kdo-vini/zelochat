@@ -36,7 +36,7 @@ export function buildOrderingEntryReply(menuUrl: string): string {
 
 export function isExplicitHumanRequest(text: string): boolean {
   const normalized = normalize(text);
-  const humanTerm = /\b(?:atendente|humano|gerente|pessoa real|gente de verdade)\b/.test(normalized);
+  const humanTerm = /\b(?:atendente|humano|gerente|pessoa real|gente de verdade|alguem)\b/.test(normalized);
   return humanTerm && /\b(?:quero|preciso|falar|chama|chame|transfere|transferir|por favor)\b/.test(normalized);
 }
 
@@ -62,7 +62,7 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
       return { kind: 'alter', instruction: text.trim() };
     }
   }
-  if (/\b(cardapio|menu|mistura|marmita|lanche|pedido|pedir|quero|tem hoje|o de sempre|arroz|feijao|acompanhamento|farofa|batata palha|tamanho|base)\b/.test(normalized)
+  if (/\b(cardapio|menu|mistura|marmita|lanche|pedido|pedir|quero|tem hoje|o de sempre|arroz|feijao|acompanhament\w*|farofa|batata palha|tamanho|base)\b/.test(normalized)
     || /^(?:voces?\s+)?(?:tem|temos|vende|vendem)\s+\S+/.test(normalized)) {
     return { kind: 'catalog_or_order', query: text.trim() };
   }
