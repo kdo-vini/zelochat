@@ -1229,7 +1229,7 @@ function buildNextOpenLabel(nextOpen: { day: DayKey; start: string }, now: Date,
  * falls back to the legacy single-window logic when no weekly schedule exists.
  * Informational only — never a hard block (orders go through ZeloMenu).
  */
-function resolveWeeklyStatus(
+export function resolveWeeklyStatus(
   empresaId: string,
   now: Date,
   tz: string,

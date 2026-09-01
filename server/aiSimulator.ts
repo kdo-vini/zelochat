@@ -7,11 +7,18 @@ import {
   DISPATCH_TRIGGER_TOOL,
   safeForPrompt,
   evaluateScheduleGuardForDryRun,
+  getZeloMenuPublicBaseUrl,
+  resolveWeeklyStatus,
 } from './ai.js';
-import { getConfig, ensureAiSettingsHydrated } from './configStore.js';
+import { getConfig, ensureAiSettingsHydrated, getEmpresaTimezone } from './configStore.js';
 import { fetchActiveTriggers } from './triggers.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
 import { recordAiUsage } from './aiUsage.js';
+import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
+import { tryHandleAiWhatsAppOrdering, type OrderingClient } from './aiWhatsAppOrdering.js';
+import type { StoredSession } from './messageHandler.js';
+import type { AiTurnPermit } from './conversationControl.js';
+import type { ChatMessage } from '../src/types.js';
 
 export interface SimulatePayload {
   customerMessage: string;
@@ -30,6 +37,11 @@ export interface SimulateResult {
   simulationNote: string;
 }
 
+export interface SimulateDependencies {
+  /** Optional authenticated ZeloMenu boundary used by focused tests. */
+  orderingClient?: OrderingClient;
+}
+
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_HISTORY_MSGS = 20;
 const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 50000;
@@ -41,6 +53,7 @@ const OWNER_AI_INSTRUCTIONS_MAX_CHARS = 50000;
 export async function simulateAtendimento(
   empresaId: string,
   payload: SimulatePayload,
+  dependencies: SimulateDependencies = {},
 ): Promise<SimulateResult> {
   // Hydrate config from DB (same TTL-gated path as the real pipeline).
   await ensureAiSettingsHydrated(empresaId);
@@ -66,6 +79,28 @@ export async function simulateAtendimento(
     { role: 'user' as const, content: customerMessage },
   ];
 
+  const simulatedMessages: ChatMessage[] = simulatedConversation.map((message, index) => ({
+    id: `simulation-message-${index}`,
+    waMessageId: `simulation-message-${index}`,
+    role: message.role,
+    content: message.content,
+    preview: message.content,
+    timestamp: new Date().toISOString(),
+    kind: 'text',
+  }));
+  const simulatedJid = `simulator-${empresaId}@s.whatsapp.net`;
+  const simulatedSession: StoredSession = {
+    id: `simulation-session-${empresaId}`,
+    customerName,
+    customerPhone: '',
+    lastMessage: customerMessage,
+    lastMessageTime: new Date().toISOString(),
+    unreadCount: 0,
+    messages: simulatedMessages,
+    status: 'active',
+    autoReply: true,
+  };
+
   const scheduleGuard = evaluateScheduleGuardForDryRun(empresaId, simulatedConversation);
   if (scheduleGuard) {
     return {
@@ -74,6 +109,45 @@ export async function simulateAtendimento(
       wouldCreateOrder: false,
       simulationNote: `Simulação — resposta bloqueada pela mesma validação de agenda da produção (${scheduleGuard.type})`,
     };
+  }
+
+  // Restaurant simulations must enter through the same canonical ordering
+  // router as production. The handler receives a dry-run flag so it can read
+  // the authenticated catalog while skipping every outbound/ordering mutation.
+  if (cfg.zelochatMode !== 'general') {
+    const menuUrl = cfg.zelomenuSlug
+      ? buildPublicStoreUrl(getZeloMenuPublicBaseUrl(), cfg.zelomenuSlug)
+      : null;
+    const permit: AiTurnPermit = {
+      empresaId,
+      conversationControlId: `simulation-control-${empresaId}`,
+      remoteJid: simulatedJid,
+      epoch: '0',
+      triggerMessageId: simulatedMessages.at(-1)?.waMessageId || 'simulation-message',
+    };
+    const ordering = await tryHandleAiWhatsAppOrdering(
+      simulatedJid,
+      empresaId,
+      simulatedSession,
+      permit,
+      {
+        menuUrl,
+        storeOpen: resolveWeeklyStatus(
+          empresaId,
+          new Date(),
+          getEmpresaTimezone(empresaId),
+        ).open,
+      },
+      { dryRun: true, client: dependencies.orderingClient },
+    );
+    if (ordering.handled) {
+      return {
+        reply: ordering.response || '[IA não retornou resposta de texto]',
+        toolCallsMade: [],
+        wouldCreateOrder: false,
+        simulationNote: 'Simulação — resposta do fluxo canônico; nenhuma mensagem foi enviada e nenhum dado foi gravado',
+      };
+    }
   }
 
   // Fetch triggers (read-only — no side effects).

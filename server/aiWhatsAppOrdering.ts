@@ -264,7 +264,7 @@ type ConfirmationOutcome =
 
 async function resolveConfirmation(
   snapshot: OrderingSnapshot,
-  client: ZeloMenuInternalClient,
+  client: OrderingClient,
   empresaId: string,
   jid: string,
   messageId: string,
@@ -295,7 +295,7 @@ async function completeConfirmation(
   outcome: ConfirmationOutcome,
   dryRun = false,
 ): Promise<string> {
-  if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot);
+  if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot, dryRun);
   const text = 'Pedido confirmado e enviado para a loja. Aviso por aqui quando houver novidade.';
   await sendText(permit, text, `confirmed:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`, dryRun);
   await persistPointer(permit, outcome.snapshot, dryRun);
@@ -331,6 +331,7 @@ export async function tryHandleAiWhatsAppOrdering(
   const client = options.client ?? ZeloMenuInternalClient.fromEnv();
   if (!client) {
     metric('ordering_turn', 'configuration_missing', startedAt);
+    if (dryRun) return { handled: false };
     const response = await transferOnFailure(permit, dryRun);
     return { handled: true, response };
   }
