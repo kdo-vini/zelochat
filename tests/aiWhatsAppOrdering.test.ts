@@ -22,6 +22,12 @@ import {
   ZeloMenuInternalClient,
   ZeloMenuInternalError,
 } from '../server/zeloMenuInternalClient.js';
+import {
+  tryHandleAiWhatsAppOrdering,
+  type OrderingClient,
+} from '../server/aiWhatsAppOrdering.js';
+import type { StoredSession } from '../server/messageHandler.js';
+import type { AiTurnPermit } from '../server/conversationControl.js';
 
 function snapshot(overrides: Partial<OrderingSnapshot> = {}): OrderingSnapshot {
   return {
@@ -67,6 +73,36 @@ function snapshot(overrides: Partial<OrderingSnapshot> = {}): OrderingSnapshot {
   };
 }
 
+function sessionWith(text: string): StoredSession {
+  return {
+    id: 'simulation-session',
+    customerName: 'Cliente',
+    customerPhone: '5511999999999',
+    lastMessage: text,
+    lastMessageTime: new Date(0).toISOString(),
+    unreadCount: 0,
+    messages: [{
+      id: 'simulation-message',
+      waMessageId: 'simulation-message',
+      role: 'user',
+      content: text,
+      preview: text,
+      timestamp: new Date(0).toISOString(),
+      kind: 'text',
+    }],
+    status: 'active',
+    autoReply: true,
+  };
+}
+
+const fakePermit: AiTurnPermit = {
+  empresaId: snapshot().empresaId,
+  conversationControlId: 'simulation-control',
+  remoteJid: snapshot().remoteJid,
+  epoch: '0',
+  triggerMessageId: 'simulation-message',
+};
+
 // The permanent product flow has no rollout flags. Availability depends only
 // on the private ZeloMenu client configuration.
 const orderingDomainSource = readFileSync(new URL('../src/domain/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
@@ -86,6 +122,48 @@ assert.equal(isOrderingEntryTurn('quero uma marmita'), false);
 const entryReply = buildOrderingEntryReply('https://menu.zelopdv.com.br/bemservido');
 assert.match(entryReply, /https:\/\/menu\.zelopdv\.com\.br\/bemservido/);
 assert.match(entryReply, /pedido por escrito/i);
+
+const dryRunCalls: string[] = [];
+const dryRunClient = {
+  searchCatalog: async () => ({
+    total: 1,
+    ambiguous: false,
+    results: [{
+      productId: 879,
+      publicName: 'Marmita do dia',
+      currentPrice: 18,
+      matchReason: 'modifier_group',
+      ambiguous: false,
+      modifierGroups: [{
+        id: 'mistura',
+        name: 'Escolha a mistura',
+        minSelections: 1,
+        maxSelections: 1,
+        options: [
+          { id: 'm1', name: 'Carne de panela', priceDelta: 0 },
+          { id: 'm2', name: 'Bisteca de porco', priceDelta: 0 },
+        ],
+      }],
+    }],
+  }),
+  updateDraft: async () => { dryRunCalls.push('updateDraft'); throw new Error('dry-run mutation'); },
+  getOrdering: async () => { dryRunCalls.push('getOrdering'); throw new Error('dry-run mutation'); },
+  confirmDraft: async () => { dryRunCalls.push('confirmDraft'); throw new Error('dry-run mutation'); },
+  cancelDraft: async () => { dryRunCalls.push('cancelDraft'); throw new Error('dry-run mutation'); },
+} satisfies OrderingClient;
+
+const dryRunCatalog = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('oq tem de mistura hoje?'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  { dryRun: true, client: dryRunClient },
+);
+assert.equal(dryRunCatalog.handled, true);
+assert.match(dryRunCatalog.response ?? '', /Carne de panela/);
+assert.match(dryRunCatalog.response ?? '', /Bisteca de porco/);
+assert.deepEqual(dryRunCalls, [], 'canonical dry-run never invokes mutation methods');
 
 // A deterministic catalog question keeps a bare option reply in the ordering flow.
 const optionSequence = [

@@ -40,6 +40,23 @@ export interface AiOrderingHandleResult {
   response?: string;
 }
 
+/**
+ * The ZeloMenu boundary used by live and dry-run ordering turns. Keeping this
+ * seam structural lets the simulator use the authenticated catalog reader
+ * without gaining access to any mutating operation.
+ */
+export type OrderingClient = Pick<
+  ZeloMenuInternalClient,
+  'searchCatalog' | 'updateDraft' | 'getOrdering' | 'confirmDraft' | 'cancelDraft'
+>;
+
+export interface AiOrderingHandlerOptions {
+  /** Do not dispatch, persist ordering state, mutate a cart or escalate. */
+  dryRun?: boolean;
+  /** Injectable boundary for the simulator and focused tests. */
+  client?: OrderingClient;
+}
+
 function metric(event: string, outcome: string, startedAt = Date.now()): void {
   // Strict allowlist: never include JID, message text, names, addresses, token or cart.
   console.info('[AiOrderingMetric]', JSON.stringify({ event, outcome, durationMs: Date.now() - startedAt }));
@@ -49,7 +66,9 @@ async function dispatchAiPayload(
   permit: AiTurnPermit,
   payload: { kind: 'text'; text: string } | { kind: 'buttons'; text: string; buttons: Array<{ id: string; label: string }> },
   purpose: string,
+  dryRun = false,
 ): Promise<void> {
+  if (dryRun) return;
   const result = await dispatchConversationOutbound({
     empresaId: permit.empresaId,
     remoteJid: permit.remoteJid,
@@ -64,11 +83,12 @@ async function dispatchAiPayload(
   if (result.state === 'failed_before_dispatch') throw new Error('AI_ORDERING_SEND_FAILED');
 }
 
-async function sendText(permit: AiTurnPermit, text: string, purpose: string): Promise<void> {
-  await dispatchAiPayload(permit, { kind: 'text', text }, purpose);
+async function sendText(permit: AiTurnPermit, text: string, purpose: string, dryRun = false): Promise<void> {
+  await dispatchAiPayload(permit, { kind: 'text', text }, purpose, dryRun);
 }
 
-async function persistPointer(permit: AiTurnPermit, snapshot: OrderingSnapshot): Promise<void> {
+async function persistPointer(permit: AiTurnPermit, snapshot: OrderingSnapshot, dryRun = false): Promise<void> {
+  if (dryRun) return;
   if (!(await isAiPermitCurrent(permit))) throw new OrderingSuppressedError();
   await addToolMessage(
     permit.remoteJid,
@@ -78,7 +98,7 @@ async function persistPointer(permit: AiTurnPermit, snapshot: OrderingSnapshot):
   );
 }
 
-async function sendSummary(permit: AiTurnPermit, snapshot: OrderingSnapshot): Promise<string> {
+async function sendSummary(permit: AiTurnPermit, snapshot: OrderingSnapshot, dryRun = false): Promise<string> {
   const text = renderOrderingSummary(snapshot);
   const buttons = buildConfirmationButtons(snapshot);
   if (buttons.length) {
@@ -86,11 +106,11 @@ async function sendSummary(permit: AiTurnPermit, snapshot: OrderingSnapshot): Pr
       kind: 'buttons',
       text,
       buttons: buttons.map((button) => ({ id: button.id, label: button.displayText })),
-    }, `summary:${snapshot.orderingId}:${snapshot.revision}`);
+    }, `summary:${snapshot.orderingId}:${snapshot.revision}`, dryRun);
   } else {
-    await sendText(permit, text, `summary:${snapshot.orderingId}:${snapshot.revision}`);
+    await sendText(permit, text, `summary:${snapshot.orderingId}:${snapshot.revision}`, dryRun);
   }
-  await persistPointer(permit, snapshot);
+  await persistPointer(permit, snapshot, dryRun);
   return text;
 }
 
@@ -98,7 +118,7 @@ async function loadCanonicalSnapshot(
   session: StoredSession,
   empresaId: string,
   jid: string,
-  client: ZeloMenuInternalClient,
+  client: OrderingClient,
 ): Promise<OrderingSnapshot | null> {
   const pointer = findLatestOrderingState(session.messages);
   if (!pointer) return null;
@@ -222,8 +242,9 @@ function lastOrderDraft(context: Awaited<ReturnType<typeof customerContext>>): O
   return applyOrderingDefaults({ items }, context);
 }
 
-async function transferOnFailure(permit: AiTurnPermit): Promise<string> {
+async function transferOnFailure(permit: AiTurnPermit, dryRun = false): Promise<string> {
   const text = 'Não consegui conferir o pedido com segurança agora; vou chamar um atendente para ajudar.';
+  if (dryRun) return text;
   await escalateSession(permit.empresaId, permit.remoteJid, {
     aiPermit: permit,
     triggerId: null,
@@ -272,11 +293,12 @@ async function resolveConfirmation(
 async function completeConfirmation(
   permit: AiTurnPermit,
   outcome: ConfirmationOutcome,
+  dryRun = false,
 ): Promise<string> {
   if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot);
   const text = 'Pedido confirmado e enviado para a loja. Aviso por aqui quando houver novidade.';
-  await sendText(permit, text, `confirmed:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`);
-  await persistPointer(permit, outcome.snapshot);
+  await sendText(permit, text, `confirmed:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`, dryRun);
+  await persistPointer(permit, outcome.snapshot, dryRun);
   return text;
 }
 
@@ -286,13 +308,15 @@ export async function tryHandleAiWhatsAppOrdering(
   session: StoredSession,
   permit: AiTurnPermit,
   entry: { menuUrl: string | null; storeOpen: boolean | null },
+  options: AiOrderingHandlerOptions = {},
 ): Promise<AiOrderingHandleResult> {
   const startedAt = Date.now();
+  const dryRun = options.dryRun === true;
   const text = lastUserText(session);
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
     const response = buildOrderingEntryReply(entry.menuUrl);
     try {
-      await sendText(permit, response, 'entry');
+      await sendText(permit, response, 'entry', dryRun);
       return { handled: true, response };
     } catch (error) {
       if (error instanceof OrderingSuppressedError) return { handled: true };
@@ -304,10 +328,10 @@ export async function tryHandleAiWhatsAppOrdering(
   const initialTurn = classifyOrderingTurn(text, hasPointer);
   const followUp = !hasPointer && isOrderingFollowUp(session.messages);
   if (initialTurn.kind === 'none' && !followUp) return { handled: false };
-  const client = ZeloMenuInternalClient.fromEnv();
+  const client = options.client ?? ZeloMenuInternalClient.fromEnv();
   if (!client) {
     metric('ordering_turn', 'configuration_missing', startedAt);
-    const response = await transferOnFailure(permit);
+    const response = await transferOnFailure(permit, dryRun);
     return { handled: true, response };
   }
   try {
@@ -320,26 +344,26 @@ export async function tryHandleAiWhatsAppOrdering(
       const response = canonical.order || canonical.state.startsWith('confirmed') || canonical.state === 'accepted'
         ? 'Esse pedido já foi confirmado. Se precisar, posso chamar um atendente.'
         : 'Esse pedido já foi finalizado. Quer começar um novo?';
-      await sendText(permit, response, 'already-closed');
+      await sendText(permit, response, 'already-closed', dryRun);
       return { handled: true, response };
     }
 
     if (current && turn.kind === 'confirm') {
       const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId);
-      const response = await completeConfirmation(permit, outcome);
+      const response = await completeConfirmation(permit, outcome, dryRun);
       metric('ordering_confirm', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && turn.kind === 'cancel') {
       await client.cancelDraft({ empresaId, remoteJid: jid, messageId, orderingId: current.orderingId, expectedRevision: current.revision });
       const response = 'Pedido cancelado. Se quiser começar outro, é só me dizer.';
-      await sendText(permit, response, 'cancelled');
+      await sendText(permit, response, 'cancelled', dryRun);
       metric('ordering_cancel', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && (turn.kind === 'ask_change' || (turn.kind === 'alter' && !turn.instruction.trim()))) {
       const response = 'Tudo bem. O que você quer alterar no pedido?';
-      await sendText(permit, response, 'ask-change');
+      await sendText(permit, response, 'ask-change', dryRun);
       return { handled: true, response };
     }
 
@@ -355,14 +379,14 @@ export async function tryHandleAiWhatsAppOrdering(
     if (!draft && wantsOrder && !catalog.ambiguous) draft = await planDraft(session, text, catalog, current);
     if (!draft) {
       const response = renderCatalogReply(catalog, query);
-      await sendText(permit, response, 'catalog');
+      await sendText(permit, response, 'catalog', dryRun);
       metric('catalog_search', 'answered', startedAt);
       return { handled: true, response };
     }
     draft = applyOrderingDefaults(draft, context);
     const missing = draftMissingQuestion(draft);
     if (missing) {
-      await sendText(permit, missing, 'missing-detail');
+      await sendText(permit, missing, 'missing-detail', dryRun);
       return { handled: true, response: missing };
     }
     draft.customer = { name: session.customerName, phone: session.customerPhone };
@@ -371,13 +395,13 @@ export async function tryHandleAiWhatsAppOrdering(
       empresaId, remoteJid: jid, messageId,
       orderingId: current?.orderingId, expectedRevision: current?.revision, draft,
     });
-    const response = await sendSummary(permit, updated);
+    const response = await sendSummary(permit, updated, dryRun);
     metric('ordering_update', 'summary_sent', startedAt);
     return { handled: true, response };
   } catch (error) {
     if (error instanceof OrderingSuppressedError) return { handled: true };
     metric('ordering_turn', 'failed_closed', startedAt);
-    const response = await transferOnFailure(permit);
+    const response = await transferOnFailure(permit, dryRun);
     return { handled: true, response };
   }
 }
