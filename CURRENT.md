@@ -10,7 +10,7 @@
 ### Simulador de atendimento — issue #22 (2026-08-31)
 
 - Implementação concluída no branch `codex/issue-22-canonical-simulator`: o simulador de restaurante usa o fluxo canônico em dry-run, com catálogo real, cardinalidade dos grupos, preview de pedido e handoff determinístico; não envia WhatsApp, não grava conversa/carrinho e mantém `wouldCreateOrder=false`.
-- Regressões cobrem Bem Servido, entrada com link + pedido escrito, misturas/acompanhamentos, arroz e feijão opcionais, entrega, item indisponível, reclamação e pedido de atendente. O build ainda precisa ser publicado antes da validação controlada; a IA da Bem Servido permanece desligada.
+- Regressões cobrem Bem Servido, entrada com link + pedido escrito, misturas/acompanhamentos, arroz e feijão opcionais, entrega, item indisponível, reclamação e pedido de atendente. O build foi publicado em 2026-09-01 (`/api/version=516899316987`); falta somente a validação controlada da conversa, e a IA da Bem Servido permanece desligada.
 
 ## Próximo foco — engine de tomada humana e outbound (2026-08-29)
 

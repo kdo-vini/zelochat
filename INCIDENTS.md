@@ -18,7 +18,7 @@
 
 **Fix:** o simulador agora monta uma sessão efêmera e chama `tryHandleAiWhatsAppOrdering` com `dryRun`, cliente/planner injetáveis para testes, preview determinístico de pedido e texto de handoff; mutações, dispatcher, persistência e escalação real continuam bloqueados — `server/aiSimulator.ts:62`, `server/aiWhatsAppOrdering.ts:319`, `tests/aiSimulatorOrdering.test.ts:1`.
 
-**Recovery / rollout:** publicar o branch após os gates de build e executar uma conversa controlada; manter a IA da Bem Servido desligada até confirmar entrada, catálogo completo, pedido escrito e handoff no ambiente publicado.
+**Recovery / rollout:** publicação concluída em 2026-09-01 (`/api/version=516899316987`) após os gates de build; executar a conversa controlada e manter a IA da Bem Servido desligada até confirmar entrada, catálogo completo, pedido escrito e handoff no ambiente publicado.
 
 ---
 

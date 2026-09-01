@@ -297,6 +297,6 @@ git add FIXES_PROGRESS.md CURRENT.md INCIDENTS.md docs/ai/ZeloChat.memory.md
 git commit -m "docs: record canonical simulator parity fix"
 ```
 
-- [ ] **Step 6: Publish only after explicit rollout approval**
+- [x] **Step 6: Publish only after explicit rollout approval**
 
-Run the production deployment workflow only after the focused tests, lint, server typecheck and build are green. Keep AI disabled for Bem Servido until a human-controlled WhatsApp test confirms entry link, complete modifier selection, delivery question and human handoff.
+Production publication was authorized by the user on 2026-09-01: `main` now points to `5168993`, the backend reports `/api/version=516899316987`, and the public frontend bundle carries the same build version. Keep AI disabled for Bem Servido until a human-controlled WhatsApp test confirms entry link, complete modifier selection, delivery question and human handoff.
