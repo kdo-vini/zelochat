@@ -10,6 +10,18 @@
 
 ---
 
+## XXX. Simulador de atendimento divergia do WhatsApp (corrigido em 2026-08-31)
+
+**Sintoma:** a simulação da Bem Servido improvisava opções, tratava arroz e feijão como escolha exclusiva, repetia acompanhamentos, contradizia a disponibilidade e mostrava `[IA chamaria as ferramentas: dispatch_trigger]` ao pedir atendimento humano.
+
+**Causa-raiz:** `/api/ai/simulate` ignorava o roteador canônico de pedidos e enviava todo turno de restaurante diretamente ao prompt genérico, sem uma fronteira de dry-run para o catálogo e para o handoff.
+
+**Fix:** o simulador agora monta uma sessão efêmera e chama `tryHandleAiWhatsAppOrdering` com `dryRun`, cliente/planner injetáveis para testes, preview determinístico de pedido e texto de handoff; mutações, dispatcher, persistência e escalação real continuam bloqueados — `server/aiSimulator.ts:62`, `server/aiWhatsAppOrdering.ts:319`, `tests/aiSimulatorOrdering.test.ts:1`.
+
+**Recovery / rollout:** publicar o branch após os gates de build e executar uma conversa controlada; manter a IA da Bem Servido desligada até confirmar entrada, catálogo completo, pedido escrito e handoff no ambiente publicado.
+
+---
+
 ## XXVIII. IA de restaurante improvisava o cardápio e interrompia o pedido (corrigido em 2026-08-31)
 
 **Sintoma:** no teste da Bem Servido, a IA não ofereceu o ZeloMenu nem pedido escrito, omitiu misturas e acompanhamentos, perguntou “arroz ou feijão?” embora ambos fossem opcionais e parou após a conexão entregar três mensagens atrasadas em lote.

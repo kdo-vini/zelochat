@@ -17,6 +17,10 @@
 - ✅ NATIVE-WA-001 — mensagens enviadas diretamente pelo WhatsApp da loja chegavam autenticadas, mas textos revertiam por fingerprint ausente no job e áudios não liam `message.base64`/`mediaUrl` no replay → a RPC agora persiste fingerprint e conteúdo exibível separadamente, e o parser cobre os dois formatos reais com mídia estruturada — `server/fromMe.ts:1`, `server/fromMeProcessor.ts:86`, `supabase/migrations/20260831205926_fix_native_from_me_persistence.sql:1`, `tests/fromMeClassifier.test.ts:1`
 - ✅ WS-REALTIME-001 — respostas automáticas já persistidas só emitiam atualizações de status do envio, então a bolha aparecia somente após recarregar a página → o dispatcher agora anuncia a mensagem persistida assim que a fila é criada, endereçando a conversa aberta pelo JID original e preservando deduplicação pelo ID da mensagem — `server/conversationOutbound.ts:624`, `server/messageHandler.ts:1355`, `tests/conversationOutbound.test.ts:569`
 
+### Simulador de atendimento (2026-08-31)
+
+- ✅ AI-SIM-022 — o simulador chamava apenas o modelo genérico e podia oferecer um cardápio improvisado, inverter a cardinalidade de arroz/feijão, repetir acompanhamentos já escolhidos, inventar disponibilidade e devolver placeholder ao pedir humano → o restaurante agora percorre o mesmo roteador canônico do WhatsApp em dry-run, consulta o catálogo autenticado, preserva escolhas, mostra preview determinístico e simula handoff sem enviar ou gravar nada — `server/aiSimulator.ts:62`, `server/aiWhatsAppOrdering.ts:319`, `src/domain/aiWhatsAppOrdering.ts:54`, `tests/aiSimulatorOrdering.test.ts:1`
+
 ### Pedido canônico por WhatsApp (2026-08-30)
 
 - ✅ IA-WA-008 — a tela de Configurações consultava `/api/ai-ordering-status`, mas o backend não expunha a rota e mostrava “Status indisponível” mesmo com a integração privada configurada → o servidor agora responde o contrato autenticado sem revelar URL ou chave internas — `server/router.ts:1662`, `tests/aiWhatsAppOrderingStatusRoute.test.ts:1`
