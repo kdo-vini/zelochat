@@ -3,6 +3,7 @@ import { evaluateAutomationCandidate, type AutomationCandidate, type EvaluatedDi
 import { getDefaultAutomationRule, type AutomationKind, type AutomationRule } from './rules.js';
 import { getCrmRolloutFlags } from '../customers/rollout.js';
 import { fingerprintOutboundPayload } from '../outbound/providerAdapter.js';
+import { wakeOutboundWorker } from '../outbound/wake.js';
 
 export type AutomationSweepDependencies = {
   listRules: () => Promise<AutomationRule[]>;
@@ -41,6 +42,7 @@ export async function persistAutomationDispatch(rule: AutomationRule, dispatch: 
   const { data: job, error: jobError } = await db.from('zelochat_outbound_jobs').upsert({ empresa_id: rule.empresaId, automation_dispatch_id: data.id, pessoa_id: dispatch.pessoaId, job_type: 'automation', idempotency_key: dispatch.eventKey, instance_key: profile?.whatsmiau_instance ?? '', phone_snapshot: dispatch.phone, message: dispatch.message, outbound_origin: 'automation', takeover_policy: 'preserve_ai', payload, payload_fingerprint: await fingerprintOutboundPayload(payload), status: 'queued', next_attempt_at: new Date().toISOString() }, { onConflict: 'empresa_id,idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
   if (jobError) throw jobError;
   if (job?.id) await db.from('zelochat_automation_dispatches').update({ status: 'queued', outbound_job_id: job.id, queued_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', data.id);
+  if (job?.id) wakeOutboundWorker();
 }
 
 export async function listAutomationCandidatesForRule(rule: AutomationRule): Promise<AutomationCandidate[]> {

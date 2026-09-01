@@ -8,6 +8,20 @@ import { getCrmRolloutFlags, isOutboundJobAllowed } from '../customers/rollout.j
 import { createProviderAdapter, type ProviderAdapter, type ProviderDispatchResult } from './providerAdapter.js';
 import { cleanupTerminalOutboundMedia } from './mediaStore.js';
 import { recordConversationOutboundMetric } from './observability.js';
+import { registerOutboundWorkerWaker, wakeOutboundWorker } from './wake.js';
+
+const parseMs = (name: string, fallback: number): number => {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+};
+/** Poll interval while there was recent job activity (or a wake). */
+export const OUTBOUND_WORKER_ACTIVE_INTERVAL_MS = parseMs('OUTBOUND_WORKER_ACTIVE_INTERVAL_MS', 1_000);
+/** Poll interval while the queue has been empty for a while. Each poll is one
+ *  PostgREST request; at 1 s this alone produced ~180k requests/day (~250 MB of
+ *  Supabase egress) for a queue that is empty most of the time. */
+export const OUTBOUND_WORKER_IDLE_INTERVAL_MS = parseMs('OUTBOUND_WORKER_IDLE_INTERVAL_MS', 15_000);
+/** How long after the last claimed job / wake the worker keeps the fast interval. */
+export const OUTBOUND_WORKER_ACTIVE_WINDOW_MS = parseMs('OUTBOUND_WORKER_ACTIVE_WINDOW_MS', 30_000);
 
 const originFor = (jobType: OutboundJob['jobType'], value?: string | null): OutboundOrigin => {
   if (value) return value as OutboundOrigin;
@@ -80,6 +94,7 @@ export function createSupabaseOutboundJobStore(): OutboundJobStore {
         next_attempt_at: new Date().toISOString(),
       }, { onConflict: 'empresa_id,idempotency_key', ignoreDuplicates: true }).select('*').maybeSingle();
       if (error || !data) throw error ?? new Error('JOB_INSERT_FAILED');
+      wakeOutboundWorker();
       return mapRow(data);
     },
 
@@ -130,8 +145,11 @@ export function createSupabaseOutboundJobStore(): OutboundJobStore {
     },
 
     async releaseExpired() {
-      const { error } = await db.rpc('release_zelochat_expired_leases');
-      if (error) throw error;
+      // Intentionally a no-op against Supabase: `claim_zelochat_outbound_job`
+      // already runs `release_zelochat_expired_leases()` inside the same
+      // transaction (supabase/migrations/065_conversation_outbound_claims.sql),
+      // so a separate RPC per tick only doubled the API request count.
+      // In-memory stores used by tests still implement a real release.
     },
   };
 }
@@ -187,6 +205,7 @@ export class OutboundWorker {
     await this.deps.queue.releaseExpired();
     const job = await this.deps.queue.claim(workerId);
     if (!job) return false;
+    this.noteActivity();
     if (!job.phone && !job.conversationJid) {
       await this.deps.queue.failBeforeDispatch(job, 'Destinatário ausente para envio.');
       return false;
@@ -273,13 +292,74 @@ export class OutboundWorker {
     return results.filter(Boolean).length;
   }
 
-  start(intervalMs = 1_000, concurrency = Number.parseInt(process.env.OUTBOUND_WORKER_CONCURRENCY || '1', 10)): void {
+  private timer: NodeJS.Timeout | null = null;
+  private tickInFlight = false;
+  private wakeRequested = false;
+  private activeUntil = 0;
+  private activeIntervalMs = OUTBOUND_WORKER_ACTIVE_INTERVAL_MS;
+  private idleIntervalMs = OUTBOUND_WORKER_IDLE_INTERVAL_MS;
+  private activeWindowMs = OUTBOUND_WORKER_ACTIVE_WINDOW_MS;
+  private concurrency = 1;
+
+  /** Keep the fast poll interval for a while after a job was claimed or a wake arrived. */
+  private noteActivity(): void { this.activeUntil = Date.now() + this.activeWindowMs; }
+
+  /**
+   * Adaptive polling: one claim immediately at start, then every
+   * `intervalMs` while jobs keep showing up (active window) and every
+   * `idleIntervalMs` once the queue is empty. `wake()` (see ./wake.ts) is
+   * called by every enqueue path in this process so a new job is claimed
+   * right away instead of waiting for the idle poll.
+   */
+  start(
+    intervalMs = OUTBOUND_WORKER_ACTIVE_INTERVAL_MS,
+    concurrency = Number.parseInt(process.env.OUTBOUND_WORKER_CONCURRENCY || '1', 10),
+    options: { idleIntervalMs?: number; activeWindowMs?: number } = {},
+  ): void {
     if (this.running) return;
     this.running = true;
-    const tick = () => { if (!this.running) return; void this.runBatch(`outbound-worker-${process.pid}`, concurrency).catch((error) => console.error('[outbound] worker tick failed', error instanceof Error ? error.message : 'unknown')).finally(() => setTimeout(tick, intervalMs)); };
-    void tick();
+    this.activeIntervalMs = Math.max(10, intervalMs);
+    this.idleIntervalMs = Math.max(this.activeIntervalMs, options.idleIntervalMs ?? OUTBOUND_WORKER_IDLE_INTERVAL_MS);
+    this.activeWindowMs = Math.max(0, options.activeWindowMs ?? OUTBOUND_WORKER_ACTIVE_WINDOW_MS);
+    this.concurrency = Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 1;
+    void this.tick();
   }
-  stop(): void { this.running = false; }
+
+  /** Claim as soon as possible (a job was just enqueued by this process). */
+  wake(): void {
+    this.noteActivity();
+    if (!this.running) return;
+    if (this.tickInFlight) { this.wakeRequested = true; return; }
+    this.schedule(0);
+  }
+
+  stop(): void {
+    this.running = false;
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  }
+
+  private schedule(delayMs: number): void {
+    if (!this.running) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => { this.timer = null; void this.tick(); }, delayMs);
+    this.timer.unref?.();
+  }
+
+  private async tick(): Promise<void> {
+    if (!this.running || this.tickInFlight) return;
+    this.tickInFlight = true;
+    this.wakeRequested = false;
+    try {
+      await this.runBatch(`outbound-worker-${process.pid}`, this.concurrency);
+    } catch (error) {
+      console.error('[outbound] worker tick failed', error instanceof Error ? error.message : 'unknown');
+    } finally {
+      this.tickInFlight = false;
+    }
+    if (!this.running) return;
+    if (this.wakeRequested) { this.schedule(0); return; }
+    this.schedule(Date.now() < this.activeUntil ? this.activeIntervalMs : this.idleIntervalMs);
+  }
 }
 
 export const canUseAutomationPhoneSnapshot = (job: OutboundJob, pessoaId: string | null): boolean =>
@@ -328,6 +408,8 @@ let cleanupTimer: NodeJS.Timeout | null = null;
 export function startOutboundWorker(): OutboundWorker | null {
   if (!startedWorker) {
     startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) });
+    const worker = startedWorker;
+    registerOutboundWorkerWaker(() => worker.wake());
     startedWorker.start();
     void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown'));
     cleanupTimer = setInterval(() => { void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown')); }, 60 * 60 * 1000);

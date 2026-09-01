@@ -18,6 +18,7 @@ import {
   type TakeoverPolicy,
 } from '../src/domain/outbound.js';
 import { recordConversationOutboundMetric } from './outbound/observability.js';
+import { wakeOutboundWorker } from './outbound/wake.js';
 
 const parsedConversationSendWaitMs = Number.parseInt(process.env.CONVERSATION_SEND_WAIT_MS || '10000', 10);
 export const CONVERSATION_SEND_WAIT_MS = Number.isFinite(parsedConversationSendWaitMs) && parsedConversationSendWaitMs >= 0
@@ -424,6 +425,7 @@ async function defaultBeginHumanOutbound(params: Parameters<BeginHumanOutbound>[
   if (error) throw new Error(error.message);
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error('OUTBOUND_JOB_NOT_CREATED');
+  wakeOutboundWorker();
   return mapRow(row);
 }
 
@@ -441,6 +443,7 @@ async function defaultEnqueueAiOutbound(params: Parameters<EnqueueAiOutbound>[0]
   });
   if (error) throw new Error(error.message);
   const row = Array.isArray(data) ? data[0] : data;
+  if (row) wakeOutboundWorker();
   return row ? mapRow(row) : null;
 }
 
@@ -456,6 +459,7 @@ async function defaultEnqueueSystemOutbound(params: Parameters<EnqueueSystemOutb
   });
   if (error) throw new Error(error.message);
   const row = Array.isArray(data) ? data[0] : data;
+  if (row) wakeOutboundWorker();
   return row ? mapRow(row) : null;
 }
 

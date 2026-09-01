@@ -1,5 +1,17 @@
 # Incidentes e padrões conhecidos
 
+## XXXI. Worker de envio estourava o egress do Supabase (corrigido em 2026-09-01)
+
+**Sintoma:** o projeto ZeloPDV no Supabase saiu da cota Free por egress (~250 MB/dia, 95% PostgREST) com apenas cinco clientes e algumas centenas de mensagens por dia. O salto começou em 26-27/08.
+
+**Causa-raiz:** `OutboundWorker.start()` fazia poll fixo a cada 1 s e cada tick disparava duas RPCs (`release_zelochat_expired_leases` e `claim_zelochat_outbound_job`), ~126 requests/min (~180k/dia) para uma fila quase sempre vazia. A RPC de claim já executa `release_zelochat_expired_leases()` internamente, então metade das chamadas era redundante.
+
+**Fix:** polling adaptativo em `server/outbound/worker.ts` (1 s enquanto há jobs ou logo após um wake, 15 s com fila vazia; `OUTBOUND_WORKER_IDLE_INTERVAL_MS`), `releaseExpired()` do store Supabase virou no-op, e todo caminho que enfileira job neste processo chama `wakeOutboundWorker()` (`server/outbound/wake.ts`) para o claim sair na hora — envios humanos continuam aguardando o terminal em `CONVERSATION_SEND_WAIT_MS` sem latência extra. Teste: `tests/outboundWorkerPolling.test.ts`.
+
+**Como verificar:** Supabase → Organization → Usage → filtro ZeloPDV → "Egress per day": PostgREST deve cair para dezenas de MB/dia. Se ainda houver ~1 request/s, existe outro processo (máquina de dev com `npm run dev:server`, réplica antiga) apontando para o banco de produção.
+
+---
+
 ## XXIX. Configurações mostrava pedido escrito como indisponível (corrigido em 2026-08-31)
 
 **Sintoma:** mesmo com o backend e a integração privada do ZeloMenu configurados, a seção “Pedidos pelo WhatsApp com IA” mostrava “Status indisponível no momento”.

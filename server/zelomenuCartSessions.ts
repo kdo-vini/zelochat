@@ -7,6 +7,7 @@ import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { getCrmRolloutFlags } from './customers/rollout.js';
 import { dispatchConversationOutbound } from './conversationOutbound.js';
 import { fingerprintOutboundPayload } from './outbound/providerAdapter.js';
+import { wakeOutboundWorker } from './outbound/wake.js';
 import { isPixPaymentMethod, isPixReceiptConfigActive, normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
 import {
@@ -2102,6 +2103,7 @@ export async function recoverAbandonedCart(sessionRow: SessionRow): Promise<'sen
     }, { onConflict: 'empresa_id,idempotency_key', ignoreDuplicates: true }).select('id').maybeSingle();
     if (jobError) throw jobError;
     if (job?.id) await db.from('zelochat_automation_dispatches').update({ status: 'queued', outbound_job_id: job.id, queued_at: now, updated_at: now }).eq('id', dispatch.id);
+    if (job?.id) wakeOutboundWorker();
     return 'sent';
   }
 
