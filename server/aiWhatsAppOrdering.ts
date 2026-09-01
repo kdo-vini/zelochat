@@ -9,6 +9,7 @@ import { isAiPermitCurrent, type AiTurnPermit } from './conversationControl.js';
 import {
   applyOrderingDefaults,
   buildOrderingEntryReply,
+  buildDeliveryFeeReply,
   buildConfirmationButtons,
   type CanonicalButtonHandling,
   classifyOrderingTurn,
@@ -16,8 +17,10 @@ import {
   findLatestOrderingState,
   isOrderingFollowUp,
   isOrderingEntryTurn,
+  isDeliveryFeeQuestion,
   parseOrderingButton,
   renderCatalogReply,
+  renderOrderingDraftPreview,
   renderOrderingSummary,
   serializeOrderingState,
   snapshotToDraft,
@@ -50,11 +53,20 @@ export type OrderingClient = Pick<
   'searchCatalog' | 'updateDraft' | 'getOrdering' | 'confirmDraft' | 'cancelDraft'
 >;
 
+export type OrderingDraftPlanner = (
+  session: StoredSession,
+  text: string,
+  result: CatalogReplyResult,
+  current: OrderingSnapshot | null,
+) => Promise<OrderingDraft | null>;
+
 export interface AiOrderingHandlerOptions {
   /** Do not dispatch, persist ordering state, mutate a cart or escalate. */
   dryRun?: boolean;
   /** Injectable boundary for the simulator and focused tests. */
   client?: OrderingClient;
+  /** Injectable planner for deterministic simulator tests. */
+  draftPlanner?: OrderingDraftPlanner;
 }
 
 function metric(event: string, outcome: string, startedAt = Date.now()): void {
@@ -323,6 +335,11 @@ export async function tryHandleAiWhatsAppOrdering(
       throw error;
     }
   }
+  if (entry.menuUrl && isDeliveryFeeQuestion(text)) {
+    const response = buildDeliveryFeeReply(entry.menuUrl);
+    await sendText(permit, response, 'delivery-fee', dryRun);
+    return { handled: true, response };
+  }
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(findLatestOrderingState(session.messages));
   const initialTurn = classifyOrderingTurn(text, hasPointer);
@@ -377,7 +394,9 @@ export async function tryHandleAiWhatsAppOrdering(
     // Candidate ambiguity is resolved in the conversation, never delegated to
     // the model: a valid ID is not enough to prove which sellable item the
     // customer meant.
-    if (!draft && wantsOrder && !catalog.ambiguous) draft = await planDraft(session, text, catalog, current);
+    if (!draft && wantsOrder && !catalog.ambiguous) {
+      draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
+    }
     if (!draft) {
       const response = renderCatalogReply(catalog, query);
       await sendText(permit, response, 'catalog', dryRun);
@@ -389,6 +408,11 @@ export async function tryHandleAiWhatsAppOrdering(
     if (missing) {
       await sendText(permit, missing, 'missing-detail', dryRun);
       return { handled: true, response: missing };
+    }
+    if (dryRun) {
+      const response = renderOrderingDraftPreview(draft, catalog);
+      metric('ordering_update', 'dry_run_preview', startedAt);
+      return { handled: true, response };
     }
     draft.customer = { name: session.customerName, phone: session.customerPhone };
     draft.pessoaId = session.personId ?? null;

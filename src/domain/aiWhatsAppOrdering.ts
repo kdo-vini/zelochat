@@ -34,8 +34,26 @@ export function buildOrderingEntryReply(menuUrl: string): string {
   return `Olá! Estamos atendendo. Você pode ver o cardápio e fazer o pedido por aqui: ${menuUrl}\n\nSe preferir, também pode fazer o pedido por escrito nesta conversa que eu monto com você.`;
 }
 
+export function isExplicitHumanRequest(text: string): boolean {
+  const normalized = normalize(text);
+  const humanTerm = /\b(?:atendente|humano|gerente|pessoa real|gente de verdade)\b/.test(normalized);
+  return humanTerm && /\b(?:quero|preciso|falar|chama|chame|transfere|transferir|por favor)\b/.test(normalized);
+}
+
+export function isDeliveryFeeQuestion(text: string): boolean {
+  const normalized = normalize(text);
+  const mentionsDelivery = /\b(?:entrega|delivery|frete)\b/.test(normalized);
+  const asksValue = /\b(?:taxa|quanto|custa|valor)\b/.test(normalized);
+  return mentionsDelivery && asksValue;
+}
+
+export function buildDeliveryFeeReply(menuUrl: string): string {
+  return `A taxa de entrega é calculada no cardápio quando você informa o endereço: ${menuUrl}. Se preferir, pode fazer o pedido por escrito aqui comigo.`;
+}
+
 export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): OrderingTurn {
   const normalized = normalize(text);
+  if (isExplicitHumanRequest(text)) return { kind: 'none' };
   if (hasOpenOrdering) {
     if (/^(?:quero\s+)?(?:cancela|cancelar)(?:\s+(?:o|meu|esse|este))?\s*pedido(?:\s+(?:agora|por favor))?$/.test(normalized)) return { kind: 'cancel' };
     if (/^(sim|s|confirmo|pode confirmar|confirmar)$/.test(normalized)) return { kind: 'confirm' };
@@ -44,7 +62,7 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
       return { kind: 'alter', instruction: text.trim() };
     }
   }
-  if (/\b(cardapio|menu|mistura|marmita|lanche|pedido|pedir|quero|tem hoje|o de sempre)\b/.test(normalized)
+  if (/\b(cardapio|menu|mistura|marmita|lanche|pedido|pedir|quero|tem hoje|o de sempre|arroz|feijao|acompanhamento|farofa|batata palha|tamanho|base)\b/.test(normalized)
     || /^(?:voces?\s+)?(?:tem|temos|vende|vendem)\s+\S+/.test(normalized)) {
     return { kind: 'catalog_or_order', query: text.trim() };
   }
@@ -316,6 +334,37 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string): s
     return `${customerText(item.publicName)} por ${money(item.currentPrice)}`;
   }).join('\n');
   return `${requestedGroup ? 'As opções disponíveis são' : 'Encontrei'}:\n${choices}\nQual você quer?`;
+}
+
+/**
+ * Renders a non-mutating preview for the simulator from the same catalog IDs
+ * and modifier selections used by the live planner. It intentionally does not
+ * calculate a price or claim that an order was created.
+ */
+export function renderOrderingDraftPreview(draft: OrderingDraft, result: CatalogReplyResult): string {
+  const productsById = new Map(result.results.map((item) => [item.productId, item]));
+  const items = draft.items.map((item) => {
+    const product = productsById.get(item.productId);
+    const productName = customerText(product?.publicName || `produto #${item.productId}`);
+    const modifiers = (item.selectedOptions ?? []).flatMap((selection) => {
+      const group = product?.modifierGroups?.find((candidate) => candidate.id === selection.groupId);
+      if (!group) return [];
+      const options = selection.optionSelections.flatMap((selected) => {
+        const option = group.options.find((candidate) => candidate.id === selected.optionId);
+        if (!option) return [];
+        return [selected.quantity > 1
+          ? `${selected.quantity}x ${customerText(option.name)}`
+          : customerText(option.name)];
+      }).join(', ');
+      return options ? `${customerText(group.name)}: ${options}` : [];
+    }).join('; ');
+    return `${Math.max(1, item.quantity)}x ${productName}${modifiers ? ` (${modifiers})` : ''}`;
+  }).join(', ');
+  const fulfillment = draft.fulfillment?.type === 'delivery'
+    ? `entrega${draft.fulfillment.deliveryAddress ? ` em ${customerText(draft.fulfillment.deliveryAddress)}` : ''}`
+    : 'retirada no local';
+  const payment = paymentLabel(draft.paymentMethod);
+  return `Resumo: ${items}; ${fulfillment}; ${customerText(payment)}. Posso confirmar?`;
 }
 
 export interface OrderingStatePointer { orderingId: string; revision: number }

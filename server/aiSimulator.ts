@@ -15,7 +15,13 @@ import { fetchActiveTriggers } from './triggers.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
 import { recordAiUsage } from './aiUsage.js';
 import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
-import { tryHandleAiWhatsAppOrdering, type OrderingClient } from './aiWhatsAppOrdering.js';
+import {
+  tryHandleAiWhatsAppOrdering,
+  type OrderingClient,
+  type OrderingDraftPlanner,
+} from './aiWhatsAppOrdering.js';
+import { handoffMessageFor } from './escalation.js';
+import { detectEscalationIntentFromText } from '../src/domain/escalationIntent.js';
 import type { StoredSession } from './messageHandler.js';
 import type { AiTurnPermit } from './conversationControl.js';
 import type { ChatMessage } from '../src/types.js';
@@ -40,6 +46,8 @@ export interface SimulateResult {
 export interface SimulateDependencies {
   /** Optional authenticated ZeloMenu boundary used by focused tests. */
   orderingClient?: OrderingClient;
+  /** Optional deterministic planner used by focused tests. */
+  orderingDraftPlanner?: OrderingDraftPlanner;
 }
 
 const MAX_MESSAGE_CHARS = 2000;
@@ -111,6 +119,19 @@ export async function simulateAtendimento(
     };
   }
 
+  // Built-in human requests are deterministic in production. Preview the same
+  // customer-facing acknowledgement and tool intent without touching the real
+  // escalation/session state.
+  const escalationIntent = detectEscalationIntentFromText(customerMessage);
+  if (escalationIntent) {
+    return {
+      reply: handoffMessageFor(escalationIntent.category),
+      toolCallsMade: ['dispatch_trigger'],
+      wouldCreateOrder: false,
+      simulationNote: 'Simulação — handoff humano em dry-run; nenhuma mensagem foi enviada e nenhum dado foi gravado',
+    };
+  }
+
   // Restaurant simulations must enter through the same canonical ordering
   // router as production. The handler receives a dry-run flag so it can read
   // the authenticated catalog while skipping every outbound/ordering mutation.
@@ -138,7 +159,11 @@ export async function simulateAtendimento(
           getEmpresaTimezone(empresaId),
         ).open,
       },
-      { dryRun: true, client: dependencies.orderingClient },
+      {
+        dryRun: true,
+        client: dependencies.orderingClient,
+        draftPlanner: dependencies.orderingDraftPlanner,
+      },
     );
     if (ordering.handled) {
       return {

@@ -117,6 +117,7 @@ assert.deepEqual(classifyOrderingTurn('quero cancelar meu pedido por favor', tru
 assert.equal(classifyOrderingTurn('cancelar só a coca', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('não, prefiro retirar', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('tem carne de porco?', false).kind, 'catalog_or_order');
+assert.equal(classifyOrderingTurn('quero falar com um atendente humano', false).kind, 'none');
 assert.equal(isOrderingEntryTurn('boa tarde, estão atendendo?'), true);
 assert.equal(isOrderingEntryTurn('quero uma marmita'), false);
 const entryReply = buildOrderingEntryReply('https://menu.zelopdv.com.br/bemservido');
