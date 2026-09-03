@@ -134,6 +134,9 @@ server/
 - O estado serializado guarda `orderingId`, revisão, permit, IDs de mensagens consumidas e opcionais oferecidos/recusados. Persistir o ponteiro antes de enfileirar botão ou lista.
 - `server/orderingPatchPlanner.ts` valida a hierarquia produto → grupo → opção por linha antes da mutação. Não substituir seleções estruturadas por observações livres nem aceitar opção de outro produto.
 - `src/domain/orderingRequirementPresenter.ts` pergunta um requisito bloqueante por vez; opcionais aparecem uma única vez e `sem extras` os recusa. Texto e áudio permanecem alternativas aos controles.
+- **Leitura do snapshot é escopada por conversa.** `GET /internal/ordering/:orderingId` no ZeloMenu exige `empresaId` **e** `remoteJid` (sem JID → 400 `CONVERSA_INVALIDA`). `ZeloMenuInternalClient.getOrdering(orderingId, empresaId, remoteJid)` tem os três argumentos obrigatórios e `loadCanonicalSnapshot` ainda confere `snapshot.empresaId`/`remoteJid` contra a conversa local. Não relaxe o JID no ZeloMenu para "resolver" um 400 — ele é parte do limite de tenant. Dobrar o cliente em teste com a assinatura antiga esconde exatamente essa classe de bug.
+- Prévia em dry-run (simulador) nunca assume retirada: sem `fulfillment.type` ela pergunta "entrega ou retirada" em vez de montar o resumo. O fluxo real usa os requisitos canônicos do ZeloMenu para o mesmo efeito.
+- Antes de qualquer piloto: rascunhos `whatsapp_order` em `cart_open` criados antes do `lineId` não recebem backfill no ZeloMenu e falham em update (`MATERIALIZED_LINE_ID_MISSING`); cancelar/expirar esses rascunhos no ambiente-alvo em vez de reparar.
 
 ## Stack
 

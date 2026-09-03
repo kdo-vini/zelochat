@@ -10,6 +10,8 @@
 ### Pedidos conversacionais híbridos (2026-09-03)
 
 - Implementação local concluída para a conversa canônica: entrada com link e botão único, texto/áudio e controles normalizados, patches por linha, requisitos guiados, resumo com confirmar/alterar/cancelar e permit da conversa em toda mutação. A IA da cliente voluntária continua desligada; não houve migration, ativação ou publicação.
+- 2026-09-03 (continuação): corrigido o bloqueio cross-repo do snapshot (`remoteJid` obrigatório no GET), a prévia do simulador deixou de assumir retirada e a suíte completa do ZeloChat ficou verde (lint, typecheck do servidor, build, `npm test` sem arquivo falhando). Revisão independente do ZeloMenu `4acf9d2..fa07608`: 0 Critical, 2 Important registrados como follow-up (rascunhos legados sem `lineId`; `confirm_draft` não exige `confirmationToken` server-side). Branch `kdo-vini/ai-hybrid-ordering` em `0521ad0`+docs, não mergeado nem publicado.
+- **Ainda aberto antes de piloto:** G1 (pgTAP/`db lint`/`db diff` locais do ZeloMenu — Docker Desktop indisponível nesta máquina), G2 (scheduler de duas sessões concorrentes), cancelar rascunhos `cart_open` legados no ambiente-alvo, autorização explícita para ativar a loja voluntária.
 
 ### Simulador de atendimento — issue #22 (2026-08-31)
 
