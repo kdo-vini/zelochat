@@ -4,6 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 import { assert, pass, fail } from './testHarness.js';
+import { classifyFromMe, type ExtractedFromMeMessage } from '../server/fromMe.js';
 
 function read(path: string): string {
   return readFileSync(path, 'utf8');
@@ -24,16 +25,93 @@ const router = read('server/router.ts');
 assert(router.includes('WEBHOOK_REQUIRE_TOKEN'), 'webhook has explicit strict-mode toggle env');
 assert(router.includes("res.status(401).json({ error: 'webhook token required' })"), 'missing webhook token fails closed by default');
 assert(router.includes('safeEqualString(headerToken, webhookToken)'), 'webhook token comparison is constant-time');
-assert(router.includes('messageExistsByWhatsAppId'), 'fromMe echo skip checks database persistence');
-assert(router.includes('createAssistantMessageIntent'), 'manual sends persist an outbound intent before WhatsApp send');
-assert(router.includes('markAssistantMessageSendFailed'), 'manual send failures are persisted');
+// fromMe echo dedup moved from server/router.ts (messageExistsByWhatsAppId,
+// long retired) to server/fromMe.ts + server/fromMeProcessor.ts. classifyFromMe
+// is a pure function, so we can exercise the actual guarantee behaviorally:
+// a message the DB already has a row for is skipped as a duplicate, and one
+// with no DB evidence is recorded as a fresh native takeover.
+const sampleFromMeMessage: ExtractedFromMeMessage = {
+  waMessageId: 'wamid-guardrail-1',
+  remoteJid: '5511999999999@s.whatsapp.net',
+  payload: { kind: 'text', text: 'Oi' },
+  jobPayload: { kind: 'text', text: 'Oi' },
+  messageContent: 'Oi',
+  preview: 'Oi',
+  sentAt: new Date().toISOString(),
+  fingerprint: 'guardrail-fingerprint',
+  protocolArtifact: false,
+};
+assert(
+  classifyFromMe(sampleFromMeMessage, { existingMessage: { origin: null, jobId: null } }).kind === 'duplicate',
+  'fromMe echo skip checks database persistence',
+);
+assert(
+  classifyFromMe(sampleFromMeMessage, {}).kind === 'native_human',
+  'fromMe message with no DB persistence evidence is recorded as a new native takeover, not skipped',
+);
+const fromMeProcessor = read('server/fromMeProcessor.ts');
+assert(
+  fromMeProcessor.includes(".eq('wa_message_id', input.waMessageId)"),
+  'fromMe echo classification is fed evidence from a real zelochat_messages lookup by WhatsApp message id',
+);
+
+// Manual sends (POST /api/send) moved from a synchronous in-route send to the
+// durable outbound-job pipeline: server/conversationOutbound.ts persists the
+// job (via the begin_zelochat_human_outbound RPC) before returning, and the
+// actual WhatsApp transport call only happens later, from the background
+// worker in server/outbound/worker.ts.
+const conversationOutbound = read('server/conversationOutbound.ts');
+const outboundWorker = read('server/outbound/worker.ts');
+const outboundQueue = read('server/outbound/queue.ts');
+const sendRouteStart = router.indexOf("router.post('/api/send',");
+const sendRouteEnd = router.indexOf("router.post('/api/send-contact'");
+assert(sendRouteStart !== -1 && sendRouteEnd > sendRouteStart, 'manual send route (/api/send) exists in router.ts');
+const sendRouteBlock = router.slice(sendRouteStart, sendRouteEnd);
+assert(
+  sendRouteBlock.includes('dispatchConversationOutbound({') && !/\b(sendTextMessage|sendMediaMessage|sendWhatsAppAudio)\s*\(/.test(sendRouteBlock),
+  'manual send route never calls WhatsApp transport directly — it only dispatches to the outbound pipeline',
+);
+assert(
+  conversationOutbound.includes('job = await deps.beginHumanOutbound({') && conversationOutbound.includes("rpc('begin_zelochat_human_outbound'"),
+  'manual sends persist an outbound intent before WhatsApp send',
+);
+assert(
+  outboundWorker.indexOf('this.deps.queue.startTransport(job)') < outboundWorker.indexOf('this.transport.send({'),
+  'the WhatsApp transport call only happens after the queued job has already recorded a dispatch_started DB state',
+);
+
+// A manual send that fails before the transport attempt (bad payload, no
+// recipient) is persisted via markFailed — not dropped in memory.
+assert(
+  outboundQueue.includes('async failBeforeDispatch(job: OutboundJob, reason: string): Promise<boolean> {')
+    && outboundQueue.includes('return succeeded(await this.store.markFailed(job.id, reason, null, job.empresaId, job.leaseOwner));'),
+  'manual send failures are persisted',
+);
+assert(
+  outboundWorker.includes("await this.deps.queue.failBeforeDispatch(job, cause instanceof Error ? cause.message : 'Payload inválido para envio.');"),
+  'a manual send that fails before transport starts is persisted as failed_before_dispatch, not silently dropped',
+);
 assert(router.includes('isRetryableOutboundFailure(message.outbound_status)'), 'retry route accepts legacy and canonical failed outbound statuses');
 assert(router.includes('serializeManualSendError'), 'manual send provider failures return a controlled API error');
 assert(!router.includes('...(payload.providerStatus ? { providerStatus: payload.providerStatus } : {})'), 'manual send errors do not expose provider status to the frontend');
 for (const routeContext of ['send contact failed','send list failed','send location failed','send reaction failed','send poll failed']) {
   assert(router.includes(`sendFriendlyOutboundRouteError(res, '${routeContext}', error)`), `${routeContext} returns a friendly redacted error`);
 }
-assert(router.includes('WhatsApp sent, but failed to mark DB message as sent'), 'manual sends do not turn post-send DB status failures into 500s');
+// The literal "WhatsApp sent, but failed to mark DB message as sent" string
+// (and the synchronous send-then-DB-write it described) is gone with the old
+// in-route send. Its replacement: a DB failure after the transport call has
+// already started (which covers "WhatsApp actually sent, then the completing
+// DB write failed") is caught and persisted as delivery_uncertain, and the
+// manual-send route maps that to a 202 with a friendly message — never a 500.
+assert(
+  outboundWorker.includes('if (transportStarted) {')
+    && outboundWorker.includes("await this.deps.queue.deliveryUncertain({ ...job, status: 'dispatch_started' }, reason);"),
+  'a DB failure after the WhatsApp transport call started is persisted as delivery_uncertain instead of crashing the worker',
+);
+assert(
+  router.includes("res.status(status === 'queued' || status === 'delivery_uncertain' ? 202 : 200).json(body);"),
+  'manual sends do not turn post-send DB status failures into 500s',
+);
 
 const whatsapp = read('server/whatsapp.ts');
 assert(whatsapp.includes('toWhatsmiauNumber(jid)'), 'outbound sends pass phone digits to Whatsmiau instead of full JIDs');
