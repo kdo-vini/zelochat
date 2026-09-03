@@ -71,7 +71,7 @@ export function buildOrderingEntryPayload(menuUrl: string): {
 } {
   return {
     kind: 'buttons',
-    text: `Olá! Estamos atendendo. Veja o cardápio e faça seu pedido por aqui: ${menuUrl}\n\nSe preferir, escreva ou mande um áudio nesta conversa que eu monto com você.`,
+    text: `Olá! Estamos atendendo. Veja o cardápio e faça seu pedido por aqui: ${menuUrl}\n\nSe preferir, pode fazer o pedido por escrito ou mandar um áudio nesta conversa que eu monto com você.`,
     buttons: [{ id: AI_ORDER_START_BUTTON, label: 'Pedir por aqui' }],
   };
 }
@@ -477,6 +477,14 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string, me
 }
 
 export function renderOrderingDraftPreview(draft: OrderingDraft, result: CatalogReplyResult): string {
+  // A dry-run preview can never call the mutating canonical endpoint, so it
+  // has no server-computed `requirements` list to consult. Mirror the single
+  // most common missing requirement (fulfillment type) locally so the
+  // simulator doesn't default silently to pickup and jump straight to a
+  // "posso confirmar?" summary before the customer has actually chosen.
+  if (!draft.fulfillment?.type) {
+    return 'Seu pedido é para entrega ou retirada?';
+  }
   const productsById = new Map(result.results.map((item) => [item.productId, item]));
   const items = draft.items.map((item) => {
     const product = productsById.get(item.productId);
@@ -493,7 +501,7 @@ export function renderOrderingDraftPreview(draft: OrderingDraft, result: Catalog
     }).join('; ');
     return `${Math.max(1, item.quantity)}x ${productName}${modifiers ? ` (${modifiers})` : ''}`;
   }).join(', ');
-  const fulfillment = draft.fulfillment?.type === 'delivery' ? `entrega${draft.fulfillment.deliveryAddress ? ` em ${customerText(draft.fulfillment.deliveryAddress)}` : ''}` : 'retirada no local';
+  const fulfillment = draft.fulfillment.type === 'delivery' ? `entrega${draft.fulfillment.deliveryAddress ? ` em ${customerText(draft.fulfillment.deliveryAddress)}` : ''}` : 'retirada no local';
   return `Resumo: ${items}; ${fulfillment}; ${customerText(paymentLabel(draft.paymentMethod))}. Posso confirmar?`;
 }
 
