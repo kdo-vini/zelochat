@@ -70,6 +70,17 @@ export function validateOutboundPayload(payload: unknown): string | null {
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
   const nonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+  const boundedString = (value: unknown, max: number): value is string => nonEmptyString(value) && value.length <= max;
+  const validListSections = (value: unknown): boolean => Array.isArray(value)
+    && value.length > 0
+    && value.length <= 10
+    && value.every((section) => isRecord(section)
+      && boundedString(section.title, 24)
+      && Array.isArray(section.rows)
+      && section.rows.length > 0
+      && section.rows.length <= 10
+      && section.rows.every((row) => isRecord(row) && boundedString(row.id, 128) && boundedString(row.title, 24)
+        && (row.description == null || boundedString(row.description, 72))));
 
   if (!isRecord(payload) || typeof payload.kind !== 'string') {
     return 'OUTBOUND_PAYLOAD_INVALID';
@@ -93,13 +104,13 @@ export function validateOutboundPayload(payload: unknown): string | null {
       }
       return null;
     case 'buttons':
-      return nonEmptyString(payload.text) && Array.isArray(payload.buttons) && payload.buttons.length > 0
-        && payload.buttons.every((button) => isRecord(button) && nonEmptyString(button.id) && nonEmptyString(button.label))
+      return boundedString(payload.text, 1024) && Array.isArray(payload.buttons) && payload.buttons.length > 0 && payload.buttons.length <= 3
+        && payload.buttons.every((button) => isRecord(button) && boundedString(button.id, 128) && boundedString(button.label, 20))
         ? null : 'OUTBOUND_BUTTONS_INVALID';
     case 'contact':
       return nonEmptyString(payload.displayName) && nonEmptyString(payload.vcard) ? null : 'OUTBOUND_CONTACT_INVALID';
     case 'list':
-      return nonEmptyString(payload.body) && nonEmptyString(payload.buttonText) && Array.isArray(payload.sections) && payload.sections.length > 0
+      return boundedString(payload.body, 1024) && boundedString(payload.buttonText, 20) && validListSections(payload.sections)
         ? null : 'OUTBOUND_LIST_INVALID';
     case 'location':
       return typeof payload.latitude === 'number' && typeof payload.longitude === 'number'

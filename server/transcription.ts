@@ -4,6 +4,9 @@ import { getServiceSupabase } from './supabase.js';
 import { recordAiUsage } from './aiUsage.js';
 
 const MAX_AUDIO_BYTES = 5 * 1024 * 1024; // 5 MB cost guard
+const TRANSCRIPTION_FETCH_TIMEOUT_MS = Math.min(15_000, Math.max(1_000, Number(process.env.AUDIO_TRANSCRIPTION_FETCH_TIMEOUT_MS ?? 10_000)));
+const TRANSCRIPTION_REQUEST_TIMEOUT_MS = Math.min(15_000, Math.max(1_000, Number(process.env.AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS ?? 10_000)));
+const ACCEPTED_AUDIO_MIME = /^(?:audio\/(?:ogg|mpeg|mp4|wav|webm|x-m4a)|application\/octet-stream)(?:;|$)/i;
 const OPENAI_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
 const TRANSCRIPTION_PROMPT = [
   'Áudio de cliente brasileiro falando com uma lanchonete pelo WhatsApp.',
@@ -32,7 +35,8 @@ export interface TranscribeParams {
   sizeBytes?: number;
 }
 
-type TranscriptStatus = 'pending' | 'done' | 'failed';
+export type TranscriptStatus = 'pending' | 'done' | 'failed';
+export type TranscriptionOutcome = 'done' | 'missing_key' | 'empty' | 'unsupported' | 'too_large' | 'timeout' | 'failed';
 
 async function persistAndBroadcast(
   params: { empresaId: string; jid: string; messageId: string },
@@ -95,12 +99,23 @@ function describeError(err: unknown): string {
  * Persist-first, transcribe-async. Never throws — failures land as status='failed'
  * so the webhook handler can fire-and-forget without risking the response.
  */
-export async function transcribeAudio(params: TranscribeParams): Promise<void> {
+export async function transcribeAudio(params: TranscribeParams): Promise<TranscriptionOutcome> {
   const { empresaId, jid, messageId, audioUrl, mimeType, fileName, sizeBytes } = params;
 
   if (!process.env.OPENAI_API_KEY) {
+    await persistAndBroadcast({ empresaId, jid, messageId }, {
+      audio_transcript_status: 'failed', audio_transcript: null, audio_transcript_error: 'missing_key',
+    });
+    return 'missing_key';
     console.warn('[Transcription] OPENAI_API_KEY not set — skipping transcription');
     return;
+  }
+
+  if (!ACCEPTED_AUDIO_MIME.test(mimeType)) {
+    await persistAndBroadcast({ empresaId, jid, messageId }, {
+      audio_transcript_status: 'failed', audio_transcript: null, audio_transcript_error: 'unsupported',
+    });
+    return 'unsupported';
   }
 
   if (!audioUrl) {
@@ -109,7 +124,7 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
       audio_transcript: null,
       audio_transcript_error: 'missing audio URL',
     });
-    return;
+    return 'failed';
   }
 
   if (sizeBytes && sizeBytes > MAX_AUDIO_BYTES) {
@@ -119,7 +134,7 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
       audio_transcript: null,
       audio_transcript_error: `audio too large: ${sizeBytes} bytes (limit ${MAX_AUDIO_BYTES})`,
     });
-    return;
+    return 'too_large';
   }
 
   await persistAndBroadcast({ empresaId, jid, messageId }, {
@@ -128,11 +143,20 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
   });
 
   try {
-    const audioRes = await fetch(audioUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_FETCH_TIMEOUT_MS);
+    const audioRes = await fetch(audioUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
     if (!audioRes.ok) {
       throw new Error(`Audio fetch failed: ${audioRes.status} ${audioRes.statusText}`);
     }
     const audioBlob = await audioRes.blob();
+
+    if (audioBlob.size === 0) {
+      await persistAndBroadcast({ empresaId, jid, messageId }, {
+        audio_transcript_status: 'failed', audio_transcript: null, audio_transcript_error: 'empty',
+      });
+      return 'empty';
+    }
 
     if (audioBlob.size > MAX_AUDIO_BYTES) {
       console.warn(`[Transcription] Downloaded audio exceeds size guard (${audioBlob.size} bytes) for ${messageId}`);
@@ -141,17 +165,20 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
         audio_transcript: null,
         audio_transcript_error: `downloaded audio too large: ${audioBlob.size} bytes (limit ${MAX_AUDIO_BYTES})`,
       });
-      return;
+      return 'too_large';
     }
 
     const file = await toFile(audioBlob, fileName, { type: mimeType });
 
-    const result = await getWhisperClient().audio.transcriptions.create({
-      file,
-      model: OPENAI_TRANSCRIPTION_MODEL,
-      language: 'pt',
-      prompt: TRANSCRIPTION_PROMPT,
-    });
+    const result = await Promise.race([
+      getWhisperClient().audio.transcriptions.create({
+        file,
+        model: OPENAI_TRANSCRIPTION_MODEL,
+        language: 'pt',
+        prompt: TRANSCRIPTION_PROMPT,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('transcription_timeout')), TRANSCRIPTION_REQUEST_TIMEOUT_MS)),
+    ]);
     recordAiUsage({
       empresaId,
       feature: 'ai_transcription',
@@ -165,6 +192,7 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
       audio_transcript_status: 'done',
       audio_transcript: transcript || null,
     });
+    return 'done';
   } catch (err) {
     console.error('[Transcription] Whisper call failed for', messageId, err);
     recordAiUsage({
@@ -176,7 +204,8 @@ export async function transcribeAudio(params: TranscribeParams): Promise<void> {
     await persistAndBroadcast({ empresaId, jid, messageId }, {
       audio_transcript_status: 'failed',
       audio_transcript: null,
-      audio_transcript_error: describeError(err),
+      audio_transcript_error: err instanceof Error && err.message === 'transcription_timeout' ? 'timeout' : describeError(err),
     });
+    return err instanceof Error && err.message === 'transcription_timeout' ? 'timeout' : 'failed';
   }
 }

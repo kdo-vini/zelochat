@@ -7,6 +7,10 @@
 
 ## Estado do produto (2026-07-24)
 
+### Pedidos conversacionais híbridos (2026-09-03)
+
+- Implementação local concluída para a conversa canônica: entrada com link e botão único, texto/áudio e controles normalizados, patches por linha, requisitos guiados, resumo com confirmar/alterar/cancelar e permit da conversa em toda mutação. A IA da cliente voluntária continua desligada; não houve migration, ativação ou publicação.
+
 ### Simulador de atendimento — issue #22 (2026-08-31)
 
 - Implementação concluída no branch `codex/issue-22-canonical-simulator`: o simulador de restaurante usa o fluxo canônico em dry-run, com catálogo real, cardinalidade dos grupos, preview de pedido e handoff determinístico; não envia WhatsApp, não grava conversa/carrinho e mantém `wouldCreateOrder=false`.

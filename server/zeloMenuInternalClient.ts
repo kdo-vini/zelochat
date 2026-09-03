@@ -3,6 +3,7 @@ import type { ChatCompletionFunctionTool } from 'openai/resources/chat/completio
 import type {
   CatalogReplyResult,
   OrderingDraft,
+  OrderingRequirement,
   OrderingSnapshot,
 } from '../src/domain/aiWhatsAppOrdering.js';
 
@@ -37,6 +38,7 @@ export const ORDERING_MODEL_TOOLS: ChatCompletionFunctionTool[] = [
             items: {
               type: 'object', additionalProperties: false, required: ['productId', 'quantity'],
               properties: {
+                lineId: { type: 'string', minLength: 1, maxLength: 64 },
                 productId: { type: 'integer', minimum: 1 },
                 quantity: { type: 'integer', minimum: 1, maximum: 999 },
                 notes: { type: 'string', maxLength: 200 },
@@ -104,23 +106,36 @@ interface ClientOptions {
   requestIdFactory?: () => string;
 }
 
-interface UpdateDraftInput {
+export interface UpdateDraftInput {
   empresaId: string;
   remoteJid: string;
   messageId: string;
+  conversationControlId: string;
+  conversationEpoch: string;
   orderingId?: string;
   expectedRevision?: number;
   draft: OrderingDraft;
 }
 
-interface DeterministicCommandInput {
+export interface DeterministicCommandInput {
   empresaId: string;
   remoteJid: string;
   messageId: string;
+  conversationControlId: string;
+  conversationEpoch: string;
   orderingId: string;
   expectedRevision: number;
   confirmationToken?: string;
 }
+
+interface OrderingRequirementWire extends Omit<OrderingRequirement, 'kind' | 'label'> {
+  type: OrderingRequirement['kind'];
+  name: string;
+}
+
+type OrderingSnapshotWire = Omit<OrderingSnapshot, 'requirements'> & {
+  requirements: OrderingRequirementWire[];
+};
 
 export class ZeloMenuInternalClient {
   private readonly fetchImpl: typeof fetch;

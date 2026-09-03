@@ -21,6 +21,7 @@ import {
   serializeStructuredMessage,
 } from '../src/domain/chat.js';
 import { isOptOutMessage } from '../src/domain/optOut.js';
+import { normalizeIncomingInteractive } from './whatsappInteractive.js';
 
 // P2.18 — Per-session counter for consecutive Whisper transcription failures.
 // After TRANSCRIPTION_FAILURE_THRESHOLD consecutive failures the session is
@@ -34,7 +35,8 @@ import { isOptOutMessage } from '../src/domain/optOut.js';
 const TRANSCRIPTION_FAILURE_THRESHOLD = 3;
 const transcriptionFailures = new Map<string, number>();
 const audioTranscriptionJobs = new Map<string, Promise<void>>();
-const AUDIO_TRANSCRIPTION_WAIT_MS = Number(process.env.AUDIO_TRANSCRIPTION_WAIT_MS ?? 90000);
+// Keep the conversation bounded; the settled callback rearms it later.
+const AUDIO_TRANSCRIPTION_WAIT_MS = Math.min(15_000, Math.max(0, Number(process.env.AUDIO_TRANSCRIPTION_WAIT_MS ?? 10_000)));
 const AUDIO_TRANSCRIPTION_POLL_MS = 750;
 const parsedSessionListLimit = Number(process.env.ZELOCHAT_SESSION_LIST_LIMIT ?? 2000);
 const SESSION_LIST_LIMIT = Number.isFinite(parsedSessionListLimit) && parsedSessionListLimit > 0
@@ -662,6 +664,11 @@ function shouldTriggerAutoReplyForMessage(msg: any): boolean {
 function extractText(msg: any): string | null {
   const message = unwrapMessage(msg.message);
   if (!message) return null;
+
+  // Keep every provider interactive shape on the same semantic path. The
+  // visible title is only a preview; routing always uses the bounded ID.
+  const interactive = normalizeIncomingInteractive(message);
+  if (interactive) return interactive.title ?? interactive.id;
 
   if (message.conversation) return message.conversation;
   if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;

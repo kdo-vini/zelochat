@@ -1,5 +1,16 @@
+/**
+ * Pure domain vocabulary for the conversational ordering flow.
+ *
+ * This module deliberately contains no provider, database, React or AI
+ * dependencies.  The server adapter is responsible for carrying these values
+ * across the ZeloMenu boundary and for dispatching the resulting payloads.
+ */
+
 export const AI_ORDER_CONFIRM_PREFIX = 'ZOC:';
 export const AI_ORDER_ALTER_BUTTON = 'ZOA';
+export const AI_ORDER_CANCEL_BUTTON = 'ZOC_CANCEL';
+export const AI_ORDER_START_BUTTON = 'AI_ORDER_START';
+export const AI_ORDER_REQUIREMENT_PREFIX = 'REQ:';
 export const AI_ORDER_STATE_PREFIX = 'ZELO_AI_ORDERING_STATE:';
 
 export type OrderingTurn =
@@ -13,25 +24,56 @@ export type OrderingTurn =
 export interface OrderingConversationMessage {
   role: string;
   content: string | null;
-  preview?: string;
+  preview?: string | null;
   audio_transcript?: string | null;
+  audio_transcript_status?: 'pending' | 'done' | 'failed' | null;
+  id?: string;
+  timestamp?: string | null;
+  /** Provider timestamp, when the transport exposes one separately. */
+  providerTimestamp?: string | number | null;
+  /** Database insertion timestamp, used as a deterministic tie breaker. */
+  dbTimestamp?: string | number | null;
 }
 
-const normalize = (value: string) => value
+export const normalizeOrderingText = (value: string): string => value
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '')
   .toLocaleLowerCase('pt-BR')
   .replace(/[.!?]+$/g, '')
   .trim();
 
+const normalize = normalizeOrderingText;
+
+/** True when the customer greeted or asked whether the store is operating. */
 export function isOrderingEntryTurn(text: string): boolean {
   const normalized = normalize(text);
   return /^(?:oi|ola|bom dia|boa tarde|boa noite)(?:\b|$)/.test(normalized)
     || /\b(?:estao|tao|esta|ta)\s+(?:atendendo|aberto|funcionando)\b/.test(normalized);
 }
 
+export function isOrderingGreeting(text: string): boolean {
+  const normalized = normalize(text).replace(/[,;:]\s*/g, ' ').trim();
+  return /^(?:oi|ola|bom dia|boa tarde|boa noite)(?:\s+(?:tudo\s+bem|estao\s+atendendo|esta[o]?\s+aberto|tem\s+algu(?:e|é)m))?$/.test(normalized);
+}
+
+/**
+ * Entry copy retained for old callers.  The live handler uses the structured
+ * payload below so the entry message has exactly one action button.
+ */
 export function buildOrderingEntryReply(menuUrl: string): string {
   return `Olá! Estamos atendendo. Você pode ver o cardápio e fazer o pedido por aqui: ${menuUrl}\n\nSe preferir, também pode fazer o pedido por escrito nesta conversa que eu monto com você.`;
+}
+
+export function buildOrderingEntryPayload(menuUrl: string): {
+  kind: 'buttons';
+  text: string;
+  buttons: Array<{ id: string; label: string }>;
+} {
+  return {
+    kind: 'buttons',
+    text: `Olá! Estamos atendendo. Veja o cardápio e faça seu pedido por aqui: ${menuUrl}\n\nSe preferir, escreva ou mande um áudio nesta conversa que eu monto com você.`,
+    buttons: [{ id: AI_ORDER_START_BUTTON, label: 'Pedir por aqui' }],
+  };
 }
 
 export function isExplicitHumanRequest(text: string): boolean {
@@ -55,10 +97,10 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
   const normalized = normalize(text);
   if (isExplicitHumanRequest(text)) return { kind: 'none' };
   if (hasOpenOrdering) {
-    if (/^(?:quero\s+)?(?:cancela|cancelar)(?:\s+(?:o|meu|esse|este))?\s*pedido(?:\s+(?:agora|por favor))?$/.test(normalized)) return { kind: 'cancel' };
-    if (/^(sim|s|confirmo|pode confirmar|confirmar)$/.test(normalized)) return { kind: 'confirm' };
-    if (/^(nao|n)$/.test(normalized)) return { kind: 'ask_change' };
-    if (/^(sim|nao|não)\b.+/.test(normalized) || /\b(troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|cancela|cancelar|prefiro|quero)\b/.test(normalized)) {
+    if (/^(?:quero\s+)?(?:cancela|cancelar)(?:\s+(?:o|meu|esse|este))?\s+pedido(?:\s+(?:agora|por favor))?$/.test(normalized)) return { kind: 'cancel' };
+    if (/^(?:sim|s|confirmo|pode confirmar|confirmar|pode|fechado|certinho|show|👍)$/.test(normalized)) return { kind: 'confirm' };
+    if (/^(?:nao|n)$/.test(normalized)) return { kind: 'ask_change' };
+    if (/^(?:sim|nao)\b.+/.test(normalized) || /\b(troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|cancela|cancelar|prefiro|quero)\b/.test(normalized)) {
       return { kind: 'alter', instruction: text.trim() };
     }
   }
@@ -99,23 +141,40 @@ export function canonicalButtonMessageKey(input: {
   return messageId ? `${input.empresaId}:${input.jid}:${messageId}` : null;
 }
 
-/** Must run inside the shared per-JID queue. Marks only recognized Task 6 events. */
+/** Must run inside the shared per-JID queue. */
 export async function handleCanonicalButtonOnce<T extends CanonicalButtonHandling>(
   handledMessageIds: Map<string, number>,
   exactKey: string | null,
   handler: () => Promise<T>,
-): Promise<T | CanonicalButtonHandling> {
-  if (exactKey && handledMessageIds.has(exactKey)) return { handled: true };
+): Promise<T> {
+  if (exactKey && handledMessageIds.has(exactKey)) return { handled: true } as T;
   const result = await handler();
   if (result.handled && exactKey) handledMessageIds.set(exactKey, Date.now());
   return result;
 }
 
-export function parseOrderingButton(buttonId: string): { kind: 'confirm'; token: string } | { kind: 'alter' } | null {
-  if (buttonId === AI_ORDER_ALTER_BUTTON) return { kind: 'alter' };
-  if (!buttonId.startsWith(AI_ORDER_CONFIRM_PREFIX)) return null;
-  const token = buttonId.slice(AI_ORDER_CONFIRM_PREFIX.length).trim();
-  return token ? { kind: 'confirm', token } : null;
+export type OrderingButtonAction =
+  | { kind: 'confirm'; token: string }
+  | { kind: 'alter' }
+  | { kind: 'cancel' }
+  | { kind: 'start' }
+  | { kind: 'requirement'; requirementId: string; optionId: string };
+
+export function parseOrderingButton(buttonId: string): OrderingButtonAction | null {
+  const normalized = buttonId.trim();
+  if (normalized === AI_ORDER_ALTER_BUTTON) return { kind: 'alter' };
+  if (normalized === AI_ORDER_CANCEL_BUTTON) return { kind: 'cancel' };
+  if (normalized === AI_ORDER_START_BUTTON) return { kind: 'start' };
+  if (normalized.startsWith(AI_ORDER_REQUIREMENT_PREFIX)) {
+    const [, requirementId, optionId, ...extra] = normalized.split(':');
+    if (requirementId && optionId && !extra.length && requirementId.length <= 128 && optionId.length <= 128) {
+      return { kind: 'requirement', requirementId, optionId };
+    }
+    return null;
+  }
+  if (!normalized.startsWith(AI_ORDER_CONFIRM_PREFIX)) return null;
+  const token = normalized.slice(AI_ORDER_CONFIRM_PREFIX.length).trim();
+  return token && token.length <= 256 ? { kind: 'confirm', token } : null;
 }
 
 export interface OrderingModifierSelection {
@@ -123,6 +182,46 @@ export interface OrderingModifierSelection {
   groupName: string;
   kind: string;
   selectedOptions: Array<{ optionId: string; optionName: string; priceDelta: number; quantity: number }>;
+}
+
+export type OrderingRequirementKind =
+  | 'modifier_group'
+  | 'fulfillment_type'
+  | 'delivery_address'
+  | 'pickup_schedule'
+  | 'payment_method'
+  | 'customer_name'
+  | 'review';
+
+export interface OrderingRequirementOption {
+  id: string;
+  name: string;
+  currentPrice?: number;
+  priceDelta: number;
+  available: boolean;
+  displayPrice?: string;
+}
+
+export interface OrderingRequirement {
+  id: string;
+  /** Stable line reference for modifier requirements. */
+  lineId?: string;
+  /** Stable modifier group reference; for non-modifier requirements it may be omitted. */
+  groupId?: string;
+  kind: OrderingRequirementKind;
+  /** Wire adapters may supply `type`/`name`; domain code uses kind/label. */
+  type?: OrderingRequirementKind;
+  label: string;
+  name?: string;
+  blocking: boolean;
+  minSelections?: number;
+  maxSelections?: number | null;
+  minTotalQuantity?: number;
+  maxTotalQuantity?: number | null;
+  allowsQuantity?: boolean;
+  maxPerOption?: number | null;
+  pricingMode?: 'base' | 'delta' | 'substitution' | 'fixed' | string;
+  options?: OrderingRequirementOption[];
 }
 
 export interface OrderingSnapshot {
@@ -133,6 +232,8 @@ export interface OrderingSnapshot {
   revision: number;
   cart: {
     items: Array<{
+      /** Optional for backward-compatible legacy snapshots; derived by adapters. */
+      lineId?: string;
       productId: number;
       productName: string;
       baseUnitPrice: number;
@@ -162,6 +263,9 @@ export interface OrderingSnapshot {
   payment: { declaredMethod?: string; pixReceiptRequired: boolean; pixReceiptApproved: boolean };
   pricing: { subtotal: number; deliveryFee: number; discount: number; total: number };
   revalidation: { checkedAt: string; ok: boolean; issues: Array<{ code: string; message: string }> };
+  requirements?: OrderingRequirement[];
+  readyForConfirmation?: boolean;
+  summaryText?: string;
   confirmationAction: { type: 'confirm_order'; token: string; revision: number; expiresAt: string } | null;
   requiresReview: boolean;
   order: { id: string; status: string; alreadyConfirmed: boolean; revision: number } | null;
@@ -169,6 +273,7 @@ export interface OrderingSnapshot {
 
 export interface OrderingDraft {
   items: Array<{
+    lineId?: string;
     productId: number;
     quantity: number;
     notes?: string;
@@ -219,8 +324,7 @@ export function applyOrderingDefaults(draft: OrderingDraft, context: OrderingCon
     deliveryNeighborhood: draft.fulfillment?.deliveryNeighborhood ?? resolved?.deliveryNeighborhood?.value ?? contextAddress?.neighborhood ?? undefined,
     deliveryPostalCode: draft.fulfillment?.deliveryPostalCode ?? resolved?.deliveryPostalCode?.value ?? contextAddress?.postalCode ?? undefined,
     deliveryComplement: draft.fulfillment?.deliveryComplement ?? contextAddress?.complement ?? undefined,
-    // A habitual time is context for the model, never an implicit promise for
-    // this order. Without an explicit time, the canonical default is ASAP.
+    // A habitual time is context, never an implicit promise for this order.
     pickupTime: draft.fulfillment?.pickupTime,
   } : undefined;
   return {
@@ -233,7 +337,7 @@ export function applyOrderingDefaults(draft: OrderingDraft, context: OrderingCon
 const money = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
   .format(value)
   .replace(/\u00a0/g, ' ');
-const customerText = (value: string | undefined) => (value ?? '')
+const customerText = (value: string | undefined | null) => (value ?? '')
   .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '')
   .replace(/[\u0000-\u001f\u007f.!?;]+/gu, ' ')
   .replace(/\s+/gu, ' ')
@@ -243,29 +347,58 @@ const paymentLabel = (value?: string) => {
   return value.toLocaleLowerCase('pt-BR') === 'pix' ? 'Pix' : value;
 };
 
+export function isOrderingSummaryBlocked(snapshot: OrderingSnapshot): boolean {
+  return snapshot.requiresReview
+    || snapshot.fulfillment.deliveryFeeToConfirm === true
+    || snapshot.revalidation.ok === false
+    || snapshot.revalidation.issues.length > 0
+    || snapshot.readyForConfirmation === false;
+}
+
 export function renderOrderingSummary(snapshot: OrderingSnapshot): string {
   const items = snapshot.cart.items.map((item) => {
     const modifiers = item.selectedModifiers.flatMap((group) => {
-      const options = group.selectedOptions.map((option) => option.quantity > 1 ? `${option.quantity}x ${customerText(option.optionName)}` : customerText(option.optionName)).join(', ');
+      const options = group.selectedOptions.map((option) => {
+        const selected = option.quantity > 1 ? `${option.quantity}x ${customerText(option.optionName)}` : customerText(option.optionName);
+        return option.priceDelta > 0 ? `${selected} (+${money(option.priceDelta)})` : selected;
+      }).join(', ');
       return options ? `${customerText(group.groupName)}: ${options}` : '';
     }).filter(Boolean).join('; ');
     return `${item.quantity}x ${customerText(item.productName)}${modifiers ? ` (${modifiers})` : ''}`;
   }).join(', ');
   const fulfillment = snapshot.fulfillment.type === 'delivery'
-    ? `entrega em ${[customerText(snapshot.fulfillment.deliveryAddress), customerText(snapshot.fulfillment.deliveryNumber)].filter(Boolean).join(', ')}${snapshot.fulfillment.deliveryNeighborhood ? ` - ${customerText(snapshot.fulfillment.deliveryNeighborhood)}` : ''}`
+    ? `entrega em ${[customerText(snapshot.fulfillment.deliveryAddress), customerText(snapshot.fulfillment.deliveryNumber)].filter(Boolean).join(', ')}${snapshot.fulfillment.deliveryNeighborhood ? ` - ${customerText(snapshot.fulfillment.deliveryNeighborhood)}` : ''}${snapshot.fulfillment.deliveryComplement ? ` (${customerText(snapshot.fulfillment.deliveryComplement)})` : ''}`
     : 'retirada no local';
   const time = snapshot.fulfillment.asap
     ? 'o quanto antes'
     : [snapshot.fulfillment.pickupDate, snapshot.fulfillment.pickupTime].filter(Boolean).join(' às ');
-  return `Resumo: ${items}; ${fulfillment}; ${customerText(paymentLabel(snapshot.payment.declaredMethod))}; ${customerText(time)}; total ${money(snapshot.pricing.total)}. Posso confirmar?`;
+  const payment = customerText(paymentLabel(snapshot.payment.declaredMethod));
+  const fee = snapshot.pricing.deliveryFee > 0 ? ` (taxa ${money(snapshot.pricing.deliveryFee)})` : '';
+  const observations = customerText(snapshot.cart.observations);
+  const blocked = snapshot.revalidation.issues[0]?.message || (snapshot.fulfillment.deliveryFeeToConfirm ? 'a taxa de entrega ainda precisa ser confirmada' : 'a conferência do pedido ainda não terminou');
+  const ending = isOrderingSummaryBlocked(snapshot)
+    ? `Preciso ajustar ${customerText(blocked)} antes de confirmar.`
+    : 'Posso confirmar?';
+  return `Resumo: ${items}; ${fulfillment}; ${payment}; ${customerText(time)}; total ${money(snapshot.pricing.total)}${fee}${observations ? `; observação: ${observations}` : ''}. ${ending}`;
 }
 
+/** Legacy two-button helper retained for simulator/old callers. */
 export function buildConfirmationButtons(snapshot: OrderingSnapshot): Array<{ id: string; displayText: string }> {
   const token = snapshot.confirmationAction?.token;
-  if (!token) return [];
+  if (!token || isOrderingSummaryBlocked(snapshot)) return [];
   return [
     { id: `${AI_ORDER_CONFIRM_PREFIX}${token}`, displayText: 'Confirmar' },
     { id: AI_ORDER_ALTER_BUTTON, displayText: 'Alterar' },
+  ];
+}
+
+export function buildCanonicalConfirmationButtons(snapshot: OrderingSnapshot): Array<{ id: string; displayText: string }> {
+  const token = snapshot.confirmationAction?.token;
+  if (!token || isOrderingSummaryBlocked(snapshot)) return [];
+  return [
+    { id: `${AI_ORDER_CONFIRM_PREFIX}${token}`, displayText: 'Confirmar' },
+    { id: AI_ORDER_ALTER_BUTTON, displayText: 'Alterar' },
+    { id: AI_ORDER_CANCEL_BUTTON, displayText: 'Cancelar' },
   ];
 }
 
@@ -283,7 +416,12 @@ export interface CatalogReplyResult {
       name: string;
       minSelections?: number;
       maxSelections?: number | null;
-      options: Array<{ id: string; name: string; priceDelta: number }>;
+      minTotalQuantity?: number;
+      maxTotalQuantity?: number | null;
+      allowsQuantity?: boolean;
+      maxPerOption?: number | null;
+      pricingMode?: string;
+      options: Array<{ id: string; name: string; priceDelta: number; currentPrice?: number; available?: boolean; displayPrice?: string }>;
     }>;
   }>;
 }
@@ -299,9 +437,7 @@ function requestedModifierGroup(query: string): RegExp | null {
 
 function selectionRule(group: { minSelections?: number; maxSelections?: number | null }): string {
   const min = Number.isFinite(group.minSelections) ? Math.max(0, Number(group.minSelections)) : null;
-  const max = group.maxSelections == null || !Number.isFinite(group.maxSelections)
-    ? null
-    : Math.max(0, Number(group.maxSelections));
+  const max = group.maxSelections == null || !Number.isFinite(group.maxSelections) ? null : Math.max(0, Number(group.maxSelections));
   if (min === 0 && max != null) return `opcional; escolha até ${max}`;
   if (min === 0) return 'opcional';
   if (min != null && max === min) return min === 1 ? 'escolha 1' : `escolha ${min}`;
@@ -310,11 +446,7 @@ function selectionRule(group: { minSelections?: number; maxSelections?: number |
   return '';
 }
 
-export function renderCatalogReply(
-  result: CatalogReplyResult,
-  query: string,
-  menuUrl?: string | null,
-): string {
+export function renderCatalogReply(result: CatalogReplyResult, query: string, menuUrl?: string | null): string {
   const finish = (text: string): string => menuUrl
     ? `${text}\n\nCardápio digital: ${menuUrl}\nSe preferir, pode fazer o pedido por escrito aqui comigo.`
     : text;
@@ -329,11 +461,12 @@ export function renderCatalogReply(
   }
   const uniqueProducts = [...productsById.values()].slice(0, 12);
   const choices = uniqueProducts.map((item) => {
-    const groups = requestedGroup
-      ? (item.modifierGroups ?? []).filter((candidate) => requestedGroup.test(candidate.name))
-      : [];
+    const groups = requestedGroup ? (item.modifierGroups ?? []).filter((candidate) => requestedGroup.test(candidate.name)) : [];
     const groupChoices = groups.flatMap((group) => {
-      const options = group.options.map((option) => customerText(option.name)).join(', ');
+      const options = group.options.filter((option) => option.available !== false).map((option) => {
+        if (option.displayPrice) return `${customerText(option.name)} (${option.displayPrice})`;
+        return option.priceDelta > 0 ? `${customerText(option.name)} (+${money(option.priceDelta)})` : customerText(option.name);
+      }).join(', ');
       const rule = selectionRule(group);
       return options ? [`*${customerText(group.name)}*${rule ? ` (${rule})` : ''}: ${options}`] : [];
     });
@@ -343,11 +476,6 @@ export function renderCatalogReply(
   return finish(`${requestedGroup ? 'As opções disponíveis são' : 'Encontrei'}:\n${choices}\nQual você quer?`);
 }
 
-/**
- * Renders a non-mutating preview for the simulator from the same catalog IDs
- * and modifier selections used by the live planner. It intentionally does not
- * calculate a price or claim that an order was created.
- */
 export function renderOrderingDraftPreview(draft: OrderingDraft, result: CatalogReplyResult): string {
   const productsById = new Map(result.results.map((item) => [item.productId, item]));
   const items = draft.items.map((item) => {
@@ -359,22 +487,25 @@ export function renderOrderingDraftPreview(draft: OrderingDraft, result: Catalog
       const options = selection.optionSelections.flatMap((selected) => {
         const option = group.options.find((candidate) => candidate.id === selected.optionId);
         if (!option) return [];
-        return [selected.quantity > 1
-          ? `${selected.quantity}x ${customerText(option.name)}`
-          : customerText(option.name)];
+        return [selected.quantity > 1 ? `${selected.quantity}x ${customerText(option.name)}` : customerText(option.name)];
       }).join(', ');
       return options ? `${customerText(group.name)}: ${options}` : [];
     }).join('; ');
     return `${Math.max(1, item.quantity)}x ${productName}${modifiers ? ` (${modifiers})` : ''}`;
   }).join(', ');
-  const fulfillment = draft.fulfillment?.type === 'delivery'
-    ? `entrega${draft.fulfillment.deliveryAddress ? ` em ${customerText(draft.fulfillment.deliveryAddress)}` : ''}`
-    : 'retirada no local';
-  const payment = paymentLabel(draft.paymentMethod);
-  return `Resumo: ${items}; ${fulfillment}; ${customerText(payment)}. Posso confirmar?`;
+  const fulfillment = draft.fulfillment?.type === 'delivery' ? `entrega${draft.fulfillment.deliveryAddress ? ` em ${customerText(draft.fulfillment.deliveryAddress)}` : ''}` : 'retirada no local';
+  return `Resumo: ${items}; ${fulfillment}; ${customerText(paymentLabel(draft.paymentMethod))}. Posso confirmar?`;
 }
 
-export interface OrderingStatePointer { orderingId: string; revision: number }
+export interface OrderingStatePointer {
+  orderingId: string;
+  revision: number;
+  conversationControlId?: string;
+  conversationEpoch?: string;
+  offeredOptionalRequirementIds?: string[];
+  declinedOptionalRequirementIds?: string[];
+  consumedMessageIds?: string[];
+}
 
 export function serializeOrderingState(pointer: OrderingStatePointer): string {
   return `${AI_ORDER_STATE_PREFIX}${JSON.stringify(pointer)}`;
@@ -386,7 +517,15 @@ export function findLatestOrderingState(messages: Array<{ role: string; content:
     try {
       const value = JSON.parse(message.content.slice(AI_ORDER_STATE_PREFIX.length)) as Partial<OrderingStatePointer>;
       if (typeof value.orderingId === 'string' && Number.isInteger(value.revision)) {
-        return { orderingId: value.orderingId, revision: value.revision as number };
+        return {
+          orderingId: value.orderingId,
+          revision: value.revision as number,
+          ...(typeof value.conversationControlId === 'string' ? { conversationControlId: value.conversationControlId } : {}),
+          ...(typeof value.conversationEpoch === 'string' ? { conversationEpoch: value.conversationEpoch } : {}),
+          ...(Array.isArray(value.offeredOptionalRequirementIds) ? { offeredOptionalRequirementIds: value.offeredOptionalRequirementIds.filter((id): id is string => typeof id === 'string').slice(0, 100) } : {}),
+          ...(Array.isArray(value.declinedOptionalRequirementIds) ? { declinedOptionalRequirementIds: value.declinedOptionalRequirementIds.filter((id): id is string => typeof id === 'string').slice(0, 100) } : {}),
+          ...(Array.isArray(value.consumedMessageIds) ? { consumedMessageIds: value.consumedMessageIds.filter((id): id is string => typeof id === 'string').slice(-100) } : {}),
+        };
       }
     } catch {
       // Ignore malformed internal audit rows and keep searching older state.
@@ -397,7 +536,8 @@ export function findLatestOrderingState(messages: Array<{ role: string; content:
 
 export function snapshotToDraft(snapshot: OrderingSnapshot): OrderingDraft {
   return {
-    items: snapshot.cart.items.map((item) => ({
+    items: snapshot.cart.items.map((item, index) => ({
+      lineId: item.lineId ?? `line-${item.productId}-${index + 1}`,
       productId: item.productId,
       quantity: item.quantity,
       notes: item.notes,

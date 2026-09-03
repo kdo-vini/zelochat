@@ -3,6 +3,10 @@
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
 
+### Pedidos conversacionais híbridos (2026-09-03)
+
+- ✅ IA-WA-010 — pedido escrito/áudio podia perder fragmentos, não carregava permit para a autoridade canônica e não oferecia controles de requisito/revisão completos → estado por mensagem consumida, patch relacional com `lineId`, controles normalizados e presenter determinístico agora percorrem o dispatcher com control/epoch; áudio falho responde de forma curta e a espera é limitada — `server/aiWhatsAppOrdering.ts:1`, `server/orderingPatchPlanner.ts:1`, `server/orderingTurnComposer.ts:1`, `server/whatsappInteractive.ts:1`, `src/domain/orderingRequirementPresenter.ts:1`, `server/transcription.ts:1`
+
 ### Infraestrutura — egress do Supabase (2026-09-01)
 
 - ✅ INFRA-EGRESS-001 — o worker de envio consultava `claim_zelochat_outbound_job` e `release_zelochat_expired_leases` a cada 1 s mesmo com a fila vazia (~180k requests/dia, ~250 MB/dia de egress) → polling adaptativo: 1 s por 30 s após atividade, 15 s em repouso, acordado na hora por todo ponto que enfileira job; a chamada separada de release foi removida porque o claim já libera leases expirados no banco — `server/outbound/worker.ts:1`, `server/outbound/wake.ts:1`, `server/conversationOutbound.ts:1`, `server/campaigns/service.ts:1`, `server/automations/sweeper.ts:1`, `server/zelomenuCartSessions.ts:1`, `tests/outboundWorkerPolling.test.ts:1`

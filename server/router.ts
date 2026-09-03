@@ -66,6 +66,7 @@ import { buildFailedMessageRetryPayload } from './failedMessageRetry.js';
 import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton } from '../src/domain/aiWhatsAppOrdering.js';
 import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { tryHandleAiWhatsAppOrderingButton } from './aiWhatsAppOrdering.js';
+import { normalizeIncomingInteractive } from './whatsappInteractive.js';
 import { ZeloMenuInternalClient } from './zeloMenuInternalClient.js';
 import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventFailed, markWebhookEventProcessed, type WebhookAuthStatus } from './webhookLog.js';
@@ -615,16 +616,9 @@ async function processWebhookEvent(
       return;
     }
 
-    const interactiveParams = data.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
-    const interactiveId = interactiveParams
-      ? safeJsonParse<{ id?: string }>(interactiveParams)?.id ?? ''
-      : '';
-    const buttonId: string =
-      data.message?.buttonsResponseMessage?.selectedButtonId ??
-      data.message?.templateButtonReplyMessage?.selectedId ??
-      interactiveId ?? '';
-
-    const buttonDisplayText = data.message?.buttonsResponseMessage?.selectedDisplayText;
+    const interactive = normalizeIncomingInteractive(data.message);
+    const buttonId = interactive?.id ?? '';
+    const buttonDisplayText = interactive?.title ?? data.message?.buttonsResponseMessage?.selectedDisplayText;
     const interactiveText = data.message?.interactiveResponseMessage?.body?.text ?? '';
     const msgText = (
       data.message?.conversation ??

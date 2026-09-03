@@ -4,6 +4,10 @@
 
 ## Purpose
 
+### Pedido conversacional híbrido (confirmed 2026-09-03)
+- Texto e transcrição concluída são compostos por cursor durável antes do planejador. Patches carregam `lineId` e são validados por produto → grupo → opção; o ZeloMenu é a única autoridade de requisito/preço.
+- O presenter salva opcionais oferecidos/recusados antes de enviar botões/listas, e todo comando canônico leva o mesmo control ID/epoch do `AiTurnPermit`. Nunca reintroduzir envio direto neste fluxo.
+
 ### Pedido canônico pelo WhatsApp (2026-08-30)
 - O tracer `server/aiWhatsAppOrdering.ts` usa catálogo/carrinho canônicos do ZeloMenu; confirmação é determinística por texto/botão, com token opaco, revisão e idempotência. Catálogo ambíguo nunca chega ao planejador. A integração indisponível transfere ao humano.
 - Hotfix de produção (2026-08-31): `server/ai.ts` precisa chamar `tryHandleAiWhatsAppOrdering` antes do modelo genérico em modo restaurante. O primeiro contato oferece duas rotas — link público e pedido escrito —, e consultas de grupos são respondidas pelo catálogo interno com IDs string/UUID, cardinalidade real e todas as opções do grupo. Respostas, botões e handoff passam por `dispatchConversationOutbound` com `AiTurnPermit`; não reintroduzir `sendTextMessage`/`sendButtonMessage` direto nesse handler.

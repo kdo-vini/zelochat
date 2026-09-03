@@ -128,6 +128,13 @@ server/
 - Tipo de atendimento, endereço e pagamento seguem a precedência `override fixado > último pedido > ausente`. Horário habitual usa mediana **circular** determinística (23:50 + 00:10 = 00:00); recorrência usa mediana linear dos intervalos. Itens frequentes são calculados por `product_id` canônico, servem só como sugestão e **nunca** viram itens padrão automaticamente. `lastOrder` preserva `customer` e todos os campos originais de fulfillment/payment (incluindo `asap`), além das projeções normalizadas e dos itens/modificadores.
 - Overrides vivem em `zelochat_customer_relationships.ordering_overrides`. O PATCH aceita somente `fulfillmentType`, `deliveryAddress`, `paymentMethod` e `habitualTime`, permite `null` para remover um campo e exige `pessoas.gerenciar`. O ZeloChat **nunca** faz read/merge/upsert do JSON: `orderingContextAdapter.ts` chama o RPC service-role `patch_zelochat_customer_ordering_overrides`, cujo DDL pertence ao stream compartilhado do ZeloPDV e faz validação empresa/owner/pessoa mais merge atômico no banco.
 
+### Pedido conversacional híbrido — contrato local
+
+- `server/aiWhatsAppOrdering.ts` apenas orquestra: o ZeloMenu continua dono de requisitos, preço, revisão e confirmação. Todo update/confirm/cancel recebe o mesmo `AiTurnPermit.conversationControlId` + `epoch` do outbound; `AI_TURN_REVOKED` é supressão limpa.
+- O estado serializado guarda `orderingId`, revisão, permit, IDs de mensagens consumidas e opcionais oferecidos/recusados. Persistir o ponteiro antes de enfileirar botão ou lista.
+- `server/orderingPatchPlanner.ts` valida a hierarquia produto → grupo → opção por linha antes da mutação. Não substituir seleções estruturadas por observações livres nem aceitar opção de outro produto.
+- `src/domain/orderingRequirementPresenter.ts` pergunta um requisito bloqueante por vez; opcionais aparecem uma única vez e `sem extras` os recusa. Texto e áudio permanecem alternativas aos controles.
+
 ## Stack
 
 - **Frontend**: React + Vite + TypeScript + Tailwind + Motion (framer)
