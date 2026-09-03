@@ -12,11 +12,11 @@ export interface OrderingTurnComposition {
   consumedMessageIds: string[];
 }
 
-type ComposerMessage = Pick<
+export type ComposerMessage = Pick<
   ChatMessage,
   'id' | 'role' | 'content' | 'preview' | 'timestamp' | 'kind' | 'audio_transcript' | 'audio_transcript_status'
 >;
-type TimedComposerMessage = ComposerMessage & { providerTimestamp?: string | number | null; dbTimestamp?: string | number | null };
+export type TimedComposerMessage = ComposerMessage & { providerTimestamp?: string | number | null; dbTimestamp?: string | number | null };
 
 const AUDIO_PLACEHOLDER_REGEX = /^\[(?:áudio|audio) receb/i;
 
