@@ -172,8 +172,8 @@ export class ZeloMenuInternalClient {
     return this.orderingCommand({ type: 'cancel_draft', ...input });
   }
 
-  async getOrdering(orderingId: string, empresaId: string): Promise<OrderingSnapshot> {
-    return this.request(`/internal/ordering/${encodeURIComponent(orderingId)}?empresaId=${encodeURIComponent(empresaId)}`, { method: 'GET' });
+  async getOrdering(orderingId: string, empresaId: string, remoteJid: string): Promise<OrderingSnapshot> {
+    return this.request(`/internal/ordering/${encodeURIComponent(orderingId)}?empresaId=${encodeURIComponent(empresaId)}&remoteJid=${encodeURIComponent(remoteJid)}`, { method: 'GET' });
   }
 
   private async orderingCommand(body: Record<string, unknown>): Promise<OrderingSnapshot> {

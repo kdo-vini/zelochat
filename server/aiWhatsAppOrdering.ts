@@ -198,7 +198,7 @@ async function loadCanonicalSnapshot(
   const pointer = findLatestOrderingState(session.messages);
   if (!pointer) return null;
   try {
-    const snapshot = await client.getOrdering(pointer.orderingId, empresaId);
+    const snapshot = await client.getOrdering(pointer.orderingId, empresaId, jid);
     if (snapshot.empresaId !== empresaId || snapshot.remoteJid !== jid) {
       throw new ZeloMenuInternalError('PEDIDO_INDISPONIVEL', 403, 'tenant-boundary');
     }

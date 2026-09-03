@@ -150,7 +150,7 @@ const dryRunClient = {
     }],
   }),
   updateDraft: async () => { dryRunCalls.push('updateDraft'); throw new Error('dry-run mutation'); },
-  getOrdering: async () => { dryRunCalls.push('getOrdering'); throw new Error('dry-run mutation'); },
+  getOrdering: async (_orderingId: string, _empresaId: string, _remoteJid: string) => { dryRunCalls.push('getOrdering'); throw new Error('dry-run mutation'); },
   confirmDraft: async () => { dryRunCalls.push('confirmDraft'); throw new Error('dry-run mutation'); },
   cancelDraft: async () => { dryRunCalls.push('cancelDraft'); throw new Error('dry-run mutation'); },
 } satisfies OrderingClient;
@@ -170,9 +170,13 @@ assert.deepEqual(dryRunCalls, [], 'canonical dry-run never invokes mutation meth
 
 // Even with an open canonical pointer, dry-run confirmation/cancellation must
 // only read the snapshot and preview the result; neither path may mutate it.
+const getOrderingArgs: Array<[string, string, string]> = [];
 const openDryRunClient: OrderingClient = {
   ...dryRunClient,
-  getOrdering: async () => snapshot(),
+  getOrdering: async (orderingId: string, empresaId: string, remoteJid: string) => {
+    getOrderingArgs.push([orderingId, empresaId, remoteJid]);
+    return snapshot();
+  },
 };
 const sessionWithPointer = (text: string): StoredSession => {
   const session = sessionWith(text);
@@ -208,6 +212,11 @@ const cancellationPreview = await tryHandleAiWhatsAppOrdering(
 assert.equal(cancellationPreview.handled, true);
 assert.match(cancellationPreview.response ?? '', /pedido cancelado/i);
 assert.deepEqual(dryRunCalls, [], 'confirmation/cancellation dry-run never mutates the open ordering');
+assert.equal(getOrderingArgs.length, 2, 'loadCanonicalSnapshot reads the pointer once per turn');
+assert.ok(
+  getOrderingArgs.every(([, , remoteJid]) => remoteJid === fakePermit.remoteJid),
+  'loadCanonicalSnapshot must pass the session JID as the 3rd getOrdering argument',
+);
 
 // A deterministic catalog question keeps a bare option reply in the ordering flow.
 const optionSequence = [
@@ -468,7 +477,7 @@ const failing = new ZeloMenuInternalClient({
   fetchImpl: async () => new Response(JSON.stringify({ error: 'PEDIDO_INDISPONIVEL', detail: 'raw database secret' }), { status: 500 }),
 });
 await assert.rejects(
-  () => failing.getOrdering(snapshot().orderingId, snapshot().empresaId),
+  () => failing.getOrdering(snapshot().orderingId, snapshot().empresaId, snapshot().remoteJid),
   (error: unknown) => error instanceof ZeloMenuInternalError
     && error.message === 'Não foi possível consultar o pedido agora.'
     && !error.message.includes('raw database secret'),

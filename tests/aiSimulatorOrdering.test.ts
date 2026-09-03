@@ -59,7 +59,7 @@ const catalogClient: OrderingClient = {
     }],
   }),
   updateDraft: async () => { throw new Error('simulator must not mutate a cart'); },
-  getOrdering: async () => { throw new Error('simulator must not read an ordering snapshot'); },
+  getOrdering: async (_orderingId: string, _empresaId: string, _remoteJid: string) => { throw new Error('simulator must not read an ordering snapshot'); },
   confirmDraft: async () => { throw new Error('simulator must not confirm an order'); },
   cancelDraft: async () => { throw new Error('simulator must not cancel an order'); },
 };
