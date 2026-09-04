@@ -704,6 +704,44 @@ console.log('===== Scenario 3: Monte Sua Massa in one utterance, step by step ==
   // outcome is this exact, stable string.
   const aiWhatsAppOrderingSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
   assert.match(aiWhatsAppOrderingSource, /'Pedido confirmado e enviado para a loja\. Aviso por aqui quando houver novidade\.'/);
+
+  // A ready snapshot without the authority-issued token can never confirm.
+  // Fail into the friendly availability recovery without spending a doomed
+  // mutation or escalating to a human.
+  const tokenless: OrderingSnapshot = {
+    ...afterPayment,
+    readyForConfirmation: true,
+    confirmationAction: null,
+  };
+  const { client: tokenlessClient, log: tokenlessLog, assertExhausted: tokenlessExhausted } = fakeClient([]);
+  let tokenlessError: unknown = null;
+  try {
+    await resolveConfirmation(
+      tokenless, tokenlessClient, permit.empresaId, permit.remoteJid, 'wamid.e1-tokenless', permit,
+      undefined, tokenless.revision, alwaysCurrentPermit,
+    );
+  } catch (error) { tokenlessError = error; }
+  tokenlessExhausted('scenario 4 tokenless confirmation');
+  assert.equal(tokenlessLog.length, 0, 'a missing confirmation token makes ZERO confirmDraft calls');
+  // The local code is deliberately DISTINCT from the authority's
+  // `CONFIRMACAO_INDISPONIVEL`: both recover identically, but a pilot needs
+  // the metric line to separate "our snapshot carried no token" from "the
+  // store's confirmation service is down".
+  assert.ok(tokenlessError instanceof ZeloMenuInternalError && tokenlessError.code === 'CONFIRMACAO_SEM_TOKEN');
+  const tokenlessRecovery = classifyOrderingFailure(tokenlessError);
+  assert.equal(tokenlessRecovery.action, 'retry_later', 'missing token follows friendly retry, never human escalation');
+  assert.ok(tokenlessRecovery.action === 'retry_later');
+  assert.equal(tokenlessRecovery.countsTowardLimit, false);
+
+  // Staleness still wins before token availability: re-present the current
+  // summary and do not emit the availability failure for an unseen revision.
+  const staleOutcome = await resolveConfirmation(
+    tokenless, tokenlessClient, permit.empresaId, permit.remoteJid, 'wamid.e1-tokenless-stale', permit,
+    undefined, tokenless.revision - 1, alwaysCurrentPermit,
+  );
+  assert.equal(staleOutcome.kind, 'summary');
+  assert.equal(staleOutcome.snapshot, tokenless);
+  assert.equal(tokenlessLog.length, 0, 'the stale tokenless path also makes ZERO confirmDraft calls');
 }
 
 // =============================================================================
@@ -1101,7 +1139,31 @@ console.log('===== Scenario 8: authority error codes recover or fail friendly ==
     assert.ok(recovery.action === 'retry_later');
     assert.equal(recovery.text, 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?');
     assert.doesNotMatch(recovery.text, /MUITAS_REQUISICOES|429|internal|upstream/i, 'no technical code/status ever reaches customer-facing copy');
-    assert.notEqual(recovery.countsTowardLimit, false, 'a plain rate-limit still spends the per-conversation retry budget (only the breaker code is exempt)');
+    assert.notEqual(recovery.countsTowardLimit, false, 'a plain rate-limit still spends the per-conversation retry budget (store-side availability codes are exempt)');
+  }
+
+  // --- CONFIRMACAO_INDISPONIVEL: this 400 is a store-side availability
+  // fault, not a domain rejection. It must use the friendly retry path
+  // without spending this conversation's escalation budget.
+  {
+    const unavailable = new ZeloMenuInternalError('CONFIRMACAO_INDISPONIVEL', 400, 'req-confirm-unavailable');
+    const recovery = classifyOrderingFailure(unavailable);
+    assert.equal(recovery.action, 'retry_later');
+    assert.ok(recovery.action === 'retry_later');
+    assert.equal(recovery.text, 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?');
+    assert.equal(recovery.countsTowardLimit, false, 'store-side confirmation availability never burns the per-conversation retry budget');
+  }
+
+  // --- CONFIRMACAO_SEM_TOKEN: the LOCAL twin of the code above, raised by
+  // `resolveConfirmation` before a doomed mutation. Same recovery, distinct
+  // code so the metric line stays diagnosable.
+  {
+    const tokenless = new ZeloMenuInternalError('CONFIRMACAO_SEM_TOKEN', 400, 'req-confirm-tokenless');
+    const recovery = classifyOrderingFailure(tokenless);
+    assert.equal(recovery.action, 'retry_later');
+    assert.ok(recovery.action === 'retry_later');
+    assert.equal(recovery.countsTowardLimit, false, 'a locally-detected missing token never burns the retry budget either');
+    assert.doesNotMatch(recovery.text, /token|CONFIRMACAO|400/i, 'no technical code ever reaches customer-facing copy');
   }
 
   // --- Circuit breaker open: friendly copy, bounded by the SAME family of

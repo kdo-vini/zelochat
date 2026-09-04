@@ -283,7 +283,19 @@ export class ZeloMenuInternalClient {
         // Only a transport-y failure (rate-limited or the server itself
         // erroring) counts toward the breaker — a domain 4xx (validation,
         // conflict, not-found) means ZeloMenu answered fine, it just said no.
-        if (response.status === 429 || response.status >= 500) recordFailure();
+        // FIX 2026-09-04: CONFIRMACAO_INDISPONIVEL resetava o breaker por vir
+        // como 400 → é a única exceção, porque o código significa
+        // indisponibilidade do serviço de confirmação da loja (RPC ou segredo
+        // do token ausente — ver a nota desse código em
+        // `tests/fixtures/zelomenu-wire/v1/errors.json`), não uma recusa de
+        // domínio. Sem isso, um deploy fora de lockstep entre os dois
+        // repositórios escala uma conversa por vez e notifica o gerente uma
+        // vez por conversa — exatamente o flood que o breaker existe pra
+        // impedir. Trade-off aceito: enquanto o breaker está aberto, GET e
+        // update dessa empresa também falham rápido por `openMs`; é
+        // deliberado, igual a qualquer outra indisponibilidade, e o circuito
+        // reabre após 30s.
+        if (response.status === 429 || response.status >= 500 || rawPayload.error === 'CONFIRMACAO_INDISPONIVEL') recordFailure();
         else recordSuccess();
         let current: OrderingSnapshot | null = null;
         if (parseSnapshot && rawPayload.current) {

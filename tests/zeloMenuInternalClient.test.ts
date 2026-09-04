@@ -176,4 +176,68 @@ await assert.rejects(
   assert.equal(fetchCalls, 6, 'a different empresa key still reaches the network normally');
 }
 
+// CONFIRMACAO_INDISPONIVEL is the one 400 that represents store-side
+// unavailability. It contributes to the breaker and opens it once at the
+// configured threshold, just like a transport failure.
+{
+  let fetchCalls = 0;
+  let openedCount = 0;
+  const empresaId = 'empresa-confirm-unavailable';
+  const breaker = createOrderingCircuitBreaker({ threshold: 2, windowMs: 60_000, openMs: 30_000, now: () => 1_000 });
+  const unavailableClient = new ZeloMenuInternalClient({
+    baseUrl: 'https://internal.example', apiKey: 'key', timeoutMs: 100,
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ error: 'CONFIRMACAO_INDISPONIVEL' }), { status: 400 });
+    },
+    circuitBreaker: breaker,
+    onCircuitOpen: () => { openedCount += 1; },
+  });
+
+  for (let i = 0; i < 2; i += 1) {
+    await assert.rejects(
+      () => unavailableClient.getOrdering('ordering-id', empresaId, remoteJid),
+      (error: unknown) => (error as { code?: string }).code === 'CONFIRMACAO_INDISPONIVEL',
+    );
+  }
+  assert.equal(fetchCalls, 2, 'both failures up to the threshold reach the authority');
+  assert.equal(openedCount, 1, 'the circuit-open side effect fires exactly once at the threshold');
+
+  await assert.rejects(
+    () => unavailableClient.getOrdering('ordering-id', empresaId, remoteJid),
+    (error: unknown) => (error as { code?: string }).code === 'INDISPONIVEL_CIRCUITO_ABERTO',
+  );
+  assert.equal(fetchCalls, 2, 'subsequent calls fast-fail while the breaker is open');
+  assert.equal(openedCount, 1, 'fast-fail does not emit another circuit-open side effect');
+}
+
+// Regression guard: every other 4xx is a healthy authority response and
+// must reset, rather than merely avoid contributing to, the breaker.
+{
+  let fetchCalls = 0;
+  let openedCount = 0;
+  const empresaId = 'empresa-invalid-command';
+  const breaker = createOrderingCircuitBreaker({ threshold: 2, windowMs: 60_000, openMs: 30_000, now: () => 1_000 });
+  const invalidCommandClient = new ZeloMenuInternalClient({
+    baseUrl: 'https://internal.example', apiKey: 'key', timeoutMs: 100,
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      const error = fetchCalls === 2 ? 'COMANDO_INVALIDO' : 'CONFIRMACAO_INDISPONIVEL';
+      return new Response(JSON.stringify({ error }), { status: 400 });
+    },
+    circuitBreaker: breaker,
+    onCircuitOpen: () => { openedCount += 1; },
+  });
+
+  await assert.rejects(() => invalidCommandClient.getOrdering('ordering-id', empresaId, remoteJid));
+  await assert.rejects(
+    () => invalidCommandClient.getOrdering('ordering-id', empresaId, remoteJid),
+    (error: unknown) => (error as { code?: string }).code === 'COMANDO_INVALIDO',
+  );
+  await assert.rejects(() => invalidCommandClient.getOrdering('ordering-id', empresaId, remoteJid));
+  assert.equal(fetchCalls, 3, 'COMANDO_INVALIDO resets the prior failure, so the next availability fault still reaches the authority');
+  assert.equal(breaker.isOpen(empresaId), false, 'the two availability faults are not consecutive across COMANDO_INVALIDO');
+  assert.equal(openedCount, 0, 'a normal domain 400 resets the streak and never emits the circuit-open side effect');
+}
+
 console.log('zeloMenuInternalClient tests passed');

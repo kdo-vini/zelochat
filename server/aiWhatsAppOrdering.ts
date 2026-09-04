@@ -84,8 +84,9 @@ const declinesOptionalExtras = (value: string) => /^(?:sem extras|so isso|só is
  *   turn opens a fresh draft.
  * - `retry_later`: transient/availability faults
  *   (`MUITAS_REQUISICOES`/`PEDIDO_INDISPONIVEL`/`TIMEOUT`/`INDISPONIVEL`/
- *   `ORDERING_WIRE_UNSUPPORTED`) — ask the customer to try again, bounded by
- *   `MAX_RETRY_LATER_ATTEMPTS` before falling through to escalation.
+ *   `ORDERING_WIRE_UNSUPPORTED`/`CONFIRMACAO_INDISPONIVEL`/
+ *   `CONFIRMACAO_SEM_TOKEN`) — ask the customer to try again. Store-side
+ *   availability faults do not spend the per-conversation retry budget.
  * - `escalate`: everything else (validation errors that should never happen
  *   given this codebase's own request-building, or errors with no
  *   recoverable `current`).
@@ -98,13 +99,12 @@ type OrderingErrorRecovery =
     action: 'retry_later';
     text: string;
     /**
-     * FIX 2026-09-04 (PR I-5): `false` for the circuit breaker's own error
-     * code — while ZeloMenu is known-down for this empresa (the breaker is
-     * open), every turn must keep getting the same friendly retry reply and
-     * NEVER spend the per-conversation `MAX_RETRY_LATER_ATTEMPTS` budget,
-     * or every open conversation would still independently escalate once
-     * its own small counter ran out — exactly the flood I-5 exists to stop.
-     * Omitted (defaults to counting) for every other transient code.
+     * FIX 2026-09-04 (PR I-5): `false` for store-side availability codes.
+     * While the service is unavailable, every turn must keep getting the
+     * same friendly retry reply and NEVER spend the per-conversation
+     * `MAX_RETRY_LATER_ATTEMPTS` budget, or every open conversation would
+     * still independently escalate once its own small counter ran out.
+     * Omitted (defaults to counting) for customer/domain transients.
      */
     countsTowardLimit?: boolean;
   }
@@ -129,6 +129,14 @@ export function classifyOrderingFailure(error: unknown): OrderingErrorRecovery {
     case 'INDISPONIVEL':
     case 'ORDERING_WIRE_UNSUPPORTED':
       return { action: 'retry_later', text: 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?' };
+    // `CONFIRMACAO_INDISPONIVEL` chega como 400 mas é indisponibilidade do
+    // serviço de confirmação da loja; `CONFIRMACAO_SEM_TOKEN` é a mesma
+    // condição detectada localmente, antes de gastar a mutação (ver
+    // `resolveConfirmation`). Nenhum dos dois gasta o orçamento de tentativas
+    // da conversa — senão um erro de configuração escala uma conversa por vez.
+    case 'CONFIRMACAO_INDISPONIVEL':
+    case 'CONFIRMACAO_SEM_TOKEN':
+      return { action: 'retry_later', text: 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?', countsTowardLimit: false };
     // PR I-5: the circuit breaker's own code (server/orderingCircuitBreaker.ts
     // via zeloMenuInternalClient.ts) — never counts toward the escalation
     // budget, see the field doc on `countsTowardLimit`.
@@ -660,6 +668,22 @@ export async function resolveConfirmation(
   // C5 / PR I-2, I-16, 1.22-1.24: check the live permit before this
   // conversation's single money-moving mutation.
   await assertPermitCurrent(permit, isPermitCurrent);
+  // FIX 2026-09-04: confirmação sem token enviava uma mutação certamente
+  // rejeitada e gastava um handoff humano → falha localmente pela mesma
+  // recuperação amigável de indisponibilidade.
+  //
+  // A autoridade exige um token amarrado à revisão exata do resumo. Um
+  // snapshot pronto pode não trazer `confirmationAction` (token expirado, ou
+  // segredo do token ausente na loja), e nesse caso o `confirm_draft` volta
+  // como `COMANDO_INVALIDO` → `escalate`. O código é LOCAL e distinto do
+  // `CONFIRMACAO_INDISPONIVEL` da autoridade de propósito: os dois têm a
+  // mesma recuperação, mas a métrica precisa distinguir "nosso snapshot não
+  // tinha token" de "o serviço de confirmação da loja está fora" para
+  // diagnosticar um piloto. Mesmo precedente de `ORDERING_WIRE_UNSUPPORTED`
+  // e `INDISPONIVEL_CIRCUITO_ABERTO`, que também não vêm de `errors.json`.
+  if (!token) {
+    throw new ZeloMenuInternalError('CONFIRMACAO_SEM_TOKEN', 400, messageId);
+  }
   try {
     const confirmed = await client.confirmDraft({
       empresaId, remoteJid: jid, messageId, orderingId: snapshot.orderingId,
@@ -1025,11 +1049,28 @@ export async function tryHandleAiWhatsAppOrdering(
         return { handled: true, response: recovery.text };
       }
       if (recovery.action === 'retry_later') {
-        // PR I-5: a breaker-open failure never spends this conversation's
-        // retry budget — reply and return without touching the counter.
+        // PR I-5: store-side availability never spends this conversation's
+        // retry budget. Persist the consumed-message cursor (while preserving
+        // the existing count) before the friendly reply is enqueued.
         if (recovery.countsTowardLimit === false) {
+          await persistOrderingState(
+            permit,
+            current ?? priorState,
+            dryRun,
+            priorState,
+            composition.consumedMessageIds,
+            { retryFailureCount: priorState?.retryFailureCount ?? 0 },
+            isPermitCurrent,
+          );
           await sendText(permit, recovery.text, 'ordering-retry-later', dryRun, isPermitCurrent);
-          metric({ ...metricBase, stage: 'update', outcome: 'circuit_open', errorCode, orderingId: current?.orderingId ?? priorState?.orderingId, revision: current?.revision ?? priorState?.revision });
+          metric({
+            ...metricBase,
+            stage: errorCode === 'CONFIRMACAO_INDISPONIVEL' || errorCode === 'CONFIRMACAO_SEM_TOKEN' ? 'confirm' : 'update',
+            outcome: errorCode === 'INDISPONIVEL_CIRCUITO_ABERTO' ? 'circuit_open' : 'retry_later',
+            errorCode,
+            orderingId: current?.orderingId ?? priorState?.orderingId,
+            revision: current?.revision ?? priorState?.revision,
+          });
           return { handled: true, response: recovery.text };
         }
         const attempts = (priorState?.retryFailureCount ?? 0) + 1;
@@ -1242,7 +1283,12 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
     if (recovery.action === 'clear_and_tell' || recovery.action === 'retry_later') {
       return { handled: true, complete: withSuppression(async () => {
         await sendText(input.permit, recovery.text, 'button-error-recovery', false, isPermitCurrent);
-        metric({ ...metricBase, stage: 'update', outcome: recovery.action === 'clear_and_tell' ? 'closed_recovered' : 'retry_later', errorCode });
+        metric({
+          ...metricBase,
+          stage: (errorCode === 'CONFIRMACAO_INDISPONIVEL' || errorCode === 'CONFIRMACAO_SEM_TOKEN') && action.kind === 'confirm' ? 'confirm' : 'update',
+          outcome: recovery.action === 'clear_and_tell' ? 'closed_recovered' : 'retry_later',
+          errorCode,
+        });
       }) };
     }
     metric({ ...metricBase, stage: 'escalate', outcome: 'failed_closed', errorCode });
