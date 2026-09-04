@@ -4,9 +4,13 @@
 
 ## Purpose
 
-### Pedido conversacional híbrido (confirmed 2026-09-03)
+### Pedido conversacional híbrido (confirmed 2026-09-03, contrato corrigido 2026-09-04)
 - Texto e transcrição concluída são compostos por cursor durável antes do planejador. Patches carregam `lineId` e são validados por produto → grupo → opção; o ZeloMenu é a única autoridade de requisito/preço.
 - O presenter salva opcionais oferecidos/recusados antes de enviar botões/listas, e todo comando canônico leva o mesmo control ID/epoch do `AiTurnPermit`. Nunca reintroduzir envio direto neste fluxo.
+- **Lição de 2026-09-04 (a mais importante deste fluxo):** a suíte ficou 100% verde enquanto a feature estava inoperante em produção, porque cada repositório testava contra um double inventado do outro. O contrato agora é artefato versionado: o ZeloMenu gera as fixtures reais em `docs/contracts/conversation-ordering-wire/v1/` com teste de drift e o ZeloChat copia a pasta verbatim para `tests/fixtures/zelomenu-wire/v1/`. Ao mudar o contrato, mude a autoridade primeiro, regenere, recopie. Não escreva double de snapshot à mão.
+- A autoridade usa `type`/`name` no requisito e reserva `kind` para o subtipo do modificador; o ID do requisito contém `:`, então IDs de ação usam `|` e carregam fingerprint de `orderingId:revision`. `parseOrderingSnapshotWire` é o único tradutor de JSON da autoridade e falha fechado.
+- Confirmação: token da revisão que o cliente viu → confirm → persistir → enfileirar → reconciliar. O ZeloMenu passou a exigir `confirmationToken` no confirm, então os dois repositórios precisam subir em lockstep.
+- A feature roda somente com `empresa_perfil.ai_hybrid_ordering_enabled = true` (default false), lida sempre via `isAiHybridOrderingEnabled`. Rollback é virar a flag.
 
 ### Pedido canônico pelo WhatsApp (2026-08-30)
 - O tracer `server/aiWhatsAppOrdering.ts` usa catálogo/carrinho canônicos do ZeloMenu; confirmação é determinística por texto/botão, com token opaco, revisão e idempotência. Catálogo ambíguo nunca chega ao planejador. A integração indisponível transfere ao humano.

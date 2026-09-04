@@ -12,6 +12,8 @@
 
 > **Status 2026-09-03:** Tasks 1–11 implementadas em `7d82675` e corrigidas até `0521ad0` (remoteJid no GET do snapshot, prévia sem retirada implícita, suíte completa verde). Gates locais do ZeloMenu (G1/G2) e piloto continuam pendentes — ver CURRENT.md.
 
+> **Wave 2026-09-04:** uma revisão em três lentes (funcional, contrato cross-repo, produção) provou que o fluxo não funcionava contra a autoridade real apesar da suíte verde: os doubles de cada repositório inventavam o formato do outro. A onda A–E corrigiu adaptador de formato, corpos aceitos, cursor do composer, colisão de confirmar/cancelar com a camada legada, integridade da confirmação, janelas de tomada humana, flag por empresa, breaker e observabilidade. Evidência e rulings em `.superpowers/sdd/2026-09-03-handoff/` (`ultra-review-contract.md`, `ultra-review-functional.md`, `ultra-review-production.md`, `wave-report.md`). O contrato agora vive em fixtures versionadas geradas pelo ZeloMenu.
+
 ## Global Constraints
 
 - Este plano consome o contrato implementado por `ZeloMenu/docs/superpowers/plans/2026-09-02-conversation-ordering-authority.md`; não duplicar validação canônica no ZeloChat.
