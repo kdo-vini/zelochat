@@ -149,11 +149,16 @@ function phoneToJid(phone: string): string | null {
   return `${digits}@s.whatsapp.net`;
 }
 
-type ManagerPhoneValidation =
+export type ManagerPhoneValidation =
   | { ok: true; jid: string }
   | { ok: false; reason: 'missing' | 'invalid' };
 
-function validateManagerPhone(phone: string | null | undefined): ManagerPhoneValidation {
+/**
+ * Exported (FIX 2026-09-04, PR I-5) so `zeloMenuInternalClient.ts` can send
+ * the circuit-breaker-opened manager notification without duplicating the
+ * phone→JID validation this module already owns.
+ */
+export function validateManagerPhone(phone: string | null | undefined): ManagerPhoneValidation {
   if (!phone?.trim()) return { ok: false, reason: 'missing' };
   const jid = phoneToJid(phone);
   return jid ? { ok: true, jid } : { ok: false, reason: 'invalid' };

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { ZeloMenuInternalClient, DEFAULT_ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS } from '../server/zeloMenuInternalClient.js';
+import { createOrderingCircuitBreaker } from '../server/orderingCircuitBreaker.js';
 import type { OrderingSnapshot } from '../src/domain/aiWhatsAppOrdering.js';
 
 const fixturesDir = new URL('./fixtures/zelomenu-wire/v1/', import.meta.url);
@@ -136,5 +137,43 @@ await assert.rejects(
     && error.message === 'Não foi possível consultar o pedido agora.'
     && !error.message.includes('raw database secret'),
 );
+
+// PR I-5 — a run of 5xx/timeout failures for ONE empresa trips that
+// empresa's circuit breaker: the 6th call never even reaches `fetchImpl`
+// (fail fast), the "just opened" side effect fires exactly once, and a
+// DIFFERENT empresa sharing the same client instance is unaffected.
+{
+  let fetchCalls = 0;
+  let openedCount = 0;
+  const openedFor: string[] = [];
+  let fakeNow = 0;
+  const breaker = createOrderingCircuitBreaker({ threshold: 5, windowMs: 60_000, openMs: 30_000, now: () => fakeNow });
+  const breakerClient = new ZeloMenuInternalClient({
+    baseUrl: 'https://internal.example', apiKey: 'key', timeoutMs: 100,
+    fetchImpl: async () => { fetchCalls++; return new Response(JSON.stringify({ error: 'INDISPONIVEL' }), { status: 503 }); },
+    circuitBreaker: breaker,
+    onCircuitOpen: (empresaId) => { openedCount++; openedFor.push(empresaId); },
+  });
+  for (let i = 0; i < 5; i++) {
+    fakeNow += 1_000;
+    await assert.rejects(() => breakerClient.getOrdering('ordering-id', 'empresa-breaker', remoteJid));
+  }
+  assert.equal(fetchCalls, 5, 'every one of the first 5 failures still reached the network');
+  assert.equal(openedCount, 1, 'the breaker reports "just opened" exactly once');
+  assert.deepEqual(openedFor, ['empresa-breaker']);
+
+  fakeNow += 1_000;
+  await assert.rejects(
+    () => breakerClient.getOrdering('ordering-id', 'empresa-breaker', remoteJid),
+    (error: unknown) => (error as { code?: string }).code === 'INDISPONIVEL_CIRCUITO_ABERTO',
+  );
+  assert.equal(fetchCalls, 5, 'while open, the client fails fast — no further network call is attempted');
+  assert.equal(openedCount, 1, 'no second "just opened" notification while still open');
+
+  // A different empresa sharing the same client/breaker is unaffected.
+  fakeNow += 1_000;
+  await assert.rejects(() => breakerClient.getOrdering('ordering-id', 'empresa-other', remoteJid));
+  assert.equal(fetchCalls, 6, 'a different empresa key still reaches the network normally');
+}
 
 console.log('zeloMenuInternalClient tests passed');
