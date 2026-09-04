@@ -221,7 +221,7 @@ These functions are CRITICAL for product correctness. Each one has caused (or ha
 | Function | Location | Why it's critical |
 |---|---|---|
 | `generateAndSendReply` | `server/ai.ts` | The AI dispatch entry point. Bad changes here = duplicate orders, wrong-confirms, prompt-injection. The 3-layer trap from §"Order confirmation flow" lives here. |
-| `tryHandleAiWhatsAppOrdering` / `tryHandleAiWhatsAppOrderingButton` | `server/aiWhatsAppOrdering.ts` | Fluxo canônico permanente: confirmação é determinística e orderingId/revision sempre voltam ao ZeloMenu. |
+| `tryHandleAiWhatsAppOrdering` / `tryHandleAiWhatsAppOrderingButton` | `server/aiWhatsAppOrdering.ts` | Fluxo canônico permanente: confirmação é determinística e orderingId/revision sempre voltam ao ZeloMenu. Só roda quando `isAiHybridOrderingEnabled(empresaId)` é true (ver nota abaixo) — nunca assuma que rodar localmente reflete produção para uma empresa sem a flag. |
 | `confirmPendingOrder` / `cancelPendingOrder` / `clearPendingOrder` | `server/ai.ts` | The pending-order lifecycle. The order between insert/clear/send is load-bearing — see "FIX H1" comment in `confirmPendingOrder`. |
 | `dispatchIncomingMessage` and the hard-button short-circuit | `server/router.ts` | Layer 3 of the order-flow trap. Every customer reply path passes through here. |
 | `processWebhookEvent` and `/webhook/:instance` | `server/router.ts` | Auth boundary for inbound WhatsApp. Currently relies on instance name as secret (P0.1) — rotation/dedup decisions land here. |
@@ -232,6 +232,14 @@ These functions are CRITICAL for product correctness. Each one has caused (or ha
 | `clearLocalAppState` (logout) | `src/services/authService.ts` | If new `zelochat_*`-prefixed localStorage keys are introduced, they MUST be wiped here, or the cross-tenant leak via shared device returns. |
 
 When changing any of these, follow the rule: read CLAUDE.md → read CODE_REVIEW.md → read the existing inline docstring → walk through ONE customer scenario in your head before editing.
+
+### Flag `ai_hybrid_ordering_enabled` — gate do pedido conversacional canônico
+
+`empresa_perfil.ai_hybrid_ordering_enabled` (migration 068, `boolean not null default false`) controla se `tryHandleAiWhatsAppOrdering`/`tryHandleAiWhatsAppOrderingButton` rodam para uma empresa. Leia sempre via `isAiHybridOrderingEnabled(empresaId)` (`server/configStore.ts`) — nunca `getConfig(empresaId).aiHybridOrderingEnabled` direto. Default `false`: mesmo em modo `restaurant` com `ai_enabled=true` e a integração do ZeloMenu configurada, uma empresa sem essa flag continua na IA genérica (sem cardápio guiado, sem `criar_pedido` — a tool foi removida junto com o ZLM-310; o cliente só recebe o link do cardápio digital).
+
+Não existe toggle self-service — é decisão explícita de operador/Eng, feita por update direto no banco. `GET /api/ai-ordering-status` expõe `hybridOrderingEnabled` somente-leitura pro card de Configurações (`AiWhatsAppOrderingCard`, `src/domain/aiWhatsAppOrderingUi.ts`) mostrar o estado real — inclusive o estado intermediário "integração pronta, mas ainda não ativado para esta loja".
+
+O simulador (`server/aiSimulator.ts`) honra a mesma flag: se a empresa não estiver habilitada, o simulador também cai pra IA genérica, pra sempre refletir o que o cliente realmente recebe.
 
 ## Legacy / ignore
 
@@ -249,10 +257,20 @@ VITE_SUPABASE_URL   # Supabase project URL (frontend)
 VITE_SUPABASE_ANON_KEY  # Supabase anon key (frontend)
 SUPABASE_URL        # Supabase project URL (server)
 SUPABASE_SERVICE_KEY    # Supabase service role key (server)
-ZELOMENU_INTERNAL_BASE_URL       # URL privada do ZeloMenu (default local http://127.0.0.1:3101)
+ZELOMENU_INTERNAL_BASE_URL       # URL privada do ZeloMenu. Default local http://127.0.0.1:3101 — mas em produção
+                                  # (NODE_ENV=production ou PUBLIC_APP_URL público) uma chave presente + esta ausente
+                                  # NÃO cai mais no default: loga um erro estruturado e desativa o caminho canônico
+                                  # (PR 1.6/I-6, server/zeloMenuInternalClient.ts). Sempre setar explicitamente em prod.
 ZELO_INTERNAL_API_KEY            # segredo compartilhado, nunca expor em log/copy
-ZELOMENU_INTERNAL_TIMEOUT_MS     # timeout do client interno (default 4000)
+ZELOMENU_INTERNAL_TIMEOUT_MS     # timeout do client interno para search/get/update (default 4000)
+ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS  # timeout maior só para confirm_draft — 5+ round trips no lado da autoridade (default 12000)
+AUDIO_TRANSCRIPTION_FETCH_TIMEOUT_MS   # download do áudio do WhatsApp antes de transcrever (default 10000, teto 15000)
+AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS # chamada de transcrição em si (default 10000, teto 15000)
+AUDIO_TRANSCRIPTION_WAIT_MS      # quanto o turno espera por uma transcrição em andamento antes de responder sem ela
+                                  # (default 10000, teto 10000 — depois disso o rearm por settle assume, não o turno atual)
 ```
+
+Todas as env vars acima recebem uma linha de log única no boot (`[Server] ai-hybrid-ordering env status at startup`) dizendo apenas se cada uma está presente — nunca o valor.
 
 ## Whatsmiau API (Evolution API v2 wrapper)
 

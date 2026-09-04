@@ -16,12 +16,6 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    date: '2026-09-03',
-    category: 'big',
-    title: 'Pedido por mensagem ficou mais fácil',
-    description: 'Agora você pode escrever ou mandar áudio para montar o pedido com escolhas guiadas antes da confirmação.',
-  },
-  {
     date: '2026-09-01',
     category: 'hotfix',
     title: 'Link do cardápio nas respostas da IA',
