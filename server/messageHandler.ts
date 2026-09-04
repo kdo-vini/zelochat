@@ -729,14 +729,31 @@ function shouldTriggerAutoReplyForMessage(msg: any): boolean {
   );
 }
 
+/**
+ * FIX 2026-09-04 (C6 / PR I-9): when a provider echoes an interactive tap
+ * with no display title, this used to fall back to the raw `interactive.id`
+ * — for a canonical confirm that id is `ZOC:<confirmationToken>|<revision>`,
+ * an authorization-bearing value that then landed in the operator-visible
+ * chat bubble AND in `classifyOrderingTurn`'s input on the next read.
+ * Routing never depended on this stored text (`router.ts` re-derives the
+ * button id straight from the live webhook payload, independent of what
+ * gets persisted here), so a generic, human-readable placeholder is exactly
+ * as functional and never leaks anything a customer or operator shouldn't
+ * see verbatim.
+ */
+function describeInteractiveWithoutTitle(source: 'button' | 'list' | 'template' | 'native_flow'): string {
+  return source === 'list' ? '[Item selecionado na lista]' : '[Opção selecionada]';
+}
+
 function extractText(msg: any): string | null {
   const message = unwrapMessage(msg.message);
   if (!message) return null;
 
   // Keep every provider interactive shape on the same semantic path. The
-  // visible title is only a preview; routing always uses the bounded ID.
+  // visible title is only a preview; routing always uses the bounded ID
+  // read directly from the live webhook payload, never from stored content.
   const interactive = normalizeIncomingInteractive(message);
-  if (interactive) return interactive.title ?? interactive.id;
+  if (interactive) return interactive.title ?? describeInteractiveWithoutTitle(interactive.source);
 
   if (message.conversation) return message.conversation;
   if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
@@ -888,6 +905,9 @@ export const __mediaExtractionForTests = {
   normalizeBase64Payload,
   normalizeDocumentMime,
 };
+
+/** C6 / PR I-9 — exposed for tests only, same pattern as `__mediaExtractionForTests`. */
+export const __extractTextForTests = { extractText };
 
 async function extractAttachmentDataUrl(msg: any, mimeType: string, fileName: string, empresaId: string): Promise<string | undefined> {
   // Strip parameters (`; codecs=opus`, charset, etc.) antes de qualquer uso em Storage
