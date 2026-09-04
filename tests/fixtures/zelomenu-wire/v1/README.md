@@ -30,8 +30,10 @@ side — regenerate here and re-copy.**
   `confirm_draft`. Auto-accept is intentionally disabled in the fixture
   generator so this freezes at `state: 'confirmed_waiting_review'`, the state
   a restaurant operator actually sees before acting on the order — not every
-  order reaches `'accepted'` immediately.
-- `snapshot.cancelled.json` — a fresh cart cancelled via `cancel_draft`.
+  order reaches `'accepted'` immediately. Closed snapshots always carry
+  `readyForConfirmation: false`.
+- `snapshot.cancelled.json` — a fresh cart cancelled via `cancel_draft`, also
+  with `readyForConfirmation: false`.
 - `snapshot.review-required.json` — a ready order whose delivery fee changed
   between the summary and the confirm click: `confirm_draft` returns
   `requires_review` instead of `confirmed`, so the order stays
@@ -89,3 +91,16 @@ The test fails loudly if the generated content differs from what is
 committed here — that is intentional drift detection. Regenerate, review the
 diff like any other code change, and commit both the source change and the
 regenerated JSON together.
+
+## Synthetic persistence values
+
+The recorder executes the real materializer and the real
+`SupabaseConversationOrderingAdapter`, including its scoped reads and row
+mapping. With database access intentionally unavailable, only the persistence
+boundary is synthetic: session/ordering/order UUIDs, database timestamps, the
+canonical order's initial `pending_review` status, and the confirm-time
+delivery-change RPC outcome are deterministic stand-ins for values normally
+created by PostgreSQL. The fake returns the exact snake_case row shape consumed
+by the production adapter. Catalog pricing, requirements, readiness, delivery
+snapshot shaping, and the customer phone derived from `remoteJid` all come from
+production functions rather than fixture-specific calculations.

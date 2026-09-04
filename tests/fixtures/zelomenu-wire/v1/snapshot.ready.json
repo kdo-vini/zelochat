@@ -1,4 +1,14 @@
 {
+  "orderingId": "30000000-0000-4000-8000-000000000001",
+  "empresaId": "10000000-0000-4000-8000-0000000000f1",
+  "remoteJid": "5511900000001@s.whatsapp.net",
+  "state": "cart_open",
+  "revision": 2,
+  "updatedAt": "2026-09-03T12:02:00.000Z",
+  "customer": {
+    "name": "Cliente Fixture da Silva",
+    "phone": "5511900000001"
+  },
   "cart": {
     "items": [
       {
@@ -43,10 +53,6 @@
     ],
     "observations": null
   },
-  "customer": {
-    "name": "Cliente Fixture da Silva",
-    "phone": null
-  },
   "fulfillment": {
     "type": "delivery",
     "asap": true,
@@ -54,14 +60,22 @@
     "pickupTime": null,
     "deliveryAddress": "Rua Fixture, 100",
     "deliveryNeighborhood": "Bairro Fixture",
-    "deliveryNumber": "100",
     "deliveryFee": 8,
-    "deliveryFeeToConfirm": false
-  },
-  "payment": {
-    "declaredMethod": "pix",
-    "pixReceiptRequired": true,
-    "pixReceiptApproved": false
+    "deliveryFeeToConfirm": false,
+    "deliveryPostalCode": "01001000",
+    "deliveryNumber": "100",
+    "deliveryComplement": null,
+    "deliveryStreet": "Rua Fixture",
+    "deliveryCity": "São Paulo",
+    "deliveryState": "SP",
+    "deliveryLatitude": -23.55052,
+    "deliveryLongitude": -46.633308,
+    "deliveryDistanceM": 2400,
+    "deliveryStatus": "eligible",
+    "deliveryCacheLayer": "memory",
+    "deliveryQuoteRequestId": null,
+    "deliveryPricingRuleLabel": null,
+    "deliveryQuoteOverride": null
   },
   "pricing": {
     "subtotal": 25,
@@ -72,10 +86,74 @@
     "couponDiscountValue": null,
     "total": 33
   },
+  "payment": {
+    "declaredMethod": "pix",
+    "pixReceiptRequired": false,
+    "pixReceiptApproved": false
+  },
+  "pessoaId": null,
   "revalidation": {
     "checkedAt": "2026-09-03T12:01:00.000Z",
     "ok": true,
-    "issues": []
+    "issues": [],
+    "previewCart": {
+      "items": [
+        {
+          "lineId": "linha-massa-1",
+          "productId": 1007,
+          "productName": "Monte Sua Massa",
+          "baseUnitPrice": 0,
+          "selectedModifiers": [
+            {
+              "groupId": "g001",
+              "groupName": "Escolha a massa",
+              "kind": "variacao",
+              "selectedOptions": [
+                {
+                  "optionId": "o002",
+                  "optionName": "Talharim",
+                  "priceDelta": 25,
+                  "quantity": 1
+                }
+              ]
+            },
+            {
+              "groupId": "g002",
+              "groupName": "Escolha o molho",
+              "kind": "adicional",
+              "selectedOptions": [
+                {
+                  "optionId": "o003",
+                  "optionName": "Molho ao sugo",
+                  "priceDelta": 0,
+                  "quantity": 1
+                }
+              ]
+            }
+          ],
+          "modifierDeltaTotal": 25,
+          "quantity": 1,
+          "unitPrice": 25,
+          "lineTotal": 25,
+          "notes": null
+        }
+      ],
+      "observations": null
+    },
+    "previewPricing": {
+      "subtotal": 25,
+      "deliveryFee": 8,
+      "discount": 0,
+      "couponCode": null,
+      "couponDiscountType": null,
+      "couponDiscountValue": null,
+      "total": 33
+    },
+    "previewPayment": {
+      "declaredMethod": "pix",
+      "pixReceiptRequired": false,
+      "pixReceiptApproved": false
+    }
   },
   "requirements": [
     {
@@ -199,13 +277,6 @@
     }
   ],
   "readyForConfirmation": true,
-  "empresaId": "10000000-0000-4000-8000-0000000000f1",
-  "remoteJid": "5511900000001@s.whatsapp.net",
-  "pessoaId": null,
-  "orderingId": "30000000-0000-4000-8000-000000000001",
-  "state": "cart_open",
-  "revision": 2,
-  "updatedAt": "2026-09-03T12:02:00.000Z",
   "order": null,
   "confirmationAction": {
     "type": "confirm_order",

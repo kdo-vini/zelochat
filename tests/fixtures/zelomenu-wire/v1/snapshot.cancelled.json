@@ -1,4 +1,14 @@
 {
+  "orderingId": "30000000-0000-4000-8000-000000000001",
+  "empresaId": "10000000-0000-4000-8000-0000000000f1",
+  "remoteJid": "5511900000001@s.whatsapp.net",
+  "state": "cancelled",
+  "revision": 2,
+  "updatedAt": "2026-09-03T12:02:00.000Z",
+  "customer": {
+    "name": "Cliente Fixture da Silva",
+    "phone": "5511900000001"
+  },
   "cart": {
     "items": [
       {
@@ -16,10 +26,6 @@
     ],
     "observations": null
   },
-  "customer": {
-    "name": "Cliente Fixture da Silva",
-    "phone": null
-  },
   "fulfillment": {
     "type": "pickup",
     "asap": true,
@@ -28,12 +34,21 @@
     "deliveryAddress": null,
     "deliveryNeighborhood": null,
     "deliveryFee": 0,
-    "deliveryFeeToConfirm": false
-  },
-  "payment": {
-    "declaredMethod": "dinheiro",
-    "pixReceiptRequired": false,
-    "pixReceiptApproved": false
+    "deliveryFeeToConfirm": false,
+    "deliveryPostalCode": null,
+    "deliveryNumber": null,
+    "deliveryComplement": null,
+    "deliveryStreet": null,
+    "deliveryCity": null,
+    "deliveryState": null,
+    "deliveryLatitude": null,
+    "deliveryLongitude": null,
+    "deliveryDistanceM": null,
+    "deliveryStatus": "not_applicable",
+    "deliveryCacheLayer": null,
+    "deliveryQuoteRequestId": null,
+    "deliveryPricingRuleLabel": null,
+    "deliveryQuoteOverride": null
   },
   "pricing": {
     "subtotal": 12,
@@ -44,20 +59,50 @@
     "couponDiscountValue": null,
     "total": 12
   },
+  "payment": {
+    "declaredMethod": "dinheiro",
+    "pixReceiptRequired": false,
+    "pixReceiptApproved": false
+  },
+  "pessoaId": null,
   "revalidation": {
     "checkedAt": "2026-09-03T12:00:00.000Z",
     "ok": true,
-    "issues": []
+    "issues": [],
+    "previewCart": {
+      "items": [
+        {
+          "lineId": "linha-bebida-1",
+          "productId": 1001,
+          "productName": "Coca-Cola Original 350 ml",
+          "baseUnitPrice": 6,
+          "selectedModifiers": [],
+          "modifierDeltaTotal": 0,
+          "quantity": 2,
+          "unitPrice": 6,
+          "lineTotal": 12,
+          "notes": null
+        }
+      ],
+      "observations": null
+    },
+    "previewPricing": {
+      "subtotal": 12,
+      "deliveryFee": 0,
+      "discount": 0,
+      "couponCode": null,
+      "couponDiscountType": null,
+      "couponDiscountValue": null,
+      "total": 12
+    },
+    "previewPayment": {
+      "declaredMethod": "dinheiro",
+      "pixReceiptRequired": false,
+      "pixReceiptApproved": false
+    }
   },
   "requirements": [],
-  "readyForConfirmation": true,
-  "empresaId": "10000000-0000-4000-8000-0000000000f1",
-  "remoteJid": "5511900000001@s.whatsapp.net",
-  "pessoaId": null,
-  "orderingId": "30000000-0000-4000-8000-000000000001",
-  "state": "cancelled",
-  "revision": 2,
-  "updatedAt": "2026-09-03T12:02:00.000Z",
+  "readyForConfirmation": false,
   "order": null,
   "confirmationAction": null,
   "requiresReview": false

@@ -1,4 +1,14 @@
 {
+  "orderingId": "30000000-0000-4000-8000-000000000001",
+  "empresaId": "10000000-0000-4000-8000-0000000000f1",
+  "remoteJid": "5511900000001@s.whatsapp.net",
+  "state": "cart_open",
+  "revision": 1,
+  "updatedAt": "2026-09-03T12:01:00.000Z",
+  "customer": {
+    "name": "Cliente Fixture da Silva",
+    "phone": "5511900000001"
+  },
   "cart": {
     "items": [
       {
@@ -55,24 +65,29 @@
     ],
     "observations": null
   },
-  "customer": {
-    "name": "Cliente Fixture da Silva",
-    "phone": null
-  },
   "fulfillment": {
     "type": null,
-    "asap": true,
+    "asap": false,
     "pickupDate": null,
     "pickupTime": null,
     "deliveryAddress": null,
     "deliveryNeighborhood": null,
     "deliveryFee": 0,
-    "deliveryFeeToConfirm": false
-  },
-  "payment": {
-    "declaredMethod": null,
-    "pixReceiptRequired": false,
-    "pixReceiptApproved": false
+    "deliveryFeeToConfirm": false,
+    "deliveryPostalCode": null,
+    "deliveryNumber": null,
+    "deliveryComplement": null,
+    "deliveryStreet": null,
+    "deliveryCity": null,
+    "deliveryState": null,
+    "deliveryLatitude": null,
+    "deliveryLongitude": null,
+    "deliveryDistanceM": null,
+    "deliveryStatus": null,
+    "deliveryCacheLayer": null,
+    "deliveryQuoteRequestId": null,
+    "deliveryPricingRuleLabel": null,
+    "deliveryQuoteOverride": null
   },
   "pricing": {
     "subtotal": 22,
@@ -83,10 +98,86 @@
     "couponDiscountValue": null,
     "total": 22
   },
+  "payment": {
+    "declaredMethod": null,
+    "pixReceiptRequired": false,
+    "pixReceiptApproved": false
+  },
+  "pessoaId": null,
   "revalidation": {
     "checkedAt": "2026-09-03T12:00:00.000Z",
     "ok": true,
-    "issues": []
+    "issues": [],
+    "previewCart": {
+      "items": [
+        {
+          "lineId": "linha-massa-1",
+          "productId": 1007,
+          "productName": "Monte Sua Massa",
+          "baseUnitPrice": 0,
+          "selectedModifiers": [
+            {
+              "groupId": "g001",
+              "groupName": "Escolha a massa",
+              "kind": "variacao",
+              "selectedOptions": [
+                {
+                  "optionId": "o001",
+                  "optionName": "Espaguete",
+                  "priceDelta": 22,
+                  "quantity": 1
+                }
+              ]
+            },
+            {
+              "groupId": "g004",
+              "groupName": "Acompanhamentos",
+              "kind": "adicional",
+              "selectedOptions": [
+                {
+                  "optionId": "o008",
+                  "optionName": "Salada",
+                  "priceDelta": 0,
+                  "quantity": 1
+                }
+              ]
+            }
+          ],
+          "modifierDeltaTotal": 22,
+          "quantity": 1,
+          "unitPrice": 22,
+          "lineTotal": 22,
+          "notes": null
+        },
+        {
+          "lineId": "linha-massa-2",
+          "productId": 1007,
+          "productName": "Monte Sua Massa",
+          "baseUnitPrice": 0,
+          "selectedModifiers": [],
+          "modifierDeltaTotal": 0,
+          "quantity": 1,
+          "unitPrice": 0,
+          "lineTotal": 0,
+          "notes": null
+        }
+      ],
+      "observations": null
+    },
+    "previewPricing": {
+      "subtotal": 22,
+      "deliveryFee": 0,
+      "discount": 0,
+      "couponCode": null,
+      "couponDiscountType": null,
+      "couponDiscountValue": null,
+      "total": 22
+    },
+    "previewPayment": {
+      "declaredMethod": null,
+      "pixReceiptRequired": false,
+      "pixReceiptApproved": false
+    }
   },
   "requirements": [
     {
@@ -449,16 +540,19 @@
       "type": "payment_method",
       "name": "Escolha a forma de pagamento.",
       "blocking": true
+    },
+    {
+      "id": "schedule",
+      "type": "schedule",
+      "name": "Informe a data e o horário do pedido.",
+      "blocking": true,
+      "missingFields": [
+        "date",
+        "time"
+      ]
     }
   ],
   "readyForConfirmation": false,
-  "empresaId": "10000000-0000-4000-8000-0000000000f1",
-  "remoteJid": "5511900000001@s.whatsapp.net",
-  "pessoaId": null,
-  "orderingId": "30000000-0000-4000-8000-000000000001",
-  "state": "cart_open",
-  "revision": 1,
-  "updatedAt": "2026-09-03T12:01:00.000Z",
   "order": null,
   "confirmationAction": null,
   "requiresReview": false
