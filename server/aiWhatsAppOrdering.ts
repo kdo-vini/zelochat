@@ -93,7 +93,20 @@ type OrderingErrorRecovery =
   | { action: 'suppress' }
   | { action: 'resync'; current: OrderingSnapshot }
   | { action: 'clear_and_tell'; text: string }
-  | { action: 'retry_later'; text: string }
+  | {
+    action: 'retry_later';
+    text: string;
+    /**
+     * FIX 2026-09-04 (PR I-5): `false` for the circuit breaker's own error
+     * code — while ZeloMenu is known-down for this empresa (the breaker is
+     * open), every turn must keep getting the same friendly retry reply and
+     * NEVER spend the per-conversation `MAX_RETRY_LATER_ATTEMPTS` budget,
+     * or every open conversation would still independently escalate once
+     * its own small counter ran out — exactly the flood I-5 exists to stop.
+     * Omitted (defaults to counting) for every other transient code.
+     */
+    countsTowardLimit?: boolean;
+  }
   | { action: 'escalate' };
 
 export function classifyOrderingFailure(error: unknown): OrderingErrorRecovery {
@@ -115,6 +128,11 @@ export function classifyOrderingFailure(error: unknown): OrderingErrorRecovery {
     case 'INDISPONIVEL':
     case 'ORDERING_WIRE_UNSUPPORTED':
       return { action: 'retry_later', text: 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?' };
+    // PR I-5: the circuit breaker's own code (server/orderingCircuitBreaker.ts
+    // via zeloMenuInternalClient.ts) — never counts toward the escalation
+    // budget, see the field doc on `countsTowardLimit`.
+    case 'INDISPONIVEL_CIRCUITO_ABERTO':
+      return { action: 'retry_later', text: 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?', countsTowardLimit: false };
     default:
       return { action: 'escalate' };
   }
@@ -906,6 +924,13 @@ export async function tryHandleAiWhatsAppOrdering(
         return { handled: true, response: recovery.text };
       }
       if (recovery.action === 'retry_later') {
+        // PR I-5: a breaker-open failure never spends this conversation's
+        // retry budget — reply and return without touching the counter.
+        if (recovery.countsTowardLimit === false) {
+          await sendText(permit, recovery.text, 'ordering-retry-later', dryRun, isPermitCurrent);
+          metric('ordering_turn', 'retry_later', startedAt);
+          return { handled: true, response: recovery.text };
+        }
         const attempts = (priorState?.retryFailureCount ?? 0) + 1;
         if (attempts <= MAX_RETRY_LATER_ATTEMPTS) {
           await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds, { retryFailureCount: attempts }, isPermitCurrent);

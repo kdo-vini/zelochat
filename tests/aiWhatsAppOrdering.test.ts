@@ -645,11 +645,25 @@ await assert.rejects(
     assert.equal(classifyOrderingFailure(withoutCurrent(code)).action, 'clear_and_tell');
   }
   for (const code of ['MUITAS_REQUISICOES', 'PEDIDO_INDISPONIVEL', 'TIMEOUT', 'INDISPONIVEL', 'ORDERING_WIRE_UNSUPPORTED']) {
-    assert.equal(classifyOrderingFailure(withoutCurrent(code, 503)).action, 'retry_later');
+    const recovery = classifyOrderingFailure(withoutCurrent(code, 503));
+    assert.equal(recovery.action, 'retry_later');
+    if (recovery.action === 'retry_later') {
+      assert.notEqual(recovery.countsTowardLimit, false, `${code} must still count toward MAX_RETRY_LATER_ATTEMPTS (escalation is still reachable)`);
+    }
   }
   assert.equal(classifyOrderingFailure(withoutCurrent('NAO_AUTORIZADO', 401)).action, 'escalate');
   assert.equal(classifyOrderingFailure(withoutCurrent('COMANDO_INVALIDO', 400)).action, 'escalate');
   assert.equal(classifyOrderingFailure(new Error('not a ZeloMenuInternalError')).action, 'escalate');
+
+  // PR I-5 — the circuit breaker's own error code always retries, and NEVER
+  // counts toward MAX_RETRY_LATER_ATTEMPTS: while ZeloMenu is known-down for
+  // this empresa, every turn gets the same friendly reply and never falls
+  // through to a per-conversation escalation.
+  const breakerRecovery = classifyOrderingFailure(withoutCurrent('INDISPONIVEL_CIRCUITO_ABERTO', 503));
+  assert.equal(breakerRecovery.action, 'retry_later');
+  if (breakerRecovery.action === 'retry_later') {
+    assert.equal(breakerRecovery.countsTowardLimit, false, 'a breaker-open failure must not spend the conversation\'s retry budget');
+  }
 }
 
 // CT #9 — a confirm TIMEOUT must reconcile with a fresh GET before telling
