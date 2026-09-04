@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
 import type { StoredSession } from './messageHandler.js';
 import { addToolMessage, getSession } from './messageHandler.js';
@@ -177,9 +178,60 @@ export interface AiOrderingHandlerOptions {
   permitCheck?: PermitCheck;
 }
 
-function metric(event: string, outcome: string, startedAt = Date.now()): void {
-  // Strict allowlist: never include JID, message text, names, addresses, token or cart.
-  console.info('[AiOrderingMetric]', JSON.stringify({ event, outcome, durationMs: Date.now() - startedAt }));
+/**
+ * FIX 2026-09-04 (PR 1.30/1.31): the pipeline's own canonical stages —
+ * exactly these 10, so a new call site is forced to pick one instead of
+ * inventing a fresh ad-hoc event name. `entry`/`compose` cover the
+ * turn-shaping steps before any mutation; `plan` covers catalog/patch
+ * planning (including "nothing to order, answered a catalog question" and
+ * "fell through to the generic AI model" — the canonical-vs-generic split
+ * PR 1.31 asks for); `update`/`requirement`/`summary`/`confirm`/`cancel`
+ * mirror the ZeloMenu mutation/presentation steps; `escalate`/`suppress` are
+ * the two terminal failure/no-op paths.
+ */
+export const ORDERING_METRIC_STAGES = [
+  'entry', 'compose', 'plan', 'update', 'requirement', 'summary', 'confirm', 'cancel', 'escalate', 'suppress',
+] as const;
+export type OrderingMetricStage = typeof ORDERING_METRIC_STAGES[number];
+
+export interface OrderingMetricContext {
+  stage: OrderingMetricStage;
+  outcome: string;
+  empresaId: string;
+  /** Raw JID — hashed before it ever reaches the log line, never logged as-is. */
+  jid: string;
+  orderingId?: string | null;
+  revision?: number | null;
+  errorCode?: string | null;
+  startedAt?: number;
+}
+
+/**
+ * Pure — computes the exact JSON shape `metric()` logs. Exported so the
+ * contract (fields present, JID never appears raw, the hash is stable) can
+ * be unit tested without a live turn (this codebase's test suite has no
+ * Supabase mocking to drive a full turn through every stage).
+ */
+export function buildOrderingMetricLine(ctx: OrderingMetricContext): Record<string, unknown> {
+  return {
+    stage: ctx.stage,
+    outcome: ctx.outcome,
+    empresaId: ctx.empresaId,
+    // First 12 hex of sha256(jid) — enough to correlate repeated log lines
+    // for the SAME conversation across a turn/incident without being able to
+    // recover the phone number from the log.
+    conversationKey: createHash('sha256').update(ctx.jid, 'utf8').digest('hex').slice(0, 12),
+    orderingId: ctx.orderingId ?? null,
+    revision: ctx.revision ?? null,
+    errorCode: ctx.errorCode ?? null,
+    durationMs: Date.now() - (ctx.startedAt ?? Date.now()),
+  };
+}
+
+function metric(ctx: OrderingMetricContext): void {
+  // Strict allowlist enforced by buildOrderingMetricLine's fixed shape:
+  // never JID (only its hash), message text, names, addresses, token or cart.
+  console.info('[AiOrderingMetric]', JSON.stringify(buildOrderingMetricLine(ctx)));
 }
 
 async function dispatchAiPayload(
@@ -714,6 +766,13 @@ export async function tryHandleAiWhatsAppOrdering(
   const priorState = findLatestOrderingState(session.messages);
   const composition = composeOrderingTurn(session.messages, priorState);
   const text = composition.text || lastUserText(session);
+  // PR 1.30/1.31: base fields every metric() call in this turn shares.
+  const metricBase = { empresaId, jid, startedAt };
+  metric({
+    ...metricBase, stage: 'compose',
+    outcome: composition.failedAudioMessageIds.length > 0 ? 'audio_failed' : 'ok',
+    orderingId: priorState?.orderingId, revision: priorState?.revision,
+  });
   // Hoisted so the catch-all failure handler below can still attempt a
   // best-effort cursor advance (escalation/suppression are terminal paths
   // too — see the brief's exit list) when a live draft was already loaded.
@@ -746,6 +805,7 @@ export async function tryHandleAiWhatsAppOrdering(
     try {
       await dispatchAiPayload(permit, response, 'entry', dryRun, isPermitCurrent);
       entryDispatched = true;
+      metric({ ...metricBase, stage: 'entry', outcome: 'sent' });
       if (isOrderingGreeting(text)) return { handled: true, response: response.text };
     } catch (error) {
       if (error instanceof OrderingSuppressedError) return { handled: true };
@@ -761,10 +821,16 @@ export async function tryHandleAiWhatsAppOrdering(
   const hasPointer = Boolean(priorState);
   const initialTurn = classifyOrderingTurn(text, hasPointer);
   const followUp = !hasPointer && isOrderingFollowUp(session.messages);
-  if (initialTurn.kind === 'none' && !followUp) return { handled: entryDispatched };
+  if (initialTurn.kind === 'none' && !followUp) {
+    // PR 1.31 — the canonical-vs-generic split: `handled:false` here is
+    // exactly the signal `server/ai.ts` uses to let the generic AI model
+    // answer instead. Without this, that fall-through was invisible.
+    metric({ ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'fell_through_generic' });
+    return { handled: entryDispatched };
+  }
   const client = options.client ?? ZeloMenuInternalClient.fromEnv();
   if (!client) {
-    metric('ordering_turn', 'configuration_missing', startedAt);
+    metric({ ...metricBase, stage: 'escalate', outcome: 'configuration_missing' });
     if (dryRun) return { handled: false };
     try {
       await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
@@ -790,18 +856,33 @@ export async function tryHandleAiWhatsAppOrdering(
       // stale `priorState` — every non-blocking requirement was declined
       // above, so (absent a NEW blocking one) there is nothing left to
       // offer and this correctly falls through to the summary.
-      const response = hasPendingOrderingRequirements(current, { declinedOptionalRequirementIds })
+      const stillPending = hasPendingOrderingRequirements(current, { declinedOptionalRequirementIds });
+      const response = stillPending
         ? await sendNextRequirement(permit, current, dryRun, composition.consumedMessageIds, undefined, undefined, 0, isPermitCurrent)
         : await sendSummary(permit, current, dryRun, composition.consumedMessageIds, isPermitCurrent);
+      metric({
+        ...metricBase, stage: stillPending ? 'requirement' : 'summary', outcome: 'declined_extras',
+        orderingId: current.orderingId, revision: current.revision,
+      });
       return { handled: true, response };
     }
-    if (turn.kind === 'none' && !followUp) return { handled: entryDispatched };
+    if (turn.kind === 'none' && !followUp) {
+      metric({
+        ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'fell_through_generic',
+        orderingId: current?.orderingId, revision: current?.revision,
+      });
+      return { handled: entryDispatched };
+    }
 
     if (!current && canonical && (turn.kind === 'confirm' || turn.kind === 'ask_change' || turn.kind === 'cancel')) {
       const response = canonical.order || canonical.state.startsWith('confirmed') || canonical.state === 'accepted'
         ? 'Esse pedido já foi confirmado. Se precisar, posso chamar um atendente.'
         : 'Esse pedido já foi finalizado. Quer começar um novo?';
       await sendText(permit, response, 'already-closed', dryRun, isPermitCurrent);
+      metric({
+        ...metricBase, stage: turn.kind === 'cancel' ? 'cancel' : 'confirm', outcome: 'already_closed',
+        orderingId: canonical.orderingId, revision: canonical.revision,
+      });
       return { handled: true, response };
     }
 
@@ -809,6 +890,7 @@ export async function tryHandleAiWhatsAppOrdering(
       if (dryRun) {
         const response = `${renderOrderingSummary(current)}\n\nSimulação: a confirmação não foi enviada.`;
         await sendText(permit, response, `confirm-preview:${current.orderingId}:${current.revision}`, true, isPermitCurrent);
+        metric({ ...metricBase, stage: 'confirm', outcome: 'dry_run_preview', orderingId: current.orderingId, revision: current.revision });
         return { handled: true, response };
       }
       // FIX 2026-09-04 (B2 — "send only what the parser accepts"): a
@@ -826,7 +908,7 @@ export async function tryHandleAiWhatsAppOrdering(
       // never shown a summary for.
       const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId, permit, current.confirmationAction?.token, priorState?.revision, isPermitCurrent);
       const response = await completeConfirmation(permit, outcome, dryRun, composition.consumedMessageIds, isPermitCurrent);
-      metric('ordering_confirm', 'handled', startedAt);
+      metric({ ...metricBase, stage: 'confirm', outcome: outcome.kind, orderingId: outcome.snapshot.orderingId, revision: outcome.snapshot.revision });
       return { handled: true, response };
     }
     if (current && turn.kind === 'cancel') {
@@ -838,13 +920,14 @@ export async function tryHandleAiWhatsAppOrdering(
       await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
       const response = 'Pedido cancelado. Se quiser começar outro, é só me dizer.';
       await sendText(permit, response, 'cancelled', dryRun, isPermitCurrent);
-      metric('ordering_cancel', 'handled', startedAt);
+      metric({ ...metricBase, stage: 'cancel', outcome: 'handled', orderingId: current.orderingId, revision: current.revision });
       return { handled: true, response };
     }
     if (current && (turn.kind === 'ask_change' || (turn.kind === 'alter' && !turn.instruction.trim()))) {
       await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
       const response = 'Tudo bem. O que você quer alterar no pedido?';
       await sendText(permit, response, 'ask-change', dryRun, isPermitCurrent);
+      metric({ ...metricBase, stage: 'update', outcome: 'ask_change', orderingId: current.orderingId, revision: current.revision });
       return { handled: true, response };
     }
 
@@ -867,12 +950,12 @@ export async function tryHandleAiWhatsAppOrdering(
       await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
       const response = renderCatalogReply(catalog, query, entry.menuUrl);
       await sendText(permit, response, 'catalog', dryRun, isPermitCurrent);
-      metric('catalog_search', 'answered', startedAt);
+      metric({ ...metricBase, stage: 'plan', outcome: 'catalog_reply', orderingId: current?.orderingId, revision: current?.revision });
       return { handled: true, response };
     }
     if (dryRun) {
       const response = renderOrderingDraftPreview(draft, catalog);
-      metric('ordering_update', 'dry_run_preview', startedAt);
+      metric({ ...metricBase, stage: 'update', outcome: 'dry_run_preview', orderingId: current?.orderingId, revision: current?.revision });
       return { handled: true, response };
     }
     // FIX 2026-09-04 (CT #8): sending `customer: { name: undefined, ... }`
@@ -889,30 +972,48 @@ export async function tryHandleAiWhatsAppOrdering(
       conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
     });
     current = updated;
+    metric({ ...metricBase, stage: 'update', outcome: 'success', orderingId: updated.orderingId, revision: updated.revision });
     // FIX 2026-09-04 (C4 / FN I1): route through the presenter (which offers
     // any pending optional/"extras" group exactly once) whenever there is
     // still something to ask — never jump straight to the confirm summary
     // just because ZeloMenu's blocking requirements are all satisfied.
-    const response = hasPendingOrderingRequirements(updated, priorState)
+    const updateStillPending = hasPendingOrderingRequirements(updated, priorState);
+    const response = updateStillPending
       ? await sendNextRequirement(permit, updated, dryRun, composition.consumedMessageIds, client, messageId, 0, isPermitCurrent)
       : await sendSummary(permit, updated, dryRun, composition.consumedMessageIds, isPermitCurrent);
-    metric('ordering_update', 'summary_sent', startedAt);
+    metric({
+      ...metricBase, stage: updateStillPending ? 'requirement' : 'summary', outcome: 'sent',
+      orderingId: updated.orderingId, revision: updated.revision,
+    });
     return { handled: true, response };
   } catch (error) {
-    if (error instanceof OrderingSuppressedError) return { handled: true };
+    // PR 1.30: the one error-code field every failure/suppress metric below
+    // carries — never any other error detail (no message, no stack).
+    const errorCode = error instanceof ZeloMenuInternalError ? error.code : null;
+    if (error instanceof OrderingSuppressedError) {
+      metric({ ...metricBase, stage: 'suppress', outcome: 'permit_stale', orderingId: current?.orderingId, revision: current?.revision });
+      return { handled: true };
+    }
     // FIX 2026-09-04 (B3 — explicit error-code mapping): every ZeloMenu
     // error used to collapse into the same generic escalation. See
     // `classifyOrderingFailure`'s docstring for the behavior each action
     // implements.
     const recovery = classifyOrderingFailure(error);
-    if (recovery.action === 'suppress') return { handled: true };
+    if (recovery.action === 'suppress') {
+      metric({ ...metricBase, stage: 'suppress', outcome: 'ai_turn_revoked', errorCode, orderingId: current?.orderingId, revision: current?.revision });
+      return { handled: true };
+    }
     try {
       if (recovery.action === 'resync') {
         await persistOrderingState(permit, recovery.current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
-        const response = hasPendingOrderingRequirements(recovery.current, priorState)
+        const resyncStillPending = hasPendingOrderingRequirements(recovery.current, priorState);
+        const response = resyncStillPending
           ? await sendNextRequirement(permit, recovery.current, dryRun, composition.consumedMessageIds, client, messageId, 0, isPermitCurrent)
           : await sendSummary(permit, recovery.current, dryRun, composition.consumedMessageIds, isPermitCurrent);
-        metric('ordering_turn', 'resynced', startedAt);
+        metric({
+          ...metricBase, stage: resyncStillPending ? 'requirement' : 'summary', outcome: 'resynced', errorCode,
+          orderingId: recovery.current.orderingId, revision: recovery.current.revision,
+        });
         return { handled: true, response };
       }
       if (recovery.action === 'clear_and_tell') {
@@ -920,7 +1021,7 @@ export async function tryHandleAiWhatsAppOrdering(
         // persist here — the NEXT turn opens a fresh draft instead of
         // retrying this one.
         await sendText(permit, recovery.text, 'ordering-closed-recovery', dryRun, isPermitCurrent);
-        metric('ordering_turn', 'closed_recovered', startedAt);
+        metric({ ...metricBase, stage: 'cancel', outcome: 'closed_recovered', errorCode, orderingId: current?.orderingId ?? priorState?.orderingId, revision: current?.revision ?? priorState?.revision });
         return { handled: true, response: recovery.text };
       }
       if (recovery.action === 'retry_later') {
@@ -928,14 +1029,14 @@ export async function tryHandleAiWhatsAppOrdering(
         // retry budget — reply and return without touching the counter.
         if (recovery.countsTowardLimit === false) {
           await sendText(permit, recovery.text, 'ordering-retry-later', dryRun, isPermitCurrent);
-          metric('ordering_turn', 'retry_later', startedAt);
+          metric({ ...metricBase, stage: 'update', outcome: 'circuit_open', errorCode, orderingId: current?.orderingId ?? priorState?.orderingId, revision: current?.revision ?? priorState?.revision });
           return { handled: true, response: recovery.text };
         }
         const attempts = (priorState?.retryFailureCount ?? 0) + 1;
         if (attempts <= MAX_RETRY_LATER_ATTEMPTS) {
           await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds, { retryFailureCount: attempts }, isPermitCurrent);
           await sendText(permit, recovery.text, 'ordering-retry-later', dryRun, isPermitCurrent);
-          metric('ordering_turn', 'retry_later', startedAt);
+          metric({ ...metricBase, stage: 'update', outcome: 'retry_later', errorCode, orderingId: current?.orderingId ?? priorState?.orderingId, revision: current?.revision ?? priorState?.revision });
           return { handled: true, response: recovery.text };
         }
         // Bounded policy (PR I-5): stop asking the customer to try again
@@ -946,7 +1047,7 @@ export async function tryHandleAiWhatsAppOrdering(
     } catch (recoveryError) {
       console.warn('[AiOrdering] error-recovery path itself failed, falling back to escalation:', recoveryError);
     }
-    metric('ordering_turn', 'failed_closed', startedAt);
+    metric({ ...metricBase, stage: 'escalate', outcome: 'failed_closed', errorCode, orderingId: current?.orderingId ?? priorState?.orderingId, revision: current?.revision ?? priorState?.revision });
     // Best-effort cursor advance (escalation/suppression are terminal paths
     // too): only possible when a live draft had already been loaded before
     // the failure. A failure here must never mask the original error path.
@@ -997,6 +1098,9 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
   permitCheck?: PermitCheck;
 }): Promise<CanonicalButtonHandling> {
   const isPermitCurrent = input.permitCheck ?? isAiPermitCurrent;
+  const startedAt = Date.now();
+  // PR 1.30/1.31: same base fields as the text-turn handler.
+  const metricBase = { empresaId: input.empresaId, jid: input.jid, startedAt };
   const action = parseOrderingButton(input.buttonId);
   if (!action) return { handled: false };
   if (action.kind === 'start') {
@@ -1004,6 +1108,7 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
   }
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
+    metric({ ...metricBase, stage: 'escalate', outcome: 'configuration_missing' });
     return { handled: true, complete: withSuppression(async () => { await transferOnFailure(input.permit); }) };
   }
   const session = await getSession(input.jid, input.empresaId);
@@ -1038,6 +1143,7 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
           conversationControlId: input.permit.conversationControlId, conversationEpoch: input.permit.epoch,
         });
         await sendText(input.permit, 'Pedido cancelado. Se quiser começar outro, é só me dizer.', 'button-cancel', false, isPermitCurrent);
+        metric({ ...metricBase, stage: 'cancel', outcome: 'handled', orderingId: current.orderingId, revision: current.revision });
       }) };
     }
     if (action.kind === 'requirement') {
@@ -1053,8 +1159,13 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
         // NOT blindly apply this tap to whatever is current now — show the
         // customer where things actually stand and let them re-answer.
         if (action.fingerprint !== requirementRevisionFingerprint(current.orderingId, current.revision)) {
-          if (hasPendingOrderingRequirements(current, priorState)) await sendNextRequirement(input.permit, current, false, undefined, client, input.messageId, 0, isPermitCurrent);
+          const stalePending = hasPendingOrderingRequirements(current, priorState);
+          if (stalePending) await sendNextRequirement(input.permit, current, false, undefined, client, input.messageId, 0, isPermitCurrent);
           else await sendSummary(input.permit, current, false, undefined, isPermitCurrent);
+          metric({
+            ...metricBase, stage: stalePending ? 'requirement' : 'summary', outcome: 'stale_fingerprint',
+            orderingId: current.orderingId, revision: current.revision,
+          });
           return;
         }
         const draft = snapshotToDraft(current);
@@ -1084,8 +1195,13 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
           orderingId: current.orderingId, expectedRevision: current.revision, draft,
           conversationControlId: input.permit.conversationControlId, conversationEpoch: input.permit.epoch,
         });
-        if (hasPendingOrderingRequirements(updated, priorState)) await sendNextRequirement(input.permit, updated, false, undefined, client, input.messageId, 0, isPermitCurrent);
+        const requirementStillPending = hasPendingOrderingRequirements(updated, priorState);
+        if (requirementStillPending) await sendNextRequirement(input.permit, updated, false, undefined, client, input.messageId, 0, isPermitCurrent);
         else await sendSummary(input.permit, updated, false, undefined, isPermitCurrent);
+        metric({
+          ...metricBase, stage: requirementStillPending ? 'requirement' : 'summary', outcome: 'sent',
+          orderingId: updated.orderingId, revision: updated.revision,
+        });
       }) };
     }
     if (action.kind !== 'confirm') return { handled: true };
@@ -1096,21 +1212,40 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
     const outcome = await resolveConfirmation(current, client, input.empresaId, input.jid, input.messageId, input.permit, action.token, action.expectedRevision, isPermitCurrent);
     return {
       handled: true,
-      complete: withSuppression(async () => { await completeConfirmation(input.permit, outcome, false, undefined, isPermitCurrent); }),
+      complete: withSuppression(async () => {
+        await completeConfirmation(input.permit, outcome, false, undefined, isPermitCurrent);
+        metric({ ...metricBase, stage: 'confirm', outcome: outcome.kind, orderingId: outcome.snapshot.orderingId, revision: outcome.snapshot.revision });
+      }),
     };
   } catch (error) {
-    if (error instanceof OrderingSuppressedError) return { handled: true };
+    const errorCode = error instanceof ZeloMenuInternalError ? error.code : null;
+    if (error instanceof OrderingSuppressedError) {
+      metric({ ...metricBase, stage: 'suppress', outcome: 'permit_stale' });
+      return { handled: true };
+    }
     const recovery = classifyOrderingFailure(error);
-    if (recovery.action === 'suppress') return { handled: true };
+    if (recovery.action === 'suppress') {
+      metric({ ...metricBase, stage: 'suppress', outcome: 'ai_turn_revoked', errorCode });
+      return { handled: true };
+    }
     if (recovery.action === 'resync') {
       return { handled: true, complete: withSuppression(async () => {
-        if (hasPendingOrderingRequirements(recovery.current, priorState)) await sendNextRequirement(input.permit, recovery.current, false, undefined, client, input.messageId, 0, isPermitCurrent);
+        const resyncStillPending = hasPendingOrderingRequirements(recovery.current, priorState);
+        if (resyncStillPending) await sendNextRequirement(input.permit, recovery.current, false, undefined, client, input.messageId, 0, isPermitCurrent);
         else await sendSummary(input.permit, recovery.current, false, undefined, isPermitCurrent);
+        metric({
+          ...metricBase, stage: resyncStillPending ? 'requirement' : 'summary', outcome: 'resynced', errorCode,
+          orderingId: recovery.current.orderingId, revision: recovery.current.revision,
+        });
       }) };
     }
     if (recovery.action === 'clear_and_tell' || recovery.action === 'retry_later') {
-      return { handled: true, complete: withSuppression(async () => { await sendText(input.permit, recovery.text, 'button-error-recovery', false, isPermitCurrent); }) };
+      return { handled: true, complete: withSuppression(async () => {
+        await sendText(input.permit, recovery.text, 'button-error-recovery', false, isPermitCurrent);
+        metric({ ...metricBase, stage: 'update', outcome: recovery.action === 'clear_and_tell' ? 'closed_recovered' : 'retry_later', errorCode });
+      }) };
     }
+    metric({ ...metricBase, stage: 'escalate', outcome: 'failed_closed', errorCode });
     return { handled: true, complete: withSuppression(async () => { await transferOnFailure(input.permit); }) };
   }
 }
