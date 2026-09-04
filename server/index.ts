@@ -34,6 +34,7 @@ import { redactJid } from './redact.js';
 import { startOutboundWorker } from './outbound/worker.js';
 import { startWebhookReplayWorker } from './webhookReplayWorker.js';
 import { beginAiTurn, type AiTurnPermit } from './conversationControl.js';
+import { autoReplyRateLimiter } from './autoReplyRateLimit.js';
 import { startConversationOutboundQueueObserver } from './outbound/observability.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
@@ -200,42 +201,58 @@ async function reRegisterTenantWebhooks(): Promise<void> {
 
 /**
  * Per-contact AI reply rate limiter — in-memory sliding window.
+ * Decision logic lives in autoReplyRateLimit.ts (extracted so it is testable
+ * without booting this whole process — see tests/aiRapidTurns.test.ts).
  *
- * Key: `${empresaId}:${remoteJid}`
- * Value: { count, windowStart } where windowStart is Date.now() in ms.
- *
- * Cap: MAX_AI_REPLIES_PER_WINDOW replies per RATE_LIMIT_WINDOW_MS per contact.
+ * Key: `${empresaId}:${remoteJid}`. Cap: 3 replies per 60s per contact.
  *
  * SINGLE-REPLICA CONCERN: this state is in-memory only. If the process is
  * horizontally scaled across multiple replicas, each replica keeps its
  * own counter and the effective cap becomes N × MAX_AI_REPLIES_PER_WINDOW.
  * Acceptable for the current single-node deployment; if we ever go multi-replica,
  * migrate to a Redis sorted-set or Supabase row with row-level locking.
+ *
+ * FIX 2026-09-03 (FN I2): a capped 4th (or later) turn used to be dropped
+ * silently — no reply, no retry, and if it was the customer's LAST message in
+ * the burst they got no answer until they wrote again on their own. Ruling
+ * (recorded per the brief): coalesce, no extra customer-facing message. The
+ * rate-limited message stays unconsumed in the session (composeOrderingTurn
+ * folds it into the next composed turn), and `scheduleCoalescedRetry` below
+ * GUARANTEES that "next turn" happens — once per rate-limit window, timed to
+ * fire the instant the window resets — instead of only hoping for a further
+ * inbound message.
  */
-interface RateLimitEntry { count: number; windowStart: number; }
-const autoReplyRateLimits = new Map<string, RateLimitEntry>();
-const MAX_AI_REPLIES_PER_WINDOW = 3;
-const RATE_LIMIT_WINDOW_MS = 60_000; // 60 seconds
+const RATE_LIMIT_WINDOW_MS = 60_000; // matches autoReplyRateLimiter's default window; used only as a defensive fallback
+const coalesceRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function checkAutoReplyRateLimit(empresaId: string, jid: string): boolean {
+function scheduleCoalescedRetry(params: {
+  empresaId: string;
+  jid: string;
+  messageId?: string;
+  retryAfterMs: number;
+}): void {
+  const { empresaId, jid, messageId } = params;
   const key = `${empresaId}:${jid}`;
-  const now = Date.now();
-  const entry = autoReplyRateLimits.get(key);
-
-  if (!entry || now > entry.windowStart + RATE_LIMIT_WINDOW_MS) {
-    // No entry yet, or window expired — start fresh
-    autoReplyRateLimits.set(key, { count: 1, windowStart: now });
-    return true; // within limit
-  }
-
-  if (entry.count < MAX_AI_REPLIES_PER_WINDOW) {
-    entry.count += 1;
-    return true; // within limit
-  }
-
-  // Cap hit — log and reject
-  console.warn(`[auto_reply] rate-limit hit for empresa=${empresaId} jid=${jid} (${MAX_AI_REPLIES_PER_WINDOW}/${RATE_LIMIT_WINDOW_MS / 1000}s)`);
-  return false;
+  if (coalesceRetryTimers.has(key)) return; // already have one pending for this window
+  const delayMs = Math.max(250, params.retryAfterMs);
+  console.log(`[auto_reply] rate-limit hit for empresa=${empresaId} jid=${redactJid(jid)} — coalescing, retry in ${delayMs}ms`);
+  const timer = setTimeout(() => {
+    coalesceRetryTimers.delete(key);
+    void (async () => {
+      try {
+        const permit = await beginAiTurn({
+          empresaId,
+          remoteJid: jid,
+          inboundMessageId: messageId ?? `rate-limit-retry-${Date.now()}`,
+        });
+        if (!permit) return;
+        await scheduleAutoReplyIfAllowed({ empresaId, jid, permit, messageId, reason: 'rate_limit_retry' });
+      } catch (err) {
+        console.error(`[auto_reply] coalesced retry failed empresa=${empresaId} jid=${redactJid(jid)}:`, err);
+      }
+    })();
+  }, delayMs);
+  coalesceRetryTimers.set(key, timer);
 }
 
 async function scheduleAutoReplyIfAllowed(params: {
@@ -243,7 +260,7 @@ async function scheduleAutoReplyIfAllowed(params: {
   jid: string;
   permit: AiTurnPermit;
   messageId?: string;
-  reason: 'inbound' | 'audio_transcription_settled';
+  reason: 'inbound' | 'audio_transcription_settled' | 'rate_limit_retry';
 }): Promise<void> {
   // FIX 2026-08-30: outbounds humanos não invalidavam respostas automáticas em corrida → o permit/epoch acompanha o debounce e o claim durável decide o envio.
   const { empresaId, jid, permit, messageId } = params;
@@ -298,7 +315,11 @@ async function scheduleAutoReplyIfAllowed(params: {
         return;
       }
 
-      if (!checkAutoReplyRateLimit(empresaId, jid)) return;
+      const rateLimitDecision = autoReplyRateLimiter.check(`${empresaId}:${jid}`);
+      if (!rateLimitDecision.allowed) {
+        scheduleCoalescedRetry({ empresaId, jid, messageId, retryAfterMs: rateLimitDecision.retryAfterMs ?? RATE_LIMIT_WINDOW_MS });
+        return;
+      }
 
       try {
         const result = await generateAndSendReply(jid, empresaId, scheduledPermit);

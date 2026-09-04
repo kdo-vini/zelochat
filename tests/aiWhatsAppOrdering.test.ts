@@ -494,25 +494,25 @@ await assert.rejects(
 // serializeOrderingState), so the assertions exercise the real fix rather
 // than a hand-picked fixture.
 {
-  type Turn3Message = { id: string; role: string; kind?: string; content: string | null; timestamp: string };
+  type Turn3Message = { id: string; role: 'user' | 'assistant' | 'tool'; kind: 'text'; content: string | null; preview: string | null; timestamp: string };
   const messages: Turn3Message[] = [
-    { id: 'm1', role: 'user', kind: 'text', content: 'quero uma massa', timestamp: '2026-01-01T10:00:00Z' },
+    { id: 'm1', role: 'user', kind: 'text', content: 'quero uma massa', preview: null, timestamp: '2026-01-01T10:00:00Z' },
   ];
 
   // Turn 1: requirement question sent (sendNextRequirement path).
   const priorState1 = findLatestOrderingState(messages);
   const composition1 = composeOrderingTurn(messages, priorState1);
   assert.equal(composition1.text, 'quero uma massa');
-  messages.push({ id: 'a1', role: 'assistant', kind: 'text', content: 'Escolha a massa', timestamp: '2026-01-01T10:00:05Z' });
+  messages.push({ id: 'a1', role: 'assistant', kind: 'text', content: 'Escolha a massa', preview: null, timestamp: '2026-01-01T10:00:05Z' });
   const t1Patch = nextOrderingStatePatch(priorState1, composition1.consumedMessageIds);
   messages.push({
     id: 't1', role: 'tool', kind: 'text',
-    content: serializeOrderingState({ orderingId: 'o', revision: 1, ...t1Patch }),
+    content: serializeOrderingState({ orderingId: 'o', revision: 1, ...t1Patch }), preview: null,
     timestamp: '2026-01-01T10:00:05Z',
   });
 
   // Turn 2: customer answers the requirement ("talharim") -> sendSummary path.
-  messages.push({ id: 'm2', role: 'user', kind: 'text', content: 'talharim', timestamp: '2026-01-01T10:00:10Z' });
+  messages.push({ id: 'm2', role: 'user', kind: 'text', content: 'talharim', preview: null, timestamp: '2026-01-01T10:00:10Z' });
   const priorState2 = findLatestOrderingState(messages);
   assert.deepEqual(priorState2?.consumedMessageIds, ['m1']);
   const composition2 = composeOrderingTurn(messages, priorState2);
@@ -521,13 +521,13 @@ await assert.rejects(
   assert.deepEqual(t2Patch.consumedMessageIds, ['m1', 'm2'], 'sendSummary must persist the ADVANCED cursor, not re-persist the previous one');
   messages.push({
     id: 't2', role: 'tool', kind: 'text',
-    content: serializeOrderingState({ orderingId: 'o', revision: 2, ...t2Patch }),
+    content: serializeOrderingState({ orderingId: 'o', revision: 2, ...t2Patch }), preview: null,
     timestamp: '2026-01-01T10:00:15Z',
   });
-  messages.push({ id: 'a2', role: 'assistant', kind: 'text', content: 'Resumo: 1x Massa (Talharim); retirada; total R$ 20,00. Posso confirmar?', timestamp: '2026-01-01T10:00:15Z' });
+  messages.push({ id: 'a2', role: 'assistant', kind: 'text', content: 'Resumo: 1x Massa (Talharim); retirada; total R$ 20,00. Posso confirmar?', preview: null, timestamp: '2026-01-01T10:00:15Z' });
 
   // Turn 3: "sim" must compose to exactly "sim" and classify as a confirmation.
-  messages.push({ id: 'm3', role: 'user', kind: 'text', content: 'sim', timestamp: '2026-01-01T10:00:20Z' });
+  messages.push({ id: 'm3', role: 'user', kind: 'text', content: 'sim', preview: null, timestamp: '2026-01-01T10:00:20Z' });
   const priorState3 = findLatestOrderingState(messages);
   assert.deepEqual(priorState3?.consumedMessageIds, ['m1', 'm2']);
   const composition3 = composeOrderingTurn(messages, priorState3);

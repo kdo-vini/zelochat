@@ -16,11 +16,12 @@ assert.deepEqual(composeOrderingTurn([{ ...messages[2], audio_transcript: null, 
 // PR C-6 / FN C3 — a failed audio is consumed once with its friendly reply
 // and must never be replayed into a later turn's composition.
 {
-  const failedAudio = { id: 'af1', role: 'user', kind: 'audio', content: '[Áudio recebido]', preview: null, audio_transcript: null, audio_transcript_status: 'failed' as const, timestamp: '2026-01-01T10:00:00Z' };
+  const failedAudio = { id: 'af1', role: 'user', kind: 'audio', content: '[Áudio recebido]', preview: null, audio_transcript: null, audio_transcript_status: 'failed' as const, timestamp: '2026-01-01T10:00:00Z' } satisfies TimedComposerMessage;
   const composed = composeOrderingTurn([failedAudio]);
   assert.deepEqual(composed.failedAudioMessageIds, ['af1']);
   assert.deepEqual(composed.consumedMessageIds, ['af1'], 'failed audio id must be folded into consumedMessageIds');
-  const next = composeOrderingTurn([failedAudio, { id: 'm2', role: 'user', kind: 'text', content: 'quero 2 coxinhas', preview: null, timestamp: '2026-01-01T10:00:05Z' }], { consumedMessageIds: composed.consumedMessageIds });
+  const followUpText = { id: 'm2', role: 'user', kind: 'text', content: 'quero 2 coxinhas', preview: null, timestamp: '2026-01-01T10:00:05Z' } satisfies TimedComposerMessage;
+  const next = composeOrderingTurn([failedAudio, followUpText], { consumedMessageIds: composed.consumedMessageIds });
   assert.equal(next.text, 'quero 2 coxinhas', 'a subsequent turn must not re-surface the already-answered failed audio');
   assert.deepEqual(next.failedAudioMessageIds, []);
 }
