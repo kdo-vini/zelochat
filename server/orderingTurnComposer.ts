@@ -16,6 +16,20 @@ export type ComposerMessage = Pick<
   ChatMessage,
   'id' | 'role' | 'content' | 'preview' | 'timestamp' | 'kind' | 'audio_transcript' | 'audio_transcript_status'
 >;
+// FIX 2026-09-03 (PR I-1 / PR 1.13): `ChatMessage` (src/types.ts) and the
+// `zelochat_messages` row it is read from (server/messageHandler.ts) carry a
+// SINGLE timestamp — `timestamp`/`sent_at`. For inbound customer messages
+// that column is populated from the WhatsApp provider's own
+// `messageTimestamp` (see `resolveMessageDate` in messageHandler.ts), so
+// `timestamp` already IS the provider clock; there is no second,
+// independently captured server-insertion clock today. `providerTimestamp`/
+// `dbTimestamp` below exist so a caller that DOES have a distinct signal
+// (or a test fixture) can supply one explicitly — real production messages
+// never populate them, and the comparator below must not silently discard a
+// real `dbTimestamp` tiebreak just because a `providerTimestamp` happens to
+// be present and equal on both sides (that discard was the actual bug: see
+// the old single merged `messageTime()` below, replaced by the tiered
+// comparator).
 export type TimedComposerMessage = ComposerMessage & { providerTimestamp?: string | number | null; dbTimestamp?: string | number | null };
 
 const AUDIO_PLACEHOLDER_REGEX = /^\[(?:áudio|audio) receb/i;
@@ -25,13 +39,28 @@ function timeValue(value: string | number | null | undefined): number {
   return Number.isFinite(valueAsDate) ? valueAsDate : 0;
 }
 
-function messageTime(message: TimedComposerMessage): number {
-  const value = timeValue(message.providerTimestamp) || timeValue(message.dbTimestamp) || timeValue(message.timestamp);
-  return Number.isFinite(value) ? value : 0;
+/** Provider clock: an explicit `providerTimestamp` when supplied, else the
+ * message's own `timestamp` (which, for real stored messages, already is the
+ * provider's clock — see the module comment above). */
+function providerTime(message: TimedComposerMessage): number {
+  return timeValue(message.providerTimestamp) || timeValue(message.timestamp);
 }
 
 function comparableId(message: ComposerMessage): string {
   return message.id || '';
+}
+
+/** Tiered, deterministic comparator: provider clock, then an explicit
+ * `dbTimestamp` tiebreak (only meaningful when the provider clock ties), then
+ * message id as a last-resort deterministic fallback. Each tier is compared
+ * independently — unlike a single merged `||` value, a tie at the provider
+ * level never hides a real `dbTimestamp` difference. */
+function compareMessages(left: TimedComposerMessage, right: TimedComposerMessage): number {
+  const providerDiff = providerTime(left) - providerTime(right);
+  if (providerDiff !== 0) return providerDiff;
+  const dbDiff = timeValue(left.dbTimestamp) - timeValue(right.dbTimestamp);
+  if (dbDiff !== 0) return dbDiff;
+  return comparableId(left).localeCompare(comparableId(right));
 }
 
 function textForMessage(message: ComposerMessage): string | null {
@@ -58,11 +87,7 @@ export function composeOrderingTurn(
 
   const candidates = source
     .filter((message) => message.role === 'user' && !consumed.has(message.id))
-    .sort((left, right) => {
-      const timeDiff = messageTime(left) - messageTime(right);
-      if (timeDiff !== 0) return timeDiff;
-      return comparableId(left).localeCompare(comparableId(right));
-    });
+    .sort(compareMessages);
 
   const texts: string[] = [];
   const sourceMessageIds: string[] = [];
@@ -91,6 +116,15 @@ export function composeOrderingTurn(
     sourceMessageIds,
     pendingAudioMessageIds,
     failedAudioMessageIds,
-    consumedMessageIds: [...new Set([...(state.consumedMessageIds ?? []), ...sourceMessageIds])],
+    // FIX 2026-09-03 (PR C-6 / FN C3): a failed/unsupported audio message is
+    // resolved — the customer already got the "can't hear you" reply for it —
+    // so it must never be replayed into a later turn's composition. Pending
+    // audio is deliberately excluded here: it is not resolved yet and must
+    // stay eligible to be picked up once transcription settles.
+    consumedMessageIds: [...new Set([
+      ...(state.consumedMessageIds ?? []),
+      ...sourceMessageIds,
+      ...failedAudioMessageIds,
+    ])],
   };
 }
