@@ -42,6 +42,12 @@ export interface AiHealthReport {
 
 export interface AiWhatsAppOrderingStatus {
   enabled: boolean;
+  /**
+   * PR 1.1/1.3: per-empresa `ai_hybrid_ordering_enabled` flag, read-only —
+   * there is deliberately no write endpoint for it (operator/Eng decision).
+   * Optional so an older backend without this field still parses fine.
+   */
+  hybridOrderingEnabled?: boolean;
 }
 export interface ZeloMenuReviewSession {
   id: string;

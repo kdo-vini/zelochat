@@ -482,19 +482,24 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
  */
 const AiWhatsAppOrderingCard = ({ token }: { token: string | null }) => {
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [hybridOrderingEnabled, setHybridOrderingEnabled] = useState(false);
   const [statusError, setStatusError] = useState(false);
 
   useEffect(() => {
-    if (!token) { setEnabled(null); setStatusError(false); return; }
+    if (!token) { setEnabled(null); setHybridOrderingEnabled(false); setStatusError(false); return; }
     let cancelled = false;
     setStatusError(false);
     getAiWhatsAppOrderingStatus(token)
-      .then((status) => { if (!cancelled) setEnabled(status.enabled === true); })
-      .catch(() => { if (!cancelled) { setEnabled(null); setStatusError(true); } });
+      .then((status) => {
+        if (cancelled) return;
+        setEnabled(status.enabled === true);
+        setHybridOrderingEnabled(status.hybridOrderingEnabled === true);
+      })
+      .catch(() => { if (!cancelled) { setEnabled(null); setHybridOrderingEnabled(false); setStatusError(true); } });
     return () => { cancelled = true; };
   }, [token]);
 
-  const ui = enabled === null ? null : describeAiWhatsAppOrdering(enabled);
+  const ui = enabled === null ? null : describeAiWhatsAppOrdering(enabled, hybridOrderingEnabled);
 
   return (
     <SectionCard icon={ShoppingCart} title="Pedidos pelo WhatsApp com IA">
@@ -511,18 +516,18 @@ const AiWhatsAppOrderingCard = ({ token }: { token: string | null }) => {
             </p>
           </div>
           <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold flex-shrink-0 ${
-            enabled === true
+            ui?.enabled === true
               ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
               : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'
           }`}>
-            {enabled === true && <Check className="w-3 h-3" strokeWidth={2.5} />}
+            {ui?.enabled === true && <Check className="w-3 h-3" strokeWidth={2.5} />}
             {enabled === null ? (statusError ? 'Indisponível' : 'Verificando') : ui.badge}
           </span>
         </div>
         <p className="text-[11.5px] text-[var(--color-ink-faint)]">
-          {enabled === true
+          {ui?.enabled === true
             ? 'O cliente confirma o pedido sem precisar abrir um link.'
-            : 'Quando a integração estiver pronta, o cliente confirma o pedido na própria conversa.'}
+            : 'Quando esse recurso estiver ativo, o cliente confirma o pedido na própria conversa.'}
         </p>
       </div>
     </SectionCard>
