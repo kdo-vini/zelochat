@@ -37,7 +37,12 @@ await runSuite('Router webhook/order guardrails', [
       const hardStart = indexOfOrFail('const isHardConfirm = buttonId ===');
       const hardBranch = indexOfOrFail('if (isHardConfirm || isHardCancel)');
       const hardReturn = router.indexOf('return;', hardBranch);
-      const dispatch = indexOfOrFail('dispatchIncomingMessage(data, empresaId);');
+      // NOTE: the FN C4/PR C-3 canonical-pointer routing (added ahead of this
+      // legacy branch) also calls `dispatchIncomingMessage` — search past this
+      // branch's own return so this still targets the bottom-of-function
+      // catch-all dispatch the legacy short-circuit must precede.
+      const dispatch = router.indexOf('dispatchIncomingMessage(data, empresaId);', hardReturn);
+      assert(dispatch >= 0, 'found the bottom-of-function catch-all dispatch');
       assert(hardStart < hardBranch, 'hard confirm flags are computed before branch');
       assert(hardBranch < hardReturn && hardReturn < dispatch, 'hard button branch returns before dispatchIncomingMessage');
     },
@@ -48,7 +53,10 @@ await runSuite('Router webhook/order guardrails', [
       const noPending = indexOfOrFail('No pending — order already finalized or never existed');
       const ack = indexOfOrFail('Seu pedido já foi confirmado! ✅ Qualquer dúvida é só chamar 😊');
       const branchReturn = router.indexOf('return;', ack);
-      const dispatch = indexOfOrFail('dispatchIncomingMessage(data, empresaId);');
+      // See the note in the previous test — search past this branch's own
+      // return so this targets the bottom-of-function catch-all dispatch.
+      const dispatch = router.indexOf('dispatchIncomingMessage(data, empresaId);', branchReturn);
+      assert(dispatch >= 0, 'found the bottom-of-function catch-all dispatch');
       assert(noPending < ack, 'idempotent no-pending branch is documented before ack');
       assert(ack < branchReturn && branchReturn < dispatch, 'idempotent hard-confirm reply returns before AI dispatch');
     },
@@ -80,6 +88,35 @@ await runSuite('Router webhook/order guardrails', [
       assertIncludes(router, "buttonTextNormalized === 'cancelar pedido'", 'cancelar pedido display label is accepted');
       assert(!router.includes("buttonTextNormalized.startsWith('confirmar '"), 'natural confirm phrases are not hard-confirmed');
       assert(!router.includes("buttonTextNormalized.startsWith('cancelar '"), 'partial cancel phrases are not hard-cancelled');
+    },
+  },
+  {
+    name: 'canonical pointer routes typed Confirmar/Cancelar/Alterar before the legacy short-circuit (FN C4 / PR C-3 / 1.35)',
+    run: () => {
+      const canonicalCheck = indexOfOrFail('const canonicalPointer = canonicalCheckSession ? findLatestOrderingState(canonicalCheckSession.messages) : null;');
+      const legacyBranch = indexOfOrFail('if (isHardConfirm || isHardCancel) {');
+      assert(canonicalCheck < legacyBranch, 'canonical-pointer routing runs before the legacy hard-button short-circuit');
+      const confirmDispatch = indexOfOrFail('console.log(`[WebhookTrace] canonical_text_confirm empresa=${empresaId} jid=${redactJid(remoteJid)}`);');
+      const confirmReturn = router.indexOf('return;', confirmDispatch);
+      assert(confirmDispatch < legacyBranch && confirmReturn > confirmDispatch && confirmReturn < legacyBranch,
+        'a typed Confirmar with an open canonical draft flows through the real ordering pipeline and returns before the legacy idempotent reply');
+      assertIncludes(router, 'const canonicalButtonId = isAlterText ? AI_ORDER_ALTER_BUTTON : AI_ORDER_CANCEL_BUTTON;', 'typed Cancelar/Alterar with an open canonical draft route to the equivalent canonical button action');
+      assertIncludes(router, 'buttonId: canonicalButtonId,', 'the canonical cancel/alter routing calls the real button handler with the resolved canonical id');
+    },
+  },
+  {
+    name: 'canonical routing is a no-op with no pointer — legacy body stays byte-for-byte',
+    run: () => {
+      // The legacy idempotent reply and getPendingOrder lookup still exist,
+      // untouched, guarded behind the SAME entry condition as before.
+      assertIncludes(router, 'const pending = await getPendingOrder(remoteJid, empresaId);', 'legacy pending lookup is untouched');
+      assertIncludes(router, "await enqueueAutomatedText({ permit, text: ack, origin: 'ai_auto', purpose: 'hard-confirm-idempotent' });", 'legacy idempotent ack path is untouched');
+      // The new block only ever mutates/dispatches inside `if (canonicalPointer)`
+      // — everything before that is a read-only getSession call.
+      const guardStart = indexOfOrFail('if ((isHardConfirm || isHardCancel || isAlterText) && !(buttonId && parseOrderingButton(buttonId))) {');
+      const sessionRead = indexOfOrFail('const canonicalCheckSession = await getSession(remoteJid, empresaId);');
+      const pointerGuard = indexOfOrFail('if (canonicalPointer) {');
+      assert(guardStart < sessionRead && sessionRead < pointerGuard, 'the canonical check reads the session before deciding whether to act, so a null pointer changes nothing');
     },
   },
   {

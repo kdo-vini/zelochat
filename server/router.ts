@@ -63,7 +63,14 @@ import { buildPublicStoreUrl } from '../src/domain/zelomenuSlug.js';
 import { normalizeLoose } from '../src/domain/conversationState.js';
 import { isRetryableOutboundFailure, type OutboundPayload } from '../src/domain/outbound.js';
 import { buildFailedMessageRetryPayload } from './failedMessageRetry.js';
-import { canonicalButtonMessageKey, handleCanonicalButtonOnce, parseOrderingButton } from '../src/domain/aiWhatsAppOrdering.js';
+import {
+  canonicalButtonMessageKey,
+  handleCanonicalButtonOnce,
+  parseOrderingButton,
+  findLatestOrderingState,
+  AI_ORDER_ALTER_BUTTON,
+  AI_ORDER_CANCEL_BUTTON,
+} from '../src/domain/aiWhatsAppOrdering.js';
 import { retryFailedAssistantMessage } from './failedMessageRetry.js';
 import { tryHandleAiWhatsAppOrderingButton } from './aiWhatsAppOrdering.js';
 import { normalizeIncomingInteractive } from './whatsappInteractive.js';
@@ -638,12 +645,23 @@ async function processWebhookEvent(
       });
       if (!permit) return;
       const exactKey = canonicalButtonMessageKey({ empresaId, jid: remoteJid, messageId });
+      // FIX 2026-09-04 (C3 / PR C-4): `complete()` (the confirm/cancel/alter
+      // reply — for confirm, the ZeloMenu mutation itself already ran inside
+      // `tryHandleAiWhatsAppOrderingButton` before it returned) must succeed
+      // BEFORE this click is recorded as handled. Running it INSIDE the
+      // deduped handler means a throw here propagates without setting the
+      // dedupe key, so a webhook retry re-enters and (per the idempotent
+      // "already confirmed/cancelled" checks in the button handler) finishes
+      // the job exactly once instead of silently dropping the reply forever.
       const canonicalButton = await serializeForJid(remoteJid, () => handleCanonicalButtonOnce(
         canonicalButtonMessageIds, exactKey,
-        () => tryHandleAiWhatsAppOrderingButton({ jid: remoteJid, empresaId, buttonId, messageId: messageId || `button-${Date.now()}`, permit }),
+        async () => {
+          const result = await tryHandleAiWhatsAppOrderingButton({ jid: remoteJid, empresaId, buttonId, messageId: messageId || `button-${Date.now()}`, permit });
+          if (result.handled) await result.complete?.();
+          return result;
+        },
       ));
       if (canonicalButton.handled) {
-        await canonicalButton.complete?.();
         cancelPendingReply(empresaId, remoteJid);
         return;
       }
@@ -678,6 +696,60 @@ async function processWebhookEvent(
 
     const isHardConfirm = buttonId === 'CONFIRM_ORDER' || isConfirmText;
     const isHardCancel = buttonId === 'CANCEL_ORDER' || isCancelText;
+    const isAlterText = buttonTextNormalized === 'alterar';
+
+    // FIX 2026-09-04 (FN C4 / PR C-3 / 1.35): a canonical (ZeloMenu) draft can
+    // be open for this conversation even though this message carried no
+    // parsable canonical button id — an older/alternate WhatsApp client can
+    // echo a button tap as plain text, or the customer can simply type the
+    // label. The legacy block right below knows only about
+    // `zelochat_pending_orders`; against a canonical draft it either lies
+    // ("Seu pedido já foi confirmado!" with no order ever created) or goes
+    // silent (typed "Cancelar" with no cancel arm in the no-pending branch).
+    // Check for a canonical pointer FIRST and route there instead. When there
+    // is no canonical pointer this is a read-only check — the legacy block
+    // below still runs byte-for-byte as before.
+    if ((isHardConfirm || isHardCancel || isAlterText) && !(buttonId && parseOrderingButton(buttonId))) {
+      const canonicalCheckSession = await getSession(remoteJid, empresaId);
+      const canonicalPointer = canonicalCheckSession ? findLatestOrderingState(canonicalCheckSession.messages) : null;
+      if (canonicalPointer) {
+        if (isHardConfirm) {
+          // The typed word carries no confirmation token. Let it flow
+          // through the REAL pipeline (persistence, permit, debounce, entry
+          // config) — `tryHandleAiWhatsAppOrdering` resolves the token from
+          // the customer's own current snapshot (`confirmationAction`, B2),
+          // exactly as a plain "sim" already does.
+          console.log(`[WebhookTrace] canonical_text_confirm empresa=${empresaId} jid=${redactJid(remoteJid)}`);
+          dispatchIncomingMessage(data, empresaId);
+          return;
+        }
+        // Cancelar/Alterar: no confirmation-token ambiguity — route straight
+        // to the equivalent canonical button action.
+        const persistedAction = await handleIncomingMessage(data, empresaId);
+        if (!persistedAction) return;
+        const permit = await beginAiTurn({ empresaId, remoteJid, inboundMessageId: persistedAction.messageId });
+        if (!permit) return;
+        const canonicalButtonId = isAlterText ? AI_ORDER_ALTER_BUTTON : AI_ORDER_CANCEL_BUTTON;
+        const exactKey = canonicalButtonMessageKey({ empresaId, jid: remoteJid, messageId: data.key?.id ?? '' });
+        const canonicalResult = await serializeForJid(remoteJid, () => handleCanonicalButtonOnce(
+          canonicalButtonMessageIds, exactKey,
+          async () => {
+            const result = await tryHandleAiWhatsAppOrderingButton({
+              jid: remoteJid, empresaId, buttonId: canonicalButtonId,
+              messageId: data.key?.id || `text-${Date.now()}`, permit,
+            });
+            if (result.handled) await result.complete?.();
+            return result;
+          },
+        ));
+        if (canonicalResult.handled) {
+          cancelPendingReply(empresaId, remoteJid);
+          return;
+        }
+        // Not handled (should not normally happen) — fall through to the
+        // legacy block below as a safety net.
+      }
+    }
 
     if (isHardConfirm || isHardCancel) {
       const persistedAction = await handleIncomingMessage(data, empresaId);
