@@ -443,3 +443,264 @@ console.log('===== Scenario 9: blocked date closes the live order entry =====');
 }
 
 console.log('\nGroups 0/1/2/9(part1) passed');
+
+// =============================================================================
+// Scenario 3 — Monte Sua Massa in one utterance (massa, proteína, molho, 2
+// acompanhamentos, adicional pago) -> ONE update carrying every recognized
+// id; next reply asks only the next missing requirement; optional groups
+// offered once; "sem extras" declines and is never re-asked; fulfillment
+// asked, never defaulted; then address, payment, summary with all fields and
+// total, buttons exactly Confirmar/Alterar/Cancelar.
+//
+// Every intermediate snapshot below is derived from the committed
+// snapshot.partial-montavel.json / snapshot.ready.json fixtures (same
+// orderingId/line/cart/option shapes) rather than invented from scratch.
+// =============================================================================
+console.log('===== Scenario 3: Monte Sua Massa in one utterance, step by step =====');
+{
+  const permit: AiTurnPermit = {
+    empresaId: '10000000-0000-4000-8000-0000000000f1', conversationControlId: '60000000-0000-4000-8000-0000000000f1',
+    remoteJid: '5511900000001@s.whatsapp.net', epoch: '7', triggerMessageId: 'trigger-massa',
+  };
+  const orderingId = '30000000-0000-4000-8000-000000000001';
+
+  // Base cart line shared by every step: massa + molho already resolved by
+  // step 1's single update, PLUS proteína/2 acompanhamentos/adicional pago —
+  // every group the customer named in one utterance, in ONE cart line.
+  const readyBase = cloneFixture<Record<string, unknown>>('snapshot.ready.json');
+  const lineWithEveryGroup = () => ({
+    lineId: 'linha-massa-1', productId: 1007, productName: 'Monte Sua Massa', baseUnitPrice: 0,
+    selectedModifiers: [
+      { groupId: 'g001', groupName: 'Escolha a massa', kind: 'variacao', selectedOptions: [{ optionId: 'o002', optionName: 'Talharim', priceDelta: 25, quantity: 1 }] },
+      { groupId: 'g002', groupName: 'Escolha o molho', kind: 'adicional', selectedOptions: [{ optionId: 'o003', optionName: 'Molho ao sugo', priceDelta: 0, quantity: 1 }] },
+      { groupId: 'g003', groupName: 'Proteínas', kind: 'adicional', selectedOptions: [{ optionId: 'o005', optionName: 'Bife acebolado', priceDelta: 12, quantity: 1 }] },
+      { groupId: 'g004', groupName: 'Acompanhamentos', kind: 'adicional', selectedOptions: [{ optionId: 'o008', optionName: 'Salada', priceDelta: 0, quantity: 1 }, { optionId: 'o009', optionName: 'Batata palha', priceDelta: 0, quantity: 1 }] },
+      { groupId: 'g005', groupName: 'Extra pago', kind: 'adicional', selectedOptions: [{ optionId: 'o011', optionName: 'Queijo ralado', priceDelta: 3, quantity: 1 }] },
+    ],
+    modifierDeltaTotal: 40, quantity: 1, unitPrice: 40, lineTotal: 40, notes: null,
+  });
+
+  const step1Response = {
+    ...readyBase, cart: { items: [lineWithEveryGroup()], observations: null },
+    fulfillment: { type: null, asap: true, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryFee: 0, deliveryFeeToConfirm: false },
+    payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false },
+    pricing: { subtotal: 40, deliveryFee: 0, discount: 0, total: 40 },
+    requirements: [
+      { id: 'fulfillment_type', type: 'fulfillment_type', name: 'Escolha entrega ou retirada.', blocking: true },
+      { id: 'payment_method', type: 'payment_method', name: 'Escolha a forma de pagamento.', blocking: true },
+    ],
+    readyForConfirmation: false, revision: 1, orderingId, state: 'cart_open', confirmationAction: null,
+  };
+  const step2Response = {
+    ...step1Response,
+    fulfillment: { ...step1Response.fulfillment, type: 'delivery' },
+    requirements: [
+      { id: 'linha-massa-1:delivery_address', type: 'delivery_address', name: 'Qual é o endereço para entrega?', blocking: true, missingFields: ['address', 'number', 'neighborhood'] },
+      { id: 'payment_method', type: 'payment_method', name: 'Escolha a forma de pagamento.', blocking: true },
+    ],
+    revision: 2,
+  };
+  const step3Response = {
+    ...step2Response,
+    fulfillment: { ...step2Response.fulfillment, deliveryAddress: 'Rua Fixture, 100', deliveryNeighborhood: 'Bairro Fixture', deliveryNumber: '100', deliveryFee: 8 },
+    pricing: { subtotal: 40, deliveryFee: 8, discount: 0, total: 48 },
+    requirements: [{ id: 'payment_method', type: 'payment_method', name: 'Escolha a forma de pagamento.', blocking: true }],
+    revision: 3,
+  };
+  // Step 4 uses every non-blocking group from the REAL ready.json fixture
+  // verbatim (Proteínas/Acompanhamentos/Extra pago, all still `blocking:false`
+  // and unselected THERE) to prove the optional-offer path against the
+  // authority's own recorded shape, layered on top of the customer's
+  // already-full cart line from the steps above.
+  const step4Response = {
+    ...step3Response,
+    payment: { declaredMethod: 'pix', pixReceiptRequired: true, pixReceiptApproved: false },
+    requirements: (readyBase.requirements as unknown[]),
+    readyForConfirmation: true, revision: 4,
+    confirmationAction: { type: 'confirm_order', token: (readyBase.confirmationAction as Record<string, unknown>).token, revision: 4, expiresAt: (readyBase.confirmationAction as Record<string, unknown>).expiresAt },
+  };
+
+  const { client, log, assertExhausted } = fakeClient([
+    {
+      label: 'step1: first open carries every recognized group in ONE update',
+      expect: ({ body }) => {
+        assert.equal(body?.orderingId, undefined, 'the first open never sends an orderingId');
+        const draft = body?.draft as Record<string, unknown>;
+        const items = draft.items as Array<Record<string, unknown>>;
+        assert.equal(items.length, 1, 'every recognized group lands on ONE cart line, not several updates');
+        const groupIds = ((items[0].selectedOptions as Array<Record<string, unknown>>) ?? []).map((g) => g.groupId);
+        assert.deepEqual(new Set(groupIds), new Set(['g001', 'g002', 'g003', 'g004', 'g005']), 'massa+molho+proteina+acompanhamentos+adicional pago all recognized in ONE update');
+      },
+      respond: () => okJson(step1Response),
+    },
+    {
+      label: 'step2: fulfillment answered — delivery chosen, never defaulted',
+      expect: ({ body }) => {
+        assert.equal(body?.orderingId, orderingId);
+        assert.equal(body?.expectedRevision, 1);
+        assert.deepEqual((body?.draft as Record<string, unknown>).fulfillment, { type: 'delivery', asap: true });
+      },
+      respond: () => okJson(step2Response),
+    },
+    {
+      label: 'step3: delivery address answered',
+      expect: ({ body }) => {
+        assert.equal(body?.expectedRevision, 2);
+        const fulfillment = (body?.draft as Record<string, unknown>).fulfillment as Record<string, unknown>;
+        assert.equal(fulfillment.deliveryAddress, 'Rua Fixture, 100');
+        assert.equal(fulfillment.deliveryNeighborhood, 'Bairro Fixture');
+      },
+      respond: () => okJson(step3Response),
+    },
+    {
+      label: 'step4: payment answered — draft becomes ready',
+      expect: ({ body }) => {
+        assert.equal(body?.expectedRevision, 3);
+        assert.equal((body?.draft as Record<string, unknown>).paymentMethod, 'pix');
+      },
+      respond: () => okJson(step4Response),
+    },
+  ]);
+
+  // --- Step 1 ---
+  const afterOpen = await client.updateDraft({
+    empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-massa-open-1',
+    conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
+    draft: {
+      items: [{
+        lineId: 'linha-massa-1', productId: 1007, quantity: 1,
+        selectedOptions: [
+          { groupId: 'g001', optionSelections: [{ optionId: 'o002', quantity: 1 }] },
+          { groupId: 'g002', optionSelections: [{ optionId: 'o003', quantity: 1 }] },
+          { groupId: 'g003', optionSelections: [{ optionId: 'o005', quantity: 1 }] },
+          { groupId: 'g004', optionSelections: [{ optionId: 'o008', quantity: 1 }, { optionId: 'o009', quantity: 1 }] },
+          { groupId: 'g005', optionSelections: [{ optionId: 'o011', quantity: 1 }] },
+        ],
+      }],
+    },
+  });
+  const afterOpenDomain = parseOrderingSnapshotWire(step1Response) as OrderingSnapshot;
+  assert.deepEqual(afterOpen, afterOpenDomain, 'the client returns the same domain snapshot the wire parser produces');
+  const present1 = presentOrderingRequirements(afterOpen, {});
+  assert.equal(present1.payload.kind, 'buttons');
+  assert.deepEqual((present1.payload as { text: string }).text, 'Seu pedido é para entrega ou retirada?');
+  assert.deepEqual((present1.payload as { buttons: Array<{ label: string }> }).buttons.map((b) => b.label), ['Entrega', 'Retirada'], 'fulfillment is always ASKED via a real button, never silently defaulted');
+
+  // --- Step 2 ---
+  const afterFulfillment = await client.updateDraft({
+    empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-massa-fulfillment-1',
+    conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
+    orderingId, expectedRevision: 1,
+    draft: { items: [], fulfillment: applyFulfillmentTypeSelection(undefined, 'delivery') },
+  });
+  const present2 = presentOrderingRequirements(afterFulfillment, {});
+  assert.equal(present2.payload.kind, 'text', 'delivery_address has no options[] — asked in plain text');
+  assert.equal((present2.payload as { text: string }).text, 'Qual é o endereço para entrega?', 'asks ONLY the next missing requirement (address), not payment yet');
+
+  // --- Step 3 ---
+  const afterAddress = await client.updateDraft({
+    empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-massa-address-1',
+    conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
+    orderingId, expectedRevision: 2,
+    draft: { items: [], fulfillment: { type: 'delivery', deliveryAddress: 'Rua Fixture, 100', deliveryNeighborhood: 'Bairro Fixture', deliveryNumber: '100' } },
+  });
+  const present3 = presentOrderingRequirements(afterAddress, {});
+  assert.equal(present3.payload.kind, 'text');
+  assert.equal((present3.payload as { text: string }).text, 'Escolha a forma de pagamento.', 'asks ONLY payment next, address is already satisfied');
+
+  // --- Step 4 ---
+  const afterPayment = await client.updateDraft({
+    empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-massa-payment-1',
+    conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
+    orderingId, expectedRevision: 3,
+    draft: { items: [], paymentMethod: 'pix' },
+  });
+  assert.equal(afterPayment.readyForConfirmation, true);
+  assert.equal(hasPendingOrderingRequirements(afterPayment, {}), true, 'the paid extras group is still pending — the draft is ready but not yet summarized');
+  const present4 = presentOrderingRequirements(afterPayment, {});
+  assert.equal(present4.payload.kind, 'text');
+  assert.match((present4.payload as { text: string }).text, /Proteínas.*Bife acebolado \(\+R\$\s?12,00\)/s, 'optional group Proteínas is offered with its priced options');
+  assert.match((present4.payload as { text: string }).text, /Acompanhamentos/, 'optional group Acompanhamentos is offered');
+  assert.match((present4.payload as { text: string }).text, /Extra pago/, 'the paid optional group Extra pago is offered');
+  assert.match((present4.payload as { text: string }).text, /"sem extras"/, 'the decline phrase is offered to the customer');
+  assert.deepEqual(present4.offeredOptionalRequirementIds.sort(), ['linha-massa-1:g003', 'linha-massa-1:g004', 'linha-massa-1:g005'].sort(), 'every optional group is marked offered in ONE turn');
+
+  // "sem extras" -> the orchestrator declines every non-blocking requirement;
+  // presentOrderingRequirements must NEVER re-ask them again, and must move
+  // straight to the summary.
+  const declinedState = { declinedOptionalRequirementIds: present4.offeredOptionalRequirementIds };
+  assert.equal(hasPendingOrderingRequirements(afterPayment, declinedState), false, '"sem extras" leaves nothing pending');
+  const present5 = presentOrderingRequirements(afterPayment, declinedState);
+  assert.equal(present5.payload.kind, 'buttons');
+  const buttons = (present5.payload as { buttons: Array<{ id: string; label: string }> }).buttons;
+  assert.deepEqual(buttons.map((b) => b.label), ['Confirmar', 'Alterar', 'Cancelar'], 'summary buttons are EXACTLY Confirmar/Alterar/Cancelar, in that order');
+  assert.equal(buttons.map((b) => b.label).length, 3);
+
+  // Never re-asked: calling again with the SAME declined state is byte-identical.
+  const present6 = presentOrderingRequirements(afterPayment, declinedState);
+  assert.deepEqual(present6.payload, present5.payload, 'a repeated turn after "sem extras" never re-asks the optional groups');
+
+  const summaryText = (present5.payload as { text: string }).text;
+  assert.match(summaryText, /Rua Fixture, 100/, 'summary includes the delivery address');
+  assert.match(summaryText, /Bairro Fixture/, 'summary includes the neighborhood');
+  assert.match(summaryText, /Pix/, 'summary includes the payment method');
+  assert.match(summaryText, /R\$\s?48,00/, 'summary includes the correct total (40 subtotal + 8 delivery fee)');
+  assert.match(summaryText, /Posso confirmar\?$/, 'a fully ready, unblocked summary always ends by asking to confirm');
+  assert.equal(summaryText, renderOrderingSummary(afterPayment), 'reviewButtons text is exactly renderOrderingSummary — never a second, drifted copy');
+
+  assertExhausted('scenario 3');
+  assert.ok(
+    log.every((entry) => (entry.body as Record<string, unknown> | null)?.conversationControlId === permit.conversationControlId
+      && (entry.body as Record<string, unknown> | null)?.conversationEpoch === permit.epoch),
+    'every authority call in the sequence carries the SAME permit fields (conversationControlId/conversationEpoch)',
+  );
+
+  // =============================================================================
+  // Scenario 4 (fragment composition half) — "quero uma massa" / "talharim" /
+  // "molho branco" arriving as three separate WhatsApp messages compose into
+  // ONE turn (pure — no authority call).
+  // =============================================================================
+  console.log('===== Scenario 4a: fragments compose into one turn =====');
+  const t0 = new Date(0).toISOString();
+  const fragmentComposition = composeOrderingTurn([
+    { id: 'frag-1', role: 'user', content: 'quero uma massa', timestamp: t0, kind: 'text' },
+    { id: 'frag-2', role: 'user', content: 'talharim', timestamp: t0, kind: 'text' },
+    { id: 'frag-3', role: 'user', content: 'molho branco', timestamp: t0, kind: 'text' },
+  ], null);
+  assert.equal(fragmentComposition.text, 'quero uma massa\ntalharim\nmolho branco', 'three fragments compose into ONE turn, in arrival order');
+  assert.deepEqual(fragmentComposition.sourceMessageIds, ['frag-1', 'frag-2', 'frag-3']);
+
+  // =============================================================================
+  // Scenario 4 (confirm half) — "sim" after the summary the customer actually
+  // saw (revision 4) confirms EXACTLY once, with the token bound to that
+  // revision, and produces exactly one confirmation outcome.
+  // =============================================================================
+  console.log('===== Scenario 4b: "sim" confirms exactly once, bound to the shown revision =====');
+  const confirmedResponse = {
+    ...cloneFixture<Record<string, unknown>>('snapshot.confirmed.json'),
+    orderingId, revision: 4,
+    cart: afterPayment.cart, fulfillment: afterPayment.fulfillment, payment: afterPayment.payment, pricing: afterPayment.pricing,
+  };
+  const { client: confirmClient, log: confirmLog, assertExhausted: confirmExhausted } = fakeClient([{
+    label: 'confirm_draft bound to the shown revision',
+    expect: ({ body }) => {
+      assert.equal(body?.confirmationToken, (readyBase.confirmationAction as Record<string, unknown>).token);
+      assert.equal(body?.expectedRevision, 4, 'confirms the revision the customer actually SAW, not whatever is current');
+    },
+    respond: () => okJson(confirmedResponse),
+  }]);
+  const alwaysCurrentPermit = async () => true;
+  const outcome = await resolveConfirmation(
+    afterPayment, confirmClient, permit.empresaId, permit.remoteJid, 'wamid.e1-massa-confirm-1', permit,
+    (readyBase.confirmationAction as Record<string, unknown>).token as string, 4, alwaysCurrentPermit,
+  );
+  confirmExhausted('scenario 4 confirm');
+  assert.equal(confirmLog.length, 1, 'exactly ONE confirmDraft call');
+  assert.equal(outcome.kind, 'confirmed');
+  assert.equal(outcome.snapshot.orderingId, orderingId);
+  // Static check (no Supabase in this process — see file header): the ONE
+  // confirmation message `completeConfirmation` sends for a 'confirmed'
+  // outcome is this exact, stable string.
+  const aiWhatsAppOrderingSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
+  assert.match(aiWhatsAppOrderingSource, /'Pedido confirmado e enviado para a loja\. Aviso por aqui quando houver novidade\.'/);
+}
