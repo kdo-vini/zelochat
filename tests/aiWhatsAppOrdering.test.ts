@@ -7,6 +7,7 @@ import {
   classifyOrderingTurn,
   canonicalButtonMessageKey,
   findPriorOrderingQuery,
+  findLatestOrderingState,
   handleCanonicalButtonOnce,
   buildOrderingEntryReply,
   isOrderingEntryTurn,
@@ -25,8 +26,10 @@ import {
 } from '../server/zeloMenuInternalClient.js';
 import {
   tryHandleAiWhatsAppOrdering,
+  nextOrderingStatePatch,
   type OrderingClient,
 } from '../server/aiWhatsAppOrdering.js';
+import { composeOrderingTurn } from '../server/orderingTurnComposer.js';
 import type { StoredSession } from '../server/messageHandler.js';
 import type { AiTurnPermit } from '../server/conversationControl.js';
 
@@ -482,5 +485,54 @@ await assert.rejects(
     && error.message === 'Não foi possível consultar o pedido agora.'
     && !error.message.includes('raw database secret'),
 );
+
+// FN C3 / PR C-6 — consumed-message cursor must advance on EVERY terminal
+// path, not only the text-path sendNextRequirement call. Reproduces the
+// probe scenario (scratch/probe.ts) turn-by-turn using the SAME pure
+// primitives `tryHandleAiWhatsAppOrdering` glues together
+// (composeOrderingTurn + findLatestOrderingState + nextOrderingStatePatch +
+// serializeOrderingState), so the assertions exercise the real fix rather
+// than a hand-picked fixture.
+{
+  type Turn3Message = { id: string; role: string; kind?: string; content: string | null; timestamp: string };
+  const messages: Turn3Message[] = [
+    { id: 'm1', role: 'user', kind: 'text', content: 'quero uma massa', timestamp: '2026-01-01T10:00:00Z' },
+  ];
+
+  // Turn 1: requirement question sent (sendNextRequirement path).
+  const priorState1 = findLatestOrderingState(messages);
+  const composition1 = composeOrderingTurn(messages, priorState1);
+  assert.equal(composition1.text, 'quero uma massa');
+  messages.push({ id: 'a1', role: 'assistant', kind: 'text', content: 'Escolha a massa', timestamp: '2026-01-01T10:00:05Z' });
+  const t1Patch = nextOrderingStatePatch(priorState1, composition1.consumedMessageIds);
+  messages.push({
+    id: 't1', role: 'tool', kind: 'text',
+    content: serializeOrderingState({ orderingId: 'o', revision: 1, ...t1Patch }),
+    timestamp: '2026-01-01T10:00:05Z',
+  });
+
+  // Turn 2: customer answers the requirement ("talharim") -> sendSummary path.
+  messages.push({ id: 'm2', role: 'user', kind: 'text', content: 'talharim', timestamp: '2026-01-01T10:00:10Z' });
+  const priorState2 = findLatestOrderingState(messages);
+  assert.deepEqual(priorState2?.consumedMessageIds, ['m1']);
+  const composition2 = composeOrderingTurn(messages, priorState2);
+  assert.equal(composition2.text, 'talharim', 'turn 2 composes only the new answer, not the whole history');
+  const t2Patch = nextOrderingStatePatch(priorState2, composition2.consumedMessageIds);
+  assert.deepEqual(t2Patch.consumedMessageIds, ['m1', 'm2'], 'sendSummary must persist the ADVANCED cursor, not re-persist the previous one');
+  messages.push({
+    id: 't2', role: 'tool', kind: 'text',
+    content: serializeOrderingState({ orderingId: 'o', revision: 2, ...t2Patch }),
+    timestamp: '2026-01-01T10:00:15Z',
+  });
+  messages.push({ id: 'a2', role: 'assistant', kind: 'text', content: 'Resumo: 1x Massa (Talharim); retirada; total R$ 20,00. Posso confirmar?', timestamp: '2026-01-01T10:00:15Z' });
+
+  // Turn 3: "sim" must compose to exactly "sim" and classify as a confirmation.
+  messages.push({ id: 'm3', role: 'user', kind: 'text', content: 'sim', timestamp: '2026-01-01T10:00:20Z' });
+  const priorState3 = findLatestOrderingState(messages);
+  assert.deepEqual(priorState3?.consumedMessageIds, ['m1', 'm2']);
+  const composition3 = composeOrderingTurn(messages, priorState3);
+  assert.equal(composition3.text, 'sim', 'the fixed cursor must stop "talharim" from leaking into turn 3');
+  assert.deepEqual(classifyOrderingTurn(composition3.text, true), { kind: 'confirm' });
+}
 
 console.log('aiWhatsAppOrdering tests passed');

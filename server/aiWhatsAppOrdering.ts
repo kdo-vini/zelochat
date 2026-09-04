@@ -27,11 +27,12 @@ import {
   type CatalogReplyResult,
   type OrderingDraft,
   type OrderingSnapshot,
+  type OrderingStatePointer,
 } from '../src/domain/aiWhatsAppOrdering.js';
 import { presentOrderingRequirements, type OrderingReplyPayload } from '../src/domain/orderingRequirementPresenter.js';
 import { applyConversationOrderPatch, validateConversationOrderPatch, type ConversationOrderPatch } from './orderingPatchPlanner.js';
 import { buildOrderingPatchTool } from './orderingPatchPlanner.js';
-import { composeOrderingTurn } from './orderingTurnComposer.js';
+import { composeOrderingTurn, type OrderingTurnComposition } from './orderingTurnComposer.js';
 import type { OutboundPayload } from '../src/domain/outbound.js';
 import {
   ORDERING_MODEL_TOOLS,
@@ -105,11 +106,36 @@ async function sendText(permit: AiTurnPermit, text: string, purpose: string, dry
   await dispatchAiPayload(permit, { kind: 'text', text }, purpose, dryRun);
 }
 
+type PointerExtras = Pick<OrderingStatePointer, 'offeredOptionalRequirementIds' | 'declinedOptionalRequirementIds' | 'consumedMessageIds'>;
+
+/**
+ * FIX 2026-09-03 (FN C3 / PR C-6): the single source of truth for what a
+ * pointer write carries forward. Every field here MUST default to the prior
+ * on-disk value when the caller does not have a newer one to offer — NEVER to
+ * `undefined`, because `persistPointer` only serializes a field when it is
+ * present, and `findLatestOrderingState` reads only the LATEST tool row (it
+ * does not merge across writes). Omitting a field here does not "leave it
+ * unchanged" — it erases it from the next read. This is what let
+ * `sendNextRequirement`'s auto-select/button calls silently wipe
+ * `consumedMessageIds` that a sibling call had just written moments earlier.
+ */
+export function nextOrderingStatePatch(
+  priorState: Pick<OrderingStatePointer, 'offeredOptionalRequirementIds' | 'declinedOptionalRequirementIds' | 'consumedMessageIds'> | null,
+  consumedMessageIds?: string[],
+  overrides: Pick<PointerExtras, 'offeredOptionalRequirementIds' | 'declinedOptionalRequirementIds'> = {},
+): PointerExtras {
+  return {
+    offeredOptionalRequirementIds: overrides.offeredOptionalRequirementIds ?? priorState?.offeredOptionalRequirementIds,
+    declinedOptionalRequirementIds: overrides.declinedOptionalRequirementIds ?? priorState?.declinedOptionalRequirementIds,
+    consumedMessageIds: consumedMessageIds ?? priorState?.consumedMessageIds,
+  };
+}
+
 async function persistPointer(
   permit: AiTurnPermit,
-  snapshot: OrderingSnapshot,
+  snapshot: Pick<OrderingSnapshot, 'orderingId' | 'revision'>,
   dryRun = false,
-  state: Pick<ReturnType<typeof findLatestOrderingState>, 'offeredOptionalRequirementIds' | 'declinedOptionalRequirementIds' | 'consumedMessageIds'> | null = null,
+  state: PointerExtras | null = null,
 ): Promise<void> {
   if (dryRun) return;
   if (!(await isAiPermitCurrent(permit))) throw new OrderingSuppressedError();
@@ -129,17 +155,47 @@ async function persistPointer(
   );
 }
 
+/**
+ * Single helper every terminal path in this file calls to advance the
+ * consumed-message cursor. No-ops when there is no live draft to attach the
+ * pointer to (pre-pointer turns are already bounded by
+ * `composeOrderingTurn`'s "since last assistant" window, so there is nothing
+ * to persist yet).
+ */
+async function persistOrderingState(
+  permit: AiTurnPermit,
+  current: Pick<OrderingSnapshot, 'orderingId' | 'revision'> | null,
+  dryRun: boolean,
+  priorState: PointerExtras | null,
+  consumedMessageIds: string[],
+  overrides: Pick<PointerExtras, 'offeredOptionalRequirementIds' | 'declinedOptionalRequirementIds'> = {},
+): Promise<void> {
+  if (!current) return;
+  await persistPointer(permit, current, dryRun, nextOrderingStatePatch(priorState, consumedMessageIds, overrides));
+}
+
 function presentationPayload(payload: OrderingReplyPayload): OutboundPayload {
   if (payload.kind !== 'list') return payload;
   return { kind: 'list', body: payload.text, buttonText: payload.buttonText, sections: payload.sections };
 }
 
-async function sendSummary(permit: AiTurnPermit, snapshot: OrderingSnapshot, dryRun = false): Promise<string> {
+async function sendSummary(
+  permit: AiTurnPermit,
+  snapshot: OrderingSnapshot,
+  dryRun = false,
+  consumedMessageIds?: string[],
+): Promise<string> {
   const text = renderOrderingSummary(snapshot);
   const buttons = buildCanonicalConfirmationButtons(snapshot);
   // The state pointer is durable before a customer can tap any control.
   const previous = findLatestOrderingState((await getSession(permit.remoteJid, permit.empresaId))?.messages ?? []);
-  await persistPointer(permit, snapshot, dryRun, previous);
+  // FIX 2026-09-03 (FN C3): this used to re-persist `previous` verbatim,
+  // silently dropping whatever this turn's own composeOrderingTurn() had just
+  // consumed — the root cause of "sim" replaying as "talharim\nsim" one turn
+  // later. `consumedMessageIds`, when the caller has it, always wins; falling
+  // back to `previous` only covers callers with nothing new to consume
+  // (button taps, the final "confirmed" leg).
+  await persistPointer(permit, snapshot, dryRun, nextOrderingStatePatch(previous, consumedMessageIds));
   if (buttons.length) {
     await dispatchAiPayload(permit, {
       kind: 'buttons',
@@ -180,11 +236,16 @@ async function sendNextRequirement(
       return sendNextRequirement(permit, updated, dryRun, consumedMessageIds, client, messageId);
     }
   }
-  await persistPointer(permit, snapshot, dryRun, {
+  // FIX 2026-09-03 (FN C3): `consumedMessageIds` used to be written as-is —
+  // when a caller had none to offer (the button path, or the declines-extras
+  // path calling through after its own explicit persist), the field was
+  // OMITTED from the write entirely, erasing whatever cursor a sibling call
+  // had just persisted moments earlier. Falling back to `state?.consumedMessageIds`
+  // (the pointer this same call already re-fetched above) preserves it instead.
+  await persistPointer(permit, snapshot, dryRun, nextOrderingStatePatch(state, consumedMessageIds, {
     offeredOptionalRequirementIds: presentation.offeredOptionalRequirementIds,
     declinedOptionalRequirementIds: presentation.declinedOptionalRequirementIds,
-    ...(consumedMessageIds ? { consumedMessageIds } : {}),
-  });
+  }));
   await dispatchAiPayload(permit, presentationPayload(presentation.payload), `requirement:${snapshot.orderingId}:${snapshot.revision}`, dryRun);
   return presentation.payload.text;
 }
@@ -375,11 +436,12 @@ async function completeConfirmation(
   permit: AiTurnPermit,
   outcome: ConfirmationOutcome,
   dryRun = false,
+  consumedMessageIds?: string[],
 ): Promise<string> {
-  if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot, dryRun);
+  if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot, dryRun, consumedMessageIds);
   const text = 'Pedido confirmado e enviado para a loja. Aviso por aqui quando houver novidade.';
   await sendText(permit, text, `confirmed:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`, dryRun);
-  await persistPointer(permit, outcome.snapshot, dryRun);
+  await persistPointer(permit, outcome.snapshot, dryRun, consumedMessageIds ? { consumedMessageIds } : null);
   return text;
 }
 
@@ -395,11 +457,25 @@ export async function tryHandleAiWhatsAppOrdering(
 ): Promise<AiOrderingHandleResult> {
   const startedAt = Date.now();
   const dryRun = options.dryRun === true;
-  const composition = composeOrderingTurn(session.messages, findLatestOrderingState(session.messages));
+  // Computed once per turn (FN C3 / PR C-6): every terminal exit below must
+  // route its cursor write through `persistOrderingState`/`nextOrderingStatePatch`
+  // using THIS composition's `consumedMessageIds`, never a stale re-read.
+  const priorState = findLatestOrderingState(session.messages);
+  const composition = composeOrderingTurn(session.messages, priorState);
   const text = composition.text || lastUserText(session);
+  // Hoisted so the catch-all failure handler below can still attempt a
+  // best-effort cursor advance (escalation/suppression are terminal paths
+  // too — see the brief's exit list) when a live draft was already loaded.
+  let current: OrderingSnapshot | null = null;
   if (composition.failedAudioMessageIds.length > 0) {
     const response = 'Não consegui ouvir esse áudio. Pode escrever o pedido aqui para eu continuar?';
     await sendText(permit, response, `audio-failure:${composition.failedAudioMessageIds.join(':')}`, dryRun);
+    // No ZeloMenu round trip needed here — we are not mutating the draft,
+    // only re-affirming the existing pointer's orderingId/revision with an
+    // advanced cursor so this failed audio is never re-detected on the next
+    // turn (the second half of PR C-6: "one failed audio permanently bricks
+    // the conversation").
+    await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds);
     return { handled: true, response };
   }
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
@@ -418,7 +494,7 @@ export async function tryHandleAiWhatsAppOrdering(
     return { handled: true, response };
   }
   const messageId = lastUserMessageId(session);
-  const hasPointer = Boolean(findLatestOrderingState(session.messages));
+  const hasPointer = Boolean(priorState);
   const initialTurn = classifyOrderingTurn(text, hasPointer);
   const followUp = !hasPointer && isOrderingFollowUp(session.messages);
   if (initialTurn.kind === 'none' && !followUp) return { handled: false };
@@ -426,27 +502,29 @@ export async function tryHandleAiWhatsAppOrdering(
   if (!client) {
     metric('ordering_turn', 'configuration_missing', startedAt);
     if (dryRun) return { handled: false };
+    try {
+      await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds);
+    } catch (persistError) {
+      console.warn('[AiOrdering] best-effort cursor persist on configuration_missing threw:', persistError);
+    }
     const response = await transferOnFailure(permit, dryRun);
     return { handled: true, response };
   }
   try {
     const canonical = await loadCanonicalSnapshot(session, empresaId, jid, client);
-    const current = canonical && (canonical.state === 'cart_open' || canonical.requiresReview) ? canonical : null;
+    current = canonical && (canonical.state === 'cart_open' || canonical.requiresReview) ? canonical : null;
     const turn = classifyOrderingTurn(text, Boolean(current) || hasPointer);
     if (current && declinesOptionalExtras(text)) {
-      const previous = findLatestOrderingState(session.messages);
       const declinedOptionalRequirementIds = [...new Set([
-        ...(previous?.declinedOptionalRequirementIds ?? []),
+        ...(priorState?.declinedOptionalRequirementIds ?? []),
         ...(current.requirements ?? []).filter((requirement) => !requirement.blocking).map((requirement) => requirement.id),
       ])];
-      await persistPointer(permit, current, dryRun, {
-        offeredOptionalRequirementIds: previous?.offeredOptionalRequirementIds,
+      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {
         declinedOptionalRequirementIds,
-        consumedMessageIds: composition.consumedMessageIds,
       });
       const response = current.readyForConfirmation && current.confirmationAction
-        ? await sendSummary(permit, current, dryRun)
-        : await sendNextRequirement(permit, current, dryRun);
+        ? await sendSummary(permit, current, dryRun, composition.consumedMessageIds)
+        : await sendNextRequirement(permit, current, dryRun, composition.consumedMessageIds);
       return { handled: true, response };
     }
     if (turn.kind === 'none' && !followUp) return { handled: false };
@@ -466,7 +544,7 @@ export async function tryHandleAiWhatsAppOrdering(
         return { handled: true, response };
       }
       const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId, permit);
-      const response = await completeConfirmation(permit, outcome, dryRun);
+      const response = await completeConfirmation(permit, outcome, dryRun, composition.consumedMessageIds);
       metric('ordering_confirm', 'handled', startedAt);
       return { handled: true, response };
     }
@@ -475,12 +553,14 @@ export async function tryHandleAiWhatsAppOrdering(
         await client.cancelDraft({ empresaId, remoteJid: jid, messageId, orderingId: current.orderingId, expectedRevision: current.revision,
           conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch });
       }
+      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds);
       const response = 'Pedido cancelado. Se quiser começar outro, é só me dizer.';
       await sendText(permit, response, 'cancelled', dryRun);
       metric('ordering_cancel', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && (turn.kind === 'ask_change' || (turn.kind === 'alter' && !turn.instruction.trim()))) {
+      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds);
       const response = 'Tudo bem. O que você quer alterar no pedido?';
       await sendText(permit, response, 'ask-change', dryRun);
       return { handled: true, response };
@@ -499,6 +579,10 @@ export async function tryHandleAiWhatsAppOrdering(
       draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
     }
     if (!draft) {
+      // Mid-order ambiguous catalog question (`current` may be set): advance
+      // the cursor so this text is not replayed into the next turn's
+      // composition once the customer answers the real pending requirement.
+      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds);
       const response = renderCatalogReply(catalog, query, entry.menuUrl);
       await sendText(permit, response, 'catalog', dryRun);
       metric('catalog_search', 'answered', startedAt);
@@ -516,14 +600,26 @@ export async function tryHandleAiWhatsAppOrdering(
       orderingId: current?.orderingId, expectedRevision: current?.revision, draft,
       conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
     });
+    current = updated;
     const response = updated.readyForConfirmation && updated.confirmationAction
-      ? await sendSummary(permit, updated, dryRun)
+      ? await sendSummary(permit, updated, dryRun, composition.consumedMessageIds)
       : await sendNextRequirement(permit, updated, dryRun, composition.consumedMessageIds, client, messageId);
     metric('ordering_update', 'summary_sent', startedAt);
     return { handled: true, response };
   } catch (error) {
     if (error instanceof OrderingSuppressedError) return { handled: true };
     metric('ordering_turn', 'failed_closed', startedAt);
+    // Best-effort cursor advance (escalation/suppression are terminal paths
+    // too): only possible when a live draft had already been loaded before
+    // the failure. A failure here must never mask the original error path.
+    try {
+      // `current` may be null when the failure happened while reloading the
+      // canonical snapshot itself; fall back to the pre-turn pointer so the
+      // cursor still advances against the last known orderingId/revision.
+      await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds);
+    } catch (persistError) {
+      console.warn('[AiOrdering] best-effort cursor persist on failure threw:', persistError);
+    }
     const response = await transferOnFailure(permit, dryRun);
     return { handled: true, response };
   }
