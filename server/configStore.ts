@@ -485,6 +485,16 @@ export function isAiGloballyEnabledNow(empresaId: string, now = new Date()): boo
   return sharedIsAiGloballyEnabledNow(getConfig(empresaId), now);
 }
 
+/**
+ * Single policy seam for every canonical-ordering entry point.
+ * The rollout flag is gone, but restaurant mode and the global AI schedule
+ * remain authoritative for text, buttons and the simulator alike.
+ */
+export function isCanonicalOrderingAllowedNow(empresaId: string, now = new Date()): boolean {
+  const config = getConfig(empresaId);
+  return config.zelochatMode !== 'general' && sharedIsAiGloballyEnabledNow(config, now);
+}
+
 export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
   const existing = configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
   const patch: Partial<BusinessConfig> = { ...c };

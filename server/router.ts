@@ -79,7 +79,13 @@ import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventFailed, markWebhookEventProcessed, type WebhookAuthStatus } from './webhookLog.js';
 import { processFromMeUpsert } from './fromMeProcessor.js';
 import { redactInstance, redactJid } from './redact.js';
-import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
+import {
+  getConfig,
+  setConfig,
+  loadAiSettingsFromDb,
+  ensureAiSettingsHydrated,
+  isCanonicalOrderingAllowedNow,
+} from './configStore.js';
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
 import { recordAiUsage } from './aiUsage.js';
 import { buildAiHealthReport } from './aiHealth.js';
@@ -635,6 +641,11 @@ async function processWebhookEvent(
     ).trim();
 
     if (buttonId && parseOrderingButton(buttonId)) {
+      // FIX 2026-09-04: removing the rollout flag also removed the only guard
+      // on this direct button path -> keep mode/schedule kill switches ahead
+      // of persistence, permits and every canonical mutation.
+      await ensureAiSettingsHydrated(empresaId);
+      if (!isCanonicalOrderingAllowedNow(empresaId)) return;
       const messageId = data.key?.id ?? '';
       const persistedAction = await handleIncomingMessage(data, empresaId);
       if (!persistedAction) return;
@@ -713,6 +724,11 @@ async function processWebhookEvent(
       const canonicalCheckSession = await getSession(remoteJid, empresaId);
       const canonicalPointer = canonicalCheckSession ? findLatestOrderingState(canonicalCheckSession.messages) : null;
       if (canonicalPointer) {
+        // FIX 2026-09-04: typed canonical actions must honor the same policy
+        // as a new AI turn; otherwise Cancelar/Alterar could mutate a draft
+        // while the empresa was in general mode or the AI was switched off.
+        await ensureAiSettingsHydrated(empresaId);
+        if (!isCanonicalOrderingAllowedNow(empresaId)) return;
         if (isHardConfirm) {
           // The typed word carries no confirmation token. Let it flow
           // through the REAL pipeline (persistence, permit, debounce, entry
