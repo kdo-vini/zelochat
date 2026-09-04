@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
   AI_ORDER_CONFIRM_PREFIX,
   applyOrderingDefaults,
+  applyFulfillmentTypeSelection,
   buildConfirmationButtons,
   classifyOrderingTurn,
   canonicalButtonMessageKey,
@@ -112,6 +113,12 @@ const fakePermit: AiTurnPermit = {
   triggerMessageId: 'simulation-message',
 };
 
+// C5 / PR I-2, I-16, 1.22-1.24: `resolveConfirmation`'s live-permit check
+// has no Supabase configured in this test process — inject an
+// always-current check for tests that are not themselves racing a
+// takeover (those live in tests/aiTakeoverRace.test.ts).
+const alwaysCurrentPermit = async () => true;
+
 // The permanent product flow has no rollout flags. Availability depends only
 // on the private ZeloMenu client configuration.
 const orderingDomainSource = readFileSync(new URL('../src/domain/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
@@ -204,6 +211,23 @@ assert.equal(dryRunCatalog.handled, true);
 assert.match(dryRunCatalog.response ?? '', /Carne de panela/);
 assert.match(dryRunCatalog.response ?? '', /Bisteca de porco/);
 assert.deepEqual(dryRunCalls, [], 'canonical dry-run never invokes mutation methods');
+
+// C6 / PR I-8: a greeting VARIANT that isn't an exact "oi"-style match
+// ("tá atendendo?", "estão atendendo?", "boa noite, tão aberto?") must still
+// report handled:true once the entry card has been dispatched — otherwise
+// ai.ts lets the generic model answer too and the customer gets the entry
+// card AND a redundant greeting in the same turn.
+for (const text of ['tá atendendo?', 'estão atendendo?', 'boa noite, tão aberto?']) {
+  const entryOnly = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    sessionWith(text),
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    { dryRun: true, client: dryRunClient },
+  );
+  assert.equal(entryOnly.handled, true, `"${text}" must report handled:true once the entry card was sent (no double reply)`);
+}
 
 // Even with an open canonical pointer, dry-run confirmation/cancellation must
 // only read the snapshot and preview the result; neither path may mutate it.
@@ -316,8 +340,14 @@ const buttons = buildConfirmationButtons(snapshot());
 assert.deepEqual(buttons.map((button) => button.displayText), ['Confirmar', 'Alterar']);
 assert.ok(buttons[0].id.startsWith(AI_ORDER_CONFIRM_PREFIX));
 assert.equal(buttons[0].id.includes(snapshot().orderingId), false, 'button must not expose orderingId');
-assert.deepEqual(parseOrderingButton(buttons[0].id), { kind: 'confirm', token: 'opaque-token' });
+// PR C-5: the confirm button id binds the exact revision it was rendered
+// for — a stale tap (an older button, a draft that has since moved on) must
+// never confirm whatever draft happens to be current now.
+assert.deepEqual(parseOrderingButton(buttons[0].id), { kind: 'confirm', token: 'opaque-token', expectedRevision: snapshot().revision });
 assert.deepEqual(parseOrderingButton(buttons[1].id), { kind: 'alter' });
+// The OLD format (no `|<revision>` suffix) still parses — a button already
+// delivered to a customer before this fix shipped must not break.
+assert.deepEqual(parseOrderingButton(`${AI_ORDER_CONFIRM_PREFIX}opaque-token`), { kind: 'confirm', token: 'opaque-token' });
 
 const summary = renderOrderingSummary(snapshot());
 assert.match(summary, /2x Marmita do dia \(Escolha a mistura: Frango\)/);
@@ -474,6 +504,17 @@ assert.match(accompanimentReply, /Acompanhamento 12/);
 const orderingHandlerSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
 assert.match(orderingHandlerSource, /wantsOrder\s*&&\s*!catalog\.ambiguous/, 'ambiguous catalog candidates never reach cart planning');
 assert.doesNotMatch(orderingHandlerSource, /sendTextMessage|sendButtonMessage/, 'canonical ordering must use the durable outbound dispatcher');
+// C4 / FN I1: every "summary vs. next requirement" decision must route
+// through the presenter-aware gate — the naive `readyForConfirmation &&
+// confirmationAction` ternary this replaced skipped `presentOrderingRequirements`
+// (and therefore its optional-extras offer) the instant ZeloMenu's blocking
+// requirements were satisfied.
+assert.doesNotMatch(orderingHandlerSource, /readyForConfirmation\s*&&\s*\w+\.confirmationAction\s*\)/, 'no call site decides summary-vs-requirement from readyForConfirmation alone anymore');
+assert.equal(
+  (orderingHandlerSource.match(/hasPendingOrderingRequirements\(/g) ?? []).length,
+  6,
+  'all six summary/requirement decision points (text turn, declines-extras, update, resync, and the button handler equivalents) use the presenter-aware gate',
+);
 const aiSource = readFileSync(new URL('../server/ai.ts', import.meta.url), 'utf8');
 assert.match(aiSource, /await tryHandleAiWhatsAppOrdering\(/, 'restaurant replies must invoke canonical ordering before the generic model');
 assert.match(aiSource, /pedido por escrito|pedido escrito/i, 'restaurant entry point offers written ordering');
@@ -622,7 +663,7 @@ await assert.rejects(
     cancelDraft: async () => { throw new Error('unused'); },
     getOrdering: async () => snapshot({ state: 'confirmed_waiting_review', order: { id: 'ord-1', status: 'pending_review', alreadyConfirmed: true, revision: 2 } }),
   };
-  const outcome = await resolveConfirmation(snapshot(), timeoutThenConfirmedClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token');
+  const outcome = await resolveConfirmation(snapshot(), timeoutThenConfirmedClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token', undefined, alwaysCurrentPermit);
   assert.equal(outcome.kind, 'confirmed', 'a confirm timeout followed by a reconciled "confirmed" GET must be treated as success');
 }
 
@@ -636,7 +677,7 @@ await assert.rejects(
     cancelDraft: async () => { throw new Error('unused'); },
     getOrdering: async () => snapshot({ state: 'cart_open' }),
   };
-  const outcome = await resolveConfirmation(snapshot(), timeoutStillOpenClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token');
+  const outcome = await resolveConfirmation(snapshot(), timeoutStillOpenClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token', undefined, alwaysCurrentPermit);
   assert.equal(outcome.kind, 'timeout_pending');
 }
 
@@ -658,7 +699,7 @@ await assert.rejects(
     cancelDraft: async () => { throw new Error('unused'); },
     getOrdering: async () => { throw new Error('unused'); },
   };
-  const outcome = await resolveConfirmation(snapshot(), conflictThenRefreshedClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token');
+  const outcome = await resolveConfirmation(snapshot(), conflictThenRefreshedClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token', undefined, alwaysCurrentPermit);
   assert.equal(outcome.kind, 'summary');
   assert.equal((capturedDraftBody as { fulfillment?: unknown })?.fulfillment, undefined, 'the refresh retry must never resend the rejected fulfillment shape');
   assert.equal((capturedDraftBody as { customer?: unknown })?.customer, undefined, 'the refresh retry must never resend an unknown customer name');
@@ -677,5 +718,20 @@ assert.equal(sanitizeFulfillmentForWire({ type: null, asap: true }), undefined);
 assert.deepEqual(sanitizeFulfillmentForWire({ type: 'pickup', asap: true, deliveryFee: 8, deliveryFeeToConfirm: true }), { type: 'pickup', asap: true });
 assert.equal(sanitizeCustomerForWire({ name: null, phone: '5511999999999' }), undefined);
 assert.deepEqual(sanitizeCustomerForWire({ name: 'Ana', phone: '5511999999999' }), { name: 'Ana' });
+
+// C6 / PR I-3: a fulfillment_type tap ("Entrega"/"Retirada") must never
+// discard an already-agreed schedule — `asap` only defaults to `true` when
+// nothing was collected yet.
+assert.deepEqual(applyFulfillmentTypeSelection(undefined, 'pickup'), { type: 'pickup', asap: true }, 'no prior fulfillment defaults to asap');
+assert.deepEqual(
+  applyFulfillmentTypeSelection({ type: 'pickup', asap: false, pickupDate: '2026-09-05', pickupTime: '19:00' }, 'delivery'),
+  { type: 'delivery', asap: false, pickupDate: '2026-09-05', pickupTime: '19:00' },
+  'an agreed schedule must survive switching between pickup and delivery',
+);
+assert.deepEqual(
+  applyFulfillmentTypeSelection({ type: 'delivery', asap: true, deliveryAddress: 'Rua A' }, 'pickup'),
+  { type: 'pickup', asap: true, deliveryAddress: 'Rua A' },
+  'asap:true (no schedule collected) stays true across a type switch',
+);
 
 console.log('aiWhatsAppOrdering tests passed');

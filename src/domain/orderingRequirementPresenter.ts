@@ -1,7 +1,5 @@
 import {
-  AI_ORDER_ALTER_BUTTON,
-  AI_ORDER_CANCEL_BUTTON,
-  AI_ORDER_CONFIRM_PREFIX,
+  buildCanonicalConfirmationButtons,
   buildRequirementButtonId,
   renderOrderingSummary,
   type OrderingRequirement,
@@ -83,20 +81,22 @@ function compactOptionalOffer(requirements: OrderingRequirement[]): string {
 }
 
 function reviewButtons(snapshot: OrderingSnapshot): OrderingReplyPayload {
-  const token = snapshot.confirmationAction?.token ?? '';
   // FIX 2026-09-04 (PR Important "summaryText"): `snapshot.summaryText` does
   // not exist on the ZeloMenu wire (confirmed against every recorded
   // fixture) — reading it here always rendered "Resumo do pedido:" with an
   // empty body next to a live Confirmar button. `renderOrderingSummary` is
   // the single, already-correct source of truth for this text.
+  //
+  // FIX 2026-09-04 (C4 / FN I1): this used to build the Confirmar button id
+  // inline (`ZOC:<token>`, no revision suffix) — a SECOND, drifted copy of
+  // `sendSummary`'s button construction that never got the PR C-5 fix
+  // (revision-bound confirm buttons). Reusing `buildCanonicalConfirmationButtons`
+  // keeps every summary+confirm render (whichever code path reaches it) on
+  // the one function that knows the current button-id format.
   return {
     kind: 'buttons',
     text: renderOrderingSummary(snapshot),
-    buttons: [
-      { id: `${AI_ORDER_CONFIRM_PREFIX}${token}`, label: 'Confirmar' },
-      { id: AI_ORDER_ALTER_BUTTON, label: 'Alterar' },
-      { id: AI_ORDER_CANCEL_BUTTON, label: 'Cancelar' },
-    ],
+    buttons: buildCanonicalConfirmationButtons(snapshot).map((button) => ({ id: button.id, label: button.displayText })),
   };
 }
 
@@ -203,6 +203,31 @@ function buildRequirementPrompt(requirement: OrderingRequirement, snapshot: Orde
   // plain text using the requirement's own label — NEVER an empty/undefined
   // body (that used to be the default branch's exact failure mode).
   return { kind: 'text', text: requirement.label || 'Preciso de mais uma informação para continuar com o pedido.' };
+}
+
+/**
+ * FIX 2026-09-04 (C4 / FN I1): the server-side orchestrator used to decide
+ * "summary vs. next requirement" purely from `readyForConfirmation` —
+ * ZeloMenu marks a draft ready as soon as every BLOCKING requirement is
+ * satisfied, which is exactly the state where only optional (non-blocking)
+ * groups remain. That short-circuit skipped `presentOrderingRequirements`
+ * entirely, so the paid "extras" upsell this function already knows how to
+ * offer (`compactOptionalOffer`, below) was never reachable in production —
+ * Incident XXVIII's own symptom, reintroduced by a call site that never
+ * asked the presenter. Callers should route to `sendNextRequirement` (which
+ * calls `presentOrderingRequirements`) whenever this returns true, and only
+ * treat the draft as "nothing left to ask, review the summary" when it is
+ * false — `presentOrderingRequirements` itself still decides between
+ * `reviewButtons` and the optional-offer text in that case.
+ */
+export function hasPendingOrderingRequirements(
+  snapshot: Pick<OrderingSnapshot, 'requirements'>,
+  state: OrderingPresenterState = {},
+): boolean {
+  const offered = new Set(state.offeredOptionalRequirementIds ?? []);
+  const declined = new Set(state.declinedOptionalRequirementIds ?? []);
+  const requirements = snapshot.requirements ?? [];
+  return requirements.some((requirement) => requirement.blocking || (!offered.has(requirement.id) && !declined.has(requirement.id)));
 }
 
 export function presentOrderingRequirements(

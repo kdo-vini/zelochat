@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { presentOrderingRequirements, type OrderingReplyPayload } from '../src/domain/orderingRequirementPresenter.js';
+import { presentOrderingRequirements, hasPendingOrderingRequirements, type OrderingReplyPayload } from '../src/domain/orderingRequirementPresenter.js';
 import { parseOrderingButton, type OrderingRequirementKind, type OrderingSnapshot } from '../src/domain/aiWhatsAppOrdering.js';
 import { validateOutboundPayload, type OutboundPayload } from '../src/domain/outbound.js';
 import { parseOrderingSnapshotWire } from '../server/zeloMenuOrderingWire.js';
@@ -187,7 +187,41 @@ assert.equal(missingRequirements.payload.kind, 'text');
     assert.match(ready.payload.text, /Resumo:/);
     assert.doesNotMatch(ready.payload.text, /Resumo do pedido:\s*$/);
     assert.deepEqual(ready.payload.buttons.map((button) => button.label), ['Confirmar', 'Alterar', 'Cancelar']);
+    // C3 / PR C-5: `reviewButtons` used to build the Confirmar id inline with
+    // no revision suffix — a second, drifted copy of `buildCanonicalConfirmationButtons`
+    // that never got the revision-binding fix. It must now reuse the same
+    // builder (and therefore the same `|<revision>` suffix).
+    const confirmButton = ready.payload.buttons.find((button) => button.label === 'Confirmar');
+    assert.ok(confirmButton?.id.endsWith('|1'), `Confirmar button id must bind revision 1, got ${confirmButton?.id}`);
   }
+}
+
+// --- C4 / FN I1: `hasPendingOrderingRequirements` is the gate the server
+// orchestrator uses to decide "offer the presenter first" vs "go straight to
+// the summary" — this used to be `readyForConfirmation` alone, which
+// ZeloMenu sets true as soon as blocking requirements are satisfied, i.e.
+// exactly when only optional groups remain. That skipped the presenter
+// entirely and the paid "extras" upsell was never reachable in production
+// (Incident XXVIII).
+{
+  const optionalOnly: OrderingSnapshot = {
+    ...base, readyForConfirmation: true,
+    confirmationAction: { type: 'confirm_order', token: 'tok', revision: 1, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    requirements: [{ id: 'extra', type: 'modifier_group', label: 'Extras', blocking: false, kind: 'adicional', options: [{ id: 'e1', name: 'Bacon', priceDelta: 3, available: true }] }],
+  };
+  assert.equal(hasPendingOrderingRequirements(optionalOnly), true, 'an un-offered optional group must still be offered even when ZeloMenu says ready');
+  assert.equal(hasPendingOrderingRequirements(optionalOnly, { declinedOptionalRequirementIds: ['extra'] }), false, 'once declined, the SAME group is never re-asked — routes to the summary');
+  assert.equal(hasPendingOrderingRequirements(optionalOnly, { offeredOptionalRequirementIds: ['extra'] }), false, 'once offered (even without an explicit decline), it is not offered again on the very next turn');
+  // A blocking requirement always wins, regardless of ready/offered/declined.
+  const withBlocking: OrderingSnapshot = {
+    ...base, readyForConfirmation: true,
+    confirmationAction: { type: 'confirm_order', token: 'tok', revision: 1, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    requirements: [{ id: 'molho', type: 'modifier_group', label: 'Escolha o molho', blocking: true, kind: 'adicional', options: [] }],
+  };
+  assert.equal(hasPendingOrderingRequirements(withBlocking, { declinedOptionalRequirementIds: ['molho'] }), true, 'blocking requirements are never satisfied by a decline');
+  // Nothing pending at all -> summary.
+  assert.equal(hasPendingOrderingRequirements({ ...base, requirements: [] }), false);
+  assert.equal(hasPendingOrderingRequirements({ ...base, requirements: undefined }), false);
 }
 
 console.log('orderingRequirementPresenter tests passed');

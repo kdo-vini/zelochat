@@ -177,7 +177,7 @@ export async function handleCanonicalButtonOnce<T extends CanonicalButtonHandlin
 }
 
 export type OrderingButtonAction =
-  | { kind: 'confirm'; token: string }
+  | { kind: 'confirm'; token: string; expectedRevision?: number }
   | { kind: 'alter' }
   | { kind: 'cancel' }
   | { kind: 'start' }
@@ -236,8 +236,25 @@ export function parseOrderingButton(buttonId: string): OrderingButtonAction | nu
     return { kind: 'requirement', requirementId, optionId, fingerprint };
   }
   if (!normalized.startsWith(AI_ORDER_CONFIRM_PREFIX)) return null;
-  const token = normalized.slice(AI_ORDER_CONFIRM_PREFIX.length).trim();
-  return token && token.length <= 256 ? { kind: 'confirm', token } : null;
+  const rest = normalized.slice(AI_ORDER_CONFIRM_PREFIX.length).trim();
+  // FIX 2026-09-04 (C3 / PR C-5): a trailing `|<revision>` binds this button
+  // to the exact draft revision it was rendered for — the same defense the
+  // `REQ:` requirement buttons already have (PR 1.28), previously missing
+  // here. Tolerate the OLD format (no suffix) so a button already delivered
+  // to a customer before this deploy still parses; `expectedRevision` is
+  // simply absent then and the staleness check in `resolveConfirmation`
+  // falls back to the persisted pointer's revision.
+  const sepIndex = rest.lastIndexOf('|');
+  let token = rest;
+  let expectedRevision: number | undefined;
+  if (sepIndex >= 0) {
+    const maybeRevision = rest.slice(sepIndex + 1);
+    if (/^\d+$/.test(maybeRevision)) {
+      token = rest.slice(0, sepIndex);
+      expectedRevision = Number(maybeRevision);
+    }
+  }
+  return token && token.length <= 256 ? { kind: 'confirm', token, ...(expectedRevision !== undefined ? { expectedRevision } : {}) } : null;
 }
 
 export interface OrderingModifierSelection {
@@ -494,11 +511,16 @@ export function renderOrderingSummary(snapshot: OrderingSnapshot): string {
 }
 
 /** Legacy two-button helper retained for simulator/old callers. */
+/** `|<revision>` binds the button to the exact revision it was rendered for — see `parseOrderingButton` (C3 / PR C-5). */
+function confirmButtonId(token: string, revision: number): string {
+  return `${AI_ORDER_CONFIRM_PREFIX}${token}|${revision}`;
+}
+
 export function buildConfirmationButtons(snapshot: OrderingSnapshot): Array<{ id: string; displayText: string }> {
   const token = snapshot.confirmationAction?.token;
   if (!token || isOrderingSummaryBlocked(snapshot)) return [];
   return [
-    { id: `${AI_ORDER_CONFIRM_PREFIX}${token}`, displayText: 'Confirmar' },
+    { id: confirmButtonId(token, snapshot.revision), displayText: 'Confirmar' },
     { id: AI_ORDER_ALTER_BUTTON, displayText: 'Alterar' },
   ];
 }
@@ -507,7 +529,7 @@ export function buildCanonicalConfirmationButtons(snapshot: OrderingSnapshot): A
   const token = snapshot.confirmationAction?.token;
   if (!token || isOrderingSummaryBlocked(snapshot)) return [];
   return [
-    { id: `${AI_ORDER_CONFIRM_PREFIX}${token}`, displayText: 'Confirmar' },
+    { id: confirmButtonId(token, snapshot.revision), displayText: 'Confirmar' },
     { id: AI_ORDER_ALTER_BUTTON, displayText: 'Alterar' },
     { id: AI_ORDER_CANCEL_BUTTON, displayText: 'Cancelar' },
   ];
@@ -702,6 +724,29 @@ export function sanitizeFulfillmentForWire(
   if (fulfillment.deliveryNumber) sanitized.deliveryNumber = fulfillment.deliveryNumber;
   if (fulfillment.deliveryComplement) sanitized.deliveryComplement = fulfillment.deliveryComplement;
   return sanitized;
+}
+
+/**
+ * FIX 2026-09-04 (C6 / PR I-3): applies a `fulfillment_type` requirement tap
+ * (the "Entrega"/"Retirada" button) to a draft. ZeloMenu's `fulfillment_type`
+ * requirement carries no `options[]` at all (see
+ * `tests/fixtures/zelomenu-wire/v1/requirement-types.json`), so — unlike
+ * `modifier_group`/`payment_method` — there is no per-option availability to
+ * validate against the wire; the caller's own enum check
+ * (`optionId === 'pickup' | 'delivery'`) plus the requirement-id lookup and
+ * revision-fingerprint check (PR 1.28) are the full extent of what CAN be
+ * validated here. What this function guards is the other half of I-3: a
+ * customer who already said "entrega às 19h" (`asap:false` +
+ * `pickupDate`/`pickupTime` already collected) must not have that silently
+ * discarded just because they then clarified entrega vs. retirada — `asap`
+ * only ever defaults to `true` when nothing was collected yet; an existing
+ * `false` (or any other already-set field, carried via the spread) survives.
+ */
+export function applyFulfillmentTypeSelection(
+  fulfillment: OrderingDraft['fulfillment'] | undefined,
+  optionId: 'pickup' | 'delivery',
+): NonNullable<OrderingDraft['fulfillment']> {
+  return { ...fulfillment, type: optionId, asap: fulfillment?.asap ?? true };
 }
 
 /**

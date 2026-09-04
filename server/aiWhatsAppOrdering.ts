@@ -7,6 +7,7 @@ import { escalateSession } from './escalation.js';
 import { dispatchConversationOutbound } from './conversationOutbound.js';
 import { isAiPermitCurrent, type AiTurnPermit } from './conversationControl.js';
 import {
+  applyFulfillmentTypeSelection,
   buildOrderingEntryPayload,
   buildCanonicalConfirmationButtons,
   buildDeliveryFeeReply,
@@ -32,7 +33,7 @@ import {
   type OrderingSnapshot,
   type OrderingStatePointer,
 } from '../src/domain/aiWhatsAppOrdering.js';
-import { presentOrderingRequirements, type OrderingReplyPayload } from '../src/domain/orderingRequirementPresenter.js';
+import { presentOrderingRequirements, hasPendingOrderingRequirements, type OrderingReplyPayload } from '../src/domain/orderingRequirementPresenter.js';
 import { applyConversationOrderPatch, buildOrderingPatchTool, validateConversationOrderPatch, type ConversationOrderPatch } from './orderingPatchPlanner.js';
 import { composeOrderingTurn, type OrderingTurnComposition } from './orderingTurnComposer.js';
 import type { OutboundPayload } from '../src/domain/outbound.js';
@@ -43,6 +44,16 @@ import {
 
 const MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 const STATE_TOOL_CALL_ID = 'zelo_ai_ordering_state';
+/**
+ * Injectable so `tests/aiTakeoverRace.test.ts` can race the SAME primitives
+ * this module actually calls (C5 / PR I-2, I-16, 1.22-1.24) without a real
+ * Supabase connection — production always defaults to the real
+ * `isAiPermitCurrent` (RPC-backed, fails closed). Threaded explicitly
+ * through every function between `AiOrderingHandlerOptions`/the button
+ * handler's `input` and the mutation call sites, mirroring how `client` and
+ * `dryRun` are already threaded in this file.
+ */
+type PermitCheck = (permit: AiTurnPermit) => Promise<boolean>;
 /** Depth cap for the auto-select recursion in `sendNextRequirement` (PR I-4). */
 const MAX_AUTO_SELECT_DEPTH = 3;
 /**
@@ -138,6 +149,14 @@ export interface AiOrderingHandlerOptions {
   client?: OrderingClient;
   /** Injectable planner for deterministic simulator tests. */
   draftPlanner?: OrderingDraftPlanner;
+  /**
+   * Injectable live-permit check (C5 / PR I-2, I-16, 1.22-1.24), used by
+   * every canonical mutation/persist/outbound in this turn. Defaults to the
+   * real, RPC-backed `isAiPermitCurrent` — override only in tests, to race a
+   * takeover against the SAME primitives production actually calls, without
+   * a real Supabase connection.
+   */
+  permitCheck?: PermitCheck;
 }
 
 function metric(event: string, outcome: string, startedAt = Date.now()): void {
@@ -150,8 +169,15 @@ async function dispatchAiPayload(
   payload: OutboundPayload,
   purpose: string,
   dryRun = false,
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
 ): Promise<void> {
   if (dryRun) return;
+  // C5 / PR I-2, I-16, 1.22-1.24: re-check immediately before every
+  // outbound too, not only before the mutation/persist that preceded it —
+  // the durable enqueue RPC also fences on the epoch (`enqueue_zelochat_ai_outbound`
+  // rejects a stale one as `suppressed`), so this is defense-in-depth that
+  // skips the round trip entirely for an already-known-stale permit.
+  await assertPermitCurrent(permit, isPermitCurrent);
   const result = await dispatchConversationOutbound({
     empresaId: permit.empresaId,
     remoteJid: permit.remoteJid,
@@ -166,8 +192,14 @@ async function dispatchAiPayload(
   if (result.state === 'failed_before_dispatch') throw new Error('AI_ORDERING_SEND_FAILED');
 }
 
-async function sendText(permit: AiTurnPermit, text: string, purpose: string, dryRun = false): Promise<void> {
-  await dispatchAiPayload(permit, { kind: 'text', text }, purpose, dryRun);
+async function sendText(
+  permit: AiTurnPermit,
+  text: string,
+  purpose: string,
+  dryRun = false,
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
+): Promise<void> {
+  await dispatchAiPayload(permit, { kind: 'text', text }, purpose, dryRun, isPermitCurrent);
 }
 
 type PointerExtras = Pick<OrderingStatePointer, 'offeredOptionalRequirementIds' | 'declinedOptionalRequirementIds' | 'consumedMessageIds' | 'retryFailureCount'>;
@@ -202,14 +234,32 @@ export function nextOrderingStatePatch(
   };
 }
 
+/**
+ * FIX 2026-09-04 (C5 / PR I-2, I-16, 1.22-1.24): re-check the LIVE permit
+ * immediately before every canonical mutation (`updateDraft`/`confirmDraft`/
+ * `cancelDraft`), not only before the local persist/outbound. ZeloMenu's own
+ * epoch fence (`conversationControlId`/`conversationEpoch` on every command)
+ * still backstops this — a call that slips past this check because of a
+ * race with the check itself is still rejected authority-side as
+ * `AI_TURN_REVOKED`. This is the cheap, LOCAL half of the defense: it skips
+ * the mutation (and the ZeloMenu round trip) entirely once a takeover has
+ * already landed, instead of mutating first and discovering the fence only
+ * after the cart was already changed (PR I-16's exact bug on the button
+ * paths).
+ */
+async function assertPermitCurrent(permit: AiTurnPermit, isPermitCurrent: PermitCheck = isAiPermitCurrent): Promise<void> {
+  if (!(await isPermitCurrent(permit))) throw new OrderingSuppressedError();
+}
+
 async function persistPointer(
   permit: AiTurnPermit,
   snapshot: Pick<OrderingSnapshot, 'orderingId' | 'revision'>,
   dryRun = false,
   state: PointerExtras | null = null,
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
 ): Promise<void> {
   if (dryRun) return;
-  if (!(await isAiPermitCurrent(permit))) throw new OrderingSuppressedError();
+  await assertPermitCurrent(permit, isPermitCurrent);
   await addToolMessage(
     permit.remoteJid,
     serializeOrderingState({
@@ -244,9 +294,10 @@ async function persistOrderingState(
   priorState: PointerExtras | null,
   consumedMessageIds: string[],
   overrides: PointerOverrides = {},
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
 ): Promise<void> {
   if (!current) return;
-  await persistPointer(permit, current, dryRun, nextOrderingStatePatch(priorState, consumedMessageIds, overrides));
+  await persistPointer(permit, current, dryRun, nextOrderingStatePatch(priorState, consumedMessageIds, overrides), isPermitCurrent);
 }
 
 function presentationPayload(payload: OrderingReplyPayload): OutboundPayload {
@@ -259,6 +310,7 @@ async function sendSummary(
   snapshot: OrderingSnapshot,
   dryRun = false,
   consumedMessageIds?: string[],
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
 ): Promise<string> {
   const text = renderOrderingSummary(snapshot);
   const buttons = buildCanonicalConfirmationButtons(snapshot);
@@ -270,15 +322,15 @@ async function sendSummary(
   // later. `consumedMessageIds`, when the caller has it, always wins; falling
   // back to `previous` only covers callers with nothing new to consume
   // (button taps, the final "confirmed" leg).
-  await persistPointer(permit, snapshot, dryRun, nextOrderingStatePatch(previous, consumedMessageIds));
+  await persistPointer(permit, snapshot, dryRun, nextOrderingStatePatch(previous, consumedMessageIds), isPermitCurrent);
   if (buttons.length) {
     await dispatchAiPayload(permit, {
       kind: 'buttons',
       text,
       buttons: buttons.map((button) => ({ id: button.id, label: button.displayText })),
-    }, `summary:${snapshot.orderingId}:${snapshot.revision}`, dryRun);
+    }, `summary:${snapshot.orderingId}:${snapshot.revision}`, dryRun, isPermitCurrent);
   } else {
-    await sendText(permit, text, `summary:${snapshot.orderingId}:${snapshot.revision}`, dryRun);
+    await sendText(permit, text, `summary:${snapshot.orderingId}:${snapshot.revision}`, dryRun, isPermitCurrent);
   }
   return text;
 }
@@ -291,6 +343,7 @@ async function sendNextRequirement(
   client?: OrderingClient,
   messageId?: string,
   autoSelectDepth = 0,
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
 ): Promise<string> {
   const stored = await getSession(permit.remoteJid, permit.empresaId);
   const state = findLatestOrderingState(stored?.messages ?? []);
@@ -310,12 +363,13 @@ async function sendNextRequirement(
         ...(line.selectedOptions ?? []).filter((selection) => selection.groupId !== groupId),
         { groupId, optionSelections: [{ optionId: presentation.autoSelect.optionId, quantity: 1 }] },
       ];
+      await assertPermitCurrent(permit, isPermitCurrent);
       const updated = await client.updateDraft({
         empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: `${messageId}:auto:${groupId}`,
         orderingId: snapshot.orderingId, expectedRevision: snapshot.revision, draft,
         conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
       });
-      return sendNextRequirement(permit, updated, dryRun, consumedMessageIds, client, messageId, autoSelectDepth + 1);
+      return sendNextRequirement(permit, updated, dryRun, consumedMessageIds, client, messageId, autoSelectDepth + 1, isPermitCurrent);
     }
   }
   // The depth cap was hit while the presentation would otherwise have
@@ -334,8 +388,8 @@ async function sendNextRequirement(
   await persistPointer(permit, snapshot, dryRun, nextOrderingStatePatch(state, consumedMessageIds, {
     offeredOptionalRequirementIds: presentation.offeredOptionalRequirementIds,
     declinedOptionalRequirementIds: presentation.declinedOptionalRequirementIds,
-  }));
-  await dispatchAiPayload(permit, presentationPayload(payload), `requirement:${snapshot.orderingId}:${snapshot.revision}`, dryRun);
+  }), isPermitCurrent);
+  await dispatchAiPayload(permit, presentationPayload(payload), `requirement:${snapshot.orderingId}:${snapshot.revision}`, dryRun, isPermitCurrent);
   return payload.text;
 }
 
@@ -507,7 +561,35 @@ export async function resolveConfirmation(
   messageId: string,
   permit: AiTurnPermit,
   token?: string,
+  /**
+   * FIX 2026-09-04 (C3 / PR C-5): the revision the customer actually SAW —
+   * for a button tap it comes from the button id itself
+   * (`buildRequirementButtonId`-style `|<revision>` suffix, PR 1.28's same
+   * defense finally applied to the confirm button); for typed text it is the
+   * persisted pointer's `revision` (updated on every `sendSummary` call).
+   * `snapshot` here is always the FRESHLY reloaded draft — using its OWN
+   * revision as "what the customer saw" is exactly the bug this fixes: it
+   * would let a stale `Confirmar` silently confirm whatever is current now.
+   */
+  expectedRevision?: number,
+  /**
+   * C5 / PR I-2, I-16, 1.22-1.24: injectable so `tests/aiTakeoverRace.test.ts`
+   * can race the SAME check this function performs, without a real Supabase
+   * connection. Defaults to the real, RPC-backed `isAiPermitCurrent`.
+   */
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
 ): Promise<ConfirmationOutcome> {
+  // Stale: the draft moved since the customer was shown this token/button
+  // (another edit, a store-side fee recalculation, a race with a second
+  // device). NEVER call confirmDraft against content the customer never
+  // saw — refresh and re-send the CURRENT summary so they explicitly
+  // re-confirm what is actually current.
+  if (typeof expectedRevision === 'number' && expectedRevision !== snapshot.revision) {
+    return { kind: 'summary', snapshot };
+  }
+  // C5 / PR I-2, I-16, 1.22-1.24: check the live permit before this
+  // conversation's single money-moving mutation.
+  await assertPermitCurrent(permit, isPermitCurrent);
   try {
     const confirmed = await client.confirmDraft({
       empresaId, remoteJid: jid, messageId, orderingId: snapshot.orderingId,
@@ -535,7 +617,19 @@ export async function resolveConfirmation(
       }
       return { kind: 'timeout_pending', snapshot };
     }
+    // FIX 2026-09-04 (C5 / FN I3): `AI_TURN_REVOKED` means a human already
+    // took over — CLAUDE.md/the design spec calls this "supressão limpa":
+    // no mutation, no message. The generic `error.current` branch below used
+    // to retry `updateDraft` with the SAME (now-revoked) epoch whenever
+    // ZeloMenu attached a `current` snapshot to this 409 — which it does,
+    // same as any other conflict — turning a clean suppression into a
+    // second mutation attempt under a permit the conversation has already
+    // moved on from. Re-throw immediately so `classifyOrderingFailure`
+    // (the outer catch, in both callers) maps it to `{ action: 'suppress' }`
+    // instead: no retry, no customer message, no escalation.
+    if (error instanceof ZeloMenuInternalError && error.code === 'AI_TURN_REVOKED') throw error;
     if (error instanceof ZeloMenuInternalError && error.current) {
+      await assertPermitCurrent(permit, isPermitCurrent);
       const refreshed = await client.updateDraft({
         empresaId, remoteJid: jid, messageId: `${messageId}:refresh`,
         orderingId: error.current.orderingId, expectedRevision: error.current.revision,
@@ -553,19 +647,30 @@ async function completeConfirmation(
   outcome: ConfirmationOutcome,
   dryRun = false,
   consumedMessageIds?: string[],
+  isPermitCurrent: PermitCheck = isAiPermitCurrent,
 ): Promise<string> {
-  if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot, dryRun, consumedMessageIds);
+  if (outcome.kind === 'summary') return sendSummary(permit, outcome.snapshot, dryRun, consumedMessageIds, isPermitCurrent);
   if (outcome.kind === 'timeout_pending') {
     const text = 'Ainda estou confirmando seu pedido, isso pode levar mais um instante. Se eu não confirmar em alguns minutos, me chame de novo por aqui que eu verifico.';
-    await sendText(permit, text, `confirm-timeout:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`, dryRun);
+    await sendText(permit, text, `confirm-timeout:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`, dryRun, isPermitCurrent);
     // Do not advance/replace the pointer here: the mutation may still land
     // on ZeloMenu's side after this reply. The NEXT turn's
     // `loadCanonicalSnapshot` reads whatever actually happened.
     return text;
   }
+  // FIX 2026-09-04 (C3 / PR C-4): the state transition is persisted BEFORE
+  // the confirmation text is enqueued — the reverse order (as this used to
+  // read) let a customer-visible dedupe/idempotency marker get set on the
+  // caller's side once the ZeloMenu mutation and this reply had both fired,
+  // with no durable local record in between. If persisting throws here, the
+  // confirmation text is never sent THIS attempt and no dedupe key is
+  // recorded upstream (see router.ts's canonical-button handling) — a retry
+  // re-enters this conversation, `loadCanonicalSnapshot` sees the order is
+  // already confirmed in ZeloMenu (source of truth), and the "already
+  // confirmed" branch in the caller sends the notice exactly once.
   const text = 'Pedido confirmado e enviado para a loja. Aviso por aqui quando houver novidade.';
-  await sendText(permit, text, `confirmed:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`, dryRun);
-  await persistPointer(permit, outcome.snapshot, dryRun, consumedMessageIds ? { consumedMessageIds } : null);
+  await persistPointer(permit, outcome.snapshot, dryRun, consumedMessageIds ? { consumedMessageIds } : null, isPermitCurrent);
+  await sendText(permit, text, `confirmed:${outcome.snapshot.orderingId}:${outcome.snapshot.revision}`, dryRun, isPermitCurrent);
   return text;
 }
 
@@ -581,6 +686,10 @@ export async function tryHandleAiWhatsAppOrdering(
 ): Promise<AiOrderingHandleResult> {
   const startedAt = Date.now();
   const dryRun = options.dryRun === true;
+  // C5 / PR I-2, I-16, 1.22-1.24: the live-permit check every canonical
+  // mutation/persist/outbound in this turn re-checks. Defaults to the real
+  // one; only tests override it.
+  const isPermitCurrent = options.permitCheck ?? isAiPermitCurrent;
   // Computed once per turn (FN C3 / PR C-6): every terminal exit below must
   // route its cursor write through `persistOrderingState`/`nextOrderingStatePatch`
   // using THIS composition's `consumedMessageIds`, never a stale re-read.
@@ -593,19 +702,32 @@ export async function tryHandleAiWhatsAppOrdering(
   let current: OrderingSnapshot | null = null;
   if (composition.failedAudioMessageIds.length > 0) {
     const response = 'Não consegui ouvir esse áudio. Pode escrever o pedido aqui para eu continuar?';
-    await sendText(permit, response, `audio-failure:${composition.failedAudioMessageIds.join(':')}`, dryRun);
+    await sendText(permit, response, `audio-failure:${composition.failedAudioMessageIds.join(':')}`, dryRun, isPermitCurrent);
     // No ZeloMenu round trip needed here — we are not mutating the draft,
     // only re-affirming the existing pointer's orderingId/revision with an
     // advanced cursor so this failed audio is never re-detected on the next
     // turn (the second half of PR C-6: "one failed audio permanently bricks
     // the conversation").
-    await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds);
+    await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
     return { handled: true, response };
   }
+  // FIX 2026-09-04 (C6 / PR I-8): this used to return `{ handled: false }`
+  // below whenever `text` wasn't an EXACT greeting match (e.g. "tá
+  // atendendo?", "estão atendendo?", "boa noite, tão aberto?") even though
+  // the entry card had already been dispatched — `ai.ts` then let the
+  // generic OpenAI model answer too, so the customer got the entry card
+  // AND a redundant greeting. `entryDispatched` remembers that this turn
+  // already sent something, so the "nothing else to do" exits below report
+  // `handled: true` instead of inviting a second reply. A message that is
+  // BOTH a greeting AND an order ("oi, quero uma coxinha") is unaffected:
+  // `isOrderingGreeting` stays false for it, so control falls through to
+  // the normal catalog/order flow exactly as before.
+  let entryDispatched = false;
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
     const response = buildOrderingEntryPayload(entry.menuUrl);
     try {
-      await dispatchAiPayload(permit, response, 'entry', dryRun);
+      await dispatchAiPayload(permit, response, 'entry', dryRun, isPermitCurrent);
+      entryDispatched = true;
       if (isOrderingGreeting(text)) return { handled: true, response: response.text };
     } catch (error) {
       if (error instanceof OrderingSuppressedError) return { handled: true };
@@ -614,20 +736,20 @@ export async function tryHandleAiWhatsAppOrdering(
   }
   if (entry.menuUrl && isDeliveryFeeQuestion(text)) {
     const response = buildDeliveryFeeReply(entry.menuUrl);
-    await sendText(permit, response, 'delivery-fee', dryRun);
+    await sendText(permit, response, 'delivery-fee', dryRun, isPermitCurrent);
     return { handled: true, response };
   }
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(priorState);
   const initialTurn = classifyOrderingTurn(text, hasPointer);
   const followUp = !hasPointer && isOrderingFollowUp(session.messages);
-  if (initialTurn.kind === 'none' && !followUp) return { handled: false };
+  if (initialTurn.kind === 'none' && !followUp) return { handled: entryDispatched };
   const client = options.client ?? ZeloMenuInternalClient.fromEnv();
   if (!client) {
     metric('ordering_turn', 'configuration_missing', startedAt);
     if (dryRun) return { handled: false };
     try {
-      await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds);
+      await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
     } catch (persistError) {
       console.warn('[AiOrdering] best-effort cursor persist on configuration_missing threw:', persistError);
     }
@@ -645,26 +767,30 @@ export async function tryHandleAiWhatsAppOrdering(
       ])];
       await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {
         declinedOptionalRequirementIds,
-      });
-      const response = current.readyForConfirmation && current.confirmationAction
-        ? await sendSummary(permit, current, dryRun, composition.consumedMessageIds)
-        : await sendNextRequirement(permit, current, dryRun, composition.consumedMessageIds);
+      }, isPermitCurrent);
+      // FIX 2026-09-04 (C4 / FN I1): use the JUST-declined list, not the
+      // stale `priorState` — every non-blocking requirement was declined
+      // above, so (absent a NEW blocking one) there is nothing left to
+      // offer and this correctly falls through to the summary.
+      const response = hasPendingOrderingRequirements(current, { declinedOptionalRequirementIds })
+        ? await sendNextRequirement(permit, current, dryRun, composition.consumedMessageIds, undefined, undefined, 0, isPermitCurrent)
+        : await sendSummary(permit, current, dryRun, composition.consumedMessageIds, isPermitCurrent);
       return { handled: true, response };
     }
-    if (turn.kind === 'none' && !followUp) return { handled: false };
+    if (turn.kind === 'none' && !followUp) return { handled: entryDispatched };
 
     if (!current && canonical && (turn.kind === 'confirm' || turn.kind === 'ask_change' || turn.kind === 'cancel')) {
       const response = canonical.order || canonical.state.startsWith('confirmed') || canonical.state === 'accepted'
         ? 'Esse pedido já foi confirmado. Se precisar, posso chamar um atendente.'
         : 'Esse pedido já foi finalizado. Quer começar um novo?';
-      await sendText(permit, response, 'already-closed', dryRun);
+      await sendText(permit, response, 'already-closed', dryRun, isPermitCurrent);
       return { handled: true, response };
     }
 
     if (current && turn.kind === 'confirm') {
       if (dryRun) {
         const response = `${renderOrderingSummary(current)}\n\nSimulação: a confirmação não foi enviada.`;
-        await sendText(permit, response, `confirm-preview:${current.orderingId}:${current.revision}`, true);
+        await sendText(permit, response, `confirm-preview:${current.orderingId}:${current.revision}`, true, isPermitCurrent);
         return { handled: true, response };
       }
       // FIX 2026-09-04 (B2 — "send only what the parser accepts"): a
@@ -674,26 +800,33 @@ export async function tryHandleAiWhatsAppOrdering(
       // does — every text confirmation 400'd. The token is already visible
       // to the customer's OWN conversation via `confirmationAction`, so
       // reusing it here (rather than requiring a button tap) is safe.
-      const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId, permit, current.confirmationAction?.token);
-      const response = await completeConfirmation(permit, outcome, dryRun, composition.consumedMessageIds);
+      //
+      // FIX 2026-09-04 (C3 / PR C-5): `priorState.revision` is the revision
+      // of the LAST summary this conversation actually sent (persisted by
+      // `sendSummary`/`sendNextRequirement` on every write) — pass it so
+      // `resolveConfirmation` refuses to confirm a revision the customer was
+      // never shown a summary for.
+      const outcome = await resolveConfirmation(current, client, empresaId, jid, messageId, permit, current.confirmationAction?.token, priorState?.revision, isPermitCurrent);
+      const response = await completeConfirmation(permit, outcome, dryRun, composition.consumedMessageIds, isPermitCurrent);
       metric('ordering_confirm', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && turn.kind === 'cancel') {
       if (!dryRun) {
+        await assertPermitCurrent(permit, isPermitCurrent);
         await client.cancelDraft({ empresaId, remoteJid: jid, messageId, orderingId: current.orderingId, expectedRevision: current.revision,
           conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch });
       }
-      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds);
+      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
       const response = 'Pedido cancelado. Se quiser começar outro, é só me dizer.';
-      await sendText(permit, response, 'cancelled', dryRun);
+      await sendText(permit, response, 'cancelled', dryRun, isPermitCurrent);
       metric('ordering_cancel', 'handled', startedAt);
       return { handled: true, response };
     }
     if (current && (turn.kind === 'ask_change' || (turn.kind === 'alter' && !turn.instruction.trim()))) {
-      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds);
+      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
       const response = 'Tudo bem. O que você quer alterar no pedido?';
-      await sendText(permit, response, 'ask-change', dryRun);
+      await sendText(permit, response, 'ask-change', dryRun, isPermitCurrent);
       return { handled: true, response };
     }
 
@@ -713,9 +846,9 @@ export async function tryHandleAiWhatsAppOrdering(
       // Mid-order ambiguous catalog question (`current` may be set): advance
       // the cursor so this text is not replayed into the next turn's
       // composition once the customer answers the real pending requirement.
-      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds);
+      await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
       const response = renderCatalogReply(catalog, query, entry.menuUrl);
-      await sendText(permit, response, 'catalog', dryRun);
+      await sendText(permit, response, 'catalog', dryRun, isPermitCurrent);
       metric('catalog_search', 'answered', startedAt);
       return { handled: true, response };
     }
@@ -731,15 +864,20 @@ export async function tryHandleAiWhatsAppOrdering(
     // send a name when one is actually known.
     draft.customer = sanitizeCustomerForWire({ name: session.customerName, phone: session.customerPhone });
     draft.pessoaId = session.personId ?? null;
+    await assertPermitCurrent(permit, isPermitCurrent);
     const updated = await client.updateDraft({
       empresaId, remoteJid: jid, messageId,
       orderingId: current?.orderingId, expectedRevision: current?.revision, draft,
       conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
     });
     current = updated;
-    const response = updated.readyForConfirmation && updated.confirmationAction
-      ? await sendSummary(permit, updated, dryRun, composition.consumedMessageIds)
-      : await sendNextRequirement(permit, updated, dryRun, composition.consumedMessageIds, client, messageId);
+    // FIX 2026-09-04 (C4 / FN I1): route through the presenter (which offers
+    // any pending optional/"extras" group exactly once) whenever there is
+    // still something to ask — never jump straight to the confirm summary
+    // just because ZeloMenu's blocking requirements are all satisfied.
+    const response = hasPendingOrderingRequirements(updated, priorState)
+      ? await sendNextRequirement(permit, updated, dryRun, composition.consumedMessageIds, client, messageId, 0, isPermitCurrent)
+      : await sendSummary(permit, updated, dryRun, composition.consumedMessageIds, isPermitCurrent);
     metric('ordering_update', 'summary_sent', startedAt);
     return { handled: true, response };
   } catch (error) {
@@ -752,10 +890,10 @@ export async function tryHandleAiWhatsAppOrdering(
     if (recovery.action === 'suppress') return { handled: true };
     try {
       if (recovery.action === 'resync') {
-        await persistOrderingState(permit, recovery.current, dryRun, priorState, composition.consumedMessageIds);
-        const response = recovery.current.readyForConfirmation && recovery.current.confirmationAction
-          ? await sendSummary(permit, recovery.current, dryRun, composition.consumedMessageIds)
-          : await sendNextRequirement(permit, recovery.current, dryRun, composition.consumedMessageIds, client, messageId);
+        await persistOrderingState(permit, recovery.current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
+        const response = hasPendingOrderingRequirements(recovery.current, priorState)
+          ? await sendNextRequirement(permit, recovery.current, dryRun, composition.consumedMessageIds, client, messageId, 0, isPermitCurrent)
+          : await sendSummary(permit, recovery.current, dryRun, composition.consumedMessageIds, isPermitCurrent);
         metric('ordering_turn', 'resynced', startedAt);
         return { handled: true, response };
       }
@@ -763,22 +901,22 @@ export async function tryHandleAiWhatsAppOrdering(
         // The pointer already refers to a closed/missing order; nothing to
         // persist here — the NEXT turn opens a fresh draft instead of
         // retrying this one.
-        await sendText(permit, recovery.text, 'ordering-closed-recovery', dryRun);
+        await sendText(permit, recovery.text, 'ordering-closed-recovery', dryRun, isPermitCurrent);
         metric('ordering_turn', 'closed_recovered', startedAt);
         return { handled: true, response: recovery.text };
       }
       if (recovery.action === 'retry_later') {
         const attempts = (priorState?.retryFailureCount ?? 0) + 1;
         if (attempts <= MAX_RETRY_LATER_ATTEMPTS) {
-          await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds, { retryFailureCount: attempts });
-          await sendText(permit, recovery.text, 'ordering-retry-later', dryRun);
+          await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds, { retryFailureCount: attempts }, isPermitCurrent);
+          await sendText(permit, recovery.text, 'ordering-retry-later', dryRun, isPermitCurrent);
           metric('ordering_turn', 'retry_later', startedAt);
           return { handled: true, response: recovery.text };
         }
         // Bounded policy (PR I-5): stop asking the customer to try again
         // forever — fall through to the normal escalation below, and reset
         // the streak so a fresh conversation (post-human-look) starts clean.
-        await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds, { retryFailureCount: 0 });
+        await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds, { retryFailureCount: 0 }, isPermitCurrent);
       }
     } catch (recoveryError) {
       console.warn('[AiOrdering] error-recovery path itself failed, falling back to escalation:', recoveryError);
@@ -791,7 +929,7 @@ export async function tryHandleAiWhatsAppOrdering(
       // `current` may be null when the failure happened while reloading the
       // canonical snapshot itself; fall back to the pre-turn pointer so the
       // cursor still advances against the last known orderingId/revision.
-      await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds);
+      await persistOrderingState(permit, current ?? priorState, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
     } catch (persistError) {
       console.warn('[AiOrdering] best-effort cursor persist on failure threw:', persistError);
     }
@@ -800,24 +938,54 @@ export async function tryHandleAiWhatsAppOrdering(
   }
 }
 
+/**
+ * FIX 2026-09-04 (C5 / FN I3, PR I-2): `complete()` closures run AFTER
+ * `tryHandleAiWhatsAppOrderingButton`'s own try/catch has already returned —
+ * a takeover landing while a closure is in flight (or the permit check just
+ * added ahead of each mutation above) surfaces as `OrderingSuppressedError`
+ * to WHOEVER awaits `complete()` (router.ts). Without this wrapper that
+ * throw would reach `processWebhookEvent`'s catch and get logged/retried as
+ * a genuine failure — noisy and pointless for something that is, by design,
+ * a clean no-op: the human already has the conversation.
+ */
+function withSuppression(fn: () => Promise<void>): () => Promise<void> {
+  return async () => {
+    try {
+      await fn();
+    } catch (error) {
+      if (!(error instanceof OrderingSuppressedError)) throw error;
+    }
+  };
+}
+
 export async function tryHandleAiWhatsAppOrderingButton(input: {
   jid: string;
   empresaId: string;
   buttonId: string;
   messageId: string;
   permit: AiTurnPermit;
+  /**
+   * C5 / PR I-2, I-16, 1.22-1.24: injectable live-permit check, same
+   * contract as `AiOrderingHandlerOptions.permitCheck`. Defaults to the
+   * real, RPC-backed `isAiPermitCurrent`.
+   */
+  permitCheck?: PermitCheck;
 }): Promise<CanonicalButtonHandling> {
+  const isPermitCurrent = input.permitCheck ?? isAiPermitCurrent;
   const action = parseOrderingButton(input.buttonId);
   if (!action) return { handled: false };
   if (action.kind === 'start') {
-    return { handled: true, complete: async () => { await sendText(input.permit, 'Pode escrever ou mandar um áudio com o que você quer pedir.', 'button-start'); } };
+    return { handled: true, complete: withSuppression(async () => { await sendText(input.permit, 'Pode escrever ou mandar um áudio com o que você quer pedir.', 'button-start', false, isPermitCurrent); }) };
   }
   const client = ZeloMenuInternalClient.fromEnv();
   if (!client) {
-    return { handled: true, complete: async () => { await transferOnFailure(input.permit); } };
+    return { handled: true, complete: withSuppression(async () => { await transferOnFailure(input.permit); }) };
   }
   const session = await getSession(input.jid, input.empresaId);
   if (!session) return { handled: true };
+  // Needed for C4/FN I1's "did we already offer/decline the optional
+  // groups" check below, mirroring the text-turn handler.
+  const priorState = findLatestOrderingState(session.messages);
   try {
     const current = await loadCanonicalSnapshot(session, input.empresaId, input.jid, client);
     if (!current) return { handled: true };
@@ -825,29 +993,33 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
       const text = current.order || current.state.startsWith('confirmed') || current.state === 'accepted'
           ? 'Esse pedido já foi confirmado. Se precisar, posso chamar um atendente.'
           : 'Esse pedido já foi finalizado. Quer começar um novo?';
-      return { handled: true, complete: async () => { await sendText(input.permit, text, 'button-closed'); } };
+      return { handled: true, complete: withSuppression(async () => { await sendText(input.permit, text, 'button-closed', false, isPermitCurrent); }) };
     }
     if (action.kind === 'alter') {
       return {
         handled: true,
-        complete: async () => { await sendText(input.permit, 'Tudo bem. O que você quer alterar no pedido?', 'button-alter'); },
+        complete: withSuppression(async () => { await sendText(input.permit, 'Tudo bem. O que você quer alterar no pedido?', 'button-alter', false, isPermitCurrent); }),
       };
     }
     if (action.kind === 'cancel') {
-      return { handled: true, complete: async () => {
+      return { handled: true, complete: withSuppression(async () => {
+        // C5 / PR I-16: check the permit BEFORE mutating — a takeover
+        // landing between the button tap and this closure running must
+        // never cancel the cart silently.
+        await assertPermitCurrent(input.permit, isPermitCurrent);
         await client.cancelDraft({
           empresaId: input.empresaId, remoteJid: input.jid, messageId: input.messageId,
           orderingId: current.orderingId, expectedRevision: current.revision,
           conversationControlId: input.permit.conversationControlId, conversationEpoch: input.permit.epoch,
         });
-        await sendText(input.permit, 'Pedido cancelado. Se quiser começar outro, é só me dizer.', 'button-cancel');
-      } };
+        await sendText(input.permit, 'Pedido cancelado. Se quiser começar outro, é só me dizer.', 'button-cancel', false, isPermitCurrent);
+      }) };
     }
     if (action.kind === 'requirement') {
-      return { handled: true, complete: async () => {
+      return { handled: true, complete: withSuppression(async () => {
         const requirement = (current.requirements ?? []).find((candidate) => candidate.id === action.requirementId);
         if (!requirement) {
-          await sendText(input.permit, 'Pode me dizer sua escolha por texto ou áudio.', 'button-requirement');
+          await sendText(input.permit, 'Pode me dizer sua escolha por texto ou áudio.', 'button-requirement', false, isPermitCurrent);
           return;
         }
         // FIX 2026-09-04 (PR 1.28): the button id carries a fingerprint of
@@ -856,14 +1028,16 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
         // NOT blindly apply this tap to whatever is current now — show the
         // customer where things actually stand and let them re-answer.
         if (action.fingerprint !== requirementRevisionFingerprint(current.orderingId, current.revision)) {
-          if (current.readyForConfirmation && current.confirmationAction) await sendSummary(input.permit, current);
-          else await sendNextRequirement(input.permit, current, false, undefined, client, input.messageId);
+          if (hasPendingOrderingRequirements(current, priorState)) await sendNextRequirement(input.permit, current, false, undefined, client, input.messageId, 0, isPermitCurrent);
+          else await sendSummary(input.permit, current, false, undefined, isPermitCurrent);
           return;
         }
         const draft = snapshotToDraft(current);
         if (requirement.type === 'fulfillment_type') {
           if (action.optionId !== 'pickup' && action.optionId !== 'delivery') return;
-          draft.fulfillment = { ...draft.fulfillment, type: action.optionId, asap: draft.fulfillment?.asap ?? true };
+          // C6 / PR I-3: preserves an already-agreed schedule instead of
+          // silently forcing `asap: true`.
+          draft.fulfillment = applyFulfillmentTypeSelection(draft.fulfillment, action.optionId);
         } else if (requirement.type === 'modifier_group' && requirement.lineId) {
           const line = draft.items.find((item) => item.lineId === requirement.lineId);
           const groupId = requirement.groupId ?? requirement.id;
@@ -876,37 +1050,42 @@ export async function tryHandleAiWhatsAppOrderingButton(input: {
           if (!(requirement.options ?? []).some((option) => option.id === action.optionId && option.available)) return;
           draft.paymentMethod = action.optionId;
         } else {
-          await sendText(input.permit, 'Pode me dizer sua escolha por texto ou áudio.', 'button-requirement');
+          await sendText(input.permit, 'Pode me dizer sua escolha por texto ou áudio.', 'button-requirement', false, isPermitCurrent);
           return;
         }
+        await assertPermitCurrent(input.permit, isPermitCurrent);
         const updated = await client.updateDraft({
           empresaId: input.empresaId, remoteJid: input.jid, messageId: input.messageId,
           orderingId: current.orderingId, expectedRevision: current.revision, draft,
           conversationControlId: input.permit.conversationControlId, conversationEpoch: input.permit.epoch,
         });
-        if (updated.readyForConfirmation && updated.confirmationAction) await sendSummary(input.permit, updated);
-        else await sendNextRequirement(input.permit, updated, false, undefined, client, input.messageId);
-      } };
+        if (hasPendingOrderingRequirements(updated, priorState)) await sendNextRequirement(input.permit, updated, false, undefined, client, input.messageId, 0, isPermitCurrent);
+        else await sendSummary(input.permit, updated, false, undefined, isPermitCurrent);
+      }) };
     }
     if (action.kind !== 'confirm') return { handled: true };
-    const outcome = await resolveConfirmation(current, client, input.empresaId, input.jid, input.messageId, input.permit, action.token);
+    // FIX 2026-09-04 (C3 / PR C-5): `action.expectedRevision` comes from the
+    // button id itself (`ZOC:<token>|<revision>`) — the exact revision this
+    // specific button was rendered for. Absent only for a button already
+    // delivered before this deploy shipped the suffix.
+    const outcome = await resolveConfirmation(current, client, input.empresaId, input.jid, input.messageId, input.permit, action.token, action.expectedRevision, isPermitCurrent);
     return {
       handled: true,
-      complete: async () => { await completeConfirmation(input.permit, outcome); },
+      complete: withSuppression(async () => { await completeConfirmation(input.permit, outcome, false, undefined, isPermitCurrent); }),
     };
   } catch (error) {
     if (error instanceof OrderingSuppressedError) return { handled: true };
     const recovery = classifyOrderingFailure(error);
     if (recovery.action === 'suppress') return { handled: true };
     if (recovery.action === 'resync') {
-      return { handled: true, complete: async () => {
-        if (recovery.current.readyForConfirmation && recovery.current.confirmationAction) await sendSummary(input.permit, recovery.current);
-        else await sendNextRequirement(input.permit, recovery.current, false, undefined, client, input.messageId);
-      } };
+      return { handled: true, complete: withSuppression(async () => {
+        if (hasPendingOrderingRequirements(recovery.current, priorState)) await sendNextRequirement(input.permit, recovery.current, false, undefined, client, input.messageId, 0, isPermitCurrent);
+        else await sendSummary(input.permit, recovery.current, false, undefined, isPermitCurrent);
+      }) };
     }
     if (recovery.action === 'clear_and_tell' || recovery.action === 'retry_later') {
-      return { handled: true, complete: async () => { await sendText(input.permit, recovery.text, 'button-error-recovery'); } };
+      return { handled: true, complete: withSuppression(async () => { await sendText(input.permit, recovery.text, 'button-error-recovery', false, isPermitCurrent); }) };
     }
-    return { handled: true, complete: async () => { await transferOnFailure(input.permit); } };
+    return { handled: true, complete: withSuppression(async () => { await transferOnFailure(input.permit); }) };
   }
 }
