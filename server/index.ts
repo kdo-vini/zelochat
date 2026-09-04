@@ -36,6 +36,7 @@ import { startWebhookReplayWorker } from './webhookReplayWorker.js';
 import { beginAiTurn, type AiTurnPermit } from './conversationControl.js';
 import { autoReplyRateLimiter } from './autoReplyRateLimit.js';
 import { startConversationOutboundQueueObserver } from './outbound/observability.js';
+import { isZeloMenuProductionLikeEnvironment } from './zeloMenuInternalClient.js';
 
 // PORT: production platforms (Dokploy/Render/Fly/Heroku) inject via PORT env var.
 // SERVER_PORT is the legacy dev-local setting.
@@ -428,10 +429,33 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   });
 });
 
+/**
+ * FIX 2026-09-04 (PR 1.5 / I-6): one summary line at boot naming which
+ * hybrid-ordering-related env vars are present/missing — booleans only,
+ * NEVER a value (an API key or a timeout number is not a secret, but the
+ * convention here is the same as every other startup check in this file:
+ * presence, never content). Meant to be the first thing an operator checks
+ * when ordering escalates fleet-wide right after a deploy.
+ */
+function logAiHybridOrderingEnvStatusAtStartup(): void {
+  const present = (name: string): boolean => Boolean(process.env[name]?.trim());
+  console.log('[Server] ai-hybrid-ordering env status at startup', JSON.stringify({
+    productionLike: isZeloMenuProductionLikeEnvironment(),
+    ZELOMENU_INTERNAL_BASE_URL: present('ZELOMENU_INTERNAL_BASE_URL'),
+    ZELO_INTERNAL_API_KEY: present('ZELO_INTERNAL_API_KEY'),
+    ZELOMENU_INTERNAL_TIMEOUT_MS: present('ZELOMENU_INTERNAL_TIMEOUT_MS'),
+    ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS: present('ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS'),
+    AUDIO_TRANSCRIPTION_FETCH_TIMEOUT_MS: present('AUDIO_TRANSCRIPTION_FETCH_TIMEOUT_MS'),
+    AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS: present('AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS'),
+    AUDIO_TRANSCRIPTION_WAIT_MS: present('AUDIO_TRANSCRIPTION_WAIT_MS'),
+  }));
+}
+
 // --- Start server ---
 httpServer.listen(PORT, () => {
   console.log(`[Server] Listening on http://localhost:${PORT}`);
   console.log(`[Server] WebSocket on ws://localhost:${PORT}/ws`);
+  logAiHybridOrderingEnvStatusAtStartup();
 
   // Auto-bind empresa at startup. SAFE only when exactly one empresa exists
   // (single-tenant deploy). With 2+ empresas, the legacy `LIMIT 1` query was
