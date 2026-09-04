@@ -12,19 +12,24 @@ import {
   buildOrderingEntryReply,
   isOrderingEntryTurn,
   isOrderingFollowUp,
+  isOrderingSnapshotEditable,
   parseOrderingButton,
   renderCatalogReply,
   renderOrderingSummary,
+  sanitizeCustomerForWire,
+  sanitizeFulfillmentForWire,
   serializeOrderingState,
   type OrderingSnapshot,
 } from '../src/domain/aiWhatsAppOrdering.js';
 import {
-  ORDERING_MODEL_TOOLS,
   resolveZeloMenuInternalBaseUrl,
   ZeloMenuInternalClient,
   ZeloMenuInternalError,
 } from '../server/zeloMenuInternalClient.js';
+import { buildOrderingPatchTool } from '../server/orderingPatchPlanner.js';
 import {
+  classifyOrderingFailure,
+  resolveConfirmation,
   tryHandleAiWhatsAppOrdering,
   nextOrderingStatePatch,
   type OrderingClient,
@@ -449,12 +454,17 @@ assert.equal(defaults.fulfillment?.asap, true);
 assert.equal(defaults.paymentMethod, 'pix');
 assert.deepEqual(defaults.items, [{ productId: 10, quantity: 1 }], 'frequent items are never automatic');
 
-assert.deepEqual(ORDERING_MODEL_TOOLS.map((tool) => tool.function.name), [
-  'buscar_cardapio',
-  'alterar_carrinho',
-  'consultar_carrinho',
-]);
-assert.equal(ORDERING_MODEL_TOOLS.some((tool) => /confirm/i.test(tool.function.name)), false);
+// FN I5: `buscar_cardapio`/`consultar_carrinho` were offered to the model but
+// never executed — ZeloChat already performs a deterministic
+// `client.searchCatalog` + canonical snapshot load BEFORE calling the model
+// and feeds both into the system prompt. Ruling: remove the dead tools
+// (no static duplicate list survives either) rather than wire fake handlers
+// for a lookup the pipeline already does; `buildOrderingPatchTool()` is the
+// single tool the model is ever offered.
+assert.equal(buildOrderingPatchTool().function.name, 'alterar_carrinho');
+const orderingClientSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
+assert.doesNotMatch(orderingClientSource, /buscar_cardapio|consultar_carrinho/, 'the dead tools must not be referenced anywhere in the ordering handler');
+assert.match(orderingClientSource, /tools:\s*\[buildOrderingPatchTool\(\)\]/, 'the model is offered exactly one tool, built fresh per call');
 assert.equal(resolveZeloMenuInternalBaseUrl({}), 'http://127.0.0.1:3101');
 
 let requestHeaders: Headers | undefined;
@@ -534,5 +544,96 @@ await assert.rejects(
   assert.equal(composition3.text, 'sim', 'the fixed cursor must stop "talharim" from leaking into turn 3');
   assert.deepEqual(classifyOrderingTurn(composition3.text, true), { kind: 'confirm' });
 }
+
+// B3 — error contract: every code in errors.json maps to an explicit,
+// intentional recovery action instead of one generic escalation.
+{
+  const withCurrent = (code: string) => new ZeloMenuInternalError(code, 409, 'req', snapshot());
+  const withoutCurrent = (code: string, status = 409) => new ZeloMenuInternalError(code, status, 'req', null);
+
+  assert.deepEqual(classifyOrderingFailure(withoutCurrent('AI_TURN_REVOKED')), { action: 'suppress' });
+  for (const code of ['PEDIDO_EM_ANDAMENTO', 'REVISAO_DESATUALIZADA', 'RESUMO_EXPIRADO', 'CONFIRMACAO_INVALIDA']) {
+    const recovered = classifyOrderingFailure(withCurrent(code));
+    assert.equal(recovered.action, 'resync', `${code} with a current snapshot must resync`);
+    // Same code with NO current snapshot has nothing to resync to.
+    assert.equal(classifyOrderingFailure(withoutCurrent(code)).action, 'escalate', `${code} without current must escalate`);
+  }
+  for (const code of ['PEDIDO_FECHADO', 'PEDIDO_NAO_ENCONTRADO']) {
+    assert.equal(classifyOrderingFailure(withoutCurrent(code)).action, 'clear_and_tell');
+  }
+  for (const code of ['MUITAS_REQUISICOES', 'PEDIDO_INDISPONIVEL', 'TIMEOUT', 'INDISPONIVEL', 'ORDERING_WIRE_UNSUPPORTED']) {
+    assert.equal(classifyOrderingFailure(withoutCurrent(code, 503)).action, 'retry_later');
+  }
+  assert.equal(classifyOrderingFailure(withoutCurrent('NAO_AUTORIZADO', 401)).action, 'escalate');
+  assert.equal(classifyOrderingFailure(withoutCurrent('COMANDO_INVALIDO', 400)).action, 'escalate');
+  assert.equal(classifyOrderingFailure(new Error('not a ZeloMenuInternalError')).action, 'escalate');
+}
+
+// CT #9 — a confirm TIMEOUT must reconcile with a fresh GET before telling
+// the customer anything failed. Reconciliation says the order landed ->
+// treat it as a real success (never a duplicate, never a false failure).
+{
+  const timeoutThenConfirmedClient: OrderingClient = {
+    searchCatalog: async () => { throw new Error('unused'); },
+    updateDraft: async () => { throw new Error('unused'); },
+    confirmDraft: async () => { throw new ZeloMenuInternalError('TIMEOUT', 503, 'req'); },
+    cancelDraft: async () => { throw new Error('unused'); },
+    getOrdering: async () => snapshot({ state: 'confirmed_waiting_review', order: { id: 'ord-1', status: 'pending_review', alreadyConfirmed: true, revision: 2 } }),
+  };
+  const outcome = await resolveConfirmation(snapshot(), timeoutThenConfirmedClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token');
+  assert.equal(outcome.kind, 'confirmed', 'a confirm timeout followed by a reconciled "confirmed" GET must be treated as success');
+}
+
+// CT #9 (second half) — reconciliation says the order is STILL just a cart:
+// tell the customer to hold on, never claim success or failure outright.
+{
+  const timeoutStillOpenClient: OrderingClient = {
+    searchCatalog: async () => { throw new Error('unused'); },
+    updateDraft: async () => { throw new Error('unused'); },
+    confirmDraft: async () => { throw new ZeloMenuInternalError('TIMEOUT', 503, 'req'); },
+    cancelDraft: async () => { throw new Error('unused'); },
+    getOrdering: async () => snapshot({ state: 'cart_open' }),
+  };
+  const outcome = await resolveConfirmation(snapshot(), timeoutStillOpenClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token');
+  assert.equal(outcome.kind, 'timeout_pending');
+}
+
+// CT #7 / Important 9 — a 409 whose `current` still carries the rejected
+// fields (deliveryFee/type:null) must not fail a SECOND time: the recovery
+// path routes through `snapshotToDraft`, which the B2 sanitizer fix already
+// strips before it reaches the wire.
+{
+  const staleSnapshot = snapshot({
+    orderingId: 'stale-ordering', revision: 9,
+    fulfillment: { type: null as unknown as 'pickup', asap: true, deliveryFee: 12, deliveryFeeToConfirm: true },
+    customer: { name: null as unknown as string, phone: '5511999999999' },
+  });
+  let capturedDraftBody: unknown = null;
+  const conflictThenRefreshedClient: OrderingClient = {
+    searchCatalog: async () => { throw new Error('unused'); },
+    updateDraft: async (input) => { capturedDraftBody = input.draft; return snapshot({ orderingId: staleSnapshot.orderingId, revision: staleSnapshot.revision + 1 }); },
+    confirmDraft: async () => { throw new ZeloMenuInternalError('REVISAO_DESATUALIZADA', 409, 'req', staleSnapshot); },
+    cancelDraft: async () => { throw new Error('unused'); },
+    getOrdering: async () => { throw new Error('unused'); },
+  };
+  const outcome = await resolveConfirmation(snapshot(), conflictThenRefreshedClient, snapshot().empresaId, snapshot().remoteJid, 'm1', fakePermit, 'token');
+  assert.equal(outcome.kind, 'summary');
+  assert.equal((capturedDraftBody as { fulfillment?: unknown })?.fulfillment, undefined, 'the refresh retry must never resend the rejected fulfillment shape');
+  assert.equal((capturedDraftBody as { customer?: unknown })?.customer, undefined, 'the refresh retry must never resend an unknown customer name');
+}
+
+// PR Important "needs_customer_adjustment" — an order the store bounced back
+// for adjustment is still editable, not "já foi finalizado".
+assert.equal(isOrderingSnapshotEditable({ state: 'needs_customer_adjustment', requiresReview: false }), true);
+assert.equal(isOrderingSnapshotEditable({ state: 'cart_open', requiresReview: false }), true);
+assert.equal(isOrderingSnapshotEditable({ state: 'rejected', requiresReview: false }), false);
+assert.equal(isOrderingSnapshotEditable({ state: 'accepted', requiresReview: false }), false);
+assert.equal(isOrderingSnapshotEditable({ state: 'confirmed_waiting_review', requiresReview: true }), true);
+
+// CT #4/#5/#8 — the wire sanitizers used by every snapshot->draft fallback.
+assert.equal(sanitizeFulfillmentForWire({ type: null, asap: true }), undefined);
+assert.deepEqual(sanitizeFulfillmentForWire({ type: 'pickup', asap: true, deliveryFee: 8, deliveryFeeToConfirm: true }), { type: 'pickup', asap: true });
+assert.equal(sanitizeCustomerForWire({ name: null, phone: '5511999999999' }), undefined);
+assert.deepEqual(sanitizeCustomerForWire({ name: 'Ana', phone: '5511999999999' }), { name: 'Ana' });
 
 console.log('aiWhatsAppOrdering tests passed');

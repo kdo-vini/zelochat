@@ -1,5 +1,6 @@
 import type { ChatCompletionFunctionTool } from 'openai/resources/chat/completions.js';
 import type { CatalogReplyResult, OrderingDraft, OrderingSnapshot } from '../src/domain/aiWhatsAppOrdering.js';
+import { sanitizeCustomerForWire, sanitizeFulfillmentForWire } from '../src/domain/aiWhatsAppOrdering.js';
 
 export interface ConversationOrderPatch {
   items: Array<{
@@ -12,6 +13,8 @@ export interface ConversationOrderPatch {
       optionSelections: Array<{ optionId: string; quantity: number }>;
     }>;
   }>;
+  /** Lines to drop from the cart entirely (CT Important 5). */
+  removedLineIds?: string[];
   observations?: string;
   fulfillment?: OrderingDraft['fulfillment'];
   paymentMethod?: string;
@@ -105,6 +108,12 @@ export function buildOrderingPatchTool(): ChatCompletionFunctionTool {
               },
             },
           },
+          removedLineIds: {
+            type: 'array',
+            maxItems: 50,
+            description: 'IDs de linha a remover completamente do carrinho (ex.: cliente cancelou só um item).',
+            items: { type: 'string', minLength: 1, maxLength: 64 },
+          },
           fulfillment: {
             type: 'object',
             additionalProperties: false,
@@ -152,46 +161,66 @@ export function validateConversationOrderPatch(
   });
 }
 
+function selectedOptionsFromModifiers(
+  modifiers: OrderingSnapshot['cart']['items'][number]['selectedModifiers'],
+): NonNullable<ConversationOrderPatch['items'][number]['selectedOptions']> {
+  return modifiers.map((group) => ({
+    groupId: group.groupId,
+    optionSelections: group.selectedOptions.map((option) => ({
+      optionId: option.optionId,
+      quantity: option.quantity,
+    })),
+  }));
+}
+
 export function applyConversationOrderPatch(
   current: OrderingSnapshot | null,
   patch: ConversationOrderPatch,
 ): OrderingDraft {
   const currentItems = new Map((current?.cart.items ?? []).map((item) => [item.lineId, item]));
   const usedLineIds = new Set((current?.cart.items ?? []).flatMap((item) => item.lineId ? [item.lineId] : []));
-  const mergedItems = patch.items.map((item) => {
-    const currentItem = item.lineId ? currentItems.get(item.lineId) : undefined;
-    const lineId = item.lineId?.trim() || currentItem?.lineId || newLineId(item.productId, usedLineIds);
-    usedLineIds.add(lineId);
-    return {
-      lineId,
-      productId: item.productId,
-      quantity: item.quantity,
-      notes: item.notes,
-      selectedOptions: item.selectedOptions,
-    };
-  });
+  const removedLineIds = new Set(patch.removedLineIds ?? []);
+  const mergedItems = patch.items
+    .filter((item) => !(item.lineId && removedLineIds.has(item.lineId)))
+    .map((item) => {
+      const currentItem = item.lineId ? currentItems.get(item.lineId) : undefined;
+      const lineId = item.lineId?.trim() || currentItem?.lineId || newLineId(item.productId, usedLineIds);
+      usedLineIds.add(lineId);
+      return {
+        lineId,
+        productId: item.productId,
+        quantity: item.quantity,
+        notes: item.notes,
+        // FIX 2026-09-04 (PR I-13): a patch item that omits `selectedOptions`
+        // entirely (e.g. a quantity-only change: "quero 3 ao invés de 2")
+        // used to wipe every mistura/molho/paid add-on already chosen on that
+        // line, because this used to assign `item.selectedOptions` verbatim
+        // (`undefined`) with no merge against the line it was looked up from
+        // one line above. When the caller (the model, via `alterar_carrinho`)
+        // does not mention modifiers for an existing line, keep the line's
+        // current selections; an explicit (even empty) array is still a
+        // deliberate full replace.
+        selectedOptions: item.selectedOptions ?? (currentItem ? selectedOptionsFromModifiers(currentItem.selectedModifiers) : undefined),
+      };
+    });
 
   const untouchedItems = (current?.cart.items ?? [])
+    .filter((item) => !removedLineIds.has(item.lineId ?? ''))
     .filter((item) => !mergedItems.some((candidate) => candidate.lineId === item.lineId))
     .map((item) => ({
       lineId: item.lineId,
       productId: item.productId,
       quantity: item.quantity,
       notes: item.notes,
-      selectedOptions: item.selectedModifiers.map((group) => ({
-        groupId: group.groupId,
-        optionSelections: group.selectedOptions.map((option) => ({
-          optionId: option.optionId,
-          quantity: option.quantity,
-        })),
-      })),
+      selectedOptions: selectedOptionsFromModifiers(item.selectedModifiers),
     }));
 
   return {
     items: [...untouchedItems, ...mergedItems],
+    removedLineIds: patch.removedLineIds,
     observations: patch.observations ?? current?.cart.observations,
-    customer: current?.customer,
-    fulfillment: patch.fulfillment ?? current?.fulfillment,
-    paymentMethod: patch.paymentMethod ?? current?.payment?.declaredMethod,
+    customer: sanitizeCustomerForWire(current?.customer),
+    fulfillment: patch.fulfillment ?? sanitizeFulfillmentForWire(current?.fulfillment),
+    paymentMethod: patch.paymentMethod ?? current?.payment?.declaredMethod ?? undefined,
   };
 }
