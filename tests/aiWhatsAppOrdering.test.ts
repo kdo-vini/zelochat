@@ -349,6 +349,19 @@ const dailyMealReply = renderCatalogReply({
 assert.match(dailyMealReply, /Frango/);
 assert.doesNotMatch(dailyMealReply, /Pequena|Grande/);
 assert.equal((dailyMealReply.match(/Marmita do dia/g) ?? []).length, 1, 'the same parent product is listed once');
+
+// CT Important 6: a product whose price varies with a required modifier
+// group must be quoted "a partir de", never a firm price for the cheapest
+// path through it.
+const fromPriceReply = renderCatalogReply({
+  total: 1, ambiguous: false,
+  results: [{
+    productId: 1007, publicName: 'Monte Sua Massa', currentPrice: 22,
+    displayPrice: { kind: 'from', amount: 22 },
+    matchReason: 'name', ambiguous: false, modifierGroups: [],
+  }],
+}, 'quero uma massa');
+assert.match(fromPriceReply, /a partir de R\$\s*22,00/);
 assert.match(renderCatalogReply({ total: 20, ambiguous: false, results: [] }, 'lanche'), /filtrar/i);
 assert.match(renderCatalogReply({ total: 2, ambiguous: true, results: [] }, 'x'), /qual/i);
 assert.match(renderCatalogReply({
