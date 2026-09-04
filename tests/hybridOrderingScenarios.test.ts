@@ -77,6 +77,7 @@ import { ZeloMenuInternalClient, ZeloMenuInternalError } from '../server/zeloMen
 import { parseOrderingSnapshotWire, OrderingWireUnsupportedError } from '../server/zeloMenuOrderingWire.js';
 import { createOrderingCircuitBreaker } from '../server/orderingCircuitBreaker.js';
 import { composeOrderingTurn } from '../server/orderingTurnComposer.js';
+import { applyConversationOrderPatch } from '../server/orderingPatchPlanner.js';
 import {
   presentOrderingRequirements,
   hasPendingOrderingRequirements,
@@ -704,3 +705,290 @@ console.log('===== Scenario 3: Monte Sua Massa in one utterance, step by step ==
   const aiWhatsAppOrderingSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
   assert.match(aiWhatsAppOrderingSource, /'Pedido confirmado e enviado para a loja\. Aviso por aqui quando houver novidade\.'/);
 }
+
+// =============================================================================
+// Scenario 5 — "sim, sem cebola" is an edit, not a confirmation; "cancela a
+// coca" is a partial removal (removedLineIds), not a full cancel; "Cancelar"
+// is a full cancel; "não" after a summary asks what to change.
+// =============================================================================
+console.log('===== Scenario 5: edit vs. partial-cancel vs. full-cancel vs. ask-change =====');
+{
+  // "sim, sem cebola" / "fechou, só coloca troco pra 50" / "certo, mas troca
+  // a coca" — a confirmation-ish word FOLLOWED by more content is always an
+  // edit, never a bare confirm.
+  for (const text of ['sim, sem cebola', 'fechou, só coloca troco pra 50', 'certo, mas troca a coca']) {
+    const turn = classifyOrderingTurn(text, true);
+    assert.equal(turn.kind, 'alter', `'${text}' must classify as an edit, never a confirm`);
+  }
+  // "cancela a coca" / "cancela a entrega, vou retirar" — partial cancels are
+  // edits, never a full pedido cancel.
+  for (const text of ['cancela a coca', 'cancela a entrega, vou retirar']) {
+    const turn = classifyOrderingTurn(text, true);
+    assert.equal(turn.kind, 'alter', `'${text}' must classify as a partial edit, never a full cancel`);
+  }
+  // "cancela o pedido" / "cancelar meu pedido" — the ONLY phrasing that is a
+  // full cancel.
+  for (const text of ['cancela o pedido', 'cancelar meu pedido']) {
+    assert.equal(classifyOrderingTurn(text, true).kind, 'cancel', `'${text}' must be the full cancel`);
+  }
+  // "não" after a summary asks what to change — never silently drops the order.
+  assert.equal(classifyOrderingTurn('não', true).kind, 'ask_change');
+  assert.equal(classifyOrderingTurn('nao', true).kind, 'ask_change');
+
+  // Driven: the ask_change branch of the FULL handler is DB-free under
+  // dryRun (persistOrderingState/sendText both no-op before touching
+  // Supabase), so this exercises the real handled:true/response pair.
+  const permit: AiTurnPermit = {
+    empresaId: '10000000-0000-4000-8000-0000000000f1', conversationControlId: '60000000-0000-4000-8000-0000000000f1',
+    remoteJid: '5511900000005@s.whatsapp.net', epoch: '1', triggerMessageId: 'trigger-askchange',
+  };
+  const orderingId = '30000000-0000-4000-8000-000000000005';
+  const openSnapshot = {
+    ...cloneFixture<Record<string, unknown>>('snapshot.ready.json'), orderingId, revision: 1,
+    empresaId: permit.empresaId, remoteJid: permit.remoteJid,
+  };
+  const { client: askChangeClient } = fakeClient([{ label: 'getOrdering for ask_change', respond: () => okJson(openSnapshot) }]);
+  const session: StoredSession = {
+    id: 's-askchange', customerName: 'Cliente', customerPhone: '5511900000005', lastMessage: 'não',
+    lastMessageTime: new Date(0).toISOString(), unreadCount: 0, status: 'active', autoReply: true,
+    messages: [
+      { id: 'm-pointer', waMessageId: 'm-pointer', role: 'tool', kind: 'text', content: `ZELO_AI_ORDERING_STATE:${JSON.stringify({ orderingId, revision: 1 })}`, preview: '', timestamp: new Date(0).toISOString() },
+      { id: 'm-nao-1', waMessageId: 'm-nao-1', role: 'user', kind: 'text', content: 'não', preview: 'não', timestamp: new Date(1).toISOString() },
+    ],
+  };
+  const askChangeResult = await tryHandleAiWhatsAppOrdering(
+    permit.remoteJid, permit.empresaId, session, permit, { menuUrl: null, storeOpen: null },
+    { client: askChangeClient, dryRun: true },
+  );
+  assert.equal(askChangeResult.handled, true);
+  assert.equal(askChangeResult.response, 'Tudo bem. O que você quer alterar no pedido?', '"não" after a summary asks what to change, never silently drops the order');
+
+  // Partial removal via removedLineIds — "cancela a coca" removes ONE line,
+  // the rest of the cart survives untouched (CT Important 5). Matches
+  // commands.accepted.json's own "atualiza com removedLineIds" example.
+  const twoLineCart: OrderingSnapshot = {
+    orderingId, empresaId: permit.empresaId, remoteJid: permit.remoteJid, state: 'cart_open', revision: 1,
+    cart: {
+      items: [
+        {
+          lineId: 'linha-1', productId: 1007, productName: 'Marmita', baseUnitPrice: 20,
+          selectedModifiers: [{ groupId: 'g001', groupName: 'Extras', kind: 'adicional', selectedOptions: [{ optionId: 'o011', optionName: 'Queijo ralado', priceDelta: 3, quantity: 2 }] }],
+          modifierDeltaTotal: 6, quantity: 1, unitPrice: 26, lineTotal: 26,
+        },
+        {
+          lineId: 'linha-2', productId: 501, productName: 'Coca-Cola', baseUnitPrice: 8,
+          selectedModifiers: [], modifierDeltaTotal: 0, quantity: 1, unitPrice: 8, lineTotal: 8,
+        },
+      ],
+    },
+    customer: { name: 'Cliente Fixture' },
+    fulfillment: { type: 'pickup', asap: true },
+    payment: { declaredMethod: 'dinheiro', pixReceiptRequired: false, pixReceiptApproved: false },
+    pricing: { subtotal: 34, deliveryFee: 0, discount: 0, total: 34 },
+    revalidation: { checkedAt: new Date(0).toISOString(), ok: true, issues: [] },
+    requirements: [], readyForConfirmation: true,
+    confirmationAction: { type: 'confirm_order', token: 'x'.repeat(43), revision: 1, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    requiresReview: false, order: null,
+  };
+  const patchedDraft = applyConversationOrderPatch(twoLineCart, { items: [], removedLineIds: ['linha-2'] });
+  assert.deepEqual(patchedDraft.items.map((i) => i.lineId), ['linha-1'], 'removedLineIds drops ONLY the targeted line');
+  assert.deepEqual(patchedDraft.items[0].selectedOptions, [{ groupId: 'g001', optionSelections: [{ optionId: 'o011', quantity: 2 }] }], 'the surviving line keeps its own modifiers untouched');
+
+  const partialRemovalResponse = {
+    ...cloneFixture<Record<string, unknown>>('snapshot.ready.json'),
+    orderingId, empresaId: permit.empresaId, remoteJid: permit.remoteJid, revision: 2,
+    cart: { items: [{ lineId: 'linha-1', productId: 1007, productName: 'Marmita', baseUnitPrice: 20, selectedModifiers: [], modifierDeltaTotal: 0, quantity: 1, unitPrice: 20, lineTotal: 20 }], observations: null },
+    pricing: { subtotal: 20, deliveryFee: 0, discount: 0, total: 20 },
+  };
+  const { client: removalClient, log: removalLog, assertExhausted: removalExhausted } = fakeClient([{
+    label: 'partial removal carries removedLineIds',
+    expect: ({ body }) => {
+      assert.equal(body?.orderingId, orderingId);
+      assert.equal(body?.expectedRevision, 1);
+      assert.deepEqual((body?.draft as Record<string, unknown>).removedLineIds, ['linha-2']);
+      assert.deepEqual((body?.draft as Record<string, unknown>).items, [], 'no untouched-line duplication is sent on the wire — only the removal instruction');
+    },
+    respond: () => okJson(partialRemovalResponse),
+  }]);
+  await removalClient.updateDraft({
+    empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-partial-remove-1',
+    conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
+    orderingId, expectedRevision: 1, draft: { items: [], removedLineIds: ['linha-2'] },
+  });
+  removalExhausted('scenario 5 partial removal');
+  assert.equal(removalLog.length, 1, 'partial removal is exactly one authority call — the wire body carries removedLineIds directly, no separate remove+re-add pair');
+
+  // Full cancel via the "Cancelar" button/hard-cancel path — client.cancelDraft
+  // directly, matching commands.accepted.json's cancel_draft example.
+  const cancelledResponse = { ...cloneFixture<Record<string, unknown>>('snapshot.cancelled.json'), orderingId, empresaId: permit.empresaId, remoteJid: permit.remoteJid, revision: 2 };
+  const { client: cancelClient, log: cancelLog, assertExhausted: cancelExhausted } = fakeClient([{
+    label: 'cancel_draft',
+    expect: ({ body }) => { assert.equal(body?.orderingId, orderingId); assert.equal(body?.expectedRevision, 1); },
+    respond: () => okJson(cancelledResponse),
+  }]);
+  const cancelled = await cancelClient.cancelDraft({
+    empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-full-cancel-1',
+    conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch, orderingId, expectedRevision: 1,
+  });
+  cancelExhausted('scenario 5 full cancel');
+  assert.equal(cancelLog.length, 1, 'a full cancel is exactly one cancelDraft call');
+  assert.equal(cancelled.state, 'cancelled');
+}
+
+// =============================================================================
+// Scenario 6 — audio: a 'done' transcript feeds the composer like typed
+// text; every failure reason (failed/too_large/unsupported/timeout) writes
+// the SAME audio_transcript_status:'failed' shape (verified against
+// server/transcription.ts's own write sites) and is therefore handled
+// identically and boundedly by composeOrderingTurn — one friendly reply,
+// never a repeat, and the NEXT text turn is unaffected.
+// =============================================================================
+console.log('===== Scenario 6: audio transcript outcomes feed (or bound) the turn identically =====');
+{
+  const t0 = new Date(0).toISOString();
+  const doneAudio = composeOrderingTurn([
+    { id: 'audio-done-1', role: 'user', kind: 'audio', content: null, preview: '[Áudio recebido]', audio_transcript: 'quero uma coxinha', audio_transcript_status: 'done', timestamp: t0 },
+  ], null);
+  assert.equal(doneAudio.text, 'quero uma coxinha', "a 'done' transcript feeds the composer exactly like typed text");
+  assert.deepEqual(doneAudio.failedAudioMessageIds, []);
+
+  // transcription.ts writes audio_transcript_status:'failed' for EVERY
+  // failure reason (missing_key, unsupported, too_large, timeout, empty,
+  // generic failed) — confirmed by reading every write site in that file.
+  // composeOrderingTurn only ever inspects audio_transcript_status, so all
+  // of them are bounded identically: one friendly reply, never re-detected.
+  const transcriptionSource = readFileSync(new URL('../server/transcription.ts', import.meta.url), 'utf8');
+  assert.match(
+    transcriptionSource,
+    /export type TranscriptionOutcome = 'done' \| 'missing_key' \| 'empty' \| 'unsupported' \| 'too_large' \| 'timeout' \| 'failed';/,
+    'the outcome union still lists every failure reason this scenario assumes',
+  );
+  for (const reason of ['unsupported', 'too_large', 'timeout']) {
+    assert.match(transcriptionSource, new RegExp(`'${reason}'`), `transcription.ts still returns outcome '${reason}' from some branch`);
+  }
+  // Spot-checked directly (server/transcription.ts:117-213, read while
+  // building this suite): every one of those branches persists
+  // `audio_transcript_status: 'failed'` before returning — composeOrderingTurn
+  // only reads that column, so all six failure reasons are handled identically.
+  for (const status of ['pending', 'failed'] as const) {
+    const composition = composeOrderingTurn([
+      { id: `audio-${status}-1`, role: 'user', kind: 'audio', content: null, preview: '[Áudio recebido]', audio_transcript: null, audio_transcript_status: status, timestamp: t0 },
+    ], null);
+    if (status === 'pending') {
+      assert.deepEqual(composition.pendingAudioMessageIds, [`audio-${status}-1`]);
+      assert.deepEqual(composition.failedAudioMessageIds, []);
+    } else {
+      assert.deepEqual(composition.failedAudioMessageIds, [`audio-${status}-1`]);
+      // Resolved, and therefore folded into consumedMessageIds so it is
+      // never replayed into a later turn (PR C-6 / FN C3).
+      assert.ok(composition.consumedMessageIds.includes(`audio-${status}-1`));
+    }
+  }
+
+  // End-to-end (dryRun, DB-free): turn 1 gets the friendly "não consegui
+  // ouvir" reply and makes ZERO authority calls; turn 2, a plain text order,
+  // DOES reach the authority — proving the conversation is not locked.
+  const permit: AiTurnPermit = {
+    empresaId: 'empresa-audio', conversationControlId: 'control-audio', remoteJid: '5511900000006@s.whatsapp.net',
+    epoch: '1', triggerMessageId: 'trigger-audio',
+  };
+  const { client: audioClient, log: audioLog } = fakeClient([]);
+  const turn1Session: StoredSession = {
+    id: 's-audio', customerName: 'Cliente', customerPhone: '5511900000006', lastMessage: '[Áudio recebido]',
+    lastMessageTime: t0, unreadCount: 0, status: 'active', autoReply: true,
+    messages: [{ id: 'audio-fail-1', waMessageId: 'audio-fail-1', role: 'user', kind: 'audio', content: null, preview: '[Áudio recebido]', audio_transcript: null, audio_transcript_status: 'failed', timestamp: t0 }],
+  };
+  const turn1 = await tryHandleAiWhatsAppOrdering(permit.remoteJid, permit.empresaId, turn1Session, permit, { menuUrl: null, storeOpen: null }, { client: audioClient, dryRun: true });
+  assert.equal(turn1.handled, true);
+  assert.equal(turn1.response, 'Não consegui ouvir esse áudio. Pode escrever o pedido aqui para eu continuar?');
+  assert.equal(audioLog.length, 0, 'a failed-audio turn never reaches the authority');
+
+  const searchOnlyClient: OrderingClient = {
+    searchCatalog: async () => ({ total: 1, ambiguous: false, results: [{ productId: 9, publicName: 'Coxinha', currentPrice: 7, matchReason: 'name', ambiguous: false }] }),
+    updateDraft: async () => { throw new Error('dryRun never mutates'); },
+    confirmDraft: async () => { throw new Error('unused'); },
+    cancelDraft: async () => { throw new Error('unused'); },
+    getOrdering: async () => { throw new Error('unused'); },
+  };
+  const turn2Session: StoredSession = {
+    ...turn1Session,
+    messages: [
+      ...turn1Session.messages,
+      { id: 'm-tool-pointer', waMessageId: 'm-tool-pointer', role: 'assistant', kind: 'text', content: 'Não consegui ouvir esse áudio. Pode escrever o pedido aqui para eu continuar?', preview: '', timestamp: new Date(1).toISOString() },
+      { id: 'text-after-audio-1', waMessageId: 'text-after-audio-1', role: 'user', kind: 'text', content: 'quero uma coxinha', preview: 'quero uma coxinha', timestamp: new Date(2).toISOString() },
+    ],
+  };
+  const turn2 = await tryHandleAiWhatsAppOrdering(
+    permit.remoteJid, permit.empresaId, turn2Session, permit, { menuUrl: null, storeOpen: null },
+    { client: searchOnlyClient, dryRun: true, draftPlanner: async () => null },
+  );
+  assert.equal(turn2.handled, true, 'the NEXT text turn works normally after a failed audio, unblocked');
+  assert.match(turn2.response ?? '', /Coxinha/i, 'the real catalog reply is produced for the following turn');
+}
+
+// =============================================================================
+// Scenario 7 — takeover races: zero MUTATING authority call, zero outbound,
+// no manager notification when a takeover lands before the mutation.
+// `client.searchCatalog` is a harmless read with no permit gate ahead of it
+// (by design — only `updateDraft`/`confirmDraft`/`cancelDraft` re-check the
+// live permit, see `assertPermitCurrent`'s call sites), so it legitimately
+// still runs; this suite scripts it explicitly rather than asserting "zero
+// calls of any kind", which would be a false expectation about the real
+// code. This extends tests/aiTakeoverRace.test.ts (which proves the same
+// updateDraft/confirmDraft invariant with throw-based client fakes) by
+// asserting it against the strict, wire-body-validating fake authority.
+// =============================================================================
+console.log('===== Scenario 7: permit takeover races make ZERO mutating authority calls =====');
+{
+  const permit: AiTurnPermit = {
+    empresaId: 'empresa-race', conversationControlId: 'control-race', remoteJid: '5511900000007@s.whatsapp.net',
+    epoch: '1', triggerMessageId: 'trigger-race',
+  };
+  const raceCatalog: CatalogReplyResult = { total: 1, ambiguous: false, results: [{ productId: 1, publicName: 'Marmita', currentPrice: 20, matchReason: 'name', ambiguous: false }] };
+  // Race A — the takeover lands WHILE the model is "planning" (mirrors
+  // tests/aiTakeoverRace.test.ts Race 1): searchCatalog is a read and legally
+  // runs; the permit re-check right before updateDraft must catch the
+  // takeover and suppress cleanly BEFORE any mutating call is attempted.
+  {
+    const { client, log, assertExhausted } = fakeClient([{
+      label: 'searchCatalog is a read — allowed even mid-takeover',
+      respond: () => okJson(raceCatalog),
+    }]);
+    let takeoverLanded = false;
+    const draftPlanner = async () => { takeoverLanded = true; return { items: [{ productId: 1, quantity: 1 }] }; };
+    const session: StoredSession = {
+      id: 's-race-a', customerName: 'Cliente', customerPhone: '5511900000007', lastMessage: 'quero uma marmita',
+      lastMessageTime: new Date(0).toISOString(), unreadCount: 0, status: 'active', autoReply: true,
+      messages: [{ id: 'm-race-a', waMessageId: 'm-race-a', role: 'user', kind: 'text', content: 'quero uma marmita', preview: 'quero uma marmita', timestamp: new Date(0).toISOString() }],
+    };
+    const result = await tryHandleAiWhatsAppOrdering(
+      permit.remoteJid, permit.empresaId, session, permit, { menuUrl: null, storeOpen: null },
+      { client, draftPlanner, permitCheck: async () => !takeoverLanded },
+    );
+    assertExhausted('race A — takeover during planning');
+    assert.equal(log.length, 1, 'exactly the one scripted searchCatalog read happened — no updateDraft was ever attempted');
+    assert.equal(result.handled, true, 'a suppressed turn is still "handled" (no fallback to the generic model)');
+    assert.equal(result.response, undefined, 'a suppressed turn sends nothing to the customer');
+  }
+  // Race B — on the confirm path, takeover lands right before resolveConfirmation
+  // would call confirmDraft.
+  {
+    const { client, assertExhausted } = fakeClient([]);
+    const current: OrderingSnapshot = {
+      orderingId: 'ord-race-b', empresaId: permit.empresaId, remoteJid: permit.remoteJid, state: 'cart_open', revision: 2,
+      cart: { items: [] }, customer: { name: 'Cliente' }, fulfillment: { type: 'pickup', asap: true },
+      payment: { pixReceiptRequired: false, pixReceiptApproved: false },
+      pricing: { subtotal: 10, deliveryFee: 0, discount: 0, total: 10 },
+      revalidation: { checkedAt: new Date(0).toISOString(), ok: true, issues: [] },
+      confirmationAction: { type: 'confirm_order', token: 'race-b-token', revision: 2, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      requiresReview: false, order: null,
+    };
+    await assert.rejects(
+      () => resolveConfirmation(current, client, permit.empresaId, permit.remoteJid, 'm-race-b', permit, 'race-b-token', 2, async () => false),
+      (error: unknown) => (error as { constructor: { name: string } })?.constructor?.name === 'OrderingSuppressedError',
+    );
+    assertExhausted('race B — takeover before confirmDraft');
+  }
+}
+
+console.log('\nScenarios 5, 6, 7 passed');
