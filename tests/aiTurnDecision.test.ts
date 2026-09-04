@@ -3,6 +3,7 @@ import {
   classifyPendingOrderTurn,
   shouldFinalizeAfterObservationAck,
 } from '../src/domain/conversationState.js';
+import { classifyOrderingTurn } from '../src/domain/aiWhatsAppOrdering.js';
 import { assertEqual, runSuite } from './testHarness.js';
 
 await runSuite('AI turn decision regression', [
@@ -95,6 +96,57 @@ await runSuite('AI turn decision regression', [
         'confirm_pending_order',
         'sim, com certeza is a common confirmation',
       );
+    },
+  },
+  {
+    name: 'canonical classifier (PR I-11) agrees with the legacy classifier on qualified replies',
+    run: () => {
+      // Neither classifier may treat a qualified/edit reply as a bare final
+      // confirmation — CLAUDE.md's documented set must be exactly what both
+      // paths honor, so the SAME customer message never confirms on one path
+      // and edits on the other.
+      const qualified = [
+        'sim, sem cebola',
+        'fechou, só coloca troco pra 50',
+        'certo, mas troca a coca',
+        'confirmar mais tarde?',
+        'confirmar só se trocar o refri',
+      ];
+      for (const text of qualified) {
+        assertEqual(
+          classifyPendingOrderTurn(text).action === 'confirm_pending_order',
+          false,
+          `legacy: "${text}" is not a bare confirmation`,
+        );
+        assertEqual(
+          classifyOrderingTurn(text, true).kind === 'confirm',
+          false,
+          `canonical: "${text}" is not a bare confirmation`,
+        );
+      }
+      const partialCancel = ['cancela a coca', 'cancela a entrega, vou retirar'];
+      for (const text of partialCancel) {
+        assertEqual(
+          classifyPendingOrderTurn(text).action === 'cancel_pending_order',
+          false,
+          `legacy: "${text}" is not a full cancellation`,
+        );
+        assertEqual(
+          classifyOrderingTurn(text, true).kind === 'cancel',
+          false,
+          `canonical: "${text}" is not a full cancellation`,
+        );
+      }
+      // The documented bare-confirmation set (CLAUDE.md) plus "confirmar"
+      // (FN C4 — the canonical button's own label) all confirm on the
+      // canonical path.
+      for (const word of ['sim', 'ok', 'fechado', 'certinho', 'pode confirmar', 'com certeza', 'confirmar', '👍', '✅', '👌', '🙏']) {
+        assertEqual(classifyOrderingTurn(word, true).kind, 'confirm', `canonical: "${word}" confirms`);
+      }
+      // "pode" and "show" alone are NOT documented confirmations on either path.
+      for (const word of ['pode', 'show']) {
+        assertEqual(classifyOrderingTurn(word, true).kind === 'confirm', false, `canonical: bare "${word}" does not confirm`);
+      }
     },
   },
   {

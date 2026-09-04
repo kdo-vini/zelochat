@@ -93,14 +93,37 @@ export function buildDeliveryFeeReply(menuUrl: string): string {
   return `A taxa de entrega é calculada no cardápio quando você informa o endereço: ${menuUrl}. Se preferir, pode fazer o pedido por escrito aqui comigo.`;
 }
 
+/**
+ * FIX 2026-09-04 (PR I-11): this regex used to accept bare "pode" and "show"
+ * (not documented anywhere as a confirmation) and DROP `ok`, `com certeza`,
+ * `✅`, `👌`, `🙏` — all of which CLAUDE.md §"Comportamento geral da IA"
+ * fixes as accepted confirmations. That made this canonical classifier
+ * simultaneously more trigger-happy and less forgiving than the documented
+ * (legacy) set for the exact same customer message — giving a decisive,
+ * irreversible meaning to a short informal token is the root-cause class of
+ * incident XVI. `confirmar` is added on top of the documented list because
+ * it is also the exact label of the canonical `Confirmar` button (FN C4):
+ * a typed "confirmar" must confirm the same draft a tap would.
+ */
+const BARE_CONFIRM = /^(?:sim|s|ok|confirmo|pode confirmar|confirmar|fechado|certinho|com certeza|✅|👌|🙏|👍)$/;
+/**
+ * A confirmation-ish word followed by MORE content ("sim, sem cebola",
+ * "fechou, só coloca troco pra 50", "confirmar mais tarde?") is an edit or a
+ * qualified question, never a bare confirm — mirrors the legacy
+ * `classifyPendingOrderTurn`'s qualified-reply handling in
+ * `src/domain/conversationState.ts` so both classifiers agree on the same
+ * customer message instead of contradicting each other (PR I-11).
+ */
+const CONFIRM_LEAD_WITH_MORE = /^(?:sim|nao|ok|certo|certinho|fechado|fechou|confirmar|pode confirmar|com certeza)\b.+/;
+
 export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): OrderingTurn {
   const normalized = normalize(text);
   if (isExplicitHumanRequest(text)) return { kind: 'none' };
   if (hasOpenOrdering) {
     if (/^(?:quero\s+)?(?:cancela|cancelar)(?:\s+(?:o|meu|esse|este))?\s+pedido(?:\s+(?:agora|por favor))?$/.test(normalized)) return { kind: 'cancel' };
-    if (/^(?:sim|s|confirmo|pode confirmar|confirmar|pode|fechado|certinho|show|👍)$/.test(normalized)) return { kind: 'confirm' };
+    if (BARE_CONFIRM.test(normalized)) return { kind: 'confirm' };
     if (/^(?:nao|n)$/.test(normalized)) return { kind: 'ask_change' };
-    if (/^(?:sim|nao)\b.+/.test(normalized) || /\b(troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|cancela|cancelar|prefiro|quero)\b/.test(normalized)) {
+    if (CONFIRM_LEAD_WITH_MORE.test(normalized) || /\b(troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|cancela|cancelar|prefiro|quero)\b/.test(normalized)) {
       return { kind: 'alter', instruction: text.trim() };
     }
   }
