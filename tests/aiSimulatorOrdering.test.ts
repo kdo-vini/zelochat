@@ -16,6 +16,11 @@ setConfig(empresaId, {
   aiEnabled: true,
   aiMode: 'always_on',
   zelochatMode: 'restaurant',
+  // PR 1.1/1.3: the simulator now honors the same per-empresa hybrid-ordering
+  // flag as production — this suite exercises the canonical dry-run path, so
+  // it must explicitly opt this test empresa in, exactly as a real pilot
+  // tenant would need to.
+  aiHybridOrderingEnabled: true,
 });
 
 const catalogClient: OrderingClient = {

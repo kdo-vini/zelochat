@@ -21,6 +21,7 @@ import {
   ensureAiSettingsHydrated,
   getEmpresaTimezone,
   isAiGloballyEnabledNow,
+  isAiHybridOrderingEnabled,
   DEFAULT_TIMEZONE,
   type CatalogCategoriaGroup,
 } from './configStore.js';
@@ -1075,6 +1076,22 @@ function findBlockedDateFromCustomerText(
 
 function getBlockedDateByIso(empresaId: string, isoDate: string): { date: string; reason: string } | null {
   return getBlockedDates(empresaId).find((blocked) => blocked.date === isoDate) ?? null;
+}
+
+/**
+ * FIX 2026-09-04 (PR I-15): `storeOpen` fed to the canonical ordering entry
+ * used to come straight from `resolveWeeklyStatus` (weekly hours only) — on
+ * a date in `empresa_perfil.blocked_dates`, a bare greeting still got the
+ * entry card with a LIVE "Pedir por aqui" button, because
+ * `hasTodayBlockedOperationalIntent`'s keyword guard (used elsewhere in this
+ * file) does not fire for a plain greeting with no order-shaped words in it.
+ * Exported so it can be tested directly with the same setConfig/mocked-Date
+ * style as tests/aiSchedule.test.ts, without needing to drive the whole
+ * `generateAndSendReply` pipeline.
+ */
+export function resolveOrderingEntryStoreOpen(empresaId: string, now: Date, tz: string): boolean {
+  const todayBlocked = getBlockedDateByIso(empresaId, toIsoBrazil(now, tz)) !== null;
+  return !todayBlocked && resolveWeeklyStatus(empresaId, now, tz).open === true;
 }
 
 function isoToShortDisplayBR(isoDate: string): string {
@@ -3767,18 +3784,27 @@ export async function generateAndSendReply(
     return sendBusinessHoursReply(jid, resolvedEmpresaId, permit, businessHoursIssueFromMessage);
   }
 
-  if (!isGeneralMode) {
+  // FIX 2026-09-04 (PR 1.1/1.3): `ai_hybrid_ordering_enabled` (migration 068,
+  // default false) gates the canonical router per empresa — merging/changing
+  // this flow must be a no-op for every tenant until an operator/Eng
+  // explicitly enables it. Restaurant-mode + ai_enabled=true used to be
+  // enough to live-swap behavior on deploy with no flag flip at all.
+  if (!isGeneralMode && isAiHybridOrderingEnabled(resolvedEmpresaId)) {
     // FIX 2026-08-31: o fluxo canônico existia, mas nunca era chamado → perguntas
     // de cardápio caíam no modelo genérico, que achatava grupos e inventava escolhas.
+    // FIX 2026-09-04 (PR I-15): storeOpen vinha só do horário semanal — numa
+    // data bloqueada (empresa_perfil.blocked_dates) uma saudação recebia o
+    // cartão de entrada com um botão "Pedir por aqui" ativo mesmo com a loja
+    // fechada nesse dia. `resolveOrderingEntryStoreOpen` fecha a entrada
+    // canônica na mesma condição que já bloqueia criar_pedido/retirada/Pix
+    // para datas bloqueadas; a resposta cai no modelo genérico, que já
+    // recebe blockedDatesStr no prompt e explica o fechamento (mesma copy de
+    // bloqueio, nenhum texto novo).
     const ordering = await tryHandleAiWhatsAppOrdering(jid, resolvedEmpresaId, session, permit, {
       menuUrl: aiConfig.zelomenuSlug
         ? buildPublicStoreUrl(getZeloMenuPublicBaseUrl(), aiConfig.zelomenuSlug)
         : null,
-      storeOpen: resolveWeeklyStatus(
-        resolvedEmpresaId,
-        new Date(),
-        getEmpresaTimezone(resolvedEmpresaId),
-      ).open,
+      storeOpen: resolveOrderingEntryStoreOpen(resolvedEmpresaId, new Date(), getEmpresaTimezone(resolvedEmpresaId)),
     });
     if (ordering.handled) return ordering.response ?? null;
   }

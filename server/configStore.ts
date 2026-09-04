@@ -127,6 +127,17 @@ export interface BusinessConfig {
   deliveryConfig: DeliveryConfig | null;
   pixReceiptConfig: PixReceiptConfig;
   zelochatMode: ZeloChatMode;
+  /**
+   * FIX 2026-09-04 (PR 1.1/1.3): per-empresa activation for the canonical
+   * hybrid WhatsApp ordering router (`tryHandleAiWhatsAppOrdering`).
+   * `empresa_perfil.ai_hybrid_ordering_enabled` (migration 068), NOT NULL
+   * DEFAULT false at the DB. Optional here (not in DEFAULT_CONFIG) so a
+   * never-hydrated empresa reads `undefined`, which `isAiHybridOrderingEnabled`
+   * treats as disabled — same fail-closed posture as every other gate in
+   * this file. There is deliberately no self-service UI to flip this;
+   * activation is an explicit operator/Eng decision (direct DB update).
+   */
+  aiHybridOrderingEnabled?: boolean;
 }
 
 export const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
@@ -485,6 +496,18 @@ export function isAiGloballyEnabledNow(empresaId: string, now = new Date()): boo
   return sharedIsAiGloballyEnabledNow(getConfig(empresaId), now);
 }
 
+/**
+ * FIX 2026-09-04 (PR 1.1/1.3): the single source of truth for "is the
+ * canonical hybrid ordering router turned on for this empresa" — every
+ * caller (server/ai.ts's gate, server/router.ts's button/text routing,
+ * server/aiSimulator.ts's dry-run) must go through this, never read
+ * `.aiHybridOrderingEnabled` directly, so there is exactly one place that
+ * defines "enabled" as strict `=== true` (fail closed on undefined/false).
+ */
+export function isAiHybridOrderingEnabled(empresaId: string): boolean {
+  return getConfig(empresaId).aiHybridOrderingEnabled === true;
+}
+
 export function setConfig(empresaId: string, c: Partial<BusinessConfig>): void {
   const existing = configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
   const patch: Partial<BusinessConfig> = { ...c };
@@ -663,6 +686,28 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     console.warn(`[configStore] zelomenu_slug lookup threw for ${empresaId} — AI will escalate instead of linking:`, slugErr);
   }
 
+  // FIX 2026-09-04 (PR 1.1/1.3): fetched in isolation, same reasoning as
+  // zelomenu_slug above — migration 068 is brand new and may not have run
+  // yet in every environment this code deploys to. A missing column here
+  // must never fail the whole hydration (which would silence the AI
+  // entirely); it just leaves the flag false, i.e. the pre-hybrid-ordering
+  // behavior, which is the correct fail-closed default anyway.
+  let aiHybridOrderingEnabled = false;
+  try {
+    const flagRes = await supabase
+      .from('empresa_perfil')
+      .select('ai_hybrid_ordering_enabled')
+      .eq('id', empresaId)
+      .maybeSingle();
+    if (flagRes.error) {
+      console.warn(`[configStore] ai_hybrid_ordering_enabled lookup failed for ${empresaId} — treating as disabled:`, flagRes.error.message);
+    } else {
+      aiHybridOrderingEnabled = (flagRes.data as { ai_hybrid_ordering_enabled?: boolean } | null)?.ai_hybrid_ordering_enabled === true;
+    }
+  } catch (flagErr) {
+    console.warn(`[configStore] ai_hybrid_ordering_enabled lookup threw for ${empresaId} — treating as disabled:`, flagErr);
+  }
+
   const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes] = await Promise.all([
     supabase
       .from('categorias')
@@ -762,6 +807,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   patch.deliveryConfig = normalizeDeliveryConfig(row.delivery_config);
   patch.pixReceiptConfig = normalizePixReceiptConfig(row.pix_receipt_config);
   patch.zelochatMode = normalizeZeloChatMode(row.zelochat_mode);
+  patch.aiHybridOrderingEnabled = aiHybridOrderingEnabled;
   patch.products = products;
   patch.catalogHierarchy = buildCatalogHierarchy(
     categoriasRes.data ?? [],

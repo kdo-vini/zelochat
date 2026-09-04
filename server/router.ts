@@ -79,7 +79,7 @@ import { simulateAtendimento, type SimulatePayload } from './aiSimulator.js';
 import { recordRawWebhookEvent, markWebhookEventFailed, markWebhookEventProcessed, type WebhookAuthStatus } from './webhookLog.js';
 import { processFromMeUpsert } from './fromMeProcessor.js';
 import { redactInstance, redactJid } from './redact.js';
-import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated } from './configStore.js';
+import { getConfig, setConfig, loadAiSettingsFromDb, ensureAiSettingsHydrated, isAiHybridOrderingEnabled } from './configStore.js';
 import { checkAiRouteRateLimit, validateAiCompletePayload, validateGenerateInstructionsPayload } from './aiRouteGuards.js';
 import { recordAiUsage } from './aiUsage.js';
 import { buildAiHealthReport } from './aiHealth.js';
@@ -634,7 +634,12 @@ async function processWebhookEvent(
       interactiveText ?? ''
     ).trim();
 
-    if (buttonId && parseOrderingButton(buttonId)) {
+    // FIX 2026-09-04 (PR 1.1/1.3): a disabled tenant (ai_hybrid_ordering_enabled
+    // = false, migration 068) must never have a canonical button id parsed or
+    // routed to the ordering handler — defense in depth on top of the flag
+    // gate in server/ai.ts, so a stale REQ:/ZOC:/ZOA button delivered from
+    // before the flag was flipped off can't still be actioned.
+    if (buttonId && isAiHybridOrderingEnabled(empresaId) && parseOrderingButton(buttonId)) {
       const messageId = data.key?.id ?? '';
       const persistedAction = await handleIncomingMessage(data, empresaId);
       if (!persistedAction) return;
@@ -709,7 +714,11 @@ async function processWebhookEvent(
     // Check for a canonical pointer FIRST and route there instead. When there
     // is no canonical pointer this is a read-only check — the legacy block
     // below still runs byte-for-byte as before.
-    if ((isHardConfirm || isHardCancel || isAlterText) && !(buttonId && parseOrderingButton(buttonId))) {
+    // FIX 2026-09-04 (PR 1.1/1.3): same flag gate as the button-id branch
+    // above — a disabled tenant's typed "confirmar"/"cancelar"/"alterar"
+    // always falls through to the legacy block below, even if a canonical
+    // pointer somehow exists (e.g. the flag was flipped off mid-pilot).
+    if (isAiHybridOrderingEnabled(empresaId) && (isHardConfirm || isHardCancel || isAlterText) && !(buttonId && parseOrderingButton(buttonId))) {
       const canonicalCheckSession = await getSession(remoteJid, empresaId);
       const canonicalPointer = canonicalCheckSession ? findLatestOrderingState(canonicalCheckSession.messages) : null;
       if (canonicalPointer) {
@@ -1731,9 +1740,14 @@ router.get('/api/ai-enabled', async (req: Request, res: Response) => {
  */
 router.get('/api/ai-ordering-status', async (req: Request, res: Response) => {
   try {
-    await requireEmpresaId(req);
+    const empresaId = await requireEmpresaId(req);
+    await ensureAiSettingsHydrated(empresaId);
     const client = ZeloMenuInternalClient.fromEnv();
-    res.json({ enabled: client !== null });
+    // FIX 2026-09-04 (PR 1.1/1.3): read-only exposure of the per-empresa
+    // hybrid-ordering flag so the operator UI can show "Pedidos guiados:
+    // ativado/desativado" — deliberately no matching write route; flipping
+    // this is an explicit operator/Eng decision, not a self-service toggle.
+    res.json({ enabled: client !== null, hybridOrderingEnabled: isAiHybridOrderingEnabled(empresaId) });
   } catch (error) {
     sendAuthError(res, error);
   }
