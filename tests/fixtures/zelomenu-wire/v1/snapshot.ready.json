@@ -1,0 +1,217 @@
+{
+  "cart": {
+    "items": [
+      {
+        "lineId": "linha-massa-1",
+        "productId": 1007,
+        "productName": "Monte Sua Massa",
+        "baseUnitPrice": 0,
+        "selectedModifiers": [
+          {
+            "groupId": "g001",
+            "groupName": "Escolha a massa",
+            "kind": "variacao",
+            "selectedOptions": [
+              {
+                "optionId": "o002",
+                "optionName": "Talharim",
+                "priceDelta": 25,
+                "quantity": 1
+              }
+            ]
+          },
+          {
+            "groupId": "g002",
+            "groupName": "Escolha o molho",
+            "kind": "adicional",
+            "selectedOptions": [
+              {
+                "optionId": "o003",
+                "optionName": "Molho ao sugo",
+                "priceDelta": 0,
+                "quantity": 1
+              }
+            ]
+          }
+        ],
+        "modifierDeltaTotal": 25,
+        "quantity": 1,
+        "unitPrice": 25,
+        "lineTotal": 25,
+        "notes": null
+      }
+    ],
+    "observations": null
+  },
+  "customer": {
+    "name": "Cliente Fixture da Silva",
+    "phone": null
+  },
+  "fulfillment": {
+    "type": "delivery",
+    "asap": true,
+    "pickupDate": null,
+    "pickupTime": null,
+    "deliveryAddress": "Rua Fixture, 100",
+    "deliveryNeighborhood": "Bairro Fixture",
+    "deliveryNumber": "100",
+    "deliveryFee": 8,
+    "deliveryFeeToConfirm": false
+  },
+  "payment": {
+    "declaredMethod": "pix",
+    "pixReceiptRequired": true,
+    "pixReceiptApproved": false
+  },
+  "pricing": {
+    "subtotal": 25,
+    "deliveryFee": 8,
+    "discount": 0,
+    "couponCode": null,
+    "couponDiscountType": null,
+    "couponDiscountValue": null,
+    "total": 33
+  },
+  "revalidation": {
+    "checkedAt": "2026-09-03T12:01:00.000Z",
+    "ok": true,
+    "issues": []
+  },
+  "requirements": [
+    {
+      "id": "linha-massa-1:g003",
+      "type": "modifier_group",
+      "lineId": "linha-massa-1",
+      "productId": 1007,
+      "groupId": "g003",
+      "name": "Proteínas",
+      "blocking": false,
+      "kind": "adicional",
+      "pricingMode": "somar",
+      "minSelections": 0,
+      "maxSelections": 2,
+      "minTotalQuantity": 0,
+      "maxTotalQuantity": 2,
+      "allowsQuantity": true,
+      "maxPerOption": 2,
+      "selectedDistinctCount": 0,
+      "selectedTotalQuantity": 0,
+      "options": [
+        {
+          "id": "o005",
+          "name": "Bife acebolado",
+          "currentPrice": 12,
+          "priceDelta": 12,
+          "available": true,
+          "order": 1
+        },
+        {
+          "id": "o006",
+          "name": "Frango grelhado",
+          "currentPrice": 10,
+          "priceDelta": 10,
+          "available": true,
+          "order": 2
+        },
+        {
+          "id": "o007",
+          "name": "Calabresa acebolada",
+          "currentPrice": 9,
+          "priceDelta": 9,
+          "available": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "id": "linha-massa-1:g004",
+      "type": "modifier_group",
+      "lineId": "linha-massa-1",
+      "productId": 1007,
+      "groupId": "g004",
+      "name": "Acompanhamentos",
+      "blocking": false,
+      "kind": "adicional",
+      "pricingMode": "somar",
+      "minSelections": 0,
+      "maxSelections": 2,
+      "minTotalQuantity": 0,
+      "maxTotalQuantity": 2,
+      "allowsQuantity": false,
+      "maxPerOption": 1,
+      "selectedDistinctCount": 0,
+      "selectedTotalQuantity": 0,
+      "options": [
+        {
+          "id": "o008",
+          "name": "Salada",
+          "currentPrice": 0,
+          "priceDelta": 0,
+          "available": true,
+          "order": 1
+        },
+        {
+          "id": "o009",
+          "name": "Batata palha",
+          "currentPrice": 0,
+          "priceDelta": 0,
+          "available": true,
+          "order": 2
+        }
+      ]
+    },
+    {
+      "id": "linha-massa-1:g005",
+      "type": "modifier_group",
+      "lineId": "linha-massa-1",
+      "productId": 1007,
+      "groupId": "g005",
+      "name": "Extra pago",
+      "blocking": false,
+      "kind": "adicional",
+      "pricingMode": "somar",
+      "minSelections": 0,
+      "maxSelections": 2,
+      "minTotalQuantity": 0,
+      "maxTotalQuantity": 4,
+      "allowsQuantity": true,
+      "maxPerOption": 2,
+      "selectedDistinctCount": 0,
+      "selectedTotalQuantity": 0,
+      "options": [
+        {
+          "id": "o011",
+          "name": "Queijo ralado",
+          "currentPrice": 3,
+          "priceDelta": 3,
+          "available": true,
+          "order": 1
+        },
+        {
+          "id": "o012",
+          "name": "Bacon crocante",
+          "currentPrice": 5,
+          "priceDelta": 5,
+          "available": true,
+          "order": 2
+        }
+      ]
+    }
+  ],
+  "readyForConfirmation": true,
+  "empresaId": "10000000-0000-4000-8000-0000000000f1",
+  "remoteJid": "5511900000001@s.whatsapp.net",
+  "pessoaId": null,
+  "orderingId": "30000000-0000-4000-8000-000000000001",
+  "state": "cart_open",
+  "revision": 2,
+  "updatedAt": "2026-09-03T12:02:00.000Z",
+  "order": null,
+  "confirmationAction": {
+    "type": "confirm_order",
+    "token": "qr-ckG7Wi3y7S5GTZhJcD7cQure6J0pN0u_RK8l1aaw",
+    "revision": 2,
+    "expiresAt": "2026-09-03T12:12:00.000Z"
+  },
+  "requiresReview": false
+}

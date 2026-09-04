@@ -1,0 +1,80 @@
+{
+  "modifier_group": {
+    "kinds": [
+      "adicional",
+      "variacao"
+    ],
+    "fields": [
+      "id",
+      "type",
+      "lineId",
+      "productId",
+      "groupId",
+      "name",
+      "blocking",
+      "kind",
+      "pricingMode",
+      "minSelections",
+      "maxSelections",
+      "minTotalQuantity",
+      "maxTotalQuantity",
+      "allowsQuantity",
+      "maxPerOption",
+      "selectedDistinctCount",
+      "selectedTotalQuantity",
+      "autoSelectableOptionId?",
+      "options"
+    ]
+  },
+  "fulfillment_type": {
+    "fields": [
+      "id",
+      "type",
+      "name",
+      "blocking"
+    ]
+  },
+  "customer_name": {
+    "fields": [
+      "id",
+      "type",
+      "name",
+      "blocking"
+    ]
+  },
+  "payment_method": {
+    "fields": [
+      "id",
+      "type",
+      "name",
+      "blocking"
+    ]
+  },
+  "delivery_address": {
+    "fields": [
+      "id",
+      "type",
+      "name",
+      "blocking",
+      "missingFields"
+    ],
+    "missingFieldsValues": [
+      "address",
+      "number",
+      "neighborhood"
+    ]
+  },
+  "schedule": {
+    "fields": [
+      "id",
+      "type",
+      "name",
+      "blocking",
+      "missingFields"
+    ],
+    "missingFieldsValues": [
+      "date",
+      "time"
+    ]
+  }
+}

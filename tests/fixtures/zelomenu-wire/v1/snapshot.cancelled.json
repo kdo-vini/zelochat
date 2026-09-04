@@ -1,0 +1,64 @@
+{
+  "cart": {
+    "items": [
+      {
+        "lineId": "linha-bebida-1",
+        "productId": 1001,
+        "productName": "Coca-Cola Original 350 ml",
+        "baseUnitPrice": 6,
+        "selectedModifiers": [],
+        "modifierDeltaTotal": 0,
+        "quantity": 2,
+        "unitPrice": 6,
+        "lineTotal": 12,
+        "notes": null
+      }
+    ],
+    "observations": null
+  },
+  "customer": {
+    "name": "Cliente Fixture da Silva",
+    "phone": null
+  },
+  "fulfillment": {
+    "type": "pickup",
+    "asap": true,
+    "pickupDate": null,
+    "pickupTime": null,
+    "deliveryAddress": null,
+    "deliveryNeighborhood": null,
+    "deliveryFee": 0,
+    "deliveryFeeToConfirm": false
+  },
+  "payment": {
+    "declaredMethod": "dinheiro",
+    "pixReceiptRequired": false,
+    "pixReceiptApproved": false
+  },
+  "pricing": {
+    "subtotal": 12,
+    "deliveryFee": 0,
+    "discount": 0,
+    "couponCode": null,
+    "couponDiscountType": null,
+    "couponDiscountValue": null,
+    "total": 12
+  },
+  "revalidation": {
+    "checkedAt": "2026-09-03T12:00:00.000Z",
+    "ok": true,
+    "issues": []
+  },
+  "requirements": [],
+  "readyForConfirmation": true,
+  "empresaId": "10000000-0000-4000-8000-0000000000f1",
+  "remoteJid": "5511900000001@s.whatsapp.net",
+  "pessoaId": null,
+  "orderingId": "30000000-0000-4000-8000-000000000001",
+  "state": "cancelled",
+  "revision": 2,
+  "updatedAt": "2026-09-03T12:02:00.000Z",
+  "order": null,
+  "confirmationAction": null,
+  "requiresReview": false
+}

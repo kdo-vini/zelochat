@@ -1,0 +1,114 @@
+{
+  "NAO_AUTORIZADO": {
+    "status": 401,
+    "detail": "Não foi possível autorizar esta solicitação.",
+    "source": "server/internalOrdering.ts (router guard)"
+  },
+  "COMANDO_INVALIDO": {
+    "status": 400,
+    "detail": "(varies — see commands.rejected.json)",
+    "source": "server/internalOrdering.ts (parseInternalOrderingCommand)",
+    "note": "detail is always the exact parser validation message for the field that failed."
+  },
+  "EMPRESA_INVALIDA": {
+    "status": 400,
+    "detail": "Informe uma empresa válida.",
+    "source": "server/internalOrdering.ts (GET /:orderingId)"
+  },
+  "CONVERSA_INVALIDA": {
+    "status": 400,
+    "detail": "Informe uma conversa válida.",
+    "source": "server/internalOrdering.ts (GET /:orderingId)"
+  },
+  "PEDIDO_INVALIDO": {
+    "status": 400,
+    "detail": "(varies — e.g. \"Informe um pedido válido.\" on GET, \"Revise os dados pendentes antes de confirmar.\" on confirm)",
+    "source": "server/internalOrdering.ts + server/conversationOrdering.ts"
+  },
+  "ITEM_INVALIDO": {
+    "status": 400,
+    "detail": "(varies — e.g. \"Revise a identificação dos itens do pedido.\")",
+    "source": "server/conversationOrdering.ts (validateDraftLineIds, mergeDraftLines)"
+  },
+  "PEDIDO_VAZIO": {
+    "status": 400,
+    "detail": "O pedido precisa ter pelo menos um item. Para encerrar tudo, cancele o pedido.",
+    "source": "server/conversationOrdering.ts"
+  },
+  "CLIENTE_INVALIDO": {
+    "status": 400,
+    "detail": "Não foi possível vincular o cliente a este pedido.",
+    "source": "server/supabaseConversationOrderingAdapter.ts"
+  },
+  "PEDIDO_NAO_ENCONTRADO": {
+    "status": 404,
+    "detail": "Não encontrei este pedido.",
+    "source": "server/internalOrdering.ts (GET) + server/conversationOrdering.ts (commands)"
+  },
+  "REVISAO_DESATUALIZADA": {
+    "status": 409,
+    "detail": "O pedido foi atualizado. Use a revisão mais recente.",
+    "source": "server/conversationOrdering.ts",
+    "note": "carries `current` (the fresh snapshot) in the response body."
+  },
+  "RESUMO_EXPIRADO": {
+    "status": 409,
+    "detail": "Este resumo expirou. Atualize o pedido para receber uma nova confirmação.",
+    "source": "server/conversationOrdering.ts",
+    "note": "carries `current`."
+  },
+  "PEDIDO_EM_ANDAMENTO": {
+    "status": 409,
+    "detail": "Já existe um pedido em andamento nesta conversa.",
+    "source": "server/conversationOrdering.ts",
+    "note": "carries `current` — the consumer should recover the existing orderingId from it instead of treating this as a generic failure."
+  },
+  "PEDIDO_FECHADO": {
+    "status": 409,
+    "detail": "Este pedido já foi encerrado.",
+    "source": "server/conversationOrdering.ts",
+    "note": "carries `current`."
+  },
+  "CONFIRMACAO_INVALIDA": {
+    "status": 409,
+    "detail": "Esta confirmação não é mais válida. Peça um novo resumo.",
+    "source": "server/supabaseConversationOrderingAdapter.ts",
+    "note": "also returned when confirmationToken is present but does not match the token issued for the current revision."
+  },
+  "AI_TURN_REVOKED": {
+    "status": 409,
+    "detail": "Esta conversa mudou de atendimento. Vou deixar a equipe continuar por aqui.",
+    "source": "server/supabaseConversationOrderingAdapter.ts",
+    "note": "must be suppressed cleanly by the consumer — no customer message, no escalation."
+  },
+  "CONFIRMACAO_INDISPONIVEL": {
+    "status": 400,
+    "detail": "A confirmação de pedidos não está disponível agora.",
+    "source": "server/supabaseConversationOrderingAdapter.ts",
+    "note": "this is a service-availability fault (missing RPC / missing token secret) surfaced as 400 because it is absent from the 409 allowlist in sendOrderingError — recorded as-is, not proposed to change here."
+  },
+  "PEDIDO_INDISPONIVEL": {
+    "status": [
+      400,
+      500
+    ],
+    "detail": "(varies — e.g. \"Não foi possível concluir o pedido agora. Tente novamente.\")",
+    "source": "server/conversationOrdering.ts (materialization failure -> 400 via ConversationOrderingError) and server/internalOrdering.ts sendOrderingError catch-all (unexpected error -> 500)",
+    "note": "the SAME code string is emitted at two different statuses depending on whether it reached the router as a ConversationOrderingError (400) or as an unexpected/non-domain exception (500, server/internalOrdering.ts:234-235)."
+  },
+  "MUITAS_REQUISICOES": {
+    "status": 429,
+    "detail": "(varies — \"Muitos pedidos em pouco tempo...\" for the per-empresa quota, \"Muitas tentativas em pouco tempo...\" for the coarse per-key failure limiter)",
+    "source": "server/internalOrdering.ts (quota, 120/min) and server/internalCatalogRateLimit.ts (coarse failure limiter, 30 failures/min) mounted at server/index.ts"
+  },
+  "JSON_INVALIDO": {
+    "status": 400,
+    "detail": "Envie dados em JSON válido.",
+    "source": "server/index.ts (express.json syntax-error middleware)"
+  },
+  "PAYLOAD_MUITO_GRANDE": {
+    "status": 413,
+    "detail": "Os dados enviados são grandes demais.",
+    "source": "server/index.ts (express.json limit middleware)"
+  }
+}

@@ -1,0 +1,126 @@
+[
+  {
+    "name": "open_or_update_draft: cria com selectedOptions (grupo/opção/quantidade), notes e retirada imediata",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.accepted-open-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "draft": {
+        "items": [
+          {
+            "lineId": "linha-1",
+            "productId": 1007,
+            "quantity": 1,
+            "notes": "sem cebola",
+            "selectedOptions": [
+              {
+                "groupId": "g001",
+                "optionSelections": [
+                  {
+                    "optionId": "o001",
+                    "quantity": 1
+                  }
+                ]
+              },
+              {
+                "groupId": "g005",
+                "optionSelections": [
+                  {
+                    "optionId": "o011",
+                    "quantity": 2
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "fulfillment": {
+          "type": "pickup",
+          "asap": true
+        },
+        "paymentMethod": "dinheiro",
+        "customer": {
+          "name": "Cliente Fixture"
+        }
+      }
+    }
+  },
+  {
+    "name": "open_or_update_draft: atualiza com removedLineIds e entrega com endereço",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.accepted-update-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 1,
+      "draft": {
+        "items": [],
+        "removedLineIds": [
+          "linha-2"
+        ],
+        "fulfillment": {
+          "type": "delivery",
+          "asap": true,
+          "deliveryAddress": "Rua Fixture, 100",
+          "deliveryNeighborhood": "Bairro Fixture",
+          "deliveryNumber": "100"
+        }
+      }
+    }
+  },
+  {
+    "name": "open_or_update_draft: retirada agendada (não existe fulfillment.type \"scheduled\" — agendamento é asap:false + pickupDate/pickupTime)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.accepted-scheduled-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 2,
+      "draft": {
+        "items": [],
+        "fulfillment": {
+          "type": "pickup",
+          "asap": false,
+          "pickupDate": "2026-09-10",
+          "pickupTime": "19:30"
+        }
+      }
+    }
+  },
+  {
+    "name": "confirm_draft: com confirmationToken (43 chars base64url, formato válido)",
+    "body": {
+      "type": "confirm_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.accepted-confirm-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 3,
+      "confirmationToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "name": "cancel_draft",
+    "body": {
+      "type": "cancel_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.accepted-cancel-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 1
+    }
+  }
+]

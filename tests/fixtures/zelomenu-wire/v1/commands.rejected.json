@@ -1,0 +1,188 @@
+[
+  {
+    "name": "fulfillment.deliveryFee / deliveryFeeToConfirm ecoados (a loja calcula a taxa, nunca o cliente)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-fee-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 1,
+      "draft": {
+        "items": [],
+        "fulfillment": {
+          "type": "delivery",
+          "deliveryFee": 8,
+          "deliveryFeeToConfirm": false
+        }
+      }
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "A taxa de entrega é calculada pela loja."
+    }
+  },
+  {
+    "name": "fulfillment.type: null (autoridade nula o tipo internamente até a escolha; o wire nunca aceita null explícito)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-fulfillment-null-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 1,
+      "draft": {
+        "items": [],
+        "fulfillment": {
+          "type": null
+        }
+      }
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Escolha entrega ou retirada."
+    }
+  },
+  {
+    "name": "fulfillment.type: \"scheduled\" (enum inexistente — só pickup/delivery)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-fulfillment-scheduled-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 1,
+      "draft": {
+        "items": [],
+        "fulfillment": {
+          "type": "scheduled"
+        }
+      }
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Escolha entrega ou retirada."
+    }
+  },
+  {
+    "name": "item sem lineId (o \"repeat o de sempre\" que nunca funcionou no consumidor)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-no-lineid-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "draft": {
+        "items": [
+          {
+            "productId": 1007,
+            "quantity": 1
+          }
+        ]
+      }
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Informe uma identificação válida para cada item."
+    }
+  },
+  {
+    "name": "item ecoa productName/unitPrice/lineTotal (carrinho completo do consumidor, preço não é confiável do cliente)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-priced-item-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "draft": {
+        "items": [
+          {
+            "lineId": "linha-1",
+            "productId": 1007,
+            "quantity": 1,
+            "productName": "Monte Sua Massa",
+            "unitPrice": 22,
+            "lineTotal": 22
+          }
+        ]
+      }
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Envie somente os identificadores e quantidades dos itens."
+    }
+  },
+  {
+    "name": "conversationEpoch como number (deve ser string decimal exata)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-epoch-number-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": 7,
+      "draft": {
+        "items": [
+          {
+            "lineId": "linha-1",
+            "productId": 1007,
+            "quantity": 1
+          }
+        ]
+      }
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Informe uma versão válida da conversa."
+    }
+  },
+  {
+    "name": "messageId curto demais (< 8 caracteres)",
+    "body": {
+      "type": "open_or_update_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "curta",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "draft": {
+        "items": [
+          {
+            "lineId": "linha-1",
+            "productId": 1007,
+            "quantity": 1
+          }
+        ]
+      }
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Informe uma mensagem válida."
+    }
+  },
+  {
+    "name": "confirm_draft sem confirmationToken (obrigatório desde ZM1 passo 3 — ver server/internalOrdering.ts)",
+    "body": {
+      "type": "confirm_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-no-token-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 1
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Informe a confirmação do pedido."
+    }
+  }
+]
