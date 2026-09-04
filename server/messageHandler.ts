@@ -1,7 +1,7 @@
 import { broadcast } from './ws.js';
 import { getEmpresaUserId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import { ensureCustomerForSession } from './customers/identity.js';
-import { transcribeAudio } from './transcription.js';
+import { transcribeAudio, type TranscriptionOutcome } from './transcription.js';
 import { dispatchConversationOutbound } from './conversationOutbound.js';
 import { redactJid } from './redact.js';
 import {
@@ -36,7 +36,17 @@ const TRANSCRIPTION_FAILURE_THRESHOLD = 3;
 const transcriptionFailures = new Map<string, number>();
 const audioTranscriptionJobs = new Map<string, Promise<void>>();
 // Keep the conversation bounded; the settled callback rearms it later.
-const AUDIO_TRANSCRIPTION_WAIT_MS = Math.min(15_000, Math.max(0, Number(process.env.AUDIO_TRANSCRIPTION_WAIT_MS ?? 10_000)));
+// FIX 2026-09-03 (PR 1.9 / M-13): the ceiling used to allow up to 15s via env
+// override, which can exceed the "human-feeling" reply cadence the debouncer
+// targets (AI_DEBOUNCE_READ_MS + AI_DEBOUNCE_TYPING_MS + AI_DEBOUNCE_REPLY_MS,
+// ~10s by default — see replyDebouncer.ts) BEFORE this wait even starts,
+// making the total customer-facing silence for a voice note stretch past what
+// the cadence was designed for. Cap the in-turn wait at that same ~10s
+// default budget; a transcription that is still running past it is handled
+// by the settled-callback rearm instead (see onAudioTranscriptionSettled /
+// shouldRearmAfterAudioTranscription), not by making the customer wait longer
+// inside a single turn.
+const AUDIO_TRANSCRIPTION_WAIT_MS = Math.min(10_000, Math.max(0, Number(process.env.AUDIO_TRANSCRIPTION_WAIT_MS ?? 10_000)));
 const AUDIO_TRANSCRIPTION_POLL_MS = 750;
 const parsedSessionListLimit = Number(process.env.ZELOCHAT_SESSION_LIST_LIMIT ?? 2000);
 const SESSION_LIST_LIMIT = Number.isFinite(parsedSessionListLimit) && parsedSessionListLimit > 0
@@ -107,6 +117,22 @@ export function onAudioTranscriptionSettled(handler: AudioTranscriptionSettledHa
 }
 
 /**
+ * FIX 2026-09-03 (PR 1.9 / M-12): `missing_key` means OPENAI_API_KEY is unset
+ * — an ops-level misconfiguration, not a customer-side audio problem. Every
+ * tenant's audio message fails this way identically while the key is
+ * missing, so counting it toward the consecutive-failure threshold meant a
+ * misconfigured deploy auto-escalated every active conversation's 3rd audio
+ * message (spread over any span of time — the counter never resets on a
+ * real success while the key stays missing) and kept them escalated once the
+ * key came back, since nothing ever cleared the counter. Only count outcomes
+ * that are actually about THIS audio (bad quality, unsupported format,
+ * oversized, a genuine transcription failure/timeout).
+ */
+export function shouldCountTranscriptionFailure(outcome: TranscriptionOutcome): boolean {
+  return outcome !== 'done' && outcome !== 'missing_key';
+}
+
+/**
  * Wraps `transcribeAudio` and tracks consecutive Whisper failures per session.
  * Resets the counter on any successful transcription OR any non-audio message
  * (caller is responsible for resetting on non-audio — see handleIncomingMessage).
@@ -119,71 +145,67 @@ async function transcribeAudioWithFailureTracking(
   const { empresaId, jid } = params;
   const key = transcriptionKey(empresaId, jid);
 
-  // transcribeAudio persists its own status instead of returning one, so the
-  // wrapper re-reads the row after the async Whisper attempt completes.
-  await transcribeAudio(params);
+  // FIX 2026-09-03: `transcribeAudio` already returns its own terminal
+  // outcome synchronously — re-reading the row afterward was redundant (same
+  // client, same awaited write, no cross-connection lag) and, worse, silently
+  // swallowed a failed re-read (any error here used to fall into the generic
+  // `catch` below and skip failure counting/escalation entirely).
+  const outcome = await transcribeAudio(params);
 
-  // Re-read the message row to check the outcome.
-  try {
-    const { data } = await getServiceSupabase()
-      .from('zelochat_messages')
-      .select('audio_transcript_status')
-      .eq('id', params.messageId)
-      .eq('empresa_id', empresaId)
-      .maybeSingle();
-
-    const status = (data as { audio_transcript_status?: string } | null)?.audio_transcript_status;
-
-    if (status === 'done') {
-      // Success — reset the failure counter for this session.
-      transcriptionFailures.delete(key);
-      void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'done' });
-      return;
-    }
-
-    // Status is 'failed' (or unknown) — count the failure.
-    const next = (transcriptionFailures.get(key) ?? 0) + 1;
-    transcriptionFailures.set(key, next);
-
-    if (next < TRANSCRIPTION_FAILURE_THRESHOLD) {
-      void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
-      return;
-    }
-
-    // Threshold reached — auto-escalate.
-    console.log(`[transcription] auto-escalated empresa=${empresaId} jid=${jid} after 3 consecutive Whisper failures`);
+  if (outcome === 'done') {
+    // Success — reset the failure counter for this session.
     transcriptionFailures.delete(key);
+    void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'done' });
+    return;
+  }
 
-    try {
-      // Keep this import lazy to avoid a static cycle at module load:
-      // escalation.ts imports addAssistantMessage from this file for the normal
-      // handoff path, while this rare audio-failure path needs escalateSession.
-      const { escalateSession } = await import('./escalation.js');
-      await escalateSession(empresaId, jid, {
-        triggerId: null,
-        triggerKind: 'escalate_human',
-        triggerName: 'Falha repetida de transcrição de áudio',
-        reasonCategory: 'repeated_ai_failure',
-        reasonText: `Whisper falhou ${next} vezes consecutivas para mensagens de áudio. Atendente humano solicitado.`,
-        // Skip the default handoff message — we send our own below.
-        skipCustomerMessage: true,
-      });
+  if (!shouldCountTranscriptionFailure(outcome)) {
+    // missing_key: surface the friendly fallback reply for THIS message, but
+    // do not burn the per-session escalation budget on an outage that is not
+    // this customer's fault.
+    void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
+    return;
+  }
 
-      const audioEscalationMsg = 'Tive dificuldade em ouvir seus áudios. Um atendente vai te ajudar agora.';
-      await dispatchConversationOutbound({
-        empresaId,
-        remoteJid: jid,
-        actorUserId: null,
-        origin: 'system_handoff',
-        takeoverPolicy: 'preserve_ai',
-        idempotencyKey: `transcription-handoff:${params.messageId}`,
-        payload: { kind: 'text', text: audioEscalationMsg },
-      });
-    } catch (escalateErr) {
-      console.error('[transcription] Auto-escalation after Whisper failures threw:', escalateErr);
-    }
-  } catch (readErr) {
-    console.warn('[transcription] Failed to read transcript status after Whisper call:', readErr);
+  const next = (transcriptionFailures.get(key) ?? 0) + 1;
+  transcriptionFailures.set(key, next);
+
+  if (next < TRANSCRIPTION_FAILURE_THRESHOLD) {
+    void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
+    return;
+  }
+
+  // Threshold reached — auto-escalate.
+  console.log(`[transcription] auto-escalated empresa=${empresaId} jid=${jid} after 3 consecutive Whisper failures`);
+  transcriptionFailures.delete(key);
+
+  try {
+    // Keep this import lazy to avoid a static cycle at module load:
+    // escalation.ts imports addAssistantMessage from this file for the normal
+    // handoff path, while this rare audio-failure path needs escalateSession.
+    const { escalateSession } = await import('./escalation.js');
+    await escalateSession(empresaId, jid, {
+      triggerId: null,
+      triggerKind: 'escalate_human',
+      triggerName: 'Falha repetida de transcrição de áudio',
+      reasonCategory: 'repeated_ai_failure',
+      reasonText: `Whisper falhou ${next} vezes consecutivas para mensagens de áudio. Atendente humano solicitado.`,
+      // Skip the default handoff message — we send our own below.
+      skipCustomerMessage: true,
+    });
+
+    const audioEscalationMsg = 'Tive dificuldade em ouvir seus áudios. Um atendente vai te ajudar agora.';
+    await dispatchConversationOutbound({
+      empresaId,
+      remoteJid: jid,
+      actorUserId: null,
+      origin: 'system_handoff',
+      takeoverPolicy: 'preserve_ai',
+      idempotencyKey: `transcription-handoff:${params.messageId}`,
+      payload: { kind: 'text', text: audioEscalationMsg },
+    });
+  } catch (escalateErr) {
+    console.error('[transcription] Auto-escalation after Whisper failures threw:', escalateErr);
   }
 }
 
@@ -206,6 +228,31 @@ function pendingAudioMessagesForNextReply(messages: AudioWaitMessage[]): AudioWa
     ));
 }
 
+// FIX 2026-09-03 (FN I6): tracks, per empresaId:jid, how many concurrent
+// `waitForPendingAudioTranscriptions` calls are currently polling. While a
+// wait is active, it will observe ANY audio message settling within its own
+// post-last-assistant window on its next poll (at most AUDIO_TRANSCRIPTION_POLL_MS
+// later) — so a settle event arriving mid-wait needs no rearm at all; bumping
+// the epoch at that moment only risks fencing the very turn that is about to
+// use the transcript. A rearm is only useful once nothing is left waiting.
+const activeAudioWaitCounts = new Map<string, number>();
+
+function markAudioWaitActive(key: string): void {
+  activeAudioWaitCounts.set(key, (activeAudioWaitCounts.get(key) ?? 0) + 1);
+}
+
+function markAudioWaitInactive(key: string): void {
+  const count = activeAudioWaitCounts.get(key) ?? 0;
+  if (count <= 1) activeAudioWaitCounts.delete(key);
+  else activeAudioWaitCounts.set(key, count - 1);
+}
+
+export function isAudioWaitActive(empresaId: string, jid: string): boolean {
+  return (activeAudioWaitCounts.get(transcriptionKey(empresaId, jid)) ?? 0) > 0;
+}
+
+export const __audioWaitActiveForTests = { markAudioWaitActive, markAudioWaitInactive, isAudioWaitActive };
+
 export async function waitForPendingAudioTranscriptions(
   empresaId: string,
   jid: string,
@@ -214,34 +261,49 @@ export async function waitForPendingAudioTranscriptions(
   const startedAt = Date.now();
   const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0;
   let pendingMessageIds: string[] = [];
+  const waitKey = transcriptionKey(empresaId, jid);
+  // Local flag: only this call's own mark must be unmarked in `finally` —
+  // never assume based on shared map state, which a concurrent overlapping
+  // wait for the same jid could also be holding.
+  let markedActive = false;
 
-  while (true) {
-    const session = await getSession(jid, empresaId);
-    if (!session) {
-      return { status: 'ready', waitedMs: Date.now() - startedAt, pendingMessageIds: [] };
-    }
+  try {
+    while (true) {
+      const session = await getSession(jid, empresaId);
+      if (!session) {
+        return { status: 'ready', waitedMs: Date.now() - startedAt, pendingMessageIds: [] };
+      }
 
-    const pending = pendingAudioMessagesForNextReply(session.messages);
-    pendingMessageIds = pending.map((m) => m.id);
-    if (pendingMessageIds.length === 0) {
-      return { status: 'ready', waitedMs: Date.now() - startedAt, pendingMessageIds: [] };
-    }
+      const pending = pendingAudioMessagesForNextReply(session.messages);
+      pendingMessageIds = pending.map((m) => m.id);
+      if (pendingMessageIds.length === 0) {
+        return { status: 'ready', waitedMs: Date.now() - startedAt, pendingMessageIds: [] };
+      }
 
-    const elapsed = Date.now() - startedAt;
-    const remaining = maxWaitMs - elapsed;
-    if (remaining <= 0) {
-      return { status: 'timeout', waitedMs: elapsed, pendingMessageIds };
-    }
+      const elapsed = Date.now() - startedAt;
+      const remaining = maxWaitMs - elapsed;
+      if (remaining <= 0) {
+        return { status: 'timeout', waitedMs: elapsed, pendingMessageIds };
+      }
 
-    const activeJobs = pending
-      .map((m) => audioTranscriptionJobs.get(m.id))
-      .filter((job): job is Promise<void> => !!job);
-    const pollDelay = setTimeout(Math.min(AUDIO_TRANSCRIPTION_POLL_MS, remaining));
-    if (activeJobs.length > 0) {
-      await Promise.race([Promise.allSettled(activeJobs).then(() => undefined), pollDelay]);
-    } else {
-      await pollDelay;
+      // Mark active only once we know we are actually about to poll/wait —
+      // matched by the single, locally-guarded unmark in `finally` below.
+      if (!markedActive) {
+        markAudioWaitActive(waitKey);
+        markedActive = true;
+      }
+      const activeJobs = pending
+        .map((m) => audioTranscriptionJobs.get(m.id))
+        .filter((job): job is Promise<void> => !!job);
+      const pollDelay = setTimeout(Math.min(AUDIO_TRANSCRIPTION_POLL_MS, remaining));
+      if (activeJobs.length > 0) {
+        await Promise.race([Promise.allSettled(activeJobs).then(() => undefined), pollDelay]);
+      } else {
+        await pollDelay;
+      }
     }
+  } finally {
+    if (markedActive) markAudioWaitInactive(waitKey);
   }
 }
 
@@ -254,6 +316,12 @@ export async function shouldRearmAfterAudioTranscription(
   jid: string,
   messageId: string,
 ): Promise<boolean> {
+  // FIX 2026-09-03 (FN I6): if a turn is still actively waiting on audio for
+  // this conversation, it will pick up this exact transcript on its own next
+  // poll (<= AUDIO_TRANSCRIPTION_POLL_MS away) without any epoch bump. Bumping
+  // here anyway is what let the settle callback fence an in-flight turn that
+  // had already, or was about to, consume the transcript itself.
+  if (isAudioWaitActive(empresaId, jid)) return false;
   const session = await getSession(jid, empresaId);
   if (!session?.autoReply || session.status === 'escalated') return false;
   const messages = session.messages ?? [];

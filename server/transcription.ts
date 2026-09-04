@@ -6,7 +6,16 @@ import { recordAiUsage } from './aiUsage.js';
 const MAX_AUDIO_BYTES = 5 * 1024 * 1024; // 5 MB cost guard
 const TRANSCRIPTION_FETCH_TIMEOUT_MS = Math.min(15_000, Math.max(1_000, Number(process.env.AUDIO_TRANSCRIPTION_FETCH_TIMEOUT_MS ?? 10_000)));
 const TRANSCRIPTION_REQUEST_TIMEOUT_MS = Math.min(15_000, Math.max(1_000, Number(process.env.AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS ?? 10_000)));
-const ACCEPTED_AUDIO_MIME = /^(?:audio\/(?:ogg|mpeg|mp4|wav|webm|x-m4a)|application\/octet-stream)(?:;|$)/i;
+// FIX 2026-09-03 (PR 1.9 / M-11): WhatsApp/Whatsmiau sends audio as
+// `audio/ogg; codecs=opus` (voice notes), plain `audio/ogg`, `audio/mpeg`,
+// `audio/mp4`, and — depending on the sending device/client — `audio/aac`
+// and `audio/amr`. The allowlist previously omitted aac/amr, so those real,
+// supported WhatsApp variants were rejected as 'unsupported' before ever
+// reaching Whisper.
+const ACCEPTED_AUDIO_MIME = /^(?:audio\/(?:ogg|mpeg|mp4|wav|webm|x-m4a|aac|amr)|application\/octet-stream)(?:;|$)/i;
+export function isAcceptedAudioMime(mimeType: string): boolean {
+  return ACCEPTED_AUDIO_MIME.test(mimeType);
+}
 const OPENAI_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
 const TRANSCRIPTION_PROMPT = [
   'Áudio de cliente brasileiro falando com uma lanchonete pelo WhatsApp.',
@@ -103,15 +112,14 @@ export async function transcribeAudio(params: TranscribeParams): Promise<Transcr
   const { empresaId, jid, messageId, audioUrl, mimeType, fileName, sizeBytes } = params;
 
   if (!process.env.OPENAI_API_KEY) {
+    console.warn('[Transcription] OPENAI_API_KEY not set — skipping transcription');
     await persistAndBroadcast({ empresaId, jid, messageId }, {
       audio_transcript_status: 'failed', audio_transcript: null, audio_transcript_error: 'missing_key',
     });
     return 'missing_key';
-    console.warn('[Transcription] OPENAI_API_KEY not set — skipping transcription');
-    return;
   }
 
-  if (!ACCEPTED_AUDIO_MIME.test(mimeType)) {
+  if (!isAcceptedAudioMime(mimeType)) {
     await persistAndBroadcast({ empresaId, jid, messageId }, {
       audio_transcript_status: 'failed', audio_transcript: null, audio_transcript_error: 'unsupported',
     });
