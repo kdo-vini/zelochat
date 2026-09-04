@@ -11,7 +11,7 @@
 - A autoridade usa `type`/`name` no requisito e reserva `kind` para o subtipo do modificador; o ID do requisito contém `:`, então IDs de ação usam `|` e carregam fingerprint de `orderingId:revision`. `parseOrderingSnapshotWire` é o único tradutor de JSON da autoridade e falha fechado.
 - Confirmação: token da revisão que o cliente viu → confirm → persistir → enfileirar → reconciliar. O ZeloMenu passou a exigir `confirmationToken` no confirm, então os dois repositórios precisam subir em lockstep.
 - Disponibilidade da confirmação (2026-09-04): `CONFIRMACAO_INDISPONIVEL` é uma falha store-side apesar do HTTP 400; conta para o breaker por empresa e não gasta o retry da conversa. Snapshot pronto sem `confirmationAction.token` nunca chama `confirmDraft`: depois de revisão e permit, entra na mesma recuperação amigável sem escalação, com o código local `CONFIRMACAO_SEM_TOKEN` (distinto do da autoridade só para a métrica separar "faltou token no snapshot" de "serviço da loja fora").
-- A feature roda somente com `empresa_perfil.ai_hybrid_ordering_enabled = true` (default false), lida sempre via `isAiHybridOrderingEnabled`. Rollback é virar a flag.
+- O fluxo canônico roda para toda empresa que não esteja em modo `general`. Os controles operacionais continuam sendo `empresa_perfil.ai_enabled` e `ai_mode = 'always_off'`.
 
 ### Pedido canônico pelo WhatsApp (2026-08-30)
 - O tracer `server/aiWhatsAppOrdering.ts` usa catálogo/carrinho canônicos do ZeloMenu; confirmação é determinística por texto/botão, com token opaco, revisão e idempotência. Catálogo ambíguo nunca chega ao planejador. A integração indisponível transfere ao humano.
