@@ -158,7 +158,46 @@ export type OrderingButtonAction =
   | { kind: 'alter' }
   | { kind: 'cancel' }
   | { kind: 'start' }
-  | { kind: 'requirement'; requirementId: string; optionId: string };
+  | { kind: 'requirement'; requirementId: string; optionId: string; fingerprint: string };
+
+/**
+ * FIX 2026-09-04 (CT #3): ZeloMenu's real requirement ids are
+ * `${lineId}:${groupId}` (e.g. `linha-massa-1:g002`) — they contain a colon.
+ * The old encoding (`REQ:${requirementId}:${optionId}`) split on `:` and
+ * silently rejected every modifier requirement button as soon as it was fed a
+ * real id (4 segments instead of 3). `|` never appears in a ZeloMenu-issued
+ * id (lineId/groupId/optionId are all `[A-Za-z0-9_-]+`, and the small set of
+ * non-modifier requirement ids — `fulfillment_type`, `payment_method`, etc. —
+ * are plain slugs too), so it is safe as the field separator here.
+ *
+ * The trailing fingerprint (PR 1.28) is a short, non-cryptographic digest of
+ * `orderingId:revision` at the moment the button was sent. It lets the button
+ * handler detect — cheaply, without a lookup — that a tap landed after the
+ * draft moved to a different revision, so a stale tap can be re-presented
+ * instead of blindly applied to whatever draft happens to be current.
+ */
+function shortFingerprint(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+export function requirementRevisionFingerprint(orderingId: string, revision: number): string {
+  return shortFingerprint(`${orderingId}:${revision}`);
+}
+
+export function buildRequirementButtonId(input: {
+  requirementId: string;
+  optionId: string;
+  orderingId: string;
+  revision: number;
+}): string {
+  const fingerprint = requirementRevisionFingerprint(input.orderingId, input.revision);
+  return `${AI_ORDER_REQUIREMENT_PREFIX}${input.requirementId}|${input.optionId}|${fingerprint}`;
+}
 
 export function parseOrderingButton(buttonId: string): OrderingButtonAction | null {
   const normalized = buttonId.trim();
@@ -166,11 +205,12 @@ export function parseOrderingButton(buttonId: string): OrderingButtonAction | nu
   if (normalized === AI_ORDER_CANCEL_BUTTON) return { kind: 'cancel' };
   if (normalized === AI_ORDER_START_BUTTON) return { kind: 'start' };
   if (normalized.startsWith(AI_ORDER_REQUIREMENT_PREFIX)) {
-    const [, requirementId, optionId, ...extra] = normalized.split(':');
-    if (requirementId && optionId && !extra.length && requirementId.length <= 128 && optionId.length <= 128) {
-      return { kind: 'requirement', requirementId, optionId };
-    }
-    return null;
+    if (normalized.length > 128) return null;
+    const parts = normalized.slice(AI_ORDER_REQUIREMENT_PREFIX.length).split('|');
+    if (parts.length !== 3) return null;
+    const [requirementId, optionId, fingerprint] = parts;
+    if (!requirementId || !optionId || !fingerprint) return null;
+    return { kind: 'requirement', requirementId, optionId, fingerprint };
   }
   if (!normalized.startsWith(AI_ORDER_CONFIRM_PREFIX)) return null;
   const token = normalized.slice(AI_ORDER_CONFIRM_PREFIX.length).trim();
@@ -184,14 +224,20 @@ export interface OrderingModifierSelection {
   selectedOptions: Array<{ optionId: string; optionName: string; priceDelta: number; quantity: number }>;
 }
 
+/**
+ * Exhaustive list of the requirement `type` values ZeloMenu (the authority)
+ * can emit — see `tests/fixtures/zelomenu-wire/v1/requirement-types.json`.
+ * Renamed to match the wire exactly (`schedule`, not the old `pickup_schedule`
+ * guess) so the presenter's lookup table can be checked against this union at
+ * compile time.
+ */
 export type OrderingRequirementKind =
   | 'modifier_group'
   | 'fulfillment_type'
   | 'delivery_address'
-  | 'pickup_schedule'
+  | 'schedule'
   | 'payment_method'
-  | 'customer_name'
-  | 'review';
+  | 'customer_name';
 
 export interface OrderingRequirementOption {
   id: string;
@@ -202,25 +248,40 @@ export interface OrderingRequirementOption {
   displayPrice?: string;
 }
 
+/**
+ * Domain requirement shape, produced ONLY by `parseOrderingSnapshotWire`
+ * (`server/zeloMenuOrderingWire.ts`). Field names were previously a guess at
+ * what ZeloMenu might send (`kind`/`label`) and collided with the wire's own
+ * `kind` (modifier subtype `adicional`/`variacao`) — every requirement prompt
+ * rendered `undefined` in production. `type`/`label` now match the wire's
+ * `type`/`name` 1:1; `kind` is reserved exclusively for the modifier subtype
+ * and is only ever present on `type: 'modifier_group'` requirements.
+ */
 export interface OrderingRequirement {
+  /** `${lineId}:${groupId}` for modifier requirements; a plain slug otherwise. */
   id: string;
   /** Stable line reference for modifier requirements. */
   lineId?: string;
+  productId?: number;
   /** Stable modifier group reference; for non-modifier requirements it may be omitted. */
   groupId?: string;
-  kind: OrderingRequirementKind;
-  /** Wire adapters may supply `type`/`name`; domain code uses kind/label. */
-  type?: OrderingRequirementKind;
+  type: OrderingRequirementKind;
+  /** Customer-facing question/label text — ZeloMenu's `name`. */
   label: string;
-  name?: string;
   blocking: boolean;
+  /** Modifier subtype (`adicional`|`variacao`); only present on `modifier_group`. */
+  kind?: 'adicional' | 'variacao';
   minSelections?: number;
   maxSelections?: number | null;
   minTotalQuantity?: number;
   maxTotalQuantity?: number | null;
   allowsQuantity?: boolean;
   maxPerOption?: number | null;
-  pricingMode?: 'base' | 'delta' | 'substitution' | 'fixed' | string;
+  pricingMode?: 'somar' | 'substituir' | string;
+  selectedDistinctCount?: number;
+  selectedTotalQuantity?: number;
+  autoSelectableOptionId?: string;
+  missingFields?: string[];
   options?: OrderingRequirementOption[];
 }
 
@@ -246,21 +307,23 @@ export interface OrderingSnapshot {
     }>;
     observations?: string;
   };
-  customer: { name?: string; phone?: string };
+  customer: { name?: string | null; phone?: string | null };
   fulfillment: {
-    type: 'pickup' | 'delivery';
+    /** ZeloMenu nulls this until the customer picks one — never assume a default. */
+    type: 'pickup' | 'delivery' | null;
     asap: boolean;
-    pickupDate?: string;
-    pickupTime?: string;
-    deliveryAddress?: string;
-    deliveryNumber?: string;
-    deliveryNeighborhood?: string;
-    deliveryPostalCode?: string;
-    deliveryComplement?: string;
+    pickupDate?: string | null;
+    pickupTime?: string | null;
+    deliveryAddress?: string | null;
+    deliveryNumber?: string | null;
+    deliveryNeighborhood?: string | null;
+    deliveryPostalCode?: string | null;
+    deliveryComplement?: string | null;
+    /** Store-computed; the wire REJECTS these on the way back in — read-only. */
     deliveryFee?: number;
     deliveryFeeToConfirm?: boolean;
   };
-  payment: { declaredMethod?: string; pixReceiptRequired: boolean; pixReceiptApproved: boolean };
+  payment: { declaredMethod?: string | null; pixReceiptRequired: boolean; pixReceiptApproved: boolean };
   pricing: { subtotal: number; deliveryFee: number; discount: number; total: number };
   revalidation: { checkedAt: string; ok: boolean; issues: Array<{ code: string; message: string }> };
   requirements?: OrderingRequirement[];
@@ -279,6 +342,8 @@ export interface OrderingDraft {
     notes?: string;
     selectedOptions?: Array<{ groupId: string; optionSelections: Array<{ optionId: string; quantity: number }> }>;
   }>;
+  /** Lines to remove from the current cart (CT Important 5 — "cancela só a coca"). */
+  removedLineIds?: string[];
   observations?: string;
   customer?: { name?: string; phone?: string };
   pessoaId?: string | null;
@@ -347,6 +412,21 @@ const paymentLabel = (value?: string) => {
   return value.toLocaleLowerCase('pt-BR') === 'pix' ? 'Pix' : value;
 };
 
+/**
+ * FIX 2026-09-04 (PR Important "needs_customer_adjustment"): the store can
+ * bounce a ready order back for adjustment (a fee changed between summary
+ * and confirm, etc.) — ZeloMenu keeps the draft alive as
+ * `state: 'needs_customer_adjustment'`. The three call sites that used to
+ * check only `state === 'cart_open' || requiresReview` treated this as
+ * closed and told the customer "já foi finalizado. Quer começar um novo?",
+ * while the ZeloMenu draft was still open underneath — a fresh
+ * `open_or_update_draft` on top of it then wedges into `PEDIDO_EM_ANDAMENTO`
+ * (Critical 7). A single predicate keeps the three checks in lockstep.
+ */
+export function isOrderingSnapshotEditable(snapshot: Pick<OrderingSnapshot, 'state' | 'requiresReview'>): boolean {
+  return snapshot.state === 'cart_open' || snapshot.state === 'needs_customer_adjustment' || snapshot.requiresReview === true;
+}
+
 export function isOrderingSummaryBlocked(snapshot: OrderingSnapshot): boolean {
   return snapshot.requiresReview
     || snapshot.fulfillment.deliveryFeeToConfirm === true
@@ -375,7 +455,15 @@ export function renderOrderingSummary(snapshot: OrderingSnapshot): string {
   const payment = customerText(paymentLabel(snapshot.payment.declaredMethod));
   const fee = snapshot.pricing.deliveryFee > 0 ? ` (taxa ${money(snapshot.pricing.deliveryFee)})` : '';
   const observations = customerText(snapshot.cart.observations);
-  const blocked = snapshot.revalidation.issues[0]?.message || (snapshot.fulfillment.deliveryFeeToConfirm ? 'a taxa de entrega ainda precisa ser confirmada' : 'a conferência do pedido ainda não terminou');
+  // FIX 2026-09-04 (PR I-7): `revalidation.issues[].message` is authored by
+  // ZeloMenu for operator/log consumption, not customer copy — it can contain
+  // internal codes or phrasing that violates CLAUDE.md's "Customer-facing
+  // copy" rule. Never interpolate it; always speak in generic, friendly terms.
+  const blocked = snapshot.fulfillment.deliveryFeeToConfirm
+    ? 'a taxa de entrega ainda precisa ser confirmada'
+    : snapshot.revalidation.issues.length > 0
+      ? 'alguns detalhes do pedido antes de confirmar'
+      : 'a conferência do pedido ainda não terminou';
   const ending = isOrderingSummaryBlocked(snapshot)
     ? `Preciso ajustar ${customerText(blocked)} antes de confirmar.`
     : 'Posso confirmar?';
@@ -409,6 +497,13 @@ export interface CatalogReplyResult {
     productId: number;
     publicName: string;
     currentPrice: number;
+    /**
+     * `kind: 'from'` means the price varies with a required modifier group —
+     * `currentPrice` is only the cheapest path through it. Quoting
+     * `currentPrice` alone as a firm price for these products misstates what
+     * the customer will actually pay (CT Important 6).
+     */
+    displayPrice?: { kind: 'from' | 'fixed'; amount: number };
     matchReason: string;
     ambiguous: boolean;
     modifierGroups?: Array<{
@@ -471,7 +566,14 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string, me
       return options ? [`*${customerText(group.name)}*${rule ? ` (${rule})` : ''}: ${options}`] : [];
     });
     if (groupChoices.length) return `${customerText(item.publicName)}:\n${groupChoices.join('\n')}`;
-    return `${customerText(item.publicName)} por ${money(item.currentPrice)}`;
+    // FIX 2026-09-04 (CT Important 6): `currentPrice` alone is only the
+    // cheapest path through a required modifier group when `displayPrice`
+    // says so — quoting it as a firm price misstates what the customer will
+    // actually pay.
+    const price = item.displayPrice?.kind === 'from'
+      ? `a partir de ${money(item.displayPrice.amount)}`
+      : money(item.currentPrice);
+    return `${customerText(item.publicName)} por ${price}`;
   }).join('\n');
   return finish(`${requestedGroup ? 'As opções disponíveis são' : 'Encontrei'}:\n${choices}\nQual você quer?`);
 }
@@ -513,6 +615,14 @@ export interface OrderingStatePointer {
   offeredOptionalRequirementIds?: string[];
   declinedOptionalRequirementIds?: string[];
   consumedMessageIds?: string[];
+  /**
+   * Consecutive "retry_later" turns (ZeloMenu unavailable/slow/rate-limited)
+   * for THIS conversation. Resets to 0 on any normal write; only the error
+   * recovery path in `server/aiWhatsAppOrdering.ts` increments it. Used to
+   * bound how long a customer is told "tente de novo" before the turn
+   * escalates to a human (see B3 / PR I-5).
+   */
+  retryFailureCount?: number;
 }
 
 export function serializeOrderingState(pointer: OrderingStatePointer): string {
@@ -533,6 +643,7 @@ export function findLatestOrderingState(messages: Array<{ role: string; content:
           ...(Array.isArray(value.offeredOptionalRequirementIds) ? { offeredOptionalRequirementIds: value.offeredOptionalRequirementIds.filter((id): id is string => typeof id === 'string').slice(0, 100) } : {}),
           ...(Array.isArray(value.declinedOptionalRequirementIds) ? { declinedOptionalRequirementIds: value.declinedOptionalRequirementIds.filter((id): id is string => typeof id === 'string').slice(0, 100) } : {}),
           ...(Array.isArray(value.consumedMessageIds) ? { consumedMessageIds: value.consumedMessageIds.filter((id): id is string => typeof id === 'string').slice(-100) } : {}),
+          ...(Number.isInteger(value.retryFailureCount) ? { retryFailureCount: value.retryFailureCount as number } : {}),
         };
       }
     } catch {
@@ -540,6 +651,49 @@ export function findLatestOrderingState(messages: Array<{ role: string; content:
     }
   }
   return null;
+}
+
+/**
+ * FIX 2026-09-04 (CT #4 / CT #5): ZeloMenu's snapshot ALWAYS carries
+ * `deliveryFee`/`deliveryFeeToConfirm` (store-computed) and nulls `type`
+ * until the customer has chosen — and its command parser HARD-REJECTS both
+ * on the way back in (`COMANDO_INVALIDO`: "A taxa de entrega é calculada
+ * pela loja." / "Escolha entrega ou retirada."). Every caller that turns a
+ * snapshot's fulfillment back into an outbound draft (`snapshotToDraft`,
+ * `applyConversationOrderPatch`'s fallback-to-current, the REQ button
+ * handler) MUST route through this sanitizer instead of echoing the snapshot
+ * shape verbatim: omit `fulfillment` entirely when no type is chosen yet,
+ * and only ever emit the 9 keys the wire allowlists.
+ */
+export function sanitizeFulfillmentForWire(
+  fulfillment: OrderingSnapshot['fulfillment'] | OrderingDraft['fulfillment'] | null | undefined,
+): OrderingDraft['fulfillment'] | undefined {
+  if (!fulfillment || !fulfillment.type) return undefined;
+  const sanitized: NonNullable<OrderingDraft['fulfillment']> = { type: fulfillment.type };
+  if (typeof fulfillment.asap === 'boolean') sanitized.asap = fulfillment.asap;
+  if (fulfillment.pickupDate) sanitized.pickupDate = fulfillment.pickupDate;
+  if (fulfillment.pickupTime) sanitized.pickupTime = fulfillment.pickupTime;
+  if (fulfillment.deliveryAddress) sanitized.deliveryAddress = fulfillment.deliveryAddress;
+  if (fulfillment.deliveryNeighborhood) sanitized.deliveryNeighborhood = fulfillment.deliveryNeighborhood;
+  if (fulfillment.deliveryPostalCode) sanitized.deliveryPostalCode = fulfillment.deliveryPostalCode;
+  if (fulfillment.deliveryNumber) sanitized.deliveryNumber = fulfillment.deliveryNumber;
+  if (fulfillment.deliveryComplement) sanitized.deliveryComplement = fulfillment.deliveryComplement;
+  return sanitized;
+}
+
+/**
+ * FIX 2026-09-04 (CT #8): the customer's WhatsApp session name was sent
+ * unconditionally on every update, including when it was `undefined` — the
+ * key still reached ZeloMenu as `customer: {}` and resolved to
+ * `name: null`, which re-raised the blocking `customer_name` requirement
+ * FOREVER for any contact without a WhatsApp pushName. Send a name only when
+ * one is actually known; never send an empty/null name to "clear" it.
+ */
+export function sanitizeCustomerForWire(
+  customer: { name?: string | null; phone?: string | null } | null | undefined,
+): OrderingDraft['customer'] | undefined {
+  const name = customer?.name?.trim();
+  return name ? { name } : undefined;
 }
 
 export function snapshotToDraft(snapshot: OrderingSnapshot): OrderingDraft {
@@ -555,8 +709,8 @@ export function snapshotToDraft(snapshot: OrderingSnapshot): OrderingDraft {
       })),
     })),
     observations: snapshot.cart.observations,
-    customer: snapshot.customer,
-    fulfillment: snapshot.fulfillment,
-    paymentMethod: snapshot.payment.declaredMethod,
+    customer: sanitizeCustomerForWire(snapshot.customer),
+    fulfillment: sanitizeFulfillmentForWire(snapshot.fulfillment),
+    paymentMethod: snapshot.payment.declaredMethod ?? undefined,
   };
 }

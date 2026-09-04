@@ -1,89 +1,42 @@
 import { randomUUID } from 'node:crypto';
-import type { ChatCompletionFunctionTool } from 'openai/resources/chat/completions.js';
 import type {
   CatalogReplyResult,
   OrderingDraft,
-  OrderingRequirement,
   OrderingSnapshot,
 } from '../src/domain/aiWhatsAppOrdering.js';
+import { OrderingWireUnsupportedError, parseOrderingSnapshotWire } from './zeloMenuOrderingWire.js';
 
 export const DEFAULT_ZELOMENU_INTERNAL_BASE_URL = 'http://127.0.0.1:3101';
+export const DEFAULT_ZELOMENU_INTERNAL_TIMEOUT_MS = 4000;
+/**
+ * `confirm_draft` performs 5+ sequential Supabase round trips on the
+ * authority side (order materialization, insert, re-reads, auto-accept) —
+ * the generic 4s budget aborted mid-mutation and told the customer "não
+ * consegui conferir" while the order had already been created (CT #9).
+ * Confirm gets its own, larger budget; search/get/update keep the tight one.
+ */
+export const DEFAULT_ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS = 12000;
 
 export function resolveZeloMenuInternalBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   return env.ZELOMENU_INTERNAL_BASE_URL?.trim() || DEFAULT_ZELOMENU_INTERNAL_BASE_URL;
 }
 
-export const ORDERING_MODEL_TOOLS: ChatCompletionFunctionTool[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'buscar_cardapio',
-      description: 'Busca produtos e opções disponíveis no cardápio canônico.',
-      parameters: {
-        type: 'object', additionalProperties: false, required: ['query'],
-        properties: { query: { type: 'string', minLength: 1, maxLength: 240 } },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'alterar_carrinho',
-      description: 'Abre ou altera um rascunho usando somente IDs retornados pela busca.',
-      parameters: {
-        type: 'object', additionalProperties: false, required: ['items'],
-        properties: {
-          items: {
-            type: 'array', minItems: 1, maxItems: 50,
-            items: {
-              type: 'object', additionalProperties: false, required: ['productId', 'quantity'],
-              properties: {
-                lineId: { type: 'string', minLength: 1, maxLength: 64 },
-                productId: { type: 'integer', minimum: 1 },
-                quantity: { type: 'integer', minimum: 1, maximum: 999 },
-                notes: { type: 'string', maxLength: 200 },
-                selectedOptions: {
-                  type: 'array',
-                  items: {
-                    type: 'object', additionalProperties: false, required: ['groupId', 'optionSelections'],
-                    properties: {
-                      groupId: { type: 'string', minLength: 1, maxLength: 64 },
-                      optionSelections: {
-                        type: 'array', items: {
-                          type: 'object', additionalProperties: false, required: ['optionId', 'quantity'],
-                          properties: { optionId: { type: 'string', minLength: 1, maxLength: 64 }, quantity: { type: 'integer', minimum: 1, maximum: 99 } },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          fulfillment: {
-            type: 'object', additionalProperties: false,
-            properties: {
-              type: { type: 'string', enum: ['pickup', 'delivery'] },
-              asap: { type: 'boolean' }, pickupDate: { type: 'string' }, pickupTime: { type: 'string' },
-              deliveryAddress: { type: 'string' }, deliveryNeighborhood: { type: 'string' },
-              deliveryPostalCode: { type: 'string' }, deliveryNumber: { type: 'string' }, deliveryComplement: { type: 'string' },
-            },
-          },
-          paymentMethod: { type: 'string', maxLength: 40 },
-          observations: { type: 'string', maxLength: 500 },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'consultar_carrinho',
-      description: 'Consulta o rascunho canônico aberto desta conversa.',
-      parameters: { type: 'object', additionalProperties: false, properties: {} },
-    },
-  },
-];
+/**
+ * FIX 2026-09-04 (FN I5): `buscar_cardapio` and `consultar_carrinho` used to
+ * be offered to the model but were never executed — ZeloChat already
+ * performs a deterministic `client.searchCatalog` call BEFORE invoking the
+ * model and feeds the result into the system prompt as "CATÁLOGO CANÔNICO",
+ * and the canonical snapshot is loaded and fed in as "CARRINHO ATUAL" the
+ * same way. The model had no code path that would ever see a result from
+ * either tool (`planDraft` only ever reads an `alterar_carrinho` call).
+ * Ruling: removed rather than wired — writing a real handler for a lookup
+ * the deterministic pipeline already performs would just be two ways to do
+ * the same thing with two different consistency guarantees. The one tool the
+ * model actually uses is built fresh per call by
+ * `buildOrderingPatchTool()` (`server/orderingPatchPlanner.ts`), which is
+ * also the single source of truth for its schema — no static duplicate of
+ * it lives here anymore.
+ */
 
 export class ZeloMenuInternalError extends Error {
   constructor(
@@ -102,6 +55,8 @@ interface ClientOptions {
   baseUrl: string;
   apiKey: string;
   timeoutMs: number;
+  /** Larger budget for `confirm_draft` specifically — see CT #9. */
+  confirmTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   requestIdFactory?: () => string;
 }
@@ -128,14 +83,14 @@ export interface DeterministicCommandInput {
   confirmationToken?: string;
 }
 
-interface OrderingRequirementWire extends Omit<OrderingRequirement, 'kind' | 'label'> {
-  type: OrderingRequirement['kind'];
-  name: string;
+function requireIdentity(empresaId: string, remoteJid: string, requestId: string): void {
+  // FIX 2026-09-04 (B1 "validate empresaId/remoteJid presence"): fail
+  // locally, before spending a round trip, on the same boundary ZeloMenu
+  // itself enforces (`EMPRESA_INVALIDA` / `CONVERSA_INVALIDA`).
+  if (!empresaId?.trim() || !remoteJid?.trim()) {
+    throw new ZeloMenuInternalError('COMANDO_INVALIDO', 400, requestId, null, 'Não foi possível identificar esta conversa agora.');
+  }
 }
-
-type OrderingSnapshotWire = Omit<OrderingSnapshot, 'requirements'> & {
-  requirements: OrderingRequirementWire[];
-};
 
 export class ZeloMenuInternalClient {
   private readonly fetchImpl: typeof fetch;
@@ -149,9 +104,11 @@ export class ZeloMenuInternalClient {
   static fromEnv(env: NodeJS.ProcessEnv = process.env): ZeloMenuInternalClient | null {
     const baseUrl = resolveZeloMenuInternalBaseUrl(env);
     const apiKey = env.ZELO_INTERNAL_API_KEY?.trim();
-    const timeoutMs = Number(env.ZELOMENU_INTERNAL_TIMEOUT_MS ?? '4000');
+    const timeoutMs = Number(env.ZELOMENU_INTERNAL_TIMEOUT_MS ?? String(DEFAULT_ZELOMENU_INTERNAL_TIMEOUT_MS));
+    const confirmTimeoutMs = Number(env.ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS ?? String(DEFAULT_ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS));
     if (!baseUrl || !apiKey || !Number.isFinite(timeoutMs) || timeoutMs < 100) return null;
-    return new ZeloMenuInternalClient({ baseUrl, apiKey, timeoutMs });
+    if (!Number.isFinite(confirmTimeoutMs) || confirmTimeoutMs < 100) return null;
+    return new ZeloMenuInternalClient({ baseUrl, apiKey, timeoutMs, confirmTimeoutMs });
   }
 
   async searchCatalog(input: { empresaId: string; query: string; limit?: number }): Promise<CatalogReplyResult> {
@@ -161,32 +118,38 @@ export class ZeloMenuInternalClient {
   }
 
   async updateDraft(input: UpdateDraftInput): Promise<OrderingSnapshot> {
+    requireIdentity(input.empresaId, input.remoteJid, this.requestIdFactory());
     return this.orderingCommand({ type: 'open_or_update_draft', ...input });
   }
 
   async confirmDraft(input: DeterministicCommandInput): Promise<OrderingSnapshot> {
-    return this.orderingCommand({ type: 'confirm_draft', ...input });
+    requireIdentity(input.empresaId, input.remoteJid, this.requestIdFactory());
+    return this.orderingCommand({ type: 'confirm_draft', ...input }, { timeoutMs: this.options.confirmTimeoutMs });
   }
 
   async cancelDraft(input: DeterministicCommandInput): Promise<OrderingSnapshot> {
+    requireIdentity(input.empresaId, input.remoteJid, this.requestIdFactory());
     return this.orderingCommand({ type: 'cancel_draft', ...input });
   }
 
   async getOrdering(orderingId: string, empresaId: string, remoteJid: string): Promise<OrderingSnapshot> {
-    return this.request(`/internal/ordering/${encodeURIComponent(orderingId)}?empresaId=${encodeURIComponent(empresaId)}&remoteJid=${encodeURIComponent(remoteJid)}`, { method: 'GET' });
+    requireIdentity(empresaId, remoteJid, this.requestIdFactory());
+    return this.request(`/internal/ordering/${encodeURIComponent(orderingId)}?empresaId=${encodeURIComponent(empresaId)}&remoteJid=${encodeURIComponent(remoteJid)}`, { method: 'GET', parseSnapshot: true });
   }
 
-  private async orderingCommand(body: Record<string, unknown>): Promise<OrderingSnapshot> {
-    return this.request('/internal/ordering/commands', { method: 'POST', body: JSON.stringify(body) });
+  private async orderingCommand(body: Record<string, unknown>, overrides: { timeoutMs?: number } = {}): Promise<OrderingSnapshot> {
+    return this.request('/internal/ordering/commands', { method: 'POST', body: JSON.stringify(body), parseSnapshot: true, ...overrides });
   }
 
-  private async request<T>(path: string, init: RequestInit): Promise<T> {
+  private async request<T>(path: string, init: RequestInit & { parseSnapshot?: boolean; timeoutMs?: number }): Promise<T> {
     const requestId = this.requestIdFactory();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs);
+    const timeoutMs = init.timeoutMs ?? this.options.timeoutMs;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const { parseSnapshot, timeoutMs: _ignoredTimeoutMs, ...fetchInit } = init;
     try {
       const response = await this.fetchImpl(`${this.options.baseUrl.replace(/\/$/, '')}${path}`, {
-        ...init,
+        ...fetchInit,
         signal: controller.signal,
         headers: {
           'content-type': 'application/json',
@@ -194,18 +157,45 @@ export class ZeloMenuInternalClient {
           'x-request-id': requestId,
         },
       });
-      const payload = await response.json().catch(() => ({})) as {
-        error?: string; requestId?: string; current?: OrderingSnapshot;
-      } & T;
+      const rawPayload = await response.json().catch(() => ({})) as {
+        error?: string; requestId?: string; current?: unknown;
+      } & Record<string, unknown>;
       if (!response.ok) {
+        let current: OrderingSnapshot | null = null;
+        if (parseSnapshot && rawPayload.current) {
+          try {
+            current = parseOrderingSnapshotWire(rawPayload.current);
+          } catch (parseError) {
+            // Never let a malformed `current` snapshot mask the original
+            // error code — log (no PII: request id + reason only) and
+            // proceed with `current: null`, same as if it had been absent.
+            console.warn('[ZeloMenuInternalClient] ORDERING_WIRE_UNSUPPORTED (error.current)', {
+              requestId,
+              path,
+              reason: parseError instanceof OrderingWireUnsupportedError ? parseError.reason : 'unknown',
+            });
+          }
+        }
         throw new ZeloMenuInternalError(
-          payload.error || 'PEDIDO_INDISPONIVEL',
+          typeof rawPayload.error === 'string' ? rawPayload.error : 'PEDIDO_INDISPONIVEL',
           response.status,
-          payload.requestId || requestId,
-          payload.current ?? null,
+          typeof rawPayload.requestId === 'string' ? rawPayload.requestId : requestId,
+          current,
         );
       }
-      return payload;
+      if (parseSnapshot) {
+        try {
+          return parseOrderingSnapshotWire(rawPayload) as T;
+        } catch (parseError) {
+          console.warn('[ZeloMenuInternalClient] ORDERING_WIRE_UNSUPPORTED', {
+            requestId,
+            path,
+            reason: parseError instanceof OrderingWireUnsupportedError ? parseError.reason : 'unknown',
+          });
+          throw new ZeloMenuInternalError('ORDERING_WIRE_UNSUPPORTED', 503, requestId, null, 'Não foi possível consultar o pedido agora.');
+        }
+      }
+      return rawPayload as T;
     } catch (error) {
       if (error instanceof ZeloMenuInternalError) throw error;
       const code = error instanceof Error && error.name === 'AbortError' ? 'TIMEOUT' : 'INDISPONIVEL';
