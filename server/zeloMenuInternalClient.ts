@@ -26,6 +26,50 @@ export function resolveZeloMenuInternalBaseUrl(env: NodeJS.ProcessEnv = process.
 }
 
 /**
+ * FIX 2026-09-04 (PR 1.6 / I-6): whether a missing `ZELOMENU_INTERNAL_BASE_URL`
+ * should be treated as a real misconfiguration (refuse to default to
+ * localhost) rather than normal dev/local ergonomics. `NODE_ENV=production`
+ * is the explicit signal; `PUBLIC_APP_URL` pointing at a real public https
+ * domain (CLAUDE.md's `https://chat.zelopdv.com.br` in Dokploy) is the same
+ * signal this codebase already uses elsewhere (`getPublicWebhookUrl`) to
+ * distinguish a real deploy from a local/tunnel dev session.
+ */
+export function isZeloMenuProductionLikeEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  if ((env.NODE_ENV ?? '').trim().toLowerCase() === 'production') return true;
+  const publicUrl = (env.PUBLIC_APP_URL ?? '').trim();
+  if (!publicUrl) return false;
+  try {
+    const parsed = new URL(publicUrl);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return host !== 'localhost' && host !== '127.0.0.1' && !host.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
+// Log the missing-base-URL-in-production failure at most once per process —
+// `fromEnv()` is called on every canonical turn, and a misconfigured deploy
+// would otherwise spam this line on every single message.
+let loggedMissingBaseUrlInProduction = false;
+function logMissingBaseUrlInProductionOnce(): void {
+  if (loggedMissingBaseUrlInProduction) return;
+  loggedMissingBaseUrlInProduction = true;
+  // Never log the API key value — only that it is present.
+  console.error(
+    '[ZeloMenuInternalClient] CONFIG_INVALID code=ZELOMENU_BASE_URL_MISSING_IN_PRODUCTION: '
+    + 'ZELO_INTERNAL_API_KEY is set but ZELOMENU_INTERNAL_BASE_URL is missing in a '
+    + 'production-like environment. Refusing to default to localhost — the canonical '
+    + 'ordering path is disabled until ZELOMENU_INTERNAL_BASE_URL is set.',
+  );
+}
+
+/** Test-only: resets the one-shot log guard above between test cases. */
+export function __resetZeloMenuInternalClientLogStateForTests(): void {
+  loggedMissingBaseUrlInProduction = false;
+}
+
+/**
  * FIX 2026-09-04 (FN I5): `buscar_cardapio` and `consultar_carrinho` used to
  * be offered to the model but were never executed — ZeloChat already
  * performs a deterministic `client.searchCatalog` call BEFORE invoking the
@@ -148,11 +192,26 @@ export class ZeloMenuInternalClient {
   }
 
   static fromEnv(env: NodeJS.ProcessEnv = process.env): ZeloMenuInternalClient | null {
-    const baseUrl = resolveZeloMenuInternalBaseUrl(env);
     const apiKey = env.ZELO_INTERNAL_API_KEY?.trim();
+    // No key at all = the integration simply isn't configured for this
+    // deploy yet — a normal, silent disablement, not a config error.
+    if (!apiKey) return null;
+    // FIX 2026-09-04 (PR 1.6 / I-6): a missing base URL used to silently
+    // default to localhost in every environment, including production —
+    // key-set + URL-unset/typo'd in Dokploy meant every canonical call
+    // ECONNREFUSEd with no signal naming the actual cause. In a
+    // production-like environment, refuse to default; in dev/local, keep
+    // the friendly localhost default so `npm run dev:server` still works
+    // with zero config.
+    const baseUrlExplicit = env.ZELOMENU_INTERNAL_BASE_URL?.trim();
+    if (!baseUrlExplicit && isZeloMenuProductionLikeEnvironment(env)) {
+      logMissingBaseUrlInProductionOnce();
+      return null;
+    }
+    const baseUrl = resolveZeloMenuInternalBaseUrl(env);
     const timeoutMs = Number(env.ZELOMENU_INTERNAL_TIMEOUT_MS ?? String(DEFAULT_ZELOMENU_INTERNAL_TIMEOUT_MS));
     const confirmTimeoutMs = Number(env.ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS ?? String(DEFAULT_ZELOMENU_INTERNAL_CONFIRM_TIMEOUT_MS));
-    if (!baseUrl || !apiKey || !Number.isFinite(timeoutMs) || timeoutMs < 100) return null;
+    if (!baseUrl || !Number.isFinite(timeoutMs) || timeoutMs < 100) return null;
     if (!Number.isFinite(confirmTimeoutMs) || confirmTimeoutMs < 100) return null;
     return new ZeloMenuInternalClient({ baseUrl, apiKey, timeoutMs, confirmTimeoutMs });
   }
