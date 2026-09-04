@@ -664,9 +664,9 @@ console.log('===== Scenario 3: Monte Sua Massa in one utterance, step by step ==
   console.log('===== Scenario 4a: fragments compose into one turn =====');
   const t0 = new Date(0).toISOString();
   const fragmentComposition = composeOrderingTurn([
-    { id: 'frag-1', role: 'user', content: 'quero uma massa', timestamp: t0, kind: 'text' },
-    { id: 'frag-2', role: 'user', content: 'talharim', timestamp: t0, kind: 'text' },
-    { id: 'frag-3', role: 'user', content: 'molho branco', timestamp: t0, kind: 'text' },
+    { id: 'frag-1', role: 'user', content: 'quero uma massa', preview: 'quero uma massa', timestamp: t0, kind: 'text' },
+    { id: 'frag-2', role: 'user', content: 'talharim', preview: 'talharim', timestamp: t0, kind: 'text' },
+    { id: 'frag-3', role: 'user', content: 'molho branco', preview: 'molho branco', timestamp: t0, kind: 'text' },
   ], null);
   assert.equal(fragmentComposition.text, 'quero uma massa\ntalharim\nmolho branco', 'three fragments compose into ONE turn, in arrival order');
   assert.deepEqual(fragmentComposition.sourceMessageIds, ['frag-1', 'frag-2', 'frag-3']);
@@ -992,3 +992,188 @@ console.log('===== Scenario 7: permit takeover races make ZERO mutating authorit
 }
 
 console.log('\nScenarios 5, 6, 7 passed');
+
+// =============================================================================
+// Scenario 8 — authority errors: REVISAO_DESATUALIZADA/PEDIDO_EM_ANDAMENTO
+// recover using the `current` snapshot carried on the SAME response (one
+// turn, no extra round trip); a confirm TIMEOUT reconciles via a fresh GET
+// before telling the customer anything failed; MUITAS_REQUISICOES gets
+// friendly retry copy; a tripped circuit breaker gets friendly copy plus
+// exactly one manager notification.
+// =============================================================================
+console.log('===== Scenario 8: authority error codes recover or fail friendly =====');
+{
+  const permit: AiTurnPermit = {
+    empresaId: '10000000-0000-4000-8000-0000000000f1', conversationControlId: '60000000-0000-4000-8000-0000000000f1',
+    remoteJid: '5511900000001@s.whatsapp.net', epoch: '7', triggerMessageId: 'trigger-errors',
+  };
+  const orderingId = '30000000-0000-4000-8000-000000000001';
+
+  // --- REVISAO_DESATUALIZADA: recovered in ONE turn using the `current`
+  // snapshot the 409 itself carries, no extra round trip needed to see where
+  // the order actually stands.
+  {
+    const currentSnapshot = cloneFixture<Record<string, unknown>>('snapshot.review-required.json');
+    const { client, log } = fakeClient([{
+      label: 'stale update rejected with a fresh current snapshot',
+      respond: () => ({ status: 409, json: { error: 'REVISAO_DESATUALIZADA', requestId: 'req-stale', current: currentSnapshot } }),
+    }]);
+    let caught: unknown = null;
+    try {
+      await client.updateDraft({
+        empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-stale-1',
+        conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
+        orderingId, expectedRevision: 1, draft: { items: [] },
+      });
+    } catch (error) { caught = error; }
+    assert.ok(caught instanceof ZeloMenuInternalError && caught.code === 'REVISAO_DESATUALIZADA');
+    const recovery = classifyOrderingFailure(caught);
+    assert.equal(recovery.action, 'resync', 'a stale revision recovers by adopting the fresh current snapshot, not by escalating');
+    assert.ok(recovery.action === 'resync');
+    assert.equal(recovery.current.revision, 3, 'the recovered snapshot is already the real wire-parsed current state');
+    assert.equal(recovery.current.requiresReview, true);
+    // The customer-visible turn is exactly one presentation of this SAME
+    // already-in-hand snapshot — no second authority call was made.
+    assert.equal(hasPendingOrderingRequirements(recovery.current, {}), true);
+    assert.equal(log.length, 1, 'recovery uses the current snapshot already attached to the 409 — no second round trip');
+  }
+
+  // --- PEDIDO_EM_ANDAMENTO: the conversation adopts the existing order's
+  // current state from the SAME 409 instead of treating it as a hard failure.
+  {
+    const currentSnapshot = { ...cloneFixture<Record<string, unknown>>('snapshot.partial-montavel.json'), revision: 1 };
+    const { client } = fakeClient([{
+      label: 'open rejected because a draft already exists',
+      respond: () => ({ status: 409, json: { error: 'PEDIDO_EM_ANDAMENTO', requestId: 'req-inflight', current: currentSnapshot } }),
+    }]);
+    let caught: unknown = null;
+    try {
+      await client.updateDraft({
+        empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-inflight-1',
+        conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch,
+        draft: { items: [{ lineId: 'l1', productId: 1007, quantity: 1 }] },
+      });
+    } catch (error) { caught = error; }
+    const recovery = classifyOrderingFailure(caught);
+    assert.equal(recovery.action, 'resync');
+    assert.ok(recovery.action === 'resync');
+    assert.equal(recovery.current.orderingId, orderingId, 'the conversation adopts the EXISTING open order instead of trying to create a second one');
+  }
+
+  // --- confirm TIMEOUT then reconciliation finds it actually confirmed:
+  // exactly one confirmation outcome, no false "failed" told to the customer.
+  {
+    const confirmed = { ...cloneFixture<Record<string, unknown>>('snapshot.confirmed.json'), orderingId, revision: 5 };
+    const { client, log } = fakeClient([
+      { label: 'confirm_draft times out mid-flight', respond: () => { throw new Error('simulated network timeout'); } },
+      { label: 'reconciliation GET finds the order already materialized', respond: () => okJson(confirmed) },
+    ]);
+    const current: OrderingSnapshot = {
+      orderingId, empresaId: permit.empresaId, remoteJid: permit.remoteJid, state: 'cart_open', revision: 5,
+      cart: { items: [] }, customer: { name: 'Cliente' }, fulfillment: { type: 'pickup', asap: true },
+      payment: { pixReceiptRequired: false, pixReceiptApproved: false },
+      pricing: { subtotal: 10, deliveryFee: 0, discount: 0, total: 10 },
+      revalidation: { checkedAt: new Date(0).toISOString(), ok: true, issues: [] },
+      confirmationAction: { type: 'confirm_order', token: 'timeout-token', revision: 5, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      requiresReview: false, order: null,
+    };
+    const outcome = await resolveConfirmation(current, client, permit.empresaId, permit.remoteJid, 'wamid.e1-timeout-1', permit, 'timeout-token', 5, async () => true);
+    assert.equal(log.length, 2, 'exactly two authority calls: the timed-out confirm attempt, then ONE reconciliation GET');
+    assert.equal(outcome.kind, 'confirmed', 'reconciliation finds the order already landed — never told "failed" after it actually succeeded');
+    assert.equal(outcome.snapshot.orderingId, orderingId);
+  }
+
+  // --- MUITAS_REQUISICOES: friendly retry copy, no technical detail leaked.
+  {
+    const { client } = fakeClient([{
+      label: 'rate limited',
+      respond: () => ({ status: 429, json: { error: 'MUITAS_REQUISICOES', requestId: 'req-rl' } }),
+    }]);
+    let caught: unknown = null;
+    try {
+      await client.updateDraft({
+        empresaId: permit.empresaId, remoteJid: permit.remoteJid, messageId: 'wamid.e1-ratelimit-1',
+        conversationControlId: permit.conversationControlId, conversationEpoch: permit.epoch, draft: { items: [] },
+      });
+    } catch (error) { caught = error; }
+    const recovery = classifyOrderingFailure(caught);
+    assert.equal(recovery.action, 'retry_later');
+    assert.ok(recovery.action === 'retry_later');
+    assert.equal(recovery.text, 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?');
+    assert.doesNotMatch(recovery.text, /MUITAS_REQUISICOES|429|internal|upstream/i, 'no technical code/status ever reaches customer-facing copy');
+    assert.notEqual(recovery.countsTowardLimit, false, 'a plain rate-limit still spends the per-conversation retry budget (only the breaker code is exempt)');
+  }
+
+  // --- Circuit breaker open: friendly copy, bounded by the SAME family of
+  // copy as any other transient fault, PLUS exactly one manager notification
+  // the instant it trips (not once per conversation).
+  {
+    let fakeNow = 0;
+    const breaker = createOrderingCircuitBreaker({ threshold: 2, windowMs: 60_000, openMs: 30_000, now: () => fakeNow });
+    let openedCount = 0;
+    const openedFor: string[] = [];
+    const breakerClient = new ZeloMenuInternalClient({
+      baseUrl: 'https://internal.example', apiKey: 'test-key', timeoutMs: 100,
+      fetchImpl: async () => new Response(JSON.stringify({ error: 'INDISPONIVEL' }), { status: 503 }),
+      circuitBreaker: breaker,
+      onCircuitOpen: (empresaId) => { openedCount += 1; openedFor.push(empresaId); },
+    });
+    for (let i = 0; i < 2; i += 1) {
+      fakeNow += 1000;
+      await assert.rejects(() => breakerClient.getOrdering(orderingId, 'empresa-breaker-e1', permit.remoteJid));
+    }
+    assert.equal(openedCount, 1, 'the manager is notified exactly ONCE — the call that flips the breaker, not once per conversation');
+    assert.deepEqual(openedFor, ['empresa-breaker-e1']);
+
+    fakeNow += 1000;
+    let trippedError: unknown = null;
+    try { await breakerClient.getOrdering(orderingId, 'empresa-breaker-e1', permit.remoteJid); } catch (error) { trippedError = error; }
+    assert.ok(trippedError instanceof ZeloMenuInternalError && trippedError.code === 'INDISPONIVEL_CIRCUITO_ABERTO');
+    const recovery = classifyOrderingFailure(trippedError);
+    assert.equal(recovery.action, 'retry_later');
+    assert.ok(recovery.action === 'retry_later');
+    assert.equal(recovery.text, 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?', 'the breaker-open reply reads exactly like any other transient fault to the customer');
+    assert.equal(recovery.countsTowardLimit, false, 'a breaker-open failure never spends the per-conversation retry budget — every turn keeps getting the friendly reply while the breaker stays open');
+  }
+}
+
+// =============================================================================
+// Scenario 10 — version skew: a snapshot missing `requirements` (deploy/
+// rollback skew between ZeloChat and ZeloMenu) fails closed with the
+// structured ORDERING_WIRE_UNSUPPORTED code and NEVER a raw TypeError, and
+// recovers with the SAME bounded, friendly retry copy as any other
+// transient fault.
+// =============================================================================
+console.log('===== Scenario 10: version skew fails closed, never a raw TypeError =====');
+{
+  const permit: AiTurnPermit = {
+    empresaId: '10000000-0000-4000-8000-0000000000f1', conversationControlId: '60000000-0000-4000-8000-0000000000f1',
+    remoteJid: '5511900000001@s.whatsapp.net', epoch: '7', triggerMessageId: 'trigger-skew',
+  };
+  const skewed = cloneFixture<Record<string, unknown>>('snapshot.ready.json');
+  delete (skewed as Record<string, unknown>).requirements;
+  const { client } = fakeClient([{ label: 'GET returns a snapshot missing requirements[] entirely', respond: () => okJson(skewed) }]);
+
+  // Never a raw TypeError bubbling out of the parser — a stable, structured
+  // error code every time.
+  let caught: unknown = null;
+  try {
+    await client.getOrdering('30000000-0000-4000-8000-000000000001', permit.empresaId, permit.remoteJid);
+  } catch (error) { caught = error; }
+  assert.ok(!(caught instanceof TypeError), 'version skew must never surface as a raw TypeError');
+  assert.ok(caught instanceof ZeloMenuInternalError && caught.code === 'ORDERING_WIRE_UNSUPPORTED');
+
+  // Also directly against the pure parser — the same guarantee one layer down.
+  assert.throws(
+    () => parseOrderingSnapshotWire(skewed),
+    (error: unknown) => error instanceof OrderingWireUnsupportedError && error.reason === 'missing_requirements_array',
+  );
+
+  const recovery = classifyOrderingFailure(caught);
+  assert.equal(recovery.action, 'retry_later', 'version skew is escalated boundedly and friendly, exactly like any other transient authority fault');
+  assert.ok(recovery.action === 'retry_later');
+  assert.equal(recovery.text, 'Deu uma instabilidade rápida por aqui agora. Pode tentar de novo em instantes?');
+}
+
+console.log('\nScenarios 8 and 10 passed');
+console.log('\nhybridOrderingScenarios: all groups passed');
