@@ -19,15 +19,8 @@ await runSuite('Status do pedido escrito pelo WhatsApp', [
       );
       assertIncludes(
         router,
-        /router\.get\('\/api\/ai-ordering-status'[\s\S]*?res\.json\(\{ enabled: client !== null,/,
+        /router\.get\('\/api\/ai-ordering-status'[\s\S]*?res\.json\(\{ enabled: client !== null \}\);/,
         'a resposta usa o contrato booleano consumido pela interface',
-      );
-      // FIX 2026-09-04 (PR 1.1/1.3): read-only exposure of the per-empresa
-      // hybrid-ordering flag alongside the existing `enabled` contract.
-      assertIncludes(
-        router,
-        /router\.get\('\/api\/ai-ordering-status'[\s\S]*?hybridOrderingEnabled: isAiHybridOrderingEnabled\(empresaId\)/,
-        'a resposta também expõe a flag ai_hybrid_ordering_enabled, somente leitura',
       );
     },
   },

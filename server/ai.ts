@@ -21,7 +21,6 @@ import {
   ensureAiSettingsHydrated,
   getEmpresaTimezone,
   isAiGloballyEnabledNow,
-  isAiHybridOrderingEnabled,
   DEFAULT_TIMEZONE,
   type CatalogCategoriaGroup,
 } from './configStore.js';
@@ -3784,12 +3783,7 @@ export async function generateAndSendReply(
     return sendBusinessHoursReply(jid, resolvedEmpresaId, permit, businessHoursIssueFromMessage);
   }
 
-  // FIX 2026-09-04 (PR 1.1/1.3): `ai_hybrid_ordering_enabled` (migration 068,
-  // default false) gates the canonical router per empresa — merging/changing
-  // this flow must be a no-op for every tenant until an operator/Eng
-  // explicitly enables it. Restaurant-mode + ai_enabled=true used to be
-  // enough to live-swap behavior on deploy with no flag flip at all.
-  if (!isGeneralMode && isAiHybridOrderingEnabled(resolvedEmpresaId)) {
+  if (!isGeneralMode) {
     // FIX 2026-08-31: o fluxo canônico existia, mas nunca era chamado → perguntas
     // de cardápio caíam no modelo genérico, que achatava grupos e inventava escolhas.
     // FIX 2026-09-04 (PR I-15): storeOpen vinha só do horário semanal — numa

@@ -137,11 +137,7 @@ export async function simulateAtendimento(
   // Restaurant simulations must enter through the same canonical ordering
   // router as production. The handler receives a dry-run flag so it can read
   // the authenticated catalog while skipping every outbound/ordering mutation.
-  // FIX 2026-09-04 (PR 1.1/1.3): the simulator honors `ai_hybrid_ordering_enabled`
-  // too — for a tenant the flag has not been turned on for, the operator must
-  // see exactly what customers see (the generic AI, no canonical requirement
-  // flow), never a preview of a feature production isn't giving that tenant.
-  if (cfg.zelochatMode !== 'general' && cfg.aiHybridOrderingEnabled === true) {
+  if (cfg.zelochatMode !== 'general') {
     const menuUrl = cfg.zelomenuSlug
       ? buildPublicStoreUrl(getZeloMenuPublicBaseUrl(), cfg.zelomenuSlug)
       : null;

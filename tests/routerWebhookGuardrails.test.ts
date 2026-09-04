@@ -113,10 +113,7 @@ await runSuite('Router webhook/order guardrails', [
       assertIncludes(router, "await enqueueAutomatedText({ permit, text: ack, origin: 'ai_auto', purpose: 'hard-confirm-idempotent' });", 'legacy idempotent ack path is untouched');
       // The new block only ever mutates/dispatches inside `if (canonicalPointer)`
       // — everything before that is a read-only getSession call.
-      // FIX 2026-09-04 (PR 1.1/1.3): the guard now also requires
-      // isAiHybridOrderingEnabled(empresaId) — still a read-only check, still
-      // the same "no-op with no pointer" contract.
-      const guardStart = indexOfOrFail('if (isAiHybridOrderingEnabled(empresaId) && (isHardConfirm || isHardCancel || isAlterText) && !(buttonId && parseOrderingButton(buttonId))) {');
+      const guardStart = indexOfOrFail('if ((isHardConfirm || isHardCancel || isAlterText) && !(buttonId && parseOrderingButton(buttonId))) {');
       const sessionRead = indexOfOrFail('const canonicalCheckSession = await getSession(remoteJid, empresaId);');
       const pointerGuard = indexOfOrFail('if (canonicalPointer) {');
       assert(guardStart < sessionRead && sessionRead < pointerGuard, 'the canonical check reads the session before deciding whether to act, so a null pointer changes nothing');

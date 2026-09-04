@@ -482,24 +482,22 @@ export const AiGlobalToggleCard = ({ token }: AiGlobalToggleCardProps) => {
  */
 const AiWhatsAppOrderingCard = ({ token }: { token: string | null }) => {
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [hybridOrderingEnabled, setHybridOrderingEnabled] = useState(false);
   const [statusError, setStatusError] = useState(false);
 
   useEffect(() => {
-    if (!token) { setEnabled(null); setHybridOrderingEnabled(false); setStatusError(false); return; }
+    if (!token) { setEnabled(null); setStatusError(false); return; }
     let cancelled = false;
     setStatusError(false);
     getAiWhatsAppOrderingStatus(token)
       .then((status) => {
         if (cancelled) return;
         setEnabled(status.enabled === true);
-        setHybridOrderingEnabled(status.hybridOrderingEnabled === true);
       })
-      .catch(() => { if (!cancelled) { setEnabled(null); setHybridOrderingEnabled(false); setStatusError(true); } });
+      .catch(() => { if (!cancelled) { setEnabled(null); setStatusError(true); } });
     return () => { cancelled = true; };
   }, [token]);
 
-  const ui = enabled === null ? null : describeAiWhatsAppOrdering(enabled, hybridOrderingEnabled);
+  const ui = enabled === null ? null : describeAiWhatsAppOrdering(enabled);
 
   return (
     <SectionCard icon={ShoppingCart} title="Pedidos pelo WhatsApp com IA">

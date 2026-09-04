@@ -396,15 +396,10 @@ console.log('===== Scenario 2: entry + catalog + draft in one turn =====');
 }
 
 // =============================================================================
-// Scenario 9 (part 1) — blocked date closes the live entry button. The
-// per-tenant flag half of scenario 9 ("flag false -> zero authority calls")
-// is gated inside server/ai.ts BEFORE tryHandleAiWhatsAppOrdering is ever
-// invoked; it is already covered end to end by
-// tests/aiHybridOrderingFlag.test.ts's source-order guardrails and is not
-// re-tested here to avoid duplicating that coverage — this suite instead
-// connects D3's own unit (resolveOrderingEntryStoreOpen) to the handler's
-// observable behavior when storeOpen is false, which is the part D3's own
-// test file does not itself drive.
+// Scenario 9 — blocked date closes the live entry button. This suite connects
+// D3's own unit (resolveOrderingEntryStoreOpen) to the handler's observable
+// behavior when storeOpen is false, which is the part D3's own test file does
+// not itself drive.
 // =============================================================================
 console.log('===== Scenario 9: blocked date closes the live order entry =====');
 {
