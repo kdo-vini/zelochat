@@ -1,0 +1,16 @@
+{
+  "sourceRepository": "https://github.com/kdo-vini/zelopdv",
+  "sourceCommit": "aa7711ea0c79889509b5ec3c935b60868557effd",
+  "sourcePath": "supabase/baselines/20260813091000/schema.sql",
+  "sourceSha256Lf": "37271a8370208e948e3f5090c6339e01266990574048f61b926503033d0aa8ee",
+  "fixtureSha256Lf": "7c59365b52cd8ec47073ba25b544b614f9492b7406f4248c6350279263b24bb7",
+  "copiedTableDefinitions": [
+    "empresa_perfil",
+    "access_users",
+    "zelochat_sessions",
+    "zelochat_messages",
+    "zelochat_pending_orders",
+    "zelochat_webhook_events_raw"
+  ],
+  "scope": "Literal support CREATE TABLE and primary keys only; selected prerequisite DDL from 048; no business RPC stubs. Original Chat migrations provide all tested outbound functions."
+}

@@ -6,7 +6,7 @@ A base `0d67676e0b9efa8dff682862c84345de9eb80cdb` foi publicada e o job de produ
 
 O novo patch identifica endpoint/fase/cause, segue imports com query/fragmento e testa regressões de release misto, versão errada, lazy ausente/obsoleto, conexão recuperável e corpo HTTP real travado. A CI passa a ler `/api/version`, Nginx e todos os assets das imagens reais em rede isolada, sem iniciar workers ou usar credenciais reais. A opção `--check-startup-http` é exclusivamente CLI. Esta alteração terá outro SHA e ainda precisa dos gates da branch, publicação e verificação próprias; sucesso de `0d67676` não valida o próximo commit.
 
-Validação local: 124 arquivos unitários concluídos em 126,30s, lint frontend/servidor verdes e build em 6,57s. O verificador tem 18 casos e a CLI tem dois; o corpo HTTP real foi abortado em 5.006ms. Os gates PostgreSQL continuam separados da suíte sem credenciais; o novo smoke Docker ainda precisa executar sobre o commit limpo.
+Validação local inicial: 124 arquivos selecionados concluíram em 126,30s, mas um deles era o gate SQL que emitia SKIP sem banco. O runner agora exclui `.integration.test.ts` e anuncia 123 arquivos unitários mais uma integração separada; a nova rodada está em execução. Lint frontend/servidor verdes, build em 6,57s, 18 casos do verificador e dois da CLI; o corpo HTTP real foi abortado em 5.006ms. As imagens do commit `63fb08d` passaram o smoke HTTP isolado com SHA40, 20 assets/1.567.312 bytes, UID1000 e workers desativados.
 
 ### Correção de runtime/build/impressão — 2026-09-04 (publicação em validação)
 

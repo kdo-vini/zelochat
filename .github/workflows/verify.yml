@@ -49,9 +49,21 @@ jobs:
             docker logs zelochat-frontend-http
             exit 1
           fi
+  verify-outbound-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Verify original outbound RPCs and concurrent locks on disposable PostgreSQL 17
+        run: node scripts/verification/outbound-postgres.mjs
   verify-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: verify
+    needs: [verify, verify-outbound-postgres]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

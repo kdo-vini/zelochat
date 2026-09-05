@@ -6,8 +6,8 @@ import { inspectDeployment, waitForDeployment } from '../scripts/verify-deployme
 const sha = '1234567890abcdef1234567890abcdef12345678';
 const short = sha.slice(0, 12);
 const baseUrl = 'https://fixture.invalid';
-function fixture(overrides: Record<string, [string, string]> = {}) {
-  const records: Record<string, [string, string]> = {
+function fixtureRecords(overrides: Record<string, [string, string]> = {}): Record<string, [string, string]> {
+  return {
     '/build-info.json': [JSON.stringify({ sourceCommit: sha, version: short }), 'application/json'],
     '/api/version': [JSON.stringify({ sourceCommit: sha, version: short }), 'application/json'],
     '/': ['<html><script type="module" src="/assets/index-abcdefgh.js"></script><link href="/assets/index-abcdefgh.css"></html>', 'text/html'],
@@ -16,6 +16,9 @@ function fixture(overrides: Record<string, [string, string]> = {}) {
     '/assets/AppShell-12345678.js': [`const version="${short}";`, 'application/javascript'],
     ...overrides,
   };
+}
+function fixture(overrides: Record<string, [string, string]> = {}) {
+  const records = fixtureRecords(overrides);
   const fetchImpl: typeof fetch = async (input, options) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     assert.equal(options?.redirect, 'error');
@@ -164,8 +167,11 @@ test('never turns a persistently mixed release green while retrying real verific
   });
   await assert.rejects(waitForDeployment({ baseUrl, expectedSha: sha, timeoutMs: 75, pollMs: 5,
     inspect: args => inspectDeployment({ ...args, fetchImpl }), log: message => logs.push(message),
-  }), /did not converge.*\/api\/version: expected.*received/);
+  }), /did not converge/);
   assert.ok(logs.length >= 2);
+  // The final read may consume the remaining deadline; the mismatch must still
+  // have been observed and must never be reported as a verified deployment.
+  assert.ok(logs.some(message => /\/api\/version: expected.*received/.test(message)));
   assert.ok(logs.every(message => !message.includes('Production verified')));
 });
 
@@ -175,4 +181,54 @@ test('fails explicitly when production never converges and retries only checks',
     inspect: async () => { calls++; throw new Error('old release'); }, log: () => {},
   }), /did not converge.*old release/);
   assert.ok(calls >= 2);
+});
+
+async function withHttpFixture(failure: 'disconnect' | 'mixed' | 'missing-lazy',
+  run: (baseUrl: string, requests: { path: string; method: string }[]) => Promise<void>) {
+  const records = fixtureRecords();
+  const requests: { path: string; method: string }[] = [];
+  const server = createServer((request, response) => {
+    const path = new URL(request.url!, baseUrl).pathname;
+    requests.push({ path, method: request.method! });
+    if (failure === 'disconnect' && requests.length === 1) { response.destroy(); return; }
+    let row = records[path];
+    if (failure === 'mixed' && path === '/api/version' && requests.filter(r => r.path === path).length === 1) {
+      row = [JSON.stringify({ sourceCommit: 'a'.repeat(40), version: 'a'.repeat(12) }), 'application/json'];
+    }
+    if (failure === 'missing-lazy' && path === '/assets/index-abcdefgh.js') {
+      row = [`const version="${short}"; import("./missing-12345678.js?v=1#module");`, 'application/javascript'];
+    }
+    response.writeHead(row ? 200 : 404, { 'content-type': row?.[1] || 'text/plain' });
+    response.end(row?.[0] || 'Not found');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try { await run(`http://127.0.0.1:${address.port}`, requests); }
+  finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+}
+
+for (const failure of ['disconnect', 'mixed'] as const) {
+  test(`recovers from ${failure} over real HTTP only after checking both services and all chunks`, async () => {
+    const logs: string[] = [];
+    await withHttpFixture(failure, async (baseUrl, requests) => {
+      const result = await waitForDeployment({ baseUrl, expectedSha: sha, timeoutMs: 3_000, pollMs: 5,
+        log: message => logs.push(message),
+      });
+      assert.equal(result.sourceCommit, sha);
+      assert.equal(result.assets, 3);
+      assert.equal(requests.filter(r => r.path === '/build-info.json').length, 2);
+      assert.ok(requests.every(r => r.method === 'GET'));
+      assert.ok(requests.some(r => r.path === '/assets/AppShell-12345678.js'));
+      assert.match(logs[0], /Awaiting production/);
+      assert.match(logs.at(-1)!, /Production verified/);
+    });
+  });
+}
+
+test('rejects a missing queried lazy chunk over real HTTP despite a current entry version', async () => {
+  await withHttpFixture('missing-lazy', async (baseUrl, requests) => {
+    await assert.rejects(inspectDeployment({ baseUrl, expectedSha: sha }), /missing-12345678.js \[headers\]: HTTP 404/);
+    assert.ok(requests.some(r => r.path === '/assets/missing-12345678.js'));
+  });
 });
