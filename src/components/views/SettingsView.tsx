@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import { useToast } from '../../contexts/ToastContext';
-import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Plus, Trash2, Bell, ChefHat, CheckCircle2, Sparkles, Settings2, ChevronDown, ShoppingCart } from 'lucide-react';
+import { Smartphone, RefreshCw, Wifi, WifiOff, QrCode, Loader2, Clock, UserCog, Check, CloudOff, LogOut, Bot, BotOff, Bike, Bell, ChefHat, CheckCircle2, Sparkles, Settings2, ChevronDown, ShoppingCart } from 'lucide-react';
 import { ConfirmModal } from '../ConfirmModal';
-import { ZeloState, type DeliveryConfig, type DeliveryNeighborhood } from '../../types';
+import { ZeloState } from '../../types';
 import type { EmpresaPerfil } from '../../hooks/useEmpresaPerfil';
 import { normalizeZeloChatMode, type ZeloChatMode } from '../../domain/zelochatMode';
 import { API_BASE, WS_URL, apiFetch, WaServerOfflineError } from '../../config';
@@ -1387,162 +1387,25 @@ const CustomerNotificationsCard = ({
   );
 };
 
-const DeliveryConfigCard = ({
-  state,
-  setState,
-  saveEmpresa,
-  isAuthenticated,
-}: Pick<SettingsViewProps, 'state' | 'setState' | 'saveEmpresa' | 'isAuthenticated'>) => {
-  const current = state.deliveryConfig ?? { enabled: false, neighborhoods: [] };
-  const [draft, setDraft] = useState<DeliveryConfig>(current);
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [newName, setNewName] = useState('');
-  const [newFee, setNewFee] = useState('');
-
-  useEffect(() => {
-    setDraft(state.deliveryConfig ?? { enabled: false, neighborhoods: [] });
-  }, [state.deliveryConfig]);
-
-  const isDirty = JSON.stringify(draft) !== JSON.stringify(state.deliveryConfig ?? { enabled: false, neighborhoods: [] });
-
-  const handleSave = async () => {
-    setSaveState('saving');
-    const ok = await saveEmpresa({ delivery_config: draft });
-    if (ok) {
-      setState(prev => ({ ...prev, deliveryConfig: draft }));
-      setSaveState('saved');
-      setTimeout(() => setSaveState('idle'), 2500);
-    } else {
-      setSaveState('error');
-      setTimeout(() => setSaveState('idle'), 3000);
-    }
-  };
-
-  const addNeighborhood = () => {
-    const name = newName.trim();
-    const fee = parseFloat(newFee.replace(',', '.'));
-    if (!name || isNaN(fee) || fee < 0) return;
-    setDraft(prev => ({ ...prev, neighborhoods: [...prev.neighborhoods, { name, fee }] }));
-    setNewName('');
-    setNewFee('');
-  };
-
-  const removeNeighborhood = (idx: number) => {
-    setDraft(prev => ({ ...prev, neighborhoods: prev.neighborhoods.filter((_, i) => i !== idx) }));
-  };
-
-  const updateFee = (idx: number, val: string) => {
-    const fee = parseFloat(val.replace(',', '.'));
-    if (isNaN(fee)) return;
-    setDraft(prev => ({
-      ...prev,
-      neighborhoods: prev.neighborhoods.map((n, i) => i === idx ? { ...n, fee } : n),
-    }));
-  };
-
+const DeliveryConfigCard = () => {
   return (
     <SectionCard icon={Bike} title="Entrega (delivery)">
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[13px] font-medium">Aceita entregas</p>
-            <p className="text-[11.5px] text-[var(--color-ink-faint)]">A IA vai perguntar o modo e calcular a taxa automaticamente</p>
-          </div>
-          <button
-            onClick={() => setDraft(prev => ({ ...prev, enabled: !prev.enabled }))}
-            disabled={!isAuthenticated}
-            className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 ${
-              draft.enabled ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line)]'
-            }`}
-          >
-            <span className={`inline-block w-5 h-5 bg-white rounded-full shadow transform transition-transform ${draft.enabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
-          </button>
-        </div>
-
-        {draft.enabled && (
-          <>
-            <div>
-              <label className={LABEL}>Bairros atendidos e taxas</label>
-              {draft.neighborhoods.length === 0 ? (
-                <p className="text-[12px] text-[var(--color-ink-faint)] py-2">Nenhum bairro cadastrado ainda.</p>
-              ) : (
-                <div className="space-y-1.5 mb-3">
-                  {draft.neighborhoods.map((n: DeliveryNeighborhood, idx: number) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <span className="flex-1 text-[13px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2">{n.name}</span>
-                      <div className="flex items-center gap-1 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-2">
-                        <span className="text-[12px] text-[var(--color-ink-muted)]">R$</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.50"
-                          value={n.fee}
-                          onChange={e => updateFee(idx, e.target.value)}
-                          className="w-16 bg-transparent py-2 text-[13px] outline-none"
-                        />
-                      </div>
-                      <button
-                        onClick={() => removeNeighborhood(idx)}
-                        className="p-2 text-[var(--color-ink-faint)] hover:text-[var(--color-alert)] transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Nome do bairro"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addNeighborhood()}
-                  className="flex-1 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13px] outline-none focus:ring-2 focus:ring-[var(--color-brand)]/25 focus:border-[var(--color-brand)]"
-                />
-                <div className="flex items-center gap-1 bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg px-2">
-                  <span className="text-[12px] text-[var(--color-ink-muted)]">R$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.50"
-                    placeholder="0,00"
-                    value={newFee}
-                    onChange={e => setNewFee(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && addNeighborhood()}
-                    className="w-16 bg-transparent py-2 text-[13px] outline-none"
-                  />
-                </div>
-                <button
-                  onClick={addNeighborhood}
-                  disabled={!newName.trim() || !newFee}
-                  className="p-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-40 text-white rounded-lg transition-colors"
-                >
-                  <Plus className="w-4 h-4" strokeWidth={2.5} />
-                </button>
-              </div>
-            </div>
-
-            <p className="text-[11.5px] text-[var(--color-ink-faint)]">
-              Bairros fora desta lista são encaminhados automaticamente para atendimento humano.
-            </p>
-          </>
-        )}
-
-        {isDirty && (
-          <button
-            onClick={handleSave}
-            disabled={saveState === 'saving' || !isAuthenticated}
-            className="w-full flex items-center justify-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] disabled:opacity-50 text-white py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
-          >
-            {saveState === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            {saveState === 'saving' ? 'Salvando…' : 'Salvar configuração de entrega'}
-          </button>
-        )}
-        {saveState === 'saved' && <p className="text-[12.5px] text-[var(--color-brand)] text-center font-medium">✓ Salvo com sucesso</p>}
-        {saveState === 'error' && <p className="text-[12.5px] text-[var(--color-alert)] text-center font-medium">Erro ao salvar. Verifique a conexão.</p>}
-        {!isAuthenticated && <p className="text-[12px] text-[var(--color-warn)] text-center">Faça login para salvar.</p>}
+        <p className="text-[13px] text-[var(--color-ink-muted)]">
+          A configuração de entrega agora fica no ZeloMenu, que é o lugar onde você escolhe se a loja trabalha por bairro ou por rota/distância.
+        </p>
+        <p className="text-[12px] text-[var(--color-ink-faint)]">
+          Este painel antigo não altera mais bairros, preços ou modelo de entrega. Assim, o WhatsApp e o cardápio online usam sempre a mesma configuração.
+        </p>
+        <a
+          href="https://menu.zelopdv.com.br/admin"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white px-4 py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Configurar no ZeloMenu
+        </a>
       </div>
     </SectionCard>
   );
@@ -1841,7 +1704,7 @@ export const SettingsView = ({ state, setState, empresa, saveEmpresa, isAuthenti
             {!isGeneralMode && (
               <>
                 <CustomerNotificationsCard empresa={empresa} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
-                <DeliveryConfigCard state={state} setState={setState} saveEmpresa={saveEmpresa} isAuthenticated={isAuthenticated} />
+                <DeliveryConfigCard />
               </>
             )}
 

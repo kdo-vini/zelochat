@@ -1,5 +1,17 @@
 # ZeloChat — Foco atual
 
+### Modelos de entrega por bairro ou por rota — implementação local (2026-09-05)
+
+O ZeloChat agora lê o modelo ativo e os bairros ativos da configuração
+canônica do ZeloMenu. O editor antigo de bairros foi convertido em aviso com
+link para o ZeloMenu e não sobrescreve mais preços; no WhatsApp, nomes são
+aceitos somente por correspondência exata normalizada. A configuração de
+bairros não é exposta quando o modelo ativo é por rota/distância.
+
+O código está em worktree de validação e depende da migration do ZeloPDV
+`20260905174107_zelomenu_delivery_models.sql`, ainda não aplicada neste
+ambiente.
+
 ### CI e publicação — 2026-09-05 (concluído)
 
 A base `0d67676e0b9efa8dff682862c84345de9eb80cdb` foi publicada e conferida. O commit final de CI `dc52af487cc9999a905eb9262884110fbb2f6ed5` está na `main`; frontend/backend concluíram deploy no Dokploy e `/build-info.json`/`/api/version` retornam o SHA40 final.

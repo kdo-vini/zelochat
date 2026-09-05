@@ -2442,43 +2442,25 @@ function normalizeNeighborhood(name: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
-    .trim();
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 export function resolveDeliveryFee(empresaId: string, neighborhood: string): number | null {
   const cfg = getConfig(empresaId);
-  if (!cfg.deliveryConfig?.enabled || !cfg.deliveryConfig.neighborhoods.length) return null;
+  if (
+    !cfg.deliveryConfig?.enabled
+    || cfg.deliveryConfig.mode !== 'neighborhood'
+    || !cfg.deliveryConfig.neighborhoods.length
+  ) return null;
   const normalized = normalizeNeighborhood(neighborhood);
 
-  // 1) Exact match
-  let match = cfg.deliveryConfig.neighborhoods.find(
+  // O WhatsApp não tem dropdown: ainda assim, só aceitamos o nome inteiro
+  // de um bairro ativo e cadastrado. A validação final e o preço canônico
+  // continuam no ZeloMenu/Supabase.
+  const match = cfg.deliveryConfig.neighborhoods.find(
     (n) => normalizeNeighborhood(n.name) === normalized,
   );
-
-  // 2) Config name starts with what the AI sent (ex: "marfrig" → "marfrig, jw (parque industrial)")
-  if (!match) {
-    match = cfg.deliveryConfig.neighborhoods.find((n) => {
-      const c = normalizeNeighborhood(n.name);
-      return c.startsWith(normalized + ',') || c.startsWith(normalized + ' ');
-    });
-  }
-
-  // 3) What the AI sent starts with config name (ex: "marfrig 1" → "marfrig")
-  if (!match) {
-    match = cfg.deliveryConfig.neighborhoods.find((n) => {
-      const c = normalizeNeighborhood(n.name);
-      return normalized.startsWith(c + ' ') || normalized.startsWith(c + ',');
-    });
-  }
-
-  // 4) Token match — any significant token (>3 chars) shared between config name and AI input
-  if (!match) {
-    match = cfg.deliveryConfig.neighborhoods.find((n) => {
-      const configTokens = normalizeNeighborhood(n.name).split(/[\s,()]+/).filter(Boolean);
-      const inputTokens = normalized.split(/[\s,()]+/).filter(Boolean);
-      return configTokens.some((t) => t.length > 3 && inputTokens.includes(t));
-    });
-  }
 
   return match ? match.fee : null;
 }
@@ -2815,10 +2797,11 @@ INSTRUÇÕES DE GATILHO:
 
 ${ownerStylePreferences}${tagsBlock}${autoTagsBlock}
 
-${cfg.deliveryConfig?.enabled && cfg.deliveryConfig.neighborhoods.length > 0 ? `ENTREGA (DELIVERY):
+${cfg.deliveryConfig?.enabled ? `ENTREGA (DELIVERY):
 - A lanchonete aceita pedidos de entrega. A taxa e os bairros são gerenciados pelo cardápio online.
-- Se o cliente perguntar sobre entrega, diga: "A taxa de entrega aparece no cardápio online quando voce coloca o endereço."
-- NUNCA informe taxas ou bairros manualmente.
+- Se o cliente perguntar sobre entrega, diga: "A taxa de entrega aparece no cardápio online quando você informa o endereço."
+- Se a loja trabalhar por bairro, diga que o cliente deve escolher um dos bairros cadastrados no cardápio. Não aceite ou invente bairros fora da lista.
+- NUNCA confirme a entrega ou informe uma taxa manualmente; a confirmação final é feita pelo cardápio online.
 ` : `ENTREGA (DELIVERY):
 - A lanchonete NÃO aceita entregas no momento. Todos os pedidos são para retirada.
 - Se o cliente pedir entrega, informe educadamente e ofereça retirada no local.

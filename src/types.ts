@@ -429,6 +429,7 @@ export interface DeliveryNeighborhood {
 
 export interface DeliveryConfig {
   enabled: boolean;
+  mode?: 'distance' | 'neighborhood';
   neighborhoods: DeliveryNeighborhood[];
 }
 

@@ -5,6 +5,7 @@ export interface DeliveryNeighborhood {
 
 export interface DeliveryConfig {
   enabled: boolean;
+  mode?: 'distance' | 'neighborhood';
   neighborhoods: DeliveryNeighborhood[];
 }
 
@@ -234,7 +235,7 @@ function normalizeNumber(value: unknown): number {
 
 function normalizeDeliveryConfig(value: unknown): DeliveryConfig | null {
   if (!value || typeof value !== 'object') return null;
-  const row = value as { enabled?: unknown; neighborhoods?: unknown };
+  const row = value as { enabled?: unknown; neighborhoods?: unknown; mode?: unknown };
   const neighborhoods = Array.isArray(row.neighborhoods)
     ? row.neighborhoods
       .map((item) => {
@@ -247,7 +248,61 @@ function normalizeDeliveryConfig(value: unknown): DeliveryConfig | null {
       })
       .filter((item): item is DeliveryNeighborhood => item !== null)
     : [];
-  return { enabled: row.enabled === true, neighborhoods };
+  return {
+    enabled: row.enabled === true,
+    mode: row.mode === 'neighborhood' ? 'neighborhood' : row.mode === 'distance' ? 'distance' : undefined,
+    neighborhoods,
+  };
+}
+
+function normalizeDeliveryNeighborhoodName(value: unknown): string {
+  return typeof value === 'string'
+    ? value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ')
+    : '';
+}
+
+async function loadCanonicalDeliveryConfig(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  empresaId: string,
+  legacy: DeliveryConfig | null,
+): Promise<DeliveryConfig | null> {
+  const [modeResult, neighborhoodResult] = await Promise.all([
+    supabase.from('empresa_perfil').select('delivery_mode').eq('id', empresaId).maybeSingle(),
+    supabase
+      .from('zelomenu_delivery_neighborhoods')
+      .select('name, delivery_price, active, sort_order')
+      .eq('company_id', empresaId)
+      .eq('active', true)
+      .order('sort_order')
+      .order('name'),
+  ]);
+
+  const mode = modeResult.error
+    ? (legacy?.mode ?? 'distance')
+    : (modeResult.data as { delivery_mode?: unknown } | null)?.delivery_mode === 'neighborhood'
+      ? 'neighborhood'
+      : 'distance';
+
+  // A missing table/column means the rollout has not reached this Chat
+  // instance yet. Keep the legacy JSON as a compatibility fallback; an
+  // existing table with zero active rows is authoritative and must stay zero.
+  if (neighborhoodResult.error) return legacy ? { ...legacy, mode } : null;
+
+  const neighborhoods = (neighborhoodResult.data ?? [])
+    .map((item) => {
+      const row = item as { name?: unknown; delivery_price?: unknown; active?: unknown };
+      const name = normalizeText(row.name);
+      const fee = normalizeNumber(row.delivery_price);
+      if (!name || row.active !== true || fee < 0) return null;
+      return { name, fee };
+    })
+    .filter((item): item is DeliveryNeighborhood => item !== null);
+
+  return {
+    enabled: legacy?.enabled === true,
+    mode,
+    neighborhoods,
+  };
 }
 
 type CatalogProductWithPlacement = CatalogProduct & {
@@ -673,6 +728,13 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
     console.warn(`[configStore] zelomenu_slug lookup threw for ${empresaId} — AI will escalate instead of linking:`, slugErr);
   }
 
+  let deliveryConfig = normalizeDeliveryConfig(row.delivery_config);
+  try {
+    deliveryConfig = await loadCanonicalDeliveryConfig(supabase, empresaId, deliveryConfig);
+  } catch (deliveryErr) {
+    console.warn(`[configStore] canonical delivery lookup failed for ${empresaId} — keeping legacy delivery config:`, deliveryErr);
+  }
+
   const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes] = await Promise.all([
     supabase
       .from('categorias')
@@ -769,7 +831,7 @@ export async function loadAiSettingsFromDb(empresaId: string): Promise<void> {
   patch.zelomenuSlug = zelomenuSlug;
   patch.managerPhone = normalizeText(row.manager_phone);
   patch.aiInstructions = normalizeText(row.ai_instructions);
-  patch.deliveryConfig = normalizeDeliveryConfig(row.delivery_config);
+  patch.deliveryConfig = deliveryConfig;
   patch.pixReceiptConfig = normalizePixReceiptConfig(row.pix_receipt_config);
   patch.zelochatMode = normalizeZeloChatMode(row.zelochat_mode);
   patch.products = products;
