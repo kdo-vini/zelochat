@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
 import express from 'express';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
 import { createPeriodicTask } from '../server/runtime/periodicTask.js';
 import { installShutdown } from '../server/runtime/shutdown.js';
 import { mapConcurrent } from '../server/runtime/concurrency.js';
@@ -119,4 +123,28 @@ test('updated query parser preserves ordinary nested query and form fields', asy
     });
     assert.deepEqual(await response.json(), { query: { filter: { status: 'pending' }, tags: ['one', 'two'] }, body: { customer: { name: 'Teste' }, items: [{ quantity: '2' }] } });
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
+test('production metadata accepts CRLF checkout but rejects changed or ignored source', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zelochat-build-version-'));
+  const command = resolve('build-meta.mjs');
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+  try {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src/example.ts'), 'export const value = 1;\n');
+    writeFileSync(join(dir, '.gitignore'), 'src/ignored.ts\n');
+    git('init', '--quiet'); git('config', 'core.autocrlf', 'false'); git('add', '.');
+    git('-c', 'user.name=Build test', '-c', 'user.email=build-test@localhost', 'commit', '--quiet', '-m', 'fixture');
+    writeFileSync(join(dir, 'src/example.ts'), 'export const value = 1;\r\n');
+    execFileSync(process.execPath, [command], { cwd: dir, env: { ...process.env, PUBLIC_APP_VERSION: '' }, stdio: 'pipe' });
+    assert.equal(JSON.parse(readFileSync(join(dir, 'build-info.json'), 'utf8')).sourceCommit, git('rev-parse', 'HEAD').toString().trim());
+    writeFileSync(join(dir, 'src/example.ts'), 'export const value = 2;\n');
+    assert.throws(() => execFileSync(process.execPath, [command], { cwd: dir, stdio: 'pipe' }));
+    writeFileSync(join(dir, 'src/example.ts'), 'export const value = 1;\n');
+    writeFileSync(join(dir, 'src/ignored.ts'), 'export const extra = 1;\n');
+    assert.throws(() => execFileSync(process.execPath, [command], { cwd: dir, stdio: 'pipe' }));
+  } finally {
+    assert.ok(resolve(dir).startsWith(`${resolve(tmpdir())}${sep}zelochat-build-version-`));
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

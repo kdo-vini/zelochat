@@ -14,7 +14,8 @@ export function writeBuildMetadata() {
   const sha = verifyBuildVersion(git('rev-parse', 'HEAD'), process.env.PUBLIC_APP_VERSION);
   const inputs = ['package.json', 'package-lock.json', 'src', 'server', 'public', 'index.html', 'vite.config.ts', 'tsconfig*.json', 'Dockerfile*', '.dockerignore', '.gitignore', 'nginx.frontend.conf', 'build-meta.mjs'];
   // Production images cannot claim a SHA while building dirty or untracked code.
-  git('diff', '--quiet', 'HEAD', '--', ...inputs);
+  // Compare Git-normalized text, including Windows checkouts copied to Linux.
+  git('-c', 'core.autocrlf=input', '-c', 'core.safecrlf=false', 'diff', '--quiet', 'HEAD', '--', ...inputs);
   if (git('ls-files', '--others', '--', ...inputs)) throw new Error('Untracked production source cannot be published as this SHA.');
   const metadata = { version: sha.slice(0, 12), sourceCommit: sha };
   writeFileSync('build-info.json', `${JSON.stringify(metadata)}\n`);
