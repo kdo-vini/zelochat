@@ -1,3 +1,4 @@
+import { startPeriodicTask } from './runtime/periodicTask.js';
 import { getServiceSupabase } from './supabase.js';
 
 /**
@@ -62,18 +63,7 @@ async function sweepWebhookEvents(): Promise<void> {
   }
 }
 
-let sweepHandle: NodeJS.Timeout | null = null;
 
 export function startWebhookEventsSweeper(): void {
-  if (sweepHandle) return;
-
-  const tick = () => {
-    sweepWebhookEvents().catch((err) => {
-      console.error('[webhookEventsSweeper] tick failed:', err);
-    });
-  };
-
-  setTimeout(tick, SWEEP_STARTUP_DELAY_MS).unref?.();
-  sweepHandle = setInterval(tick, SWEEP_INTERVAL_MS);
-  sweepHandle.unref?.();
+  startPeriodicTask('webhookEventsSweeper', sweepWebhookEvents, SWEEP_STARTUP_DELAY_MS, SWEEP_INTERVAL_MS);
 }

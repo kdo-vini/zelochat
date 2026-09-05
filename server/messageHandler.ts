@@ -2,6 +2,7 @@ import { broadcast } from './ws.js';
 import { getEmpresaUserId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
 import { ensureCustomerForSession } from './customers/identity.js';
 import { transcribeAudio, type TranscriptionOutcome } from './transcription.js';
+import { trackBackgroundWork } from './runtime/backgroundWork.js';
 import { dispatchConversationOutbound } from './conversationOutbound.js';
 import { redactJid } from './redact.js';
 import {
@@ -98,9 +99,9 @@ async function mapWithConcurrency<T, R>(
 
 function trackAudioTranscriptionJob(messageId: string, job: Promise<void>): void {
   audioTranscriptionJobs.set(messageId, job);
-  void job.finally(() => {
+  void trackBackgroundWork(job).finally(() => {
     if (audioTranscriptionJobs.get(messageId) === job) audioTranscriptionJobs.delete(messageId);
-  });
+  }).catch(() => {});
 }
 
 type AudioTranscriptionSettledHandler = (params: {
@@ -155,7 +156,7 @@ async function transcribeAudioWithFailureTracking(
   if (outcome === 'done') {
     // Success — reset the failure counter for this session.
     transcriptionFailures.delete(key);
-    void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'done' });
+    await audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'done' });
     return;
   }
 
@@ -163,7 +164,7 @@ async function transcribeAudioWithFailureTracking(
     // missing_key: surface the friendly fallback reply for THIS message, but
     // do not burn the per-session escalation budget on an outage that is not
     // this customer's fault.
-    void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
+    await audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
     return;
   }
 
@@ -171,7 +172,7 @@ async function transcribeAudioWithFailureTracking(
   transcriptionFailures.set(key, next);
 
   if (next < TRANSCRIPTION_FAILURE_THRESHOLD) {
-    void audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
+    await audioTranscriptionSettledHandler?.({ empresaId, jid, messageId: params.messageId, status: 'failed' });
     return;
   }
 

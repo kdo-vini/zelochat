@@ -1,3 +1,5 @@
+import { isShuttingDown } from './runtime/backgroundWork.js';
+import { startPeriodicTask } from './runtime/periodicTask.js';
 import { getServiceSupabase } from './supabase.js';
 import { deleteInstance } from './instanceManager.js';
 import { redactInstance } from './redact.js';
@@ -182,6 +184,7 @@ export async function sweepCanceledSubscriptions(
     `[sweeper] ${dryRun ? 'DRY-RUN — ' : ''}${candidates.length} candidate(s) (graceDays=${graceDays}):`,
   );
   for (const c of candidates) {
+    if (isShuttingDown()) break;
     console.warn(
       `  - empresa=${c.empresaId} instance=${redactInstance(c.instance)} status=${c.status ?? 'null'} expired=${c.effectiveExpiry ?? 'null'} (${c.daysSinceExpiry?.toFixed(1) ?? '?'} days ago)`,
     );
@@ -190,6 +193,7 @@ export async function sweepCanceledSubscriptions(
   if (dryRun) return result;
 
   for (const c of candidates) {
+    if (isShuttingDown()) break;
     try {
       await deleteInstance(c.empresaId);
       console.log(`[sweeper] deleted instance ${redactInstance(c.instance)} for empresa ${c.empresaId}`);
@@ -210,7 +214,6 @@ export async function sweepCanceledSubscriptions(
 const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 const SWEEP_STARTUP_DELAY_MS = 5 * 60 * 1000; // 5min
 
-let sweepLoopHandle: NodeJS.Timeout | null = null;
 
 /**
  * Start the periodic sweep loop. Idempotent — calling twice does not stack.
@@ -218,15 +221,5 @@ let sweepLoopHandle: NodeJS.Timeout | null = null;
  * 6 hours. Each tick is independent — one failure does not stop the loop.
  */
 export function startSubscriptionSweepLoop(): void {
-  if (sweepLoopHandle) return;
-
-  const tick = () => {
-    sweepCanceledSubscriptions().catch((err) => {
-      console.error('[sweeper] tick failed:', err);
-    });
-  };
-
-  setTimeout(tick, SWEEP_STARTUP_DELAY_MS).unref?.();
-  sweepLoopHandle = setInterval(tick, SWEEP_INTERVAL_MS);
-  sweepLoopHandle.unref?.();
+  startPeriodicTask('subscriptionSweeper', sweepCanceledSubscriptions, SWEEP_STARTUP_DELAY_MS, SWEEP_INTERVAL_MS);
 }

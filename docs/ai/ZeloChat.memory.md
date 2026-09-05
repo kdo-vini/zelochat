@@ -1,8 +1,19 @@
 # ZeloChat Memory
 
+### Runtime e impressão compartilhada — 2026-09-04
+
+Produção usa Node24 e loader tsx/esm: o loader misto causou buscas patológicas de módulos OpenAI no Windows. Usar npm ci --omit=dev com tsx explícito em dependencies. Build-info baked SHA é a autoridade; PUBLIC_APP_VERSION divergente falha build. Shutdown55s precisa60s externos. Auto impressão identifica companyStoreId pelo ownerUserId de /api/access/me e orderId por zelo_orders.id, nunca empresa_id/actor; capability nativa obrigatória, prioridade PDV, manual novoUUID. qs6.16.0 está em override enquanto Express4/body-parser prendem versão antiga.
+
 > Ver também: [[CLAUDE]] · [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]]
 
 ## Purpose
+
+### Auditoria 2026-09-04 — CRM, carregamento e impressão (correções locais)
+
+- RPC PDV `ensure_customer_from_whatsapp` recebe somente owner/phone/observed_name e retorna `pessoaId` camelCase; `invalid` significa identidade incompleta. Nunca enviar JID/source como parâmetros inexistentes. Adaptador corrigido; contrato confirmado em SQL local e via CLI no banco pela coordenação. Conflito não pode virar vínculo automático.
+- `/app/*` é a rota React; WORKDIR `/app` pertence ao container. AppShell lazy dentro do guard reduziu JS inicial gzip em 34% na medição da mesma base.
+- Resultado incerto de impressão (`PRINT_OUTCOME_UNKNOWN`/`retrySafe=false`) mantém dedupe e bloqueia fallback. Native antigo pode retornar 400 após iniciar spool; não inferir segurança de retry por qualquer 4xx. Segunda via explícita recebe novo UUID.
+- Base inicial estava 47 commits atrás; atualizada com autorização por fast-forward para `e6c7ca4af9ce`. Polling adaptativo e drifts de teste já estavam resolvidos upstream. Relatório: `docs/audits/2026-09-04-zelochat.md`.
 
 ### Pedido conversacional híbrido (confirmed 2026-09-03, contrato corrigido 2026-09-04)
 - Texto e transcrição concluída são compostos por cursor durável antes do planejador. Patches carregam `lineId` e são validados por produto → grupo → opção; o ZeloMenu é a única autoridade de requisito/preço.

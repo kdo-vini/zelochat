@@ -1,3 +1,5 @@
+import { isShuttingDown } from './runtime/backgroundWork.js';
+import { startPeriodicTask } from './runtime/periodicTask.js';
 import { getServiceSupabase, isEmpresaSubscriptionActive } from './supabase.js';
 import { sendEmail } from './email.js';
 import { sendOutreachMessage } from './whatsappOutreach.js';
@@ -213,6 +215,7 @@ export async function runDailyOnboardingFollowup(): Promise<{
   let whatsappsSent = 0;
 
   for (const row of rows) {
+    if (isShuttingDown()) break;
     if (!row.zelochat_onboarding_done_at) continue;
     const doneAt = new Date(row.zelochat_onboarding_done_at);
     const day = daysSince(doneAt, now);
@@ -285,7 +288,6 @@ function pickWhatsAppBody(day: number, firstName: string): string | null {
   }
 }
 
-let loopHandle: ReturnType<typeof setInterval> | null = null;
 const LOOP_STARTUP_DELAY_MS = 2 * 60 * 1000;
 const LOOP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -298,14 +300,13 @@ const LOOP_INTERVAL_MS = 24 * 60 * 60 * 1000;
  * Whatsmiau in dev. Enabled by default in prod.
  */
 export function startOnboardingFollowupLoop(): void {
-  if (loopHandle) return;
   if (process.env.ENABLE_ONBOARDING_FOLLOWUP === '0') {
     console.log('[onboardingFollowup] loop disabled via ENABLE_ONBOARDING_FOLLOWUP=0');
     return;
   }
 
   const tick = () => {
-    runDailyOnboardingFollowup()
+    return runDailyOnboardingFollowup()
       .then((r) => {
         console.log(`[onboardingFollowup] scanned=${r.scanned} emails=${r.emailsSent} whatsapps=${r.whatsappsSent}`);
       })
@@ -314,7 +315,5 @@ export function startOnboardingFollowupLoop(): void {
       });
   };
 
-  setTimeout(tick, LOOP_STARTUP_DELAY_MS).unref?.();
-  loopHandle = setInterval(tick, LOOP_INTERVAL_MS);
-  loopHandle.unref?.();
+  startPeriodicTask('onboardingFollowup', tick, LOOP_STARTUP_DELAY_MS, LOOP_INTERVAL_MS);
 }

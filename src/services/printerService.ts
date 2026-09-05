@@ -4,6 +4,7 @@ import {
   fallbackToBrowserPrint,
   getConfig as getZeloImpressaoConfig,
   getZeloImpressaoFriendlyMessage,
+  isPrintOutcomeUnknown,
   pairZeloImpressao,
   sendPrintJob,
   sendTestPrint,
@@ -194,10 +195,19 @@ export async function pairLocalPrint(code: string): Promise<void> {
   await pairZeloImpressao(code);
 }
 
-export async function printOrder(order: Order, businessName = 'ZeloChat'): Promise<void> {
+export interface OrderPrintOptions {
+  mode: 'automatic' | 'manual';
+  companyStoreId: string;
+}
+
+export async function printOrder(order: Order, businessName = 'ZeloChat', options?: OrderPrintOptions): Promise<void> {
   const text = buildOrderText(order, businessName);
   await sendPrintJob({
     source: 'zelochat',
+    companyStoreId: options?.companyStoreId,
+    intent: options?.mode === 'automatic'
+      ? { mode: 'automatic', orderId: order.id, purpose: 'order_ticket' }
+      : { mode: 'manual' },
     type: 'kitchen_order',
     timestamp: new Date().toISOString(),
     content: { format: 'text', text },
@@ -225,7 +235,7 @@ export async function printDayReport(
       metadata: { report: 'day', dateLabel, orderCount: orders.length },
     });
   } catch (error) {
-    if (options.browserFallback) {
+    if (options.browserFallback && !isPrintOutcomeUnknown(error)) {
       await fallbackToBrowserPrint(browserHtmlFromText(text));
       return;
     }

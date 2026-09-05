@@ -7,6 +7,7 @@ import {
   pairLocalPrint,
   printOrder,
   printDayReport,
+  type OrderPrintOptions,
 } from '../services/printerService';
 import type { Order } from '../types';
 
@@ -22,7 +23,7 @@ export interface UsePrinterReturn {
   connect: () => Promise<void>;
   pair: (code: string) => Promise<void>;
   disconnect: () => void;
-  print: (order: Order, businessName?: string) => Promise<void>;
+  print: (order: Order, businessName?: string, options?: OrderPrintOptions) => Promise<void>;
   printDay: (dateLabel: string, orders: Order[], businessName?: string) => Promise<void>;
 }
 
@@ -98,11 +99,11 @@ export function usePrinter(): UsePrinterReturn {
     }
   }, [refresh]);
 
-  const print = useCallback(async (order: Order, businessName?: string) => {
+  const print = useCallback(async (order: Order, businessName?: string, options?: OrderPrintOptions) => {
     setPrinting(true);
     setError(null);
     try {
-      await printOrder(order, businessName);
+      await printOrder(order, businessName, options);
       setConnected(true);
     } catch (err) {
       const msg = getZeloImpressaoFriendlyMessage(err);

@@ -1,5 +1,19 @@
 # Incidentes e padrões conhecidos
 
+## Carregamento de módulos travava testes AI (2026-09-04, ambiente local)
+
+Durante validação, quatro arquivos ficaram90s sem iniciar casos. Perfil apontou resolução de extensões tsx/OpenAI, com loader misto CJS/ESM. Usar node --import tsx/esm reduziu a suíte121 arquivos de348,546s com quatro timeouts para45,656s toda verde. Não foi incidente de produção comprovado. Runner/runtime atualizados e smoke Linux sem rede validado; demais evidências no relatório de auditoria.
+
+## CRM: identificação falha por assinatura da RPC (2026-09-04, correção local)
+
+**Sintoma:** logs publicados registram PGRST202 na identificação do cliente; a mensagem é preservada, mas o vínculo CRM não é enriquecido.
+
+**Causa-raiz:** `server/customers/repository.ts` enviava cinco argumentos a `ensure_customer_from_whatsapp(uuid,text,text)` e esperava pessoa_id, enquanto a função retorna pessoaId.
+
+**Fix local:** adaptador alinhado aos três parâmetros/JSON canônicos e status invalid→incomplete, com regressão que impede vínculo em conflito. Definição remota conferida via CLI pela coordenação; sem DDL — `server/customers/repository.ts`, `tests/customerIdentityAdapter.test.ts`.
+
+**Recovery pendente:** publicar backend com o patch e observar cessação do erro/vínculos novos. Não reprocessar histórico em massa ou alterar a função PDV para acomodar a chamada incorreta. Relatório: `docs/audits/2026-09-04-zelochat.md`.
+
 ## XXXI. Worker de envio estourava o egress do Supabase (corrigido em 2026-09-01)
 
 **Sintoma:** o projeto ZeloPDV no Supabase saiu da cota Free por egress (~250 MB/dia, 95% PostgREST) com apenas cinco clientes e algumas centenas de mensagens por dia. O salto começou em 26-27/08.

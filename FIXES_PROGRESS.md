@@ -1,7 +1,17 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Correções da auditoria 2026-09-04 — publicação em validação
+
+Resolvidos localmente Node20 EOL, dev toolchain no runtime, timers sobrepostos, stop sem drain, concorrência/config sem teto e chamadas externas sem deadline nos caminhos revisados. CI/build rejeita SHA divergente/código fora do commit. Impressão automática coordenada owner+pedido canônico; manual separada. Overrides/deps auditados com zero avisos npm. Validação e limites: docs/audits/2026-09-04-zelochat.md.
+
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
 **Customer status:** 1 paying tenant (R$3k contract, Casa dos Salgados). 1 founder test (Donutopia).
+
+### Auditoria CRM, impressão e performance (2026-09-04, local)
+
+- ✅ ZCHAT-CRM-001 — resolução falhava com PGRST202 e perderia ID por casing mesmo após corrigir argumentos → adaptador usa três parâmetros canônicos, lê pessoaId e preserva conflito sem vínculo; sem DDL — `server/customers/repository.ts:33`, `tests/customerIdentityAdapter.test.ts:1`
+- ✅ ZCHAT-PERF-001 — landing/login baixavam AppShell/DnD → lazy dentro do guard; JS inicial gzip −34% e sem aviso de chunk — `src/App.tsx:14`
+- ✅ ZCHAT-PRINT-001 — impressão incerta liberava repetição/fallback → cliente preserva resultado desconhecido, dedupe, deadline do corpo e UUID por tentativa explícita, incluindo HTTP 400 nativo legado — `src/services/zeloImpressaoClient.ts:71`, `src/hooks/useAutoPrint.ts:53`, `src/services/printerService.ts:229`, `tests/printerOutcome.test.ts:1`
 
 ### Pedidos conversacionais híbridos — controles de produção (2026-09-04)
 

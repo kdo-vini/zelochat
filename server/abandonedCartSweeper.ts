@@ -1,3 +1,5 @@
+import { isShuttingDown } from './runtime/backgroundWork.js';
+import { startPeriodicTask } from './runtime/periodicTask.js';
 import {
   expireStaleCartOpenSessions,
   listAbandonedCartCandidates,
@@ -23,7 +25,7 @@ import {
  *
  * Schedule: run once 3 minutes after startup (lets the paywall/config caches
  * warm), then every 15 minutes so a nudge fires reasonably close to the 2h mark.
- * Each tick is fire-and-forget; a failure in one tick (or one candidate) never
+ * Each cycle waits for completion; a failure in one tick (or one candidate) never
  * crashes the main process and never stops the rest of the batch.
  *
  * Manual trigger: import and call `sweepAbandonedCarts()` directly.
@@ -41,6 +43,7 @@ export async function sweepAbandonedCarts(): Promise<void> {
   let skipped = 0;
   let failed = 0;
   for (const candidate of candidates) {
+    if (isShuttingDown()) break;
     try {
       // The existing cart sweeper remains the only candidate scanner. When
       // ZELOCHAT_AUTOMATION_LEDGER=1, recoverAbandonedCart queues the shared
@@ -70,24 +73,13 @@ export async function sweepAbandonedCarts(): Promise<void> {
   }
 }
 
-let sweepHandle: NodeJS.Timeout | null = null;
 
 /**
  * Start the periodic abandoned-cart recovery loop. Idempotent — calling twice
  * does not stack timers. Runs once after a 3-minute startup delay, then every
- * 15 minutes. Each tick is fire-and-forget; a failure in one tick does not stop
+ * 15 minutes. Each cycle waits for completion; a failure in one tick does not stop
  * the loop.
  */
 export function startAbandonedCartRecoverySweeper(): void {
-  if (sweepHandle) return;
-
-  const tick = () => {
-    sweepAbandonedCarts().catch((err) => {
-      console.error('[abandonedCartSweeper] tick failed:', err);
-    });
-  };
-
-  setTimeout(tick, SWEEP_STARTUP_DELAY_MS).unref?.();
-  sweepHandle = setInterval(tick, SWEEP_INTERVAL_MS);
-  sweepHandle.unref?.();
+  startPeriodicTask('abandonedCartSweeper', sweepAbandonedCarts, SWEEP_STARTUP_DELAY_MS, SWEEP_INTERVAL_MS);
 }

@@ -1,3 +1,5 @@
+import { startPeriodicTask } from './runtime/periodicTask.js';
+import { isShuttingDown } from './runtime/backgroundWork.js';
 import { randomUUID } from 'node:crypto';
 import { getServiceSupabase } from './supabase.js';
 import { processFromMeUpsert } from './fromMeProcessor.js';
@@ -92,9 +94,7 @@ export class WebhookReplayWorker {
   }
 }
 
-let timer: ReturnType<typeof setInterval> | null = null;
 export function startWebhookReplayWorker(intervalMs = 5_000): void {
-  if (timer) return;
   const workerId = `webhook-replay:${process.pid}:${randomUUID()}`;
   let worker: WebhookReplayWorker | null = null;
   let running = false;
@@ -106,12 +106,10 @@ export function startWebhookReplayWorker(intervalMs = 5_000): void {
       // credentials yet. The first configured tick creates the worker; this is
       // a configuration failure, not a feature rollout decision.
       if (!worker) worker = new WebhookReplayWorker();
-      for (let count = 0; count < 20 && await worker.runOnce(workerId); count += 1) { /* drain bounded batch */ }
+      for (let count = 0; count < 20 && !isShuttingDown() && await worker.runOnce(workerId); count += 1) { /* drain bounded batch */ }
     } catch (error) {
       console.error('[WebhookReplay] worker cycle failed:', error instanceof Error ? error.message : String(error));
     } finally { running = false; }
   };
-  timer = setInterval(() => { void tick(); }, intervalMs);
-  timer.unref?.();
-  void tick();
+  startPeriodicTask('webhookReplay', tick, 0, intervalMs);
 }

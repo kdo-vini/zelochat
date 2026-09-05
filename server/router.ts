@@ -1,3 +1,4 @@
+import { BUILD_INFO } from './buildVersion.js';
 import { Router, Request, Response } from 'express';
 import express from 'express';
 import axios from 'axios';
@@ -180,7 +181,7 @@ router.get('/api/access/me', async (req: Request, res: Response) => {
   try {
     const access = await requireActorAccess(req);
     const rollout = await getCrmRolloutFlags(access.empresaId);
-    res.json({ actorUserId: access.actorUserId, isOwner: access.isOwner, rollout, capabilities: {
+    res.json({ ownerUserId: access.ownerUserId, actorUserId: access.actorUserId, isOwner: access.isOwner, rollout, capabilities: {
       pessoas: { visualizar: access.isOwner || access.permissions?.['pessoas.visualizar'] === true, gerenciar: access.isOwner || access.permissions?.['pessoas.gerenciar'] === true },
       clientes: { comunicar: access.isOwner || access.permissions?.['clientes.comunicar'] === true },
     } });
@@ -1306,7 +1307,7 @@ router.post('/api/webhooks/abacatepay', handleAbacatePayWebhook);
  * as it can answer HTTP.
  */
 router.get('/api/healthz', (_req: Request, res: Response) => {
-  res.json({ ok: true, build: 'pix-v1' });
+  res.json({ ok: true, ...BUILD_INFO });
 });
 
 /**
@@ -1321,26 +1322,11 @@ router.get('/api/healthz', (_req: Request, res: Response) => {
  * Cache-busted aggressively so a CDN/proxy in front of the API never serves
  * a stale version string after a deploy.
  */
-const _resolvedEnv = (s: string | undefined) =>
-  s && !s.startsWith('${') ? s : undefined;
-
-let _pkgVersion = 'unknown';
-try {
-  _pkgVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
-} catch { /* ignore */ }
-
-const BUILD_VERSION =
-  _resolvedEnv(process.env.PUBLIC_APP_VERSION) ||
-  _resolvedEnv(process.env.VITE_PUBLIC_APP_VERSION) ||
-  _resolvedEnv(process.env.SOURCE_COMMIT) ||
-  _resolvedEnv(process.env.GIT_COMMIT_SHA) ||
-  _pkgVersion;
-
 router.get('/api/version', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
-  res.json({ version: BUILD_VERSION, checkedAt: new Date().toISOString() });
+  res.json({ ...BUILD_INFO, checkedAt: new Date().toISOString() });
 });
 
 async function fetchQrForEmpresaWithMissingInstanceRecovery(empresaId: string) {

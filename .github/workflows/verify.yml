@@ -1,0 +1,38 @@
+name: Verify source and images
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint && npm run lint:server
+      - run: npm test
+      - run: npm run build
+      - name: Build both images from the verified checkout
+        run: |
+          docker build --pull -t zelochat-backend:verify .
+          docker build --pull -f Dockerfile.frontend -t zelochat-frontend:verify --build-arg VITE_SUPABASE_URL=https://build-only.supabase.co --build-arg VITE_SUPABASE_ANON_KEY=build-only .
+      - name: Verify baked SHA without booting business workers
+        run: |
+          docker run --rm --network none --entrypoint node zelochat-backend:verify -e 'const b=require("./build-info.json"); if(b.sourceCommit!==process.argv[1]) process.exit(1)' "$GITHUB_SHA"
+          docker run --rm --network none --entrypoint cat zelochat-frontend:verify /usr/share/nginx/html/build-info.json > /tmp/frontend-build.json
+          node -e 'const b=require("/tmp/frontend-build.json"); if(b.sourceCommit!==process.argv[1]) process.exit(1)' "$GITHUB_SHA"
+          docker run --rm --network none --entrypoint node zelochat-backend:verify --import tsx/esm -e 'import("./server/buildVersion.ts").then(({BUILD_INFO})=>console.log(BUILD_INFO))'
+          docker run --rm --network none -e SUPABASE_URL=https://build-only.supabase.co -e SUPABASE_SERVICE_ROLE_KEY=build-only -e PORT=3001 --entrypoint node zelochat-backend:verify --import tsx/esm server/index.ts --check-startup

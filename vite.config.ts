@@ -19,7 +19,11 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 const resolvedEnv = (s: string | undefined) =>
   s && !s.startsWith('${') ? s : undefined;
 
+let bakedVersion: string | undefined;
+try { bakedVersion = JSON.parse(readFileSync(new URL('./build-info.json', import.meta.url), 'utf8')).version; } catch {}
+
 const buildVersion =
+  bakedVersion ||
   resolvedEnv(process.env.PUBLIC_APP_VERSION) ||
   resolvedEnv(process.env.VITE_PUBLIC_APP_VERSION) ||
   resolvedEnv(process.env.SOURCE_COMMIT) ||

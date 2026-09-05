@@ -1,3 +1,4 @@
+import { startPeriodicTask } from '../runtime/periodicTask.js';
 import { getServiceSupabase } from '../supabase.js';
 import { redactJid } from '../redact.js';
 
@@ -84,13 +85,6 @@ export async function observeConversationOutboundQueue(): Promise<void> {
   setConversationOutboundGauge('leases_stuck', stuck);
 }
 
-let observerTimer: NodeJS.Timeout | null = null;
 export function startConversationOutboundQueueObserver(intervalMs = 60_000): void {
-  if (observerTimer) return;
-  const tick = () => void observeConversationOutboundQueue().catch((error) => {
-    console.warn('[conversation_outbound_metric] queue observation unavailable', error instanceof Error ? error.message : 'unknown');
-  });
-  tick();
-  observerTimer = setInterval(tick, intervalMs);
-  observerTimer.unref();
+  startPeriodicTask('outboundObserver', observeConversationOutboundQueue, 0, intervalMs);
 }

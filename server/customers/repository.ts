@@ -33,10 +33,11 @@ function resultFromRpc(value: unknown): CustomerIdentityResult {
   const status = row?.status;
   const normalizedStatus: CustomerIdentityStatus =
     status === 'linked' || status === 'created' || status === 'conflict' || status === 'incomplete'
-      ? status : 'failed';
+      ? status : status === 'invalid' ? 'incomplete' : 'failed';
+  const pessoaId = row?.pessoaId ?? row?.pessoa_id;
   return {
     status: normalizedStatus,
-    pessoaId: typeof row?.pessoa_id === 'string' ? row.pessoa_id : null,
+    pessoaId: typeof pessoaId === 'string' ? pessoaId : null,
     candidatePersonIds: Array.isArray(row?.candidate_person_ids)
       ? row.candidate_person_ids.filter((id): id is string => typeof id === 'string') : [],
     reason: typeof row?.reason === 'string' ? row.reason : null,
@@ -46,12 +47,12 @@ function resultFromRpc(value: unknown): CustomerIdentityResult {
 /** The only adapter allowed to decide identity/merge. PDV owns this RPC. */
 export const supabaseCustomerIdentityRepository: CustomerIdentityRepository = {
   async ensureFromWhatsApp(input) {
+    // FIX 2026-09-04: the PDV-owned RPC accepts three arguments and returns
+    // pessoaId. Extra JID/source arguments made every enrichment miss its RPC.
     const { data, error } = await getServiceSupabase().rpc('ensure_customer_from_whatsapp', {
       p_owner_user_id: input.ownerUserId,
       p_phone: input.phone,
-      p_jid: input.jid,
       p_observed_name: input.observedName ?? null,
-      p_source: input.source,
     });
     if (error) throw error;
     return resultFromRpc(data);

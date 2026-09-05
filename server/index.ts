@@ -1,3 +1,7 @@
+import { mapConcurrent } from './runtime/concurrency.js';
+import { installShutdown } from './runtime/shutdown.js';
+import { startPeriodicTask, stopPeriodicTasks } from './runtime/periodicTask.js';
+import { beginShutdown, isShuttingDown, trackBackgroundWork, drainBackgroundWork } from './runtime/backgroundWork.js';
 import 'dotenv/config';
 import ws from 'ws';
 // Polyfill WebSocket for Node.js < 22 before Supabase client initializes
@@ -9,7 +13,7 @@ import cors from 'cors';
 import express from 'express';
 import { createServer } from 'http';
 import { createWsServer } from './ws.js';
-import { startWhatsApp, onIncomingMessage, registerWebhook, getPublicWebhookUrl, setWebhookForInstance } from './whatsapp.js';
+import { startWhatsApp, stopWhatsAppLifecycle, onIncomingMessage, registerWebhook, getPublicWebhookUrl, setWebhookForInstance } from './whatsapp.js';
 import {
   handleIncomingMessage,
   getSession,
@@ -28,10 +32,10 @@ import { startAbandonedCartRecoverySweeper } from './abandonedCartSweeper.js';
 import { startAutomationSweeper } from './automations/sweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
 import { startWebhookEventsSweeper } from './webhookEventsSweeper.js';
-import { scheduleReply } from './replyDebouncer.js';
+import { scheduleReply, stopPendingReplies } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
 import { redactJid } from './redact.js';
-import { startOutboundWorker } from './outbound/worker.js';
+import { startOutboundWorker, stopOutboundWorker } from './outbound/worker.js';
 import { startWebhookReplayWorker } from './webhookReplayWorker.js';
 import { beginAiTurn, type AiTurnPermit } from './conversationControl.js';
 import { autoReplyRateLimiter } from './autoReplyRateLimit.js';
@@ -171,7 +175,22 @@ app.use(router);
 app.use(pushRouter);
 
 const httpServer = createServer(app);
-createWsServer(httpServer);
+const wsServer = createWsServer(httpServer);
+installShutdown(httpServer, {
+  closeConnections: () => {
+    for (const client of wsServer.clients) client.close(1001, 'Server restarting');
+    wsServer.close();
+  },
+  stop: async () => {
+    beginShutdown();
+    stopWhatsAppLifecycle();
+    stopPendingReplies();
+    for (const timer of coalesceRetryTimers.values()) clearTimeout(timer);
+    coalesceRetryTimers.clear();
+    await Promise.all([stopPeriodicTasks(), stopOutboundWorker()]);
+  },
+  drain: drainBackgroundWork,
+});
 
 async function reRegisterTenantWebhooks(): Promise<void> {
   try {
@@ -183,12 +202,13 @@ async function reRegisterTenantWebhooks(): Promise<void> {
     if (!instances || instances.length === 0) return;
 
     console.log(`[Server] Re-registering webhooks for ${instances.length} tenant instance(s)...`);
-    await Promise.allSettled(
-      instances.map((row: { whatsmiau_instance: string }) =>
-        setWebhookForInstance(row.whatsmiau_instance).catch((err) =>
+    await mapConcurrent(
+      instances, 4, async (row: { whatsmiau_instance: string }) => {
+        if (isShuttingDown()) return;
+        return setWebhookForInstance(row.whatsmiau_instance).catch((err) =>
           console.error(`[Server] Webhook re-register failed for ${row.whatsmiau_instance}:`, err),
-        ),
-      ),
+        );
+      },
     );
     console.log('[Server] Webhook re-registration sweep complete.');
   } catch (err) {
@@ -232,6 +252,7 @@ function scheduleCoalescedRetry(params: {
   messageId?: string;
   retryAfterMs: number;
 }): void {
+  if (isShuttingDown()) return;
   const { empresaId, jid, messageId } = params;
   const key = `${empresaId}:${jid}`;
   if (coalesceRetryTimers.has(key)) return; // already have one pending for this window
@@ -239,7 +260,7 @@ function scheduleCoalescedRetry(params: {
   console.log(`[auto_reply] rate-limit hit for empresa=${empresaId} jid=${redactJid(jid)} — coalescing, retry in ${delayMs}ms`);
   const timer = setTimeout(() => {
     coalesceRetryTimers.delete(key);
-    void (async () => {
+    void trackBackgroundWork((async () => {
       try {
         const permit = await beginAiTurn({
           empresaId,
@@ -251,7 +272,7 @@ function scheduleCoalescedRetry(params: {
       } catch (err) {
         console.error(`[auto_reply] coalesced retry failed empresa=${empresaId} jid=${redactJid(jid)}:`, err);
       }
-    })();
+    })());
   }, delayMs);
   coalesceRetryTimers.set(key, timer);
 }
@@ -392,7 +413,7 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
   // Fire-and-forget Web Push. The SW shows the notification only when no
   // ZeloChat tab is focused (handled inside the SW's push handler), so we
   // always trigger here and let the client decide. Errors never propagate.
-  void (async () => {
+  void trackBackgroundWork((async () => {
     try {
       const pushJid = msg.key?.remoteJid;
       if (!pushJid) return;
@@ -407,7 +428,7 @@ onIncomingMessage(async (msg, empresaIdFromWebhook) => {
     } catch (err) {
       console.warn('[push] inbound dispatch failed', err);
     }
-  })();
+  })());
 
   // 2. Auto-reply if enabled for this session
   const jid = msg.key?.remoteJid;
@@ -453,6 +474,13 @@ function logAiHybridOrderingEnvStatusAtStartup(): void {
 
 // --- Start server ---
 httpServer.listen(PORT, () => {
+  // Image smoke test: resolve the complete runtime graph and bind HTTP, then
+  // exit before registering webhooks or starting any business task.
+  if (process.argv.includes('--check-startup')) {
+    console.log('[startup] imports and HTTP binding verified');
+    httpServer.close(() => process.exit(0));
+    return;
+  }
   console.log(`[Server] Listening on http://localhost:${PORT}`);
   console.log(`[Server] WebSocket on ws://localhost:${PORT}/ws`);
   logAiHybridOrderingEnvStatusAtStartup();
@@ -463,7 +491,7 @@ httpServer.listen(PORT, () => {
   // (see /webhook 410 in router.ts). In multi-tenant the singleton stays null;
   // outbound broadcasts that previously relied on it become per-empresa scoped
   // via the JWT path (frontend bindEmpresa) instead.
-  (async () => {
+  void trackBackgroundWork((async () => {
     try {
       const { count, error: countError } = await getServiceSupabase()
         .from('empresa_perfil')
@@ -484,21 +512,21 @@ httpServer.listen(PORT, () => {
         // multi-tenant, each empresa manages its own instance via /api/qr, so
         // startWhatsApp (and the broadcasts it triggers) must not run — it would
         // fan out QR codes and connection events to every connected WS client.
-        startWhatsApp().catch((err) => {
+        await startWhatsApp().catch((err) => {
           console.error('[Server] WhatsApp startup error:', err);
         });
 
         // Watch for tunnel URL changes — re-register the bootstrap instance webhook
         // when the cloudflared URL rotates (dev) or PUBLIC_APP_URL changes.
         let lastKnownUrl = getPublicWebhookUrl();
-        setInterval(() => {
+        startPeriodicTask('tunnelWebhook', async () => {
           const current = getPublicWebhookUrl();
           if (current !== lastKnownUrl) {
             console.log(`[Server] Tunnel URL changed: ${lastKnownUrl} → ${current}. Re-registering webhook...`);
             lastKnownUrl = current;
-            registerWebhook(true).catch((err) => console.error('[Server] Webhook re-register failed:', err));
+            await registerWebhook(true).catch((err) => console.error('[Server] Webhook re-register failed:', err));
           }
-        }, 10_000);
+        }, 10_000, 10_000);
       } else {
         console.log(`[Server] Multi-tenant detected (${count ?? 0} empresas) — skipping auto-bind. Each request resolves its own empresa via JWT or webhook path.`);
       }
@@ -507,11 +535,11 @@ httpServer.listen(PORT, () => {
       // param is present in the URL Whatsmiau calls. Run this for both
       // single-tenant and multi-tenant deployments: a one-empresa production
       // deploy can still use a per-tenant instance and needs the same repair.
-      void reRegisterTenantWebhooks();
+      if (!isShuttingDown()) await reRegisterTenantWebhooks();
     } catch (err) {
       console.warn('[Server] Auto-bind failed:', err);
     }
-  })();
+  })());
 
   // P1.13 — periodic sweep of churned customers' Whatsmiau instances. Runs
   // 5 min after startup (lets paywall cache warm), then every 6h. Idempotent:

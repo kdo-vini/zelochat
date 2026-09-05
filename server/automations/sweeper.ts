@@ -1,3 +1,6 @@
+import { mapConcurrent } from '../runtime/concurrency.js';
+import { isShuttingDown } from '../runtime/backgroundWork.js';
+import { startPeriodicTask, stopPeriodicTask } from '../runtime/periodicTask.js';
 import { getServiceSupabase } from '../supabase.js';
 import { evaluateAutomationCandidate, type AutomationCandidate, type EvaluatedDispatch } from './evaluator.js';
 import { getDefaultAutomationRule, type AutomationKind, type AutomationRule } from './rules.js';
@@ -16,10 +19,12 @@ export type AutomationSweepDependencies = {
 export async function runAutomationSweep(deps: AutomationSweepDependencies): Promise<{ eligible: number; suppressed: number }> {
   let eligible = 0; let suppressed = 0;
   for (const rule of await deps.listRules()) {
+    if (isShuttingDown()) break;
     try {
       const dailyLimit = Math.min(Math.max(rule.dailyLimit ?? 50, 1), 200);
       let usedToday = await (deps.countSentToday?.(rule) ?? Promise.resolve(0));
       for (const candidate of await deps.listCandidates(rule)) {
+        if (isShuttingDown()) break;
         let dispatch = evaluateAutomationCandidate(rule.kind, candidate, rule, deps.now?.() ?? new Date());
         if (dispatch.status === 'eligible' && usedToday >= dailyLimit) dispatch = { ...dispatch, status: 'suppressed', suppressionReason: 'daily_limit' };
         if (dispatch.status === 'eligible') usedToday++;
@@ -68,21 +73,18 @@ export async function listAutomationCandidatesForRule(rule: AutomationRule): Pro
   return (people ?? []).map((person) => { const personOrders = byPerson.get(person.id) ?? []; const latest = personOrders[0] ?? null; const candidate: AutomationCandidate = { pessoaId: person.id, phone: person.contato, employee: person.tipo !== 'cliente', blocked: blockedIds.has(person.id), optedOut: optedOutIds.has(person.id), conflict: conflictIds.has(person.id), openOrder: openIds.has(person.id), promotionalContactAt: recentPromo.get(person.id) ?? null, recentAutomationSentAt: recentSent.get(person.id) ?? null, birthday: person.aniversario_dia && person.aniversario_mes ? { day: person.aniversario_dia, month: person.aniversario_mes } : null, lastDeliveredAt: latest ? (latest.closed_at ?? latest.created_at) : null, lastConversationAt: lastConversation.get(person.id) ?? null, deliveredOrders: personOrders.length, totalSpentCents: personOrders.reduce((sum, order) => sum + Math.round(Number(order.total ?? 0) * 100), 0), order: latest ? { id: latest.id, status: latest.status, deliveredAt: latest.closed_at ?? latest.created_at, totalCents: Math.round(Number(latest.total ?? 0) * 100) } : null }; return candidate; });
 }
 
-let sweepHandle: NodeJS.Timeout | null = null;
 export function startAutomationSweeper(): void {
-  if (sweepHandle) return;
   const tick = () => {
-    void runAutomationSweep({
-      listRules: async () => { const { data } = await getServiceSupabase().from('zelochat_automation_rules').select('*').eq('enabled', true).limit(500); const rules = (data ?? []).map((row: any) => ({ ...getDefaultAutomationRule(row.kind), ...row, empresaId: row.empresa_id, sendStart: row.send_start, sendEnd: row.send_end, dailyLimit: row.daily_limit ?? 50 })); const allowed = await Promise.all(rules.map(async (rule) => (await getCrmRolloutFlags(rule.empresaId)).automations ? rule : null)); return allowed.filter((rule): rule is AutomationRule => rule !== null); },
+    return runAutomationSweep({
+      listRules: async () => { const { data } = await getServiceSupabase().from('zelochat_automation_rules').select('*').eq('enabled', true).limit(500); const rules = (data ?? []).map((row: any) => ({ ...getDefaultAutomationRule(row.kind), ...row, empresaId: row.empresa_id, sendStart: row.send_start, sendEnd: row.send_end, dailyLimit: row.daily_limit ?? 50 })); const allowed = await mapConcurrent(rules, 4, async (rule) => !isShuttingDown() && (await getCrmRolloutFlags(rule.empresaId)).automations ? rule : null); return allowed.filter((rule): rule is AutomationRule => rule !== null); },
       listCandidates: listAutomationCandidatesForRule,
       countSentToday: async (rule) => { const start = new Date(); start.setUTCHours(0, 0, 0, 0); const { count } = await getServiceSupabase().from('zelochat_automation_dispatches').select('id', { count: 'exact', head: true }).eq('empresa_id', rule.empresaId).eq('rule_id', rule.id).in('status', ['queued', 'sending', 'sent']).gte('created_at', start.toISOString()); return count ?? 0; },
       persist: persistAutomationDispatch,
     }).catch((error) => console.error('[automations] tick failed', error));
   };
-  setTimeout(tick, 180_000).unref?.();
-  sweepHandle = setInterval(tick, 900_000); sweepHandle.unref?.();
+  startPeriodicTask('automations', tick, 180_000, 900_000);
 }
 
-export function stopAutomationSweeper(): void { if (sweepHandle) clearInterval(sweepHandle); sweepHandle = null; }
+export function stopAutomationSweeper(): Promise<void> { return stopPeriodicTask('automations'); }
 
 export function defaultRuleForKind(kind: AutomationKind): AutomationRule { return getDefaultAutomationRule(kind); }

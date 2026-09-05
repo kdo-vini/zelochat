@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const tsxCli = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
 
@@ -15,16 +17,20 @@ if (!existsSync(tsxCli)) {
 }
 
 let failures = 0;
+const testEnv = { ...process.env };
+for (const name of ['DATABASE_URL', 'SUPABASE_DB_URL', 'LOCAL_OUTBOUND_TEST_DATABASE_URL', 'SUPABASE_SERVICE_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'OPENAI_API_KEY', 'STRIPE_SECRET_KEY', 'WHATSMIAU_API_KEY', 'ZELO_INTERNAL_API_KEY']) delete testEnv[name];
 
 for (const testFile of tests) {
   console.log(`\n===== ${testFile} =====`);
-  const result = spawnSync(process.execPath, [tsxCli, testFile], {
+  const result = spawnSync(process.execPath, ['--import', 'tsx/esm', testFile], {
     stdio: 'inherit',
     env: {
-      ...process.env,
+      ...testEnv,
       WHATSMIAU_DISABLE_WEBHOOK_REGISTER: '1',
       ZELOCHAT_DISABLE_WHATSAPP_NETWORK: '1',
+      DOTENV_CONFIG_PATH: join(tmpdir(), 'zelochat-tests-absent.env'),
     },
+    timeout: 90_000,
   });
   if (result.status !== 0) {
     failures++;

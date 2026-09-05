@@ -1,3 +1,4 @@
+import { startPeriodicTask } from './runtime/periodicTask.js';
 import { getServiceSupabase } from './supabase.js';
 
 /**
@@ -36,23 +37,12 @@ async function sweepExpiredPendingOrders(): Promise<void> {
   }
 }
 
-let sweepHandle: NodeJS.Timeout | null = null;
 
 /**
  * Start the periodic pending-order sweep loop. Idempotent — calling twice does
  * not stack timers. Runs once after a 2-minute startup delay, then every 24h.
- * Each tick is fire-and-forget; a failure in one tick does not stop the loop.
+ * Each cycle waits for completion; a failure in one tick does not stop the loop.
  */
 export function startPendingOrderSweeper(): void {
-  if (sweepHandle) return;
-
-  const tick = () => {
-    sweepExpiredPendingOrders().catch((err) => {
-      console.error('[pendingOrderSweeper] tick failed:', err);
-    });
-  };
-
-  setTimeout(tick, SWEEP_STARTUP_DELAY_MS).unref?.();
-  sweepHandle = setInterval(tick, SWEEP_INTERVAL_MS);
-  sweepHandle.unref?.();
+  startPeriodicTask('pendingOrderSweeper', sweepExpiredPendingOrders, SWEEP_STARTUP_DELAY_MS, SWEEP_INTERVAL_MS);
 }

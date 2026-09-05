@@ -1,11 +1,22 @@
 # ZeloChat — Foco atual
 
+### Correção de runtime/build/impressão — 2026-09-04 (publicação em validação)
+
+Node24/ESM runtime; timers sem overlap, concorrência limitada, deadlines e shutdown55s (Dokploy60s). Build SHA verificado e CI com imagens; auto impressão usa owner+zelo_orders.id e capability nativa com prioridade PDV. Upgrades compatíveis e qs6.16 override: npm audit zero. Suíte121/121 passou com loaderESM; nova rodada npm test121/121 após dependências verde; imagens finais em validação, não declarar produção atualizada antes dos endpoints. Ver docs/audits/2026-09-04-zelochat.md.
+
 > Atualizar a cada sprint/sessão. Leitura rápida para agentes de IA antes de qualquer tarefa.
 > Docs detalhados: [[CLAUDE]] · [[FIXES_PROGRESS]] · [[AI_BACKEND_ROADMAP]]
 
 ---
 
 ## Estado do produto (2026-07-24)
+
+### Auditoria de runtime, CRM e impressão (2026-09-04, alterações locais)
+
+- Checkout alinhado por fast-forward aos 47 commits publicados até `e6c7ca4af9ce`; alterações próprias preservadas. Polling adaptativo e correções antigas de testes já vêm do upstream.
+- Erro real de identificação CRM: adaptador enviava cinco argumentos a uma RPC de três e lia `pessoa_id` em vez de `pessoaId`. Correção local sem DDL; contrato confirmado na migration PDV e via CLI pela coordenação. Teste impede associação automática em conflito.
+- AppShell passou a lazy dentro de AuthGuard: JavaScript inicial gzip caiu 34% na comparação sobre a mesma base. Impressão incerta preserva dedupe e não abre fallback, inclusive com HTTP 400 legado do aplicativo nativo.
+- Build, lint e typecheck server verdes; regressões locais de impressão 10/10 e contrato CRM 5/5. Rodada final: 120/120 arquivos convencionais passaram em 225,07 s na base atual com os patches. Gates de banco/E2E e build Docker não executados (daemon indisponível). Relatório: `docs/audits/2026-09-04-zelochat.md`.
 
 ### Pedidos conversacionais híbridos (2026-09-03)
 
@@ -134,7 +145,7 @@
 - **CRM pós-publicação:** obter uma sessão autenticada de teste em ambiente publicado e validar visualmente a navegação no dispositivo do operador. O módulo Clientes segue a assinatura/permissão, sem rollout por empresa; campanhas, automações e outbound continuam desligados.
 - **Mesmo bug de modificadores sumidos, via `LEGACY_CANONICAL_ORDER_SELECT`** (`server/ai.ts` — consultas da IA sobre pedidos do cliente — e `server/router.ts` — mensagem de despacho pro entregador): não corrigido ainda porque `ai.ts` é função crítica (ver CLAUDE.md, "Critical functions") e merece verificação própria antes de mexer.
 - `IMAGE_VAULT_BRAINSTORM.md` — feature de vault de imagens: brainstorm feito, **não iniciada**
-- `npm run build` — aviso de chunk >500 kB; maior chunk `index-BirF1qk8.js` = 603.87 kB / 171.61 kB gzip
+- Build frontend — aviso de chunk resolvido localmente em 2026-09-04 com lazy AppShell; métricas em `docs/audits/2026-09-04-zelochat.md`.
 - Dependências antigas — `npm audit` limpo; majors pendentes (`express@5`, `vite@8`, `stripe@22`, `typescript@6`)
 
 ## Dívida técnica aceita (conhecido, não prioritário)

@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import { randomBytes } from 'crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
+import { fetchWithDeadline } from './runtime/httpDeadline.js';
 import { isSubscriptionCurrentlyActive } from '../src/domain/subscription.js';
 import { requireActorAccess, resolveActorAccessFromToken, type ActorAccessContext } from './accessControl.js';
 
@@ -29,6 +30,7 @@ function getServiceRoleKey(): string {
 export function getServiceSupabase(): SupabaseClient {
   if (!serviceClient) {
     serviceClient = createClient(getSupabaseUrl(), getServiceRoleKey(), {
+      global: { fetch: fetchWithDeadline },
       auth: {
         autoRefreshToken: false,
         persistSession: false,

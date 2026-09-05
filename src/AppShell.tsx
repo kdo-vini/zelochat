@@ -78,6 +78,7 @@ export default function AppShell() {
   const [profilePics, setProfilePics] = useState<Record<string, string>>({});
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [deferredDataReady, setDeferredDataReady] = useState(false);
+  const [printOwner, setPrintOwner] = useState<{ token: string; ownerUserId: string } | null>(null);
   const [actorCapabilities, setActorCapabilities] = useState<{ pessoasVisualizar: boolean; pessoasGerenciar: boolean; clientesComunicar: boolean; campaignsEnabled: boolean; automationsEnabled: boolean } | null>(null);
 
   const syncConfigTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,6 +106,7 @@ export default function AppShell() {
   }, []);
 
   const { session, token, loading: authLoading } = useSupabaseSession();
+  const printOwnerUserId = printOwner?.token === token ? printOwner.ownerUserId : null;
   const {
     isActive: subscriptionActive,
     capabilities: subscriptionCapabilities,
@@ -116,11 +118,12 @@ export default function AppShell() {
   const zelochatMode = normalizeZeloChatMode(empresa?.zelochat_mode);
   const isGeneralMode = zelochatMode === 'general';
   useEffect(() => {
-    if (!token) { setActorCapabilities(null); return; }
+    if (!token) { setActorCapabilities(null); setPrintOwner(null); return; }
     let cancelled = false;
     void fetch(apiUrl('/api/access/me'), { headers: { Authorization: `Bearer ${token}` } }).then(async (response) => {
       if (!response.ok) throw new Error('PERMISSIONS_UNAVAILABLE');
-      const body = await response.json() as { capabilities?: { pessoas?: { visualizar?: boolean; gerenciar?: boolean }; clientes?: { comunicar?: boolean } }; rollout?: { crm?: boolean; campaigns?: boolean; automations?: boolean } };
+      const body = await response.json() as { ownerUserId?: string; capabilities?: { pessoas?: { visualizar?: boolean; gerenciar?: boolean }; clientes?: { comunicar?: boolean } }; rollout?: { crm?: boolean; campaigns?: boolean; automations?: boolean } };
+      if (!cancelled) setPrintOwner(body.ownerUserId ? { token, ownerUserId: body.ownerUserId } : null);
       if (!cancelled) setActorCapabilities({ pessoasVisualizar: body.capabilities?.pessoas?.visualizar === true, pessoasGerenciar: body.capabilities?.pessoas?.gerenciar === true, clientesComunicar: body.capabilities?.clientes?.comunicar === true, campaignsEnabled: body.rollout?.campaigns === true, automationsEnabled: body.rollout?.automations === true });
     }).catch(() => { if (!cancelled) setActorCapabilities(null); });
     return () => { cancelled = true; };
@@ -210,7 +213,7 @@ export default function AppShell() {
     deleteTrigger: deleteTriggerRequest,
   } = useTriggers(token, { enabled: shouldLoadTriggers });
   const printer = usePrinter();
-  const { autoPrintOrder, reprintOrder } = useAutoPrint(printer, state.businessInfo.name || 'ZeloChat', toast);
+  const { autoPrintOrder, reprintOrder } = useAutoPrint(printer, state.businessInfo.name || 'ZeloChat', toast, printOwnerUserId, session?.user.id ?? null);
 
   const {
     orders: supabaseOrders,

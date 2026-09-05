@@ -9,6 +9,7 @@ import { createProviderAdapter, type ProviderAdapter, type ProviderDispatchResul
 import { cleanupTerminalOutboundMedia } from './mediaStore.js';
 import { recordConversationOutboundMetric } from './observability.js';
 import { registerOutboundWorkerWaker, wakeOutboundWorker } from './wake.js';
+import { startPeriodicTask } from '../runtime/periodicTask.js';
 
 const parseMs = (name: string, fallback: number): number => {
   const value = Number.parseInt(process.env[name] || '', 10);
@@ -285,15 +286,17 @@ export class OutboundWorker {
   }
 
   async runBatch(workerId = `outbound-worker-${process.pid}`, limit = 1): Promise<number> {
-    const concurrency = Math.max(1, Math.floor(limit));
-    const results = await Promise.all(
+    const concurrency = Number.isFinite(limit) ? Math.max(1, Math.min(8, Math.floor(limit))) : 1;
+    const results = await Promise.allSettled(
       Array.from({ length: concurrency }, (_, index) => this.runOnce(`${workerId}-${index + 1}`)),
     );
-    return results.filter(Boolean).length;
+    for (const result of results) if (result.status === 'rejected') console.error('[outbound] claim failed', result.reason instanceof Error ? result.reason.message : 'unknown');
+    return results.filter((result) => result.status === 'fulfilled' && result.value).length;
   }
 
   private timer: NodeJS.Timeout | null = null;
   private tickInFlight = false;
+  private activeBatch: Promise<number> | null = null;
   private wakeRequested = false;
   private activeUntil = 0;
   private activeIntervalMs = OUTBOUND_WORKER_ACTIVE_INTERVAL_MS;
@@ -321,7 +324,7 @@ export class OutboundWorker {
     this.activeIntervalMs = Math.max(10, intervalMs);
     this.idleIntervalMs = Math.max(this.activeIntervalMs, options.idleIntervalMs ?? OUTBOUND_WORKER_IDLE_INTERVAL_MS);
     this.activeWindowMs = Math.max(0, options.activeWindowMs ?? OUTBOUND_WORKER_ACTIVE_WINDOW_MS);
-    this.concurrency = Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 1;
+    this.concurrency = Number.isFinite(concurrency) ? Math.max(1, Math.min(8, Math.floor(concurrency))) : 1;
     void this.tick();
   }
 
@@ -333,9 +336,10 @@ export class OutboundWorker {
     this.schedule(0);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.running = false;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    await this.activeBatch?.catch(() => {});
   }
 
   private schedule(delayMs: number): void {
@@ -350,11 +354,13 @@ export class OutboundWorker {
     this.tickInFlight = true;
     this.wakeRequested = false;
     try {
-      await this.runBatch(`outbound-worker-${process.pid}`, this.concurrency);
+      this.activeBatch = this.runBatch(`outbound-worker-${process.pid}`, this.concurrency);
+      await this.activeBatch;
     } catch (error) {
       console.error('[outbound] worker tick failed', error instanceof Error ? error.message : 'unknown');
     } finally {
       this.tickInFlight = false;
+      this.activeBatch = null;
     }
     if (!this.running) return;
     if (this.wakeRequested) { this.schedule(0); return; }
@@ -404,16 +410,19 @@ async function validateOutboundJob(job: OutboundJob): Promise<{ action: 'send' |
 }
 
 let startedWorker: OutboundWorker | null = null;
-let cleanupTimer: NodeJS.Timeout | null = null;
 export function startOutboundWorker(): OutboundWorker | null {
   if (!startedWorker) {
     startedWorker = new OutboundWorker({ queue: new OutboundQueue(createSupabaseOutboundJobStore()) });
     const worker = startedWorker;
     registerOutboundWorkerWaker(() => worker.wake());
     startedWorker.start();
-    void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown'));
-    cleanupTimer = setInterval(() => { void cleanupTerminalOutboundMedia().catch((error) => console.warn('[outbound] limpeza de mídia adiada', error instanceof Error ? error.message : 'unknown')); }, 60 * 60 * 1000);
-    cleanupTimer.unref();
+    startPeriodicTask('outboundMediaCleanup', cleanupTerminalOutboundMedia, 0, 60 * 60 * 1000);
   }
   return startedWorker;
+}
+
+export async function stopOutboundWorker(): Promise<void> {
+  registerOutboundWorkerWaker(null);
+  await startedWorker?.stop();
+  startedWorker = null;
 }

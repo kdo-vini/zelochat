@@ -25,7 +25,7 @@ function apiHeaders() {
 
 async function deleteProviderInstanceExact(instance: string): Promise<void> {
   try {
-    await axios.delete(`${BASE_URL}/v2/instance/delete/${instance}`, { headers: apiHeaders() });
+    await axios.delete(`${BASE_URL}/v2/instance/delete/${instance}`, { timeout: 15_000, headers: apiHeaders() });
   } catch (err: any) {
     const status = err?.response?.status;
     if (status !== 404) throw err;
@@ -192,7 +192,7 @@ export async function createInstance(empresaId: string): Promise<string> {
     await axios.post(
       `${BASE_URL}/evolution/instance/create`,
       { instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS' },
-      { headers: apiHeaders() },
+      { timeout: 15_000, headers: apiHeaders() },
     );
   } catch (err: any) {
     // 409 / "already exists" → instance was previously created (e.g. retry path);
@@ -336,7 +336,7 @@ export async function deleteInstance(empresaId: string): Promise<void> {
   const instance = await getInstanceForEmpresa(empresaId);
   if (!instance) return;
   try {
-    await axios.delete(`${BASE_URL}/v2/instance/delete/${instance}`, { headers: apiHeaders() });
+    await axios.delete(`${BASE_URL}/v2/instance/delete/${instance}`, { timeout: 15_000, headers: apiHeaders() });
   } catch (err: any) {
     const status = err?.response?.status;
     // 404 → instance was already deleted upstream; treat as success.

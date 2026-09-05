@@ -1,3 +1,5 @@
+import { startPeriodicTask } from './runtime/periodicTask.js';
+import { isShuttingDown, trackBackgroundWork } from './runtime/backgroundWork.js';
 import axios from 'axios';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
@@ -100,7 +102,7 @@ export type ConnectionStatus = 'disconnected' | 'qr' | 'connecting' | 'connected
 
 let connectionStatus: ConnectionStatus = 'disconnected';
 let currentQR: string | null = null;
-let incomingMessageHandler: ((msg: any, empresaId: string | null) => void) | null = null;
+let incomingMessageHandler: ((msg: any, empresaId: string | null) => void | Promise<void>) | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000; // 5 min cap
@@ -273,7 +275,7 @@ export async function registerWebhook(force = false): Promise<boolean> {
           events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
         },
       },
-      { headers: apiHeaders() },
+      { timeout: 15_000, headers: apiHeaders() },
     );
 
     // 2. Update instance to enable media base64 — per docs, this endpoint's
@@ -289,7 +291,7 @@ export async function registerWebhook(force = false): Promise<boolean> {
             events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
           },
         },
-        { headers: { ...apiHeaders(), 'Content-Type': 'application/json' } },
+        { timeout: 15_000, headers: { ...apiHeaders(), 'Content-Type': 'application/json' } },
       );
       console.log('[WhatsApp] Instance update response:', JSON.stringify(updateRes.data)?.slice(0, 400));
     } catch (updateErr: any) {
@@ -300,7 +302,7 @@ export async function registerWebhook(force = false): Promise<boolean> {
     try {
       const findRes = await axios.get(
         `${BASE_URL}/v2/webhook/find/${INSTANCE_NAME}`,
-        { headers: apiHeaders() },
+        { timeout: 15_000, headers: apiHeaders() },
       );
       console.log('[WhatsApp] Current webhook config:', JSON.stringify(findRes.data)?.slice(0, 600));
     } catch {
@@ -324,7 +326,7 @@ export function getQR(): string | null {
   return currentQR;
 }
 
-export function onIncomingMessage(handler: (msg: any, empresaId: string | null) => void): void {
+export function onIncomingMessage(handler: (msg: any, empresaId: string | null) => void | Promise<void>): void {
   incomingMessageHandler = handler;
 }
 
@@ -335,11 +337,13 @@ export function onIncomingMessage(handler: (msg: any, empresaId: string | null) 
  */
 export function dispatchIncomingMessage(msg: any, empresaId: string | null = null): void {
   if (incomingMessageHandler) {
-    incomingMessageHandler(msg, empresaId);
+    void trackBackgroundWork(Promise.resolve().then(() => incomingMessageHandler?.(msg, empresaId)))
+      .catch((error) => console.error('[Inbound] handler failed', error instanceof Error ? error.message : 'unknown'));
   }
 }
 
 function scheduleReconnect(): void {
+  if (isShuttingDown()) return;
   if (manuallyDisconnected) {
     console.log('[WhatsApp] Reconnect suppressed — manually disconnected.');
     return;
@@ -440,7 +444,7 @@ export async function sendTextMessage(
   const res = await axios.post(
     `${BASE_URL}/message/sendText/${instance}`,
     { number: toWhatsmiauNumber(jid), text: normalizedText, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -478,7 +482,7 @@ export async function sendButtonMessage(
         return { type: 'reply', displayText: b.displayText, id: b.id };
       }),
     },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -506,7 +510,7 @@ export async function sendMediaMessage(
   const res = await axios.post(
     `${BASE_URL}/message/sendMedia/${instance}`,
     { number: toWhatsmiauNumber(jid), ...normalizedParams, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -525,7 +529,7 @@ export async function sendWhatsAppAudio(
   const res = await axios.post(
     `${BASE_URL}/message/sendWhatsAppAudio/${instance}`,
     { number: toWhatsmiauNumber(jid), audio: audioUrl, encoding: true, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -549,7 +553,7 @@ export async function sendContactMessage(
         ...(contact.organization ? { organization: contact.organization } : {}),
       }],
     },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -611,7 +615,7 @@ export function prepareWhatsAppHttpRequest(input: WhatsAppOutboundRequestInput):
 function assertNeverOutboundRequest(input: never): never { throw new Error(`OUTBOUND_REQUEST_UNSUPPORTED:${String((input as { kind?: unknown }).kind)}`); }
 
 export async function sendPreparedWhatsAppHttpRequest(request: PreparedWhatsAppHttpRequest): Promise<string | null> {
-  const response = await axios.post(request.url, request.body, { headers: request.headers });
+  const response = await axios.post(request.url, request.body, { timeout: 15_000, headers: request.headers });
   const id = extractWhatsmiauMessageId(response.data) ?? null;
   trackSent(id ?? undefined);
   return id;
@@ -628,7 +632,7 @@ export async function sendStickerMessage(
   const res = await axios.post(
     `${BASE_URL}/message/sendSticker/${instance}`,
     { number: toWhatsmiauNumber(jid), sticker, ...(quoted ? { quoted: buildQuotedPayload(quoted) } : {}) },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -641,7 +645,7 @@ export async function fetchProfilePicture(
 ): Promise<string | null> {
   try {
     const instance = await resolveInstance(empresaId);
-    const res = await axios.get(`${BASE_URL}/chat/fetchProfilePictureUrl/${instance}`, {
+    const res = await axios.get(`${BASE_URL}/chat/fetchProfilePictureUrl/${instance}`, { timeout: 15_000,
       headers: apiHeaders(),
       params: { number: jid },
     });
@@ -812,7 +816,7 @@ export async function setWebhookForInstance(instanceName: string): Promise<void>
           events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
         },
       },
-      { headers: apiHeaders() },
+      { timeout: 15_000, headers: apiHeaders() },
     );
     try {
       await axios.put(
@@ -825,7 +829,7 @@ export async function setWebhookForInstance(instanceName: string): Promise<void>
             events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'CONTACTS_UPSERT'],
           },
         },
-        { headers: { ...apiHeaders(), 'Content-Type': 'application/json' } },
+        { timeout: 15_000, headers: { ...apiHeaders(), 'Content-Type': 'application/json' } },
       );
     } catch {
       // Non-fatal — the /webhook/set call above already enables it. The /v2/instance/update
@@ -850,7 +854,7 @@ export async function fetchQR(): Promise<void> {
 
   // 1. Check real connection state via instances list (connectionState endpoint is not supported)
   try {
-    const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, {
+    const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, { timeout: 15_000,
       headers: apiHeaders(),
     });
     const list: any[] = Array.isArray(instances) ? instances : (instances?.data ?? []);
@@ -881,7 +885,7 @@ export async function fetchQR(): Promise<void> {
   const ids = [instanceInternalId, INSTANCE_NAME].filter(Boolean);
   for (const id of ids) {
     try {
-      const res = await axios.get(`${BASE_URL}/v2/instance/connect/${id}`, {
+      const res = await axios.get(`${BASE_URL}/v2/instance/connect/${id}`, { timeout: 15_000,
         headers: apiHeaders(),
       });
       console.log('[WhatsApp] Connect response keys:', Object.keys(res.data ?? {}));
@@ -921,7 +925,7 @@ export async function startWhatsApp(): Promise<void> {
 
   // 1. Resolve instance — use existing if plan limit reached
   try {
-    const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, {
+    const { data: instances } = await axios.get(`${BASE_URL}/evolution/instances`, { timeout: 15_000,
       headers: apiHeaders(),
     });
     const list: any[] = Array.isArray(instances) ? instances : (instances?.data ?? []);
@@ -950,7 +954,7 @@ export async function startWhatsApp(): Promise<void> {
       await axios.post(
         `${BASE_URL}/evolution/instance/create`,
         { instanceName: INSTANCE_NAME, qrcode: true, integration: 'WHATSAPP-BAILEYS' },
-        { headers: apiHeaders() },
+        { timeout: 15_000, headers: apiHeaders() },
       );
       console.log(`[WhatsApp] Instance "${redactInstance(INSTANCE_NAME)}" created.`);
     }
@@ -966,13 +970,13 @@ export async function startWhatsApp(): Promise<void> {
   await fetchQR();
 
   // 3. Periodic health check — reconnect if Whatsmiau drops the session silently
-  setInterval(async () => {
+  startPeriodicTask('whatsappHealth', async () => {
     if (manuallyDisconnected) return;     // respect explicit user logout
     if (connectionStatus === 'connected') return;
     if (reconnectTimer) return; // reconnect already in progress
     console.log('[WhatsApp] Health check: not connected — triggering reconnect.');
     scheduleReconnect();
-  }, 5 * 60 * 1000); // every 5 minutes
+  }, 5 * 60 * 1000, 5 * 60 * 1000); // every 5 minutes
 }
 
 export async function disconnectWhatsApp(): Promise<void> {
@@ -1082,7 +1086,7 @@ export async function sendPresence(
     await axios.post(
       `${BASE_URL}/chat/sendPresence/${instance}`,
       { number: toWhatsmiauNumber(jid), presence, ...(delayMs > 0 ? { delay: delayMs } : {}) },
-      { headers: apiHeaders() },
+      { timeout: 15_000, headers: apiHeaders() },
     );
   } catch (err) {
     // Non-fatal — don't let presence failure block message delivery
@@ -1103,7 +1107,7 @@ export async function markWhatsAppMessageAsRead(
     await axios.post(
       `${BASE_URL}/chat/markMessageAsRead/${instance}`,
       { readMessages: [{ remoteJid: jid, id: messageId }] },
-      { headers: apiHeaders() },
+      { timeout: 15_000, headers: apiHeaders() },
     );
   } catch (err) {
     // Non-fatal — read receipt failure must not block the reply pipeline.
@@ -1122,7 +1126,7 @@ export async function validateWhatsAppNumbers(
   const res = await axios.post(
     `${BASE_URL}/chat/whatsappNumbers/${instance}`,
     { numbers },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   return res.data ?? [];
 }
@@ -1149,7 +1153,7 @@ export async function sendListMessage(
   const res = await axios.post(
     `${BASE_URL}/message/sendList/${instance}`,
     { number: toWhatsmiauNumber(jid), ...params },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -1168,7 +1172,7 @@ export async function sendLocationMessage(
   const res = await axios.post(
     `${BASE_URL}/message/sendLocation/${instance}`,
     { number: toWhatsmiauNumber(jid), ...params },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -1189,7 +1193,7 @@ export async function sendReaction(
   const res = await axios.post(
     `${BASE_URL}/message/sendReaction/${instance}`,
     { reaction, key: { remoteJid: jid, id: messageId, fromMe } },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -1208,7 +1212,7 @@ export async function sendPollMessage(
   const res = await axios.post(
     `${BASE_URL}/message/sendPoll/${instance}`,
     { number: toWhatsmiauNumber(jid), ...params },
-    { headers: apiHeaders() },
+    { timeout: 15_000, headers: apiHeaders() },
   );
   const id = extractWhatsmiauMessageId(res.data) ?? null;
   trackSent(id ?? undefined);
@@ -1224,8 +1228,13 @@ export async function revokeMessage(
   empresaId?: string | null,
 ): Promise<void> {
   const instance = await resolveInstance(empresaId);
-  await axios.delete(v2Url(`/chat/deleteMessageForEveryone/${instance}`), {
+  await axios.delete(v2Url(`/chat/deleteMessageForEveryone/${instance}`), { timeout: 15_000,
     headers: apiHeaders(),
     data: { id: messageId, remoteJid: jid, fromMe },
   });
+}
+
+/** Process shutdown must not log the merchant out of WhatsApp. */
+export function stopWhatsAppLifecycle(): void {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 }

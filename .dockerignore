@@ -19,3 +19,13 @@ auth_info_baileys
 docs
 tests
 scripts
+.codex
+.agents
+.obsidian
+build-info.json
+CURRENT.md
+CLAUDE.md
+AGENTS.md
+CODE_REVIEW.md
+FIXES_PROGRESS.md
+INCIDENTS.md

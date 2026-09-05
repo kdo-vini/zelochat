@@ -1,3 +1,4 @@
+import { isShuttingDown, trackBackgroundWork } from './runtime/backgroundWork.js';
 import { sendPresence, markWhatsAppMessageAsRead } from './whatsapp.js';
 import type { AiTurnPermit } from './conversationControl.js';
 
@@ -65,6 +66,7 @@ export interface ScheduleReplyArgs {
 }
 
 export function scheduleReply({ empresaId, jid, permit, messageId, fire }: ScheduleReplyArgs): void {
+  if (isShuttingDown()) return;
   const key = keyOf(empresaId, jid);
 
   // Kill switch: legacy single-timer mode. Skip read/typing entirely.
@@ -84,7 +86,7 @@ export function scheduleReply({ empresaId, jid, permit, messageId, fire }: Sched
       state.replyTimer = undefined;
       pending.delete(key);
       try {
-        await fire(state.permit);
+        await trackBackgroundWork(fire(state.permit));
       } catch (err) {
         console.error('[replyDebouncer] fire callback threw:', err);
       }
@@ -141,7 +143,7 @@ export function scheduleReply({ empresaId, jid, permit, messageId, fire }: Sched
     state.replyTimer = undefined;
     pending.delete(key);
     try {
-      await fire(state.permit);
+      await trackBackgroundWork(fire(state.permit));
     } catch (err) {
       console.error('[replyDebouncer] fire callback threw:', err);
     }
@@ -159,4 +161,9 @@ export function cancelPendingReply(empresaId: string, jid: string): void {
     void sendPresence(jid, 'paused', 0, empresaId);
   }
   pending.delete(key);
+}
+
+export function stopPendingReplies(): void {
+  for (const state of pending.values()) clearTimers(state);
+  pending.clear();
 }

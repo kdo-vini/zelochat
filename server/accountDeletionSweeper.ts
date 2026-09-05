@@ -1,3 +1,5 @@
+import { isShuttingDown } from './runtime/backgroundWork.js';
+import { startPeriodicTask } from './runtime/periodicTask.js';
 import { getServiceSupabase } from './supabase.js';
 import { deleteDedicatedInstance } from './instanceManager.js';
 import { cancelStripeSubscriptionForUser } from './billing.js';
@@ -204,6 +206,7 @@ export async function runAccountDeletionSweep(
 
   console.log(`[account-deletion-sweeper] purging ${due.length} due account(s)`);
   for (const account of due) {
+    if (isShuttingDown()) break;
     try {
       await deps.purgeAccount(account);
       result.purged += 1;
@@ -269,16 +272,7 @@ export async function sweepDueAccountDeletions(): Promise<DeletionSweepResult> {
   });
 }
 
-let loopHandle: ReturnType<typeof setInterval> | null = null;
 
 export function startAccountDeletionSweepLoop(): void {
-  if (loopHandle) return;
-  const tick = () => {
-    sweepDueAccountDeletions().catch((err) => {
-      console.error('[account-deletion-sweeper] tick failed:', err);
-    });
-  };
-  setTimeout(tick, STARTUP_DELAY_MS).unref?.();
-  loopHandle = setInterval(tick, INTERVAL_MS);
-  loopHandle.unref?.();
+  startPeriodicTask('accountDeletionSweeper', sweepDueAccountDeletions, STARTUP_DELAY_MS, INTERVAL_MS);
 }
