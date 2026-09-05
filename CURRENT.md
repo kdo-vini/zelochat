@@ -1,12 +1,12 @@
 # ZeloChat — Foco atual
 
-### CI e publicação — 2026-09-04 (reforço em validação)
+### CI e publicação — 2026-09-05 (concluído)
 
-A base `0d67676e0b9efa8dff682862c84345de9eb80cdb` foi publicada e o job de produção confirmou os dois SHA40, 20 assets e 1.567.508 bytes. No Dokploy, o literal `PUBLIC_APP_VERSION=${SOURCE_COMMIT}` foi removido do frontend preservando o restante da configuração; frontend/backend concluíram deploy em 11s/21s e stop grace de 60s foi conferido. A primeira rodada do verificador falhou por timeouts de conexão de 5s no runner; outra execução completou. A causa de rede/região não foi determinada.
+A base `0d67676e0b9efa8dff682862c84345de9eb80cdb` foi publicada e conferida. O commit final de CI `dc52af487cc9999a905eb9262884110fbb2f6ed5` está na `main`; frontend/backend concluíram deploy no Dokploy e `/build-info.json`/`/api/version` retornam o SHA40 final.
 
-O novo patch identifica endpoint/fase/cause, segue imports com query/fragmento e testa regressões de release misto, versão errada, lazy ausente/obsoleto, conexão recuperável e corpo HTTP real travado. A CI passa a ler `/api/version`, Nginx e todos os assets das imagens reais em rede isolada, sem iniciar workers ou usar credenciais reais. A opção `--check-startup-http` é exclusivamente CLI. Esta alteração terá outro SHA e ainda precisa dos gates da branch, publicação e verificação próprias; sucesso de `0d67676` não valida o próximo commit.
+O patch identifica endpoint/fase/cause, segue imports com query/fragmento e testa regressões de release misto, versão errada, lazy ausente/obsoleto, conexão recuperável e corpo HTTP real travado. A CI lê `/api/version`, Nginx e todos os assets das imagens reais em rede isolada, sem iniciar workers ou usar credenciais reais. A opção `--check-startup-http` é exclusivamente CLI.
 
-Validação local inicial: 124 arquivos selecionados concluíram em 126,30s, mas um deles era o gate SQL que emitia SKIP sem banco. O runner agora exclui `.integration.test.ts` e anuncia 123 arquivos unitários mais uma integração separada; a nova rodada está em execução. Lint frontend/servidor verdes, build em 6,57s, 18 casos do verificador e dois da CLI; o corpo HTTP real foi abortado em 5.006ms. As imagens do commit `63fb08d` passaram o smoke HTTP isolado com SHA40, 20 assets/1.567.312 bytes, UID1000 e workers desativados.
+Validação final: 123 arquivos unitários passaram; lint frontend/servidor, build e smoke Docker/HTTP passaram. O job PostgreSQL isolado passou as três corridas reais de lock, ACL e limpeza. A CI `33941327097` ficou verde após rerun do único job de produção: os gates `verify`, `verify-outbound-postgres` e `verify-production` passaram. O primeiro job de produção expirou por timeout de rede do runner, sem falha do artefato; a repetição passou.
 
 ### Correção de runtime/build/impressão — 2026-09-04 (publicação em validação)
 
