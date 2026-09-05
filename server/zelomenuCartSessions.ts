@@ -145,6 +145,7 @@ type PublicCartResponse = {
     address: string;
     pixEnabled: boolean;
     deliveryEnabled: boolean;
+    deliveryMode: 'distance' | 'neighborhood';
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     logoUrl?: string | null;
     welcomeText?: string | null;
@@ -988,7 +989,10 @@ async function buildPublicResponse(
       address: config.address,
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
-      deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
+      deliveryMode: config.deliveryConfig?.mode ?? 'distance',
+      deliveryNeighborhoods: config.deliveryConfig?.mode === 'neighborhood'
+        ? config.deliveryConfig.neighborhoods
+        : [],
       businessHours: buildPublicBusinessHoursStatus(config),
     },
     catalog: filterVisibleCatalog(config.catalogHierarchy),
@@ -1267,7 +1271,10 @@ export async function getPublicStoreBySlug(slug: string): Promise<{
       address: config.address,
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
-      deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
+      deliveryMode: config.deliveryConfig?.mode ?? 'distance',
+      deliveryNeighborhoods: config.deliveryConfig?.mode === 'neighborhood'
+        ? config.deliveryConfig.neighborhoods
+        : [],
       logoUrl: perfil?.logo_url ?? null,
       welcomeText: perfil?.zelomenu_welcome_text ?? null,
       featuredEnabled: perfil?.zelomenu_featured_enabled ?? false,

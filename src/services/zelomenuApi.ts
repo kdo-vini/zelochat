@@ -138,6 +138,7 @@ export type ZeloMenuPublicCartResponse = {
     address: string;
     pixEnabled: boolean;
     deliveryEnabled: boolean;
+    deliveryMode: 'distance' | 'neighborhood';
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
@@ -214,6 +215,7 @@ export type ZeloMenuPublicStoreResponse = {
     address: string;
     pixEnabled: boolean;
     deliveryEnabled: boolean;
+    deliveryMode: 'distance' | 'neighborhood';
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     logoUrl?: string | null;
     welcomeText?: string | null;
