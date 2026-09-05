@@ -35,6 +35,20 @@ jobs:
           node -e 'const b=require("/tmp/frontend-build.json"); if(b.sourceCommit!==process.argv[1]) process.exit(1)' "$GITHUB_SHA"
           docker run --rm --network none --entrypoint node zelochat-backend:verify --import tsx/esm -e 'import("./server/buildVersion.ts").then(({BUILD_INFO})=>console.log(BUILD_INFO))'
           docker run --rm --network none -e SUPABASE_URL=https://build-only.supabase.co -e SUPABASE_SERVICE_ROLE_KEY=build-only -e PORT=3001 --entrypoint node zelochat-backend:verify --import tsx/esm server/index.ts --check-startup
+      - name: Verify real backend routes and Nginx asset graph with no external network
+        shell: bash
+        run: |
+          cleanup() { docker rm -f zelochat-backend-http zelochat-frontend-http >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name zelochat-frontend-http --network none zelochat-frontend:verify
+          docker run -d --name zelochat-backend-http --network container:zelochat-frontend-http -e SUPABASE_URL=http://127.0.0.1:1 -e SUPABASE_SERVICE_ROLE_KEY=build-only -e PORT=3001 --entrypoint node zelochat-backend:verify --import tsx/esm server/index.ts --check-startup-http
+          docker cp scripts/verify-deployment.mjs zelochat-backend-http:/tmp/verify-deployment.mjs
+          docker cp scripts/verify-images.mjs zelochat-backend-http:/tmp/verify-images.mjs
+          if ! docker exec -e GITHUB_SHA="$GITHUB_SHA" zelochat-backend-http node /tmp/verify-images.mjs; then
+            docker logs zelochat-backend-http
+            docker logs zelochat-frontend-http
+            exit 1
+          fi
   verify-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
@@ -47,5 +61,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
+      - name: Record verifier runtime and expected release
+        run: node -e 'console.log(JSON.stringify({node:process.version,platform:process.platform,arch:process.arch,sha:process.env.GITHUB_SHA,image:process.env.ImageOS,imageVersion:process.env.ImageVersion}))'
       - name: Wait for both production services and their referenced bundles
         run: node scripts/verify-deployment.mjs

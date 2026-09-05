@@ -1,5 +1,13 @@
 # Incidentes e padrões conhecidos
 
+## Verificação do deploy: conexão sem contexto e import com query ignorado (2026-09-04)
+
+**Sintoma:** o job de produção registrou repetidos timeouts de conexão de 5s no runner; a mensagem genérica não identificava endpoint/fase/cause. Uma revisão local também demonstrou um falso verde: `import("./missing-abcdefgh.js?v=1")` era ignorado quando o entry já continha a versão esperada.
+
+**Causa e fix:** o catch agora mantém a causa original e identifica a fase de request/headers/body; o extrator aceita query/fragmento e continua exigindo origem local, assets presentes e SHA/versão corretos. Leituras continuam limitadas a 5s, polling a 12min e somente GET. Testes reproduziram a falta de diagnóstico e o falso verde antes da correção. A CI ganhou smoke HTTP dos artefatos reais, com rede externa bloqueada e retorno de startup antes de workers/webhooks.
+
+**Estado publicado:** `0d67676` foi confirmado pelo job após nova execução (20 assets/1.567.508 bytes). O build do frontend também exigiu remover no Dokploy o literal `PUBLIC_APP_VERSION=${SOURCE_COMMIT}`; a validação estrita não foi afrouxada. A causa dos timeouts daquele runner permanece sem confirmação. O novo patch de CI ainda exige publicação e verificação no seu próprio SHA.
+
 ## Publicação e transporte WS — contenção preventiva (2026-09-04)
 
 Verificador pósdeploy agora impede tratar CI verde como prova de frontend/backend

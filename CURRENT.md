@@ -1,5 +1,13 @@
 # ZeloChat — Foco atual
 
+### CI e publicação — 2026-09-04 (reforço em validação)
+
+A base `0d67676e0b9efa8dff682862c84345de9eb80cdb` foi publicada e o job de produção confirmou os dois SHA40, 20 assets e 1.567.508 bytes. No Dokploy, o literal `PUBLIC_APP_VERSION=${SOURCE_COMMIT}` foi removido do frontend preservando o restante da configuração; frontend/backend concluíram deploy em 11s/21s e stop grace de 60s foi conferido. A primeira rodada do verificador falhou por timeouts de conexão de 5s no runner; outra execução completou. A causa de rede/região não foi determinada.
+
+O novo patch identifica endpoint/fase/cause, segue imports com query/fragmento e testa regressões de release misto, versão errada, lazy ausente/obsoleto, conexão recuperável e corpo HTTP real travado. A CI passa a ler `/api/version`, Nginx e todos os assets das imagens reais em rede isolada, sem iniciar workers ou usar credenciais reais. A opção `--check-startup-http` é exclusivamente CLI. Esta alteração terá outro SHA e ainda precisa dos gates da branch, publicação e verificação próprias; sucesso de `0d67676` não valida o próximo commit.
+
+Validação local: 124 arquivos unitários concluídos em 126,30s, lint frontend/servidor verdes e build em 6,57s. O verificador tem 18 casos e a CLI tem dois; o corpo HTTP real foi abortado em 5.006ms. Os gates PostgreSQL continuam separados da suíte sem credenciais; o novo smoke Docker ainda precisa executar sobre o commit limpo.
+
 ### Correção de runtime/build/impressão — 2026-09-04 (publicação em validação)
 
 Node24/ESM runtime; timers sem overlap, concorrência limitada, deadlines e shutdown55s (Dokploy60s). Build SHA verificado e CI com imagens; auto impressão usa owner+zelo_orders.id e capability nativa com prioridade PDV. Upgrades compatíveis e qs6.16 override: npm audit zero. Suíte121/121 passou com loaderESM; imagens reais do commit0315947 passaram build e boot isolado (Node24.20.0/UID1000). Verificação pósdeploy em main compara os dois SHA40 e todos os chunks referenciados, com versão curta no JS. WS contém erros de transporte e limita entrada64KiB/fila de saída1MiB. Novos testes convencionais passam; publicação ainda depende do job/endpoints. Ver docs/audits/2026-09-04-zelochat.md.

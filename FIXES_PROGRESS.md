@@ -1,5 +1,12 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Regressões de CI — 2026-09-04 (branch em validação)
+
+- ✅ ZCHAT-CI-002 — erros de rede sem contexto e imports com query ignorados → diagnóstico de endpoint/fase/cause, GET explícito e navegação de query/fragmento com regressão do falso verde — `scripts/verify-deployment.mjs`, `tests/deploymentVerification.test.ts`.
+- ✅ ZCHAT-CI-003 — imagem validava apenas bind/metadados em arquivo → smoke HTTP do backend e Nginx reais em namespace sem rede externa, com CLI exata antes de workers e o mesmo verificador de SHA/assets — `.github/workflows/verify.yml`, `scripts/verify-images.mjs`, `server/runtime/startupCheck.ts`.
+
+`0d67676` já teve publicação e job de produção confirmados; os reforços acima geram outro SHA e aguardam os próprios gates/publicação.
+
 ## Correções da auditoria 2026-09-04 — publicação em validação
 
 - WS: listener de erro libera autenticação e termina o socket; send callback/catch isolados, payload de entrada64KiB e fila total1MiB incluindo bytes do próximo evento. Quatro testes convencionais com objetos locais; nenhuma reprodução de protocolo malformado.

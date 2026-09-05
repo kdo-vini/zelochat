@@ -6,26 +6,34 @@ const MAX_ASSETS = 128;
 const MAX_ASSET_BYTES = 8 * 1024 * 1024;
 
 async function readPublic(url, deadline, fetchImpl, limit = MAX_ASSET_BYTES) {
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) throw new Error('Deployment verification deadline exceeded');
-  const response = await fetchImpl(url, {
-    signal: AbortSignal.timeout(Math.min(READ_TIMEOUT_MS, remaining)),
-    redirect: 'error', headers: { 'cache-control': 'no-cache' },
-  });
-  if (!response.ok) throw new Error(`${url.pathname}: HTTP ${response.status}`);
-  let bytes = 0;
-  const chunks = [];
-  const reader = response.body.getReader();
+  let phase = 'request';
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > limit) throw new Error(`${url.pathname}: response exceeds byte limit`);
-      chunks.push(value);
-    }
-  } finally { await reader.cancel().catch(() => {}); }
-  return { text: Buffer.concat(chunks).toString('utf8'), type: response.headers.get('content-type') || '', bytes };
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('Deployment verification deadline exceeded');
+    const response = await fetchImpl(url, {
+      method: 'GET', signal: AbortSignal.timeout(Math.min(READ_TIMEOUT_MS, remaining)),
+      redirect: 'error', headers: { 'cache-control': 'no-cache' },
+    });
+    phase = 'headers';
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    phase = 'body';
+    let bytes = 0;
+    const chunks = [];
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > limit) throw new Error('response exceeds byte limit');
+        chunks.push(value);
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+    return { text: Buffer.concat(chunks).toString('utf8'), type: response.headers.get('content-type') || '', bytes };
+  } catch (error) {
+    const code = error.cause?.code || error.code;
+    throw new Error(`${url.hostname}${url.pathname} [${phase}]: ${error.message}${code ? ` (${code})` : ''}`, { cause: error });
+  }
 }
 
 function localAsset(reference, parent, origin) {
@@ -76,7 +84,7 @@ export async function inspectDeployment({ baseUrl, expectedSha, deadline = Date.
     if (asset.text.includes(short)) versionFound = true;
     // Vite preload tables and dynamic imports include hashed relative filenames.
     // Follow them as well: AppShell (and the build version) is loaded lazily.
-    for (const match of asset.text.matchAll(/["']((?:\/?assets\/|\.\/?|\.\.\/)?[^"'\\\s<>]+-[\w-]{8,}\.(?:js|css))["']/g)) {
+    for (const match of asset.text.matchAll(/["']((?:\/?assets\/|\.\/?|\.\.\/)?[^"'\\\s<>]+-[\w-]{8,}\.(?:js|css)(?:[?#][^"'\\\s<>]*)?)["']/g)) {
       const dependency = localAsset(match[1], url, base.origin);
       if (dependency) queue.push(dependency);
     }

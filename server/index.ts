@@ -1,4 +1,5 @@
 import { mapConcurrent } from './runtime/concurrency.js';
+import { startupCheckMode } from './runtime/startupCheck.js';
 import { installShutdown } from './runtime/shutdown.js';
 import { startPeriodicTask, stopPeriodicTasks } from './runtime/periodicTask.js';
 import { beginShutdown, isShuttingDown, trackBackgroundWork, drainBackgroundWork } from './runtime/backgroundWork.js';
@@ -474,11 +475,13 @@ function logAiHybridOrderingEnvStatusAtStartup(): void {
 
 // --- Start server ---
 httpServer.listen(PORT, () => {
-  // Image smoke test: resolve the complete runtime graph and bind HTTP, then
-  // exit before registering webhooks or starting any business task.
-  if (process.argv.includes('--check-startup')) {
+  // Image smoke tests use this real router and bind, before all business tasks.
+  // The HTTP variant is kept alive only by an explicit CLI flag in isolated CI.
+  const startupCheck = startupCheckMode(process.argv);
+  if (startupCheck) {
     console.log('[startup] imports and HTTP binding verified');
-    httpServer.close(() => process.exit(0));
+    if (startupCheck === 'exit') httpServer.close(() => process.exit(0));
+    else console.log('[startup] HTTP image check ready; business workers disabled');
     return;
   }
   console.log(`[Server] Listening on http://localhost:${PORT}`);
