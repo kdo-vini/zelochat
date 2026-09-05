@@ -54,6 +54,20 @@ const clientEmpresa = new WeakMap<WebSocket, {
 }>();
 
 const WS_AUTH_TIMEOUT_MS = 10_000;
+const WS_MAX_PENDING_BYTES = 1024 * 1024;
+
+/** Bound a disconnected/slow browser's outbound queue and contain I/O errors. */
+export function sendWsPayload(client: WebSocket, payload: string): void {
+  if (client.bufferedAmount + Buffer.byteLength(payload) > WS_MAX_PENDING_BYTES) {
+    client.terminate();
+    return;
+  }
+  try {
+    client.send(payload, (error) => { if (error) client.terminate(); });
+  } catch {
+    client.terminate();
+  }
+}
 
 function rawDataToString(data: RawData): string {
   if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
@@ -72,7 +86,8 @@ function parseAuthToken(data: RawData): string | null {
 }
 
 export function createWsServer(httpServer: Server): WebSocketServer {
-  wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  // Browser messages contain only the authentication envelope.
+  wss = new WebSocketServer({ server: httpServer, path: '/ws', maxPayload: 64 * 1024 });
 
   wss.on('connection', (ws) => {
     clientEmpresa.set(ws, {
@@ -88,6 +103,13 @@ export function createWsServer(httpServer: Server): WebSocketServer {
         ws.close(1008, 'Authentication required');
       }
     }, WS_AUTH_TIMEOUT_MS);
+
+    ws.on('error', () => {
+      clearTimeout(authTimeout);
+      clientEmpresa.delete(ws);
+      console.warn('[WS] Socket transport failed; disconnecting client');
+      ws.terminate();
+    });
 
     ws.on('message', async (data) => {
       const state = clientEmpresa.get(ws);
@@ -111,7 +133,7 @@ export function createWsServer(httpServer: Server): WebSocketServer {
           empresaId,
         });
         clearTimeout(authTimeout);
-        ws.send(JSON.stringify({ type: 'auth_ok', data: { empresaId } }));
+        sendWsPayload(ws, JSON.stringify({ type: 'auth_ok', data: { empresaId } }));
         console.log(`[WS] Client authenticated (empresa=${empresaId.slice(0, 8)}…)`);
       } catch (err) {
         console.warn('[WS] Token resolve failed:', (err as Error).message);
@@ -147,6 +169,6 @@ export function broadcast(event: WsEvent, empresaId?: string | null): void {
       // deliberately do NOT receive scoped events.
       if (state.empresaId !== empresaId) return;
     }
-    client.send(payload);
+    sendWsPayload(client, payload);
   });
 }

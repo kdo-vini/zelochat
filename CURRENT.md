@@ -2,7 +2,7 @@
 
 ### Correção de runtime/build/impressão — 2026-09-04 (publicação em validação)
 
-Node24/ESM runtime; timers sem overlap, concorrência limitada, deadlines e shutdown55s (Dokploy60s). Build SHA verificado e CI com imagens; auto impressão usa owner+zelo_orders.id e capability nativa com prioridade PDV. Upgrades compatíveis e qs6.16 override: npm audit zero. Suíte121/121 passou com loaderESM; nova rodada npm test121/121 após dependências verde; imagens finais em validação, não declarar produção atualizada antes dos endpoints. Ver docs/audits/2026-09-04-zelochat.md.
+Node24/ESM runtime; timers sem overlap, concorrência limitada, deadlines e shutdown55s (Dokploy60s). Build SHA verificado e CI com imagens; auto impressão usa owner+zelo_orders.id e capability nativa com prioridade PDV. Upgrades compatíveis e qs6.16 override: npm audit zero. Suíte121/121 passou com loaderESM; imagens reais do commit0315947 passaram build e boot isolado (Node24.20.0/UID1000). Verificação pósdeploy em main compara os dois SHA40 e todos os chunks referenciados, com versão curta no JS. WS contém erros de transporte e limita entrada64KiB/fila de saída1MiB. Novos testes convencionais passam; publicação ainda depende do job/endpoints. Ver docs/audits/2026-09-04-zelochat.md.
 
 > Atualizar a cada sprint/sessão. Leitura rápida para agentes de IA antes de qualquer tarefa.
 > Docs detalhados: [[CLAUDE]] · [[FIXES_PROGRESS]] · [[AI_BACKEND_ROADMAP]]
@@ -16,7 +16,7 @@ Node24/ESM runtime; timers sem overlap, concorrência limitada, deadlines e shut
 - Checkout alinhado por fast-forward aos 47 commits publicados até `e6c7ca4af9ce`; alterações próprias preservadas. Polling adaptativo e correções antigas de testes já vêm do upstream.
 - Erro real de identificação CRM: adaptador enviava cinco argumentos a uma RPC de três e lia `pessoa_id` em vez de `pessoaId`. Correção local sem DDL; contrato confirmado na migration PDV e via CLI pela coordenação. Teste impede associação automática em conflito.
 - AppShell passou a lazy dentro de AuthGuard: JavaScript inicial gzip caiu 34% na comparação sobre a mesma base. Impressão incerta preserva dedupe e não abre fallback, inclusive com HTTP 400 legado do aplicativo nativo.
-- Build, lint e typecheck server verdes; regressões locais de impressão 10/10 e contrato CRM 5/5. Rodada final: 120/120 arquivos convencionais passaram em 225,07 s na base atual com os patches. Gates de banco/E2E e build Docker não executados (daemon indisponível). Relatório: `docs/audits/2026-09-04-zelochat.md`.
+- Rodada inicial histórica: build/lint/typecheck verdes, impressão10/10 e CRM5/5;120/120 arquivos em225,07s. Docker indisponível naquela etapa, posteriormente validado na fase de publicação acima. Gates de banco/E2E seguem separados. Relatório: `docs/audits/2026-09-04-zelochat.md`.
 
 ### Pedidos conversacionais híbridos (2026-09-03)
 

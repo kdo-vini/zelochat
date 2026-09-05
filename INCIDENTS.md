@@ -1,5 +1,18 @@
 # Incidentes e padrões conhecidos
 
+## Publicação e transporte WS — contenção preventiva (2026-09-04)
+
+Verificador pósdeploy agora impede tratar CI verde como prova de frontend/backend
+publicados: `/build-info.json` e `/api/version` devem indicar o SHA40 esperado;
+HTML e assets referenciados (incluindo AppShell lazy) precisam estar presentes,
+com versão curta embutida. Leituras de5s, deadline total12min, sem credenciais ou
+efeitos no negócio. Só push main executa esse gate após build/testes.
+
+Revisão defensiva de WS adicionou contenção de erro/callback de envio, entrada
+máxima64KiB e fila de saída1MiB incluindo a próxima mensagem. Testes usam objetos
+locais/eventos de transporte; nenhuma reprodução de frames malformados foi feita.
+Não houve demonstração de outage novo; são proteções de disponibilidade.
+
 ## Carregamento de módulos travava testes AI (2026-09-04, ambiente local)
 
 Durante validação, quatro arquivos ficaram90s sem iniciar casos. Perfil apontou resolução de extensões tsx/OpenAI, com loader misto CJS/ESM. Usar node --import tsx/esm reduziu a suíte121 arquivos de348,546s com quatro timeouts para45,656s toda verde. Não foi incidente de produção comprovado. Runner/runtime atualizados e smoke Linux sem rede validado; demais evidências no relatório de auditoria.

@@ -2,6 +2,9 @@
 
 ## Correções da auditoria 2026-09-04 — publicação em validação
 
+- WS: listener de erro libera autenticação e termina o socket; send callback/catch isolados, payload de entrada64KiB e fila total1MiB incluindo bytes do próximo evento. Quatro testes convencionais com objetos locais; nenhuma reprodução de protocolo malformado.
+- CI: job pósdeploy somente push main, após verify; aguarda no máximo12min por SHA40 igual em frontend/backend e verifica existência/tipo dos assets e versão no JS lazy. Branches validam testes sem consultar deploy.
+
 Resolvidos localmente Node20 EOL, dev toolchain no runtime, timers sobrepostos, stop sem drain, concorrência/config sem teto e chamadas externas sem deadline nos caminhos revisados. CI/build rejeita SHA divergente/código fora do commit. Impressão automática coordenada owner+pedido canônico; manual separada. Overrides/deps auditados com zero avisos npm. Validação e limites: docs/audits/2026-09-04-zelochat.md.
 
 **Source review:** [[CODE_REVIEW]] — 6-agent senior audit, 24 P0 / 47 P1 / 38 P2 / 24 P3.
