@@ -168,7 +168,7 @@ export function serializeCustomerSegment(segment: CustomerSegment): Record<strin
 export function countActiveSegmentCriteria(segment: CustomerSegment): number {
   return [
     Boolean(segment.search),
-    segment.buyers !== undefined && segment.buyers !== 'all',
+    segment.buyers !== undefined && segment.buyers !== 'buyers',
     segment.minOrders !== undefined,
     segment.maxOrders !== undefined,
     segment.minTotalValue !== undefined,

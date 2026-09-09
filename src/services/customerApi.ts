@@ -1,5 +1,5 @@
 import { apiFetch, apiUrl } from '../config';
-import { countActiveSegmentCriteria, serializeCustomerSegment, type CustomerSegment, type CustomerSortKey } from '../domain/customerSegment.js';
+import { countActiveSegmentCriteria, DEFAULT_CUSTOMER_SEGMENT, DEFAULT_CUSTOMER_SORT, serializeCustomerSegment, type CustomerSegment, type CustomerSortKey } from '../domain/customerSegment.js';
 import type {
   CustomerOrderingAddress,
   CustomerOrderingContextField,
@@ -77,6 +77,14 @@ export interface CustomerListQuery extends CustomerFilters {
   cursor?: string | null;
   limit?: number;
 }
+
+/**
+ * The tela de Clientes opens on this query: only who has already bought,
+ * ranked by most orders. Production data (2026-09) showed 142 of 218
+ * cadastros are WhatsApp contacts who never ordered, and the old
+ * updated_at-desc default put zero buyers on the first page.
+ */
+export const DEFAULT_CUSTOMER_FILTERS: CustomerFilters = { segment: { ...DEFAULT_CUSTOMER_SEGMENT }, sort: DEFAULT_CUSTOMER_SORT };
 
 export class CustomerApiError extends Error {
   readonly status: number;

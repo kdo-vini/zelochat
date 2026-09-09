@@ -1,12 +1,19 @@
 # ZeloChat — Foco atual
 
-### Clientes — segmento único e ordenação server-side (2026-09-09)
+### Clientes — segmento único, ordenação e tela redesenhada (2026-09-09)
 
-Implementação local em validação: o vocabulário de filtros foi centralizado em
+Backend e frontend concluídos, revisados e verificados localmente (tsc, suíte
+de testes, build). O vocabulário de filtros foi centralizado em
 `src/domain/customerSegment.ts`, campanhas passaram a reutilizar o predicado
 puro, e a listagem de Clientes ganhou o overload RPC da migration 068 com
-ordenação por pedidos, valor, recência ou nome. Aplicar a migration 068 antes
-de publicar o backend; campanhas continuam desligadas.
+ordenação por pedidos, valor, recência ou nome. A tela agora abre em "quem já
+comprou, mais pedidos primeiro" (produção tinha 142 de 218 cadastros sem
+nenhum pedido na frente da fila), com 4 grupos prontos no painel de filtros,
+seletor de ordenação na barra e a linha da lista redesenhada para mostrar
+pedidos como dado principal. VIP e Aniversariantes saíram do painel (armadilhas:
+0 e 4 pessoas na base, respectivamente) mas o vocabulário continua suportando
+tag/mês quando fizerem sentido de novo. Aplicar a migration 068 antes de
+publicar o backend; campanhas continuam desligadas.
 
 ### Modelos de entrega por bairro ou por rota — implementação local (2026-09-05)
 
