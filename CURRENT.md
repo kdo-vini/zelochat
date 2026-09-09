@@ -1,5 +1,19 @@
 # ZeloChat — Foco atual
 
+### Correção de comportamento da IA no WhatsApp (2026-09-09)
+
+Duas causas-raiz confirmadas com dados de produção da Bem Servido e
+corrigidas com regressão: a busca do catálogo usava uma mensagem antiga em vez
+do texto atual do cliente (loop de resposta idêntica, 13 ocorrências em 10
+conversas desde 01/09) e o takeover nativo falhava quando o operador iniciava
+a conversa pelo celular, deixando a IA responder por cima até o replay
+worker (31 eventos em nove dias, alguns em dead letter). Detalhes em
+[[INCIDENTS]] e [[FIXES_PROGRESS]].
+
+Em aberto: o provedor de WhatsApp entregou webhooks dessa instância com
+45–60 s de atraso constante em 09/09 — fora do nosso controle, mas alarga a
+janela de corrida; vale monitorar se persiste.
+
 ### Modelos de entrega por bairro ou por rota — implementação local (2026-09-05)
 
 O ZeloChat agora lê o modelo ativo e os bairros ativos da configuração

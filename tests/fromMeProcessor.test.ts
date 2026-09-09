@@ -17,6 +17,7 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
       inserted: true, takeoverApplied: true, messageId: 'message-native', jobId: 'job-native',
       conversationControlId: 'control-1', mode: 'human', epoch: '8', remoteJids: [jid],
     }),
+    ensureConversationSession: async () => { calls.push('ensure-session'); },
     repairServerEcho: async () => { calls.push('repair'); },
     holdPendingCorrelation: async () => { calls.push('hold'); },
     cancelPendingReply: () => { calls.push('cancel'); },
@@ -87,6 +88,55 @@ function harness(overrides: Partial<FromMeProcessorDependencies> = {}) {
   assert.equal(result.kind, 'native_human');
   assert.equal(writes, 1, 'authenticated native human sends are always reconciled');
   assert.deepEqual(calls, ['cancel', 'broadcast:message_sent', 'broadcast:conversation_mode_changed']);
+}
+
+// REGRESSION 2026-09-09: when the operator STARTS the conversation from their
+// own phone there is no session row yet, so the takeover RPC raised
+// CONVERSATION_SESSION_NOT_FOUND. That throw used to reach the replay worker's
+// 5/10/20/40s backoff, leaving the conversation in mode='ai' — long enough for
+// the AI to answer over the operator (Bem Servido, iFood thread: takeover
+// landed 0.8s after the AI had already replied). Create the session and
+// record the takeover in the same pass instead.
+{
+  let attempts = 0;
+  const { calls, process } = harness({
+    recordNativeTakeover: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('CONVERSATION_SESSION_NOT_FOUND');
+      return { inserted: true, takeoverApplied: true, messageId: 'm-new', jobId: 'j-new', conversationControlId: 'c-new', mode: 'human', epoch: '1', remoteJids: [jid] };
+    },
+  });
+  const result = await process({ empresaId: 'empresa-1', data: event('operator-opened'), authStatus: 'token_match', rawEventId: 'raw-new' });
+  assert.equal(result.kind, 'native_human');
+  assert.equal((result as { takeoverApplied: boolean }).takeoverApplied, true);
+  assert.equal(attempts, 2, 'the takeover is retried in-band, not deferred to the replay worker');
+  assert.deepEqual(calls, ['ensure-session', 'cancel', 'broadcast:message_sent', 'broadcast:conversation_mode_changed']);
+}
+
+// Any other failure still replays — only the missing session is recovered here.
+{
+  let ensured = 0;
+  const { process } = harness({
+    ensureConversationSession: async () => { ensured += 1; },
+    recordNativeTakeover: async () => { throw new Error('NATIVE_FROM_ME_EXISTING_MESSAGE_AMBIGUOUS'); },
+  });
+  await assert.rejects(
+    () => process({ empresaId: 'empresa-1', data: event('other-failure'), authStatus: 'token_match', rawEventId: 'raw-other' }),
+    /NATIVE_FROM_ME_EXISTING_MESSAGE_AMBIGUOUS/,
+  );
+  assert.equal(ensured, 0);
+}
+
+// A session that still cannot be recorded after creation replays rather than
+// silently dropping the operator's takeover.
+{
+  const { process } = harness({
+    recordNativeTakeover: async () => { throw new Error('CONVERSATION_SESSION_NOT_FOUND'); },
+  });
+  await assert.rejects(
+    () => process({ empresaId: 'empresa-1', data: event('still-missing'), authStatus: 'token_match', rawEventId: 'raw-missing' }),
+    /CONVERSATION_SESSION_NOT_FOUND/,
+  );
 }
 
 console.log('fromMeProcessor: ok');

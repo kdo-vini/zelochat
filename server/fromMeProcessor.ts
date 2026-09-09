@@ -1,4 +1,5 @@
 import { getServiceSupabase } from './supabase.js';
+import { ensureSession } from './messageHandler.js';
 import { cancelPendingReply } from './replyDebouncer.js';
 import { broadcast, type ConversationModeChanged } from './ws.js';
 import { wasSentByServer } from './whatsapp.js';
@@ -20,6 +21,7 @@ export interface NativeTakeoverRecord {
 export interface FromMeProcessorDependencies {
   lookupEvidence(input: { empresaId: string; remoteJid: string; waMessageId: string; fingerprint: string }): Promise<FromMeEvidence>;
   recordNativeTakeover(input: { empresaId: string; remoteJid: string; waMessageId: string; jobPayload: unknown; payloadFingerprint: string; messageContent: string; preview: string; sentAt: string }): Promise<NativeTakeoverRecord>;
+  ensureConversationSession(input: { empresaId: string; remoteJid: string; preview: string; sentAt: string }): Promise<void>;
   repairServerEcho(input: { empresaId: string; remoteJid: string; waMessageId: string; jobId: string; payload: unknown; preview: string; sentAt: string }): Promise<void>;
   holdPendingCorrelation(input: { empresaId: string; remoteJid: string; waMessageId: string; jobId: string; fingerprint: string; rawEventId: string | null }): Promise<void>;
   cancelPendingReply(empresaId: string, remoteJid: string): void;
@@ -30,6 +32,10 @@ export type FromMeProcessingResult =
   | { kind: 'duplicate' | 'ignore_protocol_artifact' | 'unauthenticated' }
   | { kind: 'server_echo'; jobId: string }
   | { kind: 'native_human'; messageId: string; jobId: string; takeoverApplied: boolean };
+
+function isMissingConversationSession(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('CONVERSATION_SESSION_NOT_FOUND');
+}
 
 function mapNativeRecord(value: any): NativeTakeoverRecord {
   const row = value?.result ?? value;
@@ -97,6 +103,30 @@ async function defaultRecordNativeTakeover(input: { empresaId: string; remoteJid
   return mapNativeRecord(Array.isArray(data) ? data[0] : data);
 }
 
+/**
+ * FIX 2026-09-09: `record_zelochat_native_outbound_takeover` raises
+ * CONVERSATION_SESSION_NOT_FOUND when no `zelochat_sessions` row is bound to
+ * the conversation yet, which is exactly the case when the operator STARTS
+ * the conversation from their own phone. The throw fell through to the
+ * webhook replay worker, so the takeover was retried on a 5/10/20/40s
+ * backoff and dead-lettered after 8 attempts — and for the whole of that
+ * window the conversation stayed in `mode='ai'`, so the AI answered over the
+ * operator (Bem Servido, 2026-09-09: takeover landed 100s late, 0.8s after
+ * the AI had already replied; 31 events hit this in nine days, several never
+ * applied at all). An operator-initiated conversation is a real conversation:
+ * create the session the same way an inbound message would, then record the
+ * takeover.
+ */
+async function defaultEnsureConversationSession(input: { empresaId: string; remoteJid: string; preview: string; sentAt: string }): Promise<void> {
+  await ensureSession({
+    empresaId: input.empresaId,
+    jid: input.remoteJid,
+    lastMessage: input.preview,
+    lastMessageTime: input.sentAt,
+    unreadCount: 0,
+  });
+}
+
 async function defaultRepairServerEcho(input: { empresaId: string; remoteJid: string; waMessageId: string; jobId: string; payload: unknown; preview: string; sentAt: string }): Promise<void> {
   const legacy = input.jobId.startsWith('legacy:');
   const { error } = await getServiceSupabase().rpc('reconcile_zelochat_from_me_server_echo', {
@@ -126,6 +156,7 @@ function defaults(): FromMeProcessorDependencies {
   return {
     lookupEvidence: defaultLookupEvidence,
     recordNativeTakeover: defaultRecordNativeTakeover,
+    ensureConversationSession: defaultEnsureConversationSession,
     repairServerEcho: defaultRepairServerEcho,
     holdPendingCorrelation: defaultHoldPendingCorrelation,
     cancelPendingReply: (empresaId, remoteJid) => { cancelPendingReply(empresaId, remoteJid); },
@@ -164,7 +195,7 @@ export function createFromMeProcessor(dependencies: FromMeProcessorDependencies 
     }
 
     // FIX 2026-08-31: o job nativo perdia fingerprint/conteúdo e a RPC revertia a transação → persistir os dois campos explicitamente.
-    const recorded = await dependencies.recordNativeTakeover({
+    const takeoverInput = {
       empresaId: input.empresaId,
       remoteJid: extracted.remoteJid,
       waMessageId: extracted.waMessageId,
@@ -173,7 +204,23 @@ export function createFromMeProcessor(dependencies: FromMeProcessorDependencies 
       messageContent: extracted.messageContent,
       preview: extracted.preview,
       sentAt: extracted.sentAt,
-    });
+    };
+    let recorded: NativeTakeoverRecord;
+    try {
+      recorded = await dependencies.recordNativeTakeover(takeoverInput);
+    } catch (error) {
+      // FIX 2026-09-09: see `defaultEnsureConversationSession`. Recovering
+      // here rather than on the replay worker's backoff is what keeps the
+      // takeover ahead of the next AI turn; any other failure still replays.
+      if (!isMissingConversationSession(error)) throw error;
+      await dependencies.ensureConversationSession({
+        empresaId: input.empresaId,
+        remoteJid: extracted.remoteJid,
+        preview: extracted.preview,
+        sentAt: extracted.sentAt,
+      });
+      recorded = await dependencies.recordNativeTakeover(takeoverInput);
+    }
     recordConversationOutboundMetric('from_me_native', { takeover_applied: recorded.takeoverApplied }, { empresaId: input.empresaId, remoteJid: extracted.remoteJid, jobId: recorded.jobId, messageId: recorded.messageId });
     if (recorded.inserted) {
       dependencies.cancelPendingReply(input.empresaId, extracted.remoteJid);

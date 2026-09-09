@@ -16,6 +16,18 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-09',
+    category: 'hotfix',
+    title: 'IA para de repetir a mesma resposta',
+    description: 'Quando o cliente escrevia o pedido, a IA às vezes respondia sempre a mesma coisa, como se não estivesse lendo. Agora ela responde ao que o cliente acabou de mandar e, se não tiver nada novo a dizer, passa a conversa adiante em vez de repetir.',
+  },
+  {
+    date: '2026-09-09',
+    category: 'hotfix',
+    title: 'IA silencia na hora quando você assume a conversa',
+    description: 'Se você começava uma conversa nova pelo WhatsApp do celular, a IA ainda podia responder por cima de você por alguns minutos. Agora ela para assim que a sua primeira mensagem chega.',
+  },
+  {
     date: '2026-09-01',
     category: 'hotfix',
     title: 'Link do cardápio nas respostas da IA',

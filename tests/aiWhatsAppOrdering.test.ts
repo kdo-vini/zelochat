@@ -4,6 +4,7 @@ import {
   AI_ORDER_CONFIRM_PREFIX,
   applyOrderingDefaults,
   applyFulfillmentTypeSelection,
+  buildCatalogSearchQuery,
   buildConfirmationButtons,
   classifyOrderingTurn,
   canonicalButtonMessageKey,
@@ -17,6 +18,7 @@ import {
   parseOrderingButton,
   renderCatalogReply,
   renderOrderingSummary,
+  repeatsLastAssistantReply,
   sanitizeCustomerForWire,
   sanitizeFulfillmentForWire,
   serializeOrderingState,
@@ -295,6 +297,52 @@ assert.equal(isOrderingFollowUp([
   { role: 'assistant', content: 'Encontrei mais de uma opção parecida. Qual delas você quer?' },
   { role: 'user', content: 'a segunda' },
 ]), true);
+
+// REGRESSION 2026-09-09 (Bem Servido / Laura Ribeiro): the customer's own
+// words are the catalog query. Before the fix the stale "Vc pode me mandar o
+// cardápio" from two turns earlier was searched instead, so a complete order
+// and then an address and then a payment method all got the same product list.
+const stalePriorQuery = [
+  { role: 'user', content: 'Bom dia' },
+  { role: 'user', content: 'Vc pode me mandar o cardápio' },
+  { role: 'user', content: 'Do macarrão' },
+  { role: 'assistant', content: 'Encontrei:\nBatata frita com cheddar e bacon por R$ 49,90\nQual você quer?' },
+];
+assert.equal(
+  buildCatalogSearchQuery(stalePriorQuery, 'Penne, molho branco, bacon, calabresa,mussarela, parmesão'),
+  'Penne, molho branco, bacon, calabresa,mussarela, parmesão',
+  'a written order is searched verbatim, never replaced by an older question',
+);
+assert.equal(
+  buildCatalogSearchQuery(stalePriorQuery, 'Entregar na creche do bela vista'),
+  'Entregar na creche do bela vista',
+);
+assert.equal(
+  buildCatalogSearchQuery(stalePriorQuery, 'Vou pagar por pix'),
+  'Vou pagar por pix',
+);
+// A message that classifies on its own is always its own query.
+assert.equal(buildCatalogSearchQuery(stalePriorQuery, 'quero uma coxinha'), 'quero uma coxinha');
+// A bare answer to an option question still borrows the question it answers.
+assert.equal(buildCatalogSearchQuery(optionSequence, 'frango'), 'oq tem de mistura hoje');
+assert.equal(buildCatalogSearchQuery([], 'frango'), 'frango', 'with no prior question the answer is the query');
+
+// REGRESSION 2026-09-09: the loop breaker. A canonical reply identical to the
+// one already sent is never sent again — that repetition is what kept
+// isOrderingFollowUp true and re-entered the same branch every turn.
+const repeatedCatalogReply = 'Encontrei mais de uma opção parecida. Qual delas você quer?';
+assert.equal(repeatsLastAssistantReply([
+  { role: 'user', content: 'oi' },
+  { role: 'assistant', content: repeatedCatalogReply },
+], repeatedCatalogReply), true);
+assert.equal(repeatsLastAssistantReply([
+  { role: 'assistant', content: repeatedCatalogReply },
+  { role: 'user', content: 'a segunda' },
+], repeatedCatalogReply), true, 'a customer message in between does not make it a new reply');
+assert.equal(repeatsLastAssistantReply([
+  { role: 'assistant', content: 'Encontrei:\nPenne por R$ 22,00\nQual você quer?' },
+], repeatedCatalogReply), false);
+assert.equal(repeatsLastAssistantReply([], repeatedCatalogReply), false);
 
 // Concurrent retry dedupes only the exact provider message; Alterar remains distinct.
 const handledButtons = new Map<string, number>();

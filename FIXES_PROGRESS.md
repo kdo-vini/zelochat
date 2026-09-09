@@ -1,5 +1,10 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Comportamento da IA no WhatsApp — 2026-09-09
+
+- ✅ ZCHAT-AI-010 — busca do catálogo usava mensagem antiga e repetia a mesma resposta em loop → texto atual do cliente vira a busca e resposta idêntica à anterior não é reenviada — `src/domain/aiWhatsAppOrdering.ts:152`, `server/aiWhatsAppOrdering.ts:959`, `tests/aiWhatsAppOrdering.test.ts:305`
+- ✅ ZCHAT-AI-011 — takeover nativo falhava com CONVERSATION_SESSION_NOT_FOUND quando o operador iniciava a conversa, deixando a IA responder por cima até 7 min → sessão é criada e o takeover gravado no mesmo passo — `server/fromMeProcessor.ts:104`, `tests/fromMeProcessor.test.ts:93`
+
 ## Regressões de CI — 2026-09-04 (branch em validação)
 
 - ✅ ZCHAT-CI-002 — erros de rede sem contexto e imports com query ignorados → diagnóstico de endpoint/fase/cause, GET explícito e navegação de query/fragmento com regressão do falso verde — `scripts/verify-deployment.mjs`, `tests/deploymentVerification.test.ts`.

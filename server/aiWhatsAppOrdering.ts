@@ -11,10 +11,10 @@ import {
   applyFulfillmentTypeSelection,
   buildOrderingEntryPayload,
   buildCanonicalConfirmationButtons,
+  buildCatalogSearchQuery,
   buildDeliveryFeeReply,
   type CanonicalButtonHandling,
   classifyOrderingTurn,
-  findPriorOrderingQuery,
   findLatestOrderingState,
   isOrderingFollowUp,
   isOrderingEntryTurn,
@@ -23,6 +23,7 @@ import {
   isDeliveryFeeQuestion,
   parseOrderingButton,
   renderCatalogReply,
+  repeatsLastAssistantReply,
   renderOrderingDraftPreview,
   renderOrderingSummary,
   requirementRevisionFingerprint,
@@ -957,7 +958,7 @@ export async function tryHandleAiWhatsAppOrdering(
 
     const context = await customerContext(session, empresaId);
     let draft: OrderingDraft | null = null;
-    const query = findPriorOrderingQuery(session.messages, text);
+    const query = buildCatalogSearchQuery(session.messages, text);
     if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
     const catalog = await client.searchCatalog({ empresaId, query, limit: 12 });
     const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp;
@@ -968,11 +969,23 @@ export async function tryHandleAiWhatsAppOrdering(
       draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
     }
     if (!draft) {
+      const response = renderCatalogReply(catalog, query, entry.menuUrl);
+      // FIX 2026-09-09: restating the previous reply word for word tells the
+      // customer nothing and keeps `isOrderingFollowUp` true, so the next
+      // message re-enters here and repeats it again — the fixed point that
+      // answered "Penne, molho branco, bacon..." and "Vou pagar por pix" with
+      // the same product list. When the canonical path has nothing new to
+      // say, hand the turn to the generic assistant instead (the same
+      // `handled: false` signal `server/ai.ts` already acts on above) and
+      // leave the cursor alone so those messages still reach it.
+      if (repeatsLastAssistantReply(session.messages, response)) {
+        metric({ ...metricBase, stage: 'plan', outcome: 'catalog_reply_repeated', orderingId: current?.orderingId, revision: current?.revision });
+        return { handled: entryDispatched };
+      }
       // Mid-order ambiguous catalog question (`current` may be set): advance
       // the cursor so this text is not replayed into the next turn's
       // composition once the customer answers the real pending requirement.
       await persistOrderingState(permit, current, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
-      const response = renderCatalogReply(catalog, query, entry.menuUrl);
       await sendText(permit, response, 'catalog', dryRun, isPermitCurrent);
       metric({ ...metricBase, stage: 'plan', outcome: 'catalog_reply', orderingId: current?.orderingId, revision: current?.revision });
       return { handled: true, response };

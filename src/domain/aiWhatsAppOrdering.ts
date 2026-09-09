@@ -150,6 +150,57 @@ export function findPriorOrderingQuery(messages: OrderingConversationMessage[], 
     .find((text) => classifyOrderingTurn(text, false).kind === 'catalog_or_order') || fallback;
 }
 
+/**
+ * A short answer to an option question ("frango", "o médio", "a de 600") is
+ * not a searchable query on its own — the question it answers is. Anything
+ * longer is the customer describing what they want.
+ */
+const FOLLOW_UP_ANSWER_MAX_WORDS = 3;
+
+/**
+ * FIX 2026-09-09: the catalog query for THIS turn used to be
+ * `findPriorOrderingQuery` alone, which threw the customer's own words away
+ * whenever they carried none of `classifyOrderingTurn`'s keywords. "Penne,
+ * molho branco, bacon, calabresa, mussarela, parmesão" — a complete order —
+ * has none of them, so the search ran on the stale "Vc pode me mandar o
+ * cardápio" from two turns earlier and answered with the same product list.
+ * That list ends in "Qual você quer?", which keeps `isOrderingFollowUp` true,
+ * so the next message re-entered the same branch, re-ran the same stale
+ * query and sent the same sentence again: a fixed point the conversation
+ * could not leave (Bem Servido, 2026-09-09 — three identical replies to
+ * three different messages; 13 occurrences across 10 conversations in the
+ * nine days before the fix).
+ *
+ * The prior question is still the query when the current message is a bare
+ * follow-up answer, because that is the case it was written for. It is never
+ * a substitute for a message that says something.
+ */
+export function buildCatalogSearchQuery(messages: OrderingConversationMessage[], text: string): string {
+  const current = text.trim();
+  if (!current) return findPriorOrderingQuery(messages, current);
+  if (classifyOrderingTurn(current, false).kind === 'catalog_or_order') return current;
+  const words = current.split(/\s+/).filter(Boolean);
+  if (words.length > FOLLOW_UP_ANSWER_MAX_WORDS) return current;
+  return findPriorOrderingQuery(messages, current);
+}
+
+/**
+ * FIX 2026-09-09: the loop breaker. Even with the right query, a canonical
+ * catalog reply that repeats the previous one verbatim tells the customer
+ * nothing new and keeps `isOrderingFollowUp` true for the next turn. When
+ * that happens the canonical path has nothing left to add and must hand the
+ * turn to the generic assistant instead of restating itself.
+ */
+export function repeatsLastAssistantReply(
+  messages: OrderingConversationMessage[],
+  response: string,
+): boolean {
+  const candidate = response.trim();
+  if (!candidate) return false;
+  const previousAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
+  return (previousAssistant?.content || previousAssistant?.preview || '').trim() === candidate;
+}
+
 export interface CanonicalButtonHandling {
   handled: boolean;
   complete?: () => Promise<void>;
