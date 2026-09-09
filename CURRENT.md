@@ -1,5 +1,13 @@
 # ZeloChat — Foco atual
 
+### Clientes — segmento único e ordenação server-side (2026-09-09)
+
+Implementação local em validação: o vocabulário de filtros foi centralizado em
+`src/domain/customerSegment.ts`, campanhas passaram a reutilizar o predicado
+puro, e a listagem de Clientes ganhou o overload RPC da migration 068 com
+ordenação por pedidos, valor, recência ou nome. Aplicar a migration 068 antes
+de publicar o backend; campanhas continuam desligadas.
+
 ### Modelos de entrega por bairro ou por rota — implementação local (2026-09-05)
 
 O ZeloChat agora lê o modelo ativo e os bairros ativos da configuração

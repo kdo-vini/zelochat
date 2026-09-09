@@ -1,4 +1,5 @@
 import { apiFetch, apiUrl } from '../config';
+import { countActiveSegmentCriteria, serializeCustomerSegment, type CustomerSegment, type CustomerSortKey } from '../domain/customerSegment.js';
 import type {
   CustomerOrderingAddress,
   CustomerOrderingContextField,
@@ -28,6 +29,8 @@ export interface CustomerFilters {
   hasWhatsApp?: boolean;
   vip?: boolean;
   birthdayOnly?: boolean;
+  segment?: CustomerSegment;
+  sort?: CustomerSortKey;
 }
 
 export interface CustomerSummary {
@@ -36,6 +39,7 @@ export interface CustomerSummary {
   phone: string | null;
   whatsapp: string | null;
   lastActivityAt: string | null;
+  lastOrderAt: string | null;
   activityState: CustomerActivityState;
   orderCount: number;
   totalValue: number;
@@ -94,7 +98,7 @@ export function countActiveCustomerFilters(filters: CustomerFilters): number {
     filters.hasWhatsApp !== undefined,
     filters.vip === true,
     filters.birthdayOnly === true,
-  ].filter(Boolean).length;
+  ].filter(Boolean).length + (filters.segment ? countActiveSegmentCriteria(filters.segment) : 0);
 }
 
 export function serializeCustomerFilters(filters: CustomerFilters): string {
@@ -107,6 +111,11 @@ export function serializeCustomerFilters(filters: CustomerFilters): string {
   if (filters.hasWhatsApp !== undefined) params.set('hasWhatsApp', String(filters.hasWhatsApp));
   if (filters.vip === true) params.set('vip', 'true');
   if (filters.birthdayOnly === true) params.set('birthdayOnly', 'true');
+  if (filters.segment) {
+    const segment = serializeCustomerSegment(filters.segment);
+    for (const [key, value] of Object.entries(segment)) params.set(key === 'search' ? 'q' : key, value);
+  }
+  if (filters.sort) params.set('sort', filters.sort);
   return params.toString();
 }
 
@@ -116,7 +125,7 @@ export function shouldResetCustomerCursor(previous: CustomerFilters, next: Custo
 
 function normalizeCustomerSummary(value: Partial<CustomerSummary> & Record<string, unknown>): CustomerSummary {
   const hasWhatsApp = typeof value.hasWhatsApp === 'boolean' ? value.hasWhatsApp : Boolean(value.whatsapp ?? value.phone);
-  return { id: String(value.id ?? ''), name: String(value.name ?? 'Cliente'), phone: (value.phone as string | null | undefined) ?? null, whatsapp: (value.whatsapp as string | null | undefined) ?? (hasWhatsApp ? (value.phone as string | null | undefined) ?? null : null), lastActivityAt: (value.lastActivityAt as string | null | undefined) ?? null, activityState: value.activityState === 'active' ? 'active' : value.activityState === 'never' ? 'never' : 'inactive', orderCount: Number(value.orderCount ?? value.totalOrders ?? 0), totalValue: Number(value.totalValue ?? 0), openBalance: (value.openBalance as number | null | undefined) ?? null, tags: Array.isArray(value.tags) ? value.tags as string[] : [] };
+  return { id: String(value.id ?? ''), name: String(value.name ?? 'Cliente'), phone: (value.phone as string | null | undefined) ?? null, whatsapp: (value.whatsapp as string | null | undefined) ?? (hasWhatsApp ? (value.phone as string | null | undefined) ?? null : null), lastOrderAt: (value.lastOrderAt as string | null | undefined) ?? null, lastActivityAt: (value.lastActivityAt as string | null | undefined) ?? null, activityState: value.activityState === 'active' ? 'active' : value.activityState === 'never' ? 'never' : 'inactive', orderCount: Number(value.orderCount ?? value.totalOrders ?? 0), totalValue: Number(value.totalValue ?? 0), openBalance: (value.openBalance as number | null | undefined) ?? null, tags: Array.isArray(value.tags) ? value.tags as string[] : [] };
 }
 
 const orderingContextSources = new Set<CustomerOrderingContextSource>(['fixed', 'last_order', 'derived', 'none']);

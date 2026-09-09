@@ -18,7 +18,7 @@ const deps: BackfillDependencies = {
 };
 const dry = await runCustomerBackfill({ empresaId: 'e', dryRun: true, dependencies: deps });
 assert.equal(dry.counts.linked, 1); assert.equal(previewCalls, 1); assert.equal(mutatingResolveCalls, 0); assert.equal(writes, 0);
-const cursor = encodeCustomerCursor(row.updated_at, row.id); assert.deepEqual(decodeCustomerCursor(cursor), { updatedAt: row.updated_at, id: row.id });
+const cursor = encodeCustomerCursor('orders', '1', row.id); assert.deepEqual(decodeCustomerCursor(cursor, 'orders'), { sort: 'orders', value: '1', id: row.id });
 const timelineCursor = encodeTimelineCursor(row.updated_at, 'order', row.id); assert.deepEqual(decodeTimelineCursor(timelineCursor), { occurredAt: row.updated_at, kind: 'order', id: row.id });
 assert.throws(() => parseCustomerFilters({ q: 'Ana),id.neq.x' }));
 assert.throws(() => decodeCustomerCursor('not-a-valid-cursor'));

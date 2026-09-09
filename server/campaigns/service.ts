@@ -1,5 +1,6 @@
 import { getServiceSupabase } from '../supabase.js';
 import { evaluateAudience, parseSegmentDefinition, type AudiencePerson, type SegmentDefinition } from './filters.js';
+import { resolveCustomerActivity } from '../customers/filters.js';
 import { CAMPAIGN_LIMITS, canStartCampaign, createRateLimiter } from '../outbound/policy.js';
 import { getInstanceForEmpresa } from '../instanceManager.js';
 import { fingerprintOutboundPayload } from '../outbound/providerAdapter.js';
@@ -35,18 +36,68 @@ export async function deleteSegment(empresaId: string, id: string): Promise<void
 
 async function loadAudience(empresaId: string, ownerUserId: string, definition: SegmentDefinition): Promise<CampaignPreview> {
   const db = getServiceSupabase();
-  const [{ data: people, error: peopleError }, { data: blocked }, { data: conflicts }, { data: optouts }, { data: orders }] = await Promise.all([
-    db.from('pessoas').select('id,nome,contato,tipo').eq('id_usuario', ownerUserId),
+  const [{ data: people, error: peopleError }, { data: blocked }, { data: conflicts }, { data: optouts }, { data: orders }, { data: personTags }, { data: tags }, { data: sessions }] = await Promise.all([
+    db.from('pessoas').select('*').eq('id_usuario', ownerUserId),
     db.from('zelochat_customer_relationships').select('pessoa_id,whatsapp_blocked_at').eq('empresa_id', empresaId).not('whatsapp_blocked_at', 'is', null),
     db.from('zelochat_person_match_conflicts').select('candidate_person_ids').eq('empresa_id', empresaId).eq('state', 'open'),
     db.from('zelochat_customer_optouts').select('pessoa_id').eq('empresa_id', empresaId),
-    db.from('zelo_orders').select('pessoa_id,total,status').eq('empresa_id', empresaId).eq('status', 'delivered').not('pessoa_id', 'is', null),
+    db.from('zelo_orders').select('pessoa_id,total,status,closed_at,created_at').eq('empresa_id', empresaId).eq('status', 'delivered').not('pessoa_id', 'is', null),
+    db.from('zelochat_person_tags').select('pessoa_id,tag_id').eq('empresa_id', empresaId),
+    db.from('zelochat_tags').select('id,name').eq('empresa_id', empresaId),
+    db.from('zelochat_sessions').select('pessoa_id,last_message_time').eq('empresa_id', empresaId).not('pessoa_id', 'is', null),
   ]);
   if (peopleError) throw peopleError;
-  const count = new Map<string, { count: number; total: number }>(); for (const row of orders ?? []) { const current = count.get(row.pessoa_id) ?? { count: 0, total: 0 }; current.count += 1; current.total += Number(row.total ?? 0); count.set(row.pessoa_id, current); }
+  const count = new Map<string, { count: number; total: number; lastOrderAt: string | null }>();
+  for (const row of orders ?? []) {
+    const deliveredAt = row.closed_at ?? row.created_at ?? null;
+    const current = count.get(row.pessoa_id) ?? { count: 0, total: 0, lastOrderAt: null };
+    current.count += 1;
+    current.total += Number(row.total ?? 0);
+    if (deliveredAt && (!current.lastOrderAt || deliveredAt > current.lastOrderAt)) current.lastOrderAt = deliveredAt;
+    count.set(row.pessoa_id, current);
+  }
   const blockedIds = new Set((blocked ?? []).map((row) => row.pessoa_id)); const optedOutIds = new Set((optouts ?? []).map((row) => row.pessoa_id)); const conflictIds = new Set<string>();
   for (const conflict of conflicts ?? []) for (const id of Array.isArray(conflict.candidate_person_ids) ? conflict.candidate_person_ids : []) if (typeof id === 'string') conflictIds.add(id);
-  const audience: AudiencePerson[] = (people ?? []).map((person) => { const stats = count.get(person.id) ?? { count: 0, total: 0 }; return { id: person.id, name: person.nome || 'Cliente', phone: person.contato || null, activityState: stats.count ? 'active' : 'never', orderCount: stats.count, totalValue: stats.total, isEmployee: person.tipo !== 'cliente', hasConflict: conflictIds.has(person.id), blocked: blockedIds.has(person.id), optedOut: optedOutIds.has(person.id) }; });
+  const tagIdsByPerson = new Map<string, string[]>();
+  for (const row of personTags ?? []) {
+    if (typeof row.pessoa_id !== 'string' || typeof row.tag_id !== 'string') continue;
+    tagIdsByPerson.set(row.pessoa_id, [...(tagIdsByPerson.get(row.pessoa_id) ?? []), row.tag_id]);
+  }
+  const vipTagIds = new Set((tags ?? []).filter((tag) => typeof tag.name === 'string' && tag.name.trim().toLocaleLowerCase() === 'vip').map((tag) => tag.id));
+  const lastConversationByPerson = new Map<string, string | null>();
+  for (const row of sessions ?? []) {
+    if (typeof row.pessoa_id !== 'string' || typeof row.last_message_time !== 'string') continue;
+    if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T/u.test(row.last_message_time.trim())) continue;
+    const parsed = new Date(row.last_message_time);
+    if (Number.isNaN(parsed.getTime())) continue;
+    const current = lastConversationByPerson.get(row.pessoa_id);
+    const candidate = parsed.toISOString();
+    if (!current || candidate > current) lastConversationByPerson.set(row.pessoa_id, candidate);
+  }
+  const audience: AudiencePerson[] = (people ?? []).map((person) => {
+    const stats = count.get(person.id) ?? { count: 0, total: 0, lastOrderAt: null };
+    const tagsForPerson = tagIdsByPerson.get(person.id) ?? [];
+    const activity = resolveCustomerActivity({ lastDeliveredOrderAt: stats.lastOrderAt, lastConversationAt: lastConversationByPerson.get(person.id) ?? null });
+    const origin = typeof person.origem === 'string' ? person.origem : typeof person.origin === 'string' ? person.origin : null;
+    const birthdayMonth = person.aniversario_mes == null ? null : Number(person.aniversario_mes);
+    return {
+      id: person.id,
+      name: person.nome || 'Cliente',
+      phone: person.contato || null,
+      activityState: activity.state,
+      orderCount: stats.count,
+      totalValue: stats.total,
+      lastOrderAt: stats.lastOrderAt,
+      tagIds: tagsForPerson,
+      birthdayMonth,
+      origin,
+      isVip: tagsForPerson.some((tagId) => vipTagIds.has(tagId)),
+      isEmployee: person.tipo !== 'cliente',
+      hasConflict: conflictIds.has(person.id),
+      blocked: blockedIds.has(person.id),
+      optedOut: optedOutIds.has(person.id),
+    };
+  });
   const result = evaluateAudience(audience, definition); return { ...result, version: Date.now() };
 }
 

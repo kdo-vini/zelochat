@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Clientes — segmento único e ordenação (2026-09-09)
+
+- ✅ CRM-SEG-001 — filtros de Clientes e campanhas tinham vocabulários divergentes e a listagem priorizava atividade de conversa → domínio compartilhado, RPC 068 com filtros/ordenação server-side por pedidos, valor, recência ou nome, cursor keyset por ordenação e `total_count`; a migration 068 precisa ser aplicada antes do deploy do backend — `src/domain/customerSegment.ts:1`, `supabase/migrations/068_customer_segment_sort.sql:1`, `server/customers/service.ts:38`
+
 ## Regressões de CI — 2026-09-04 (branch em validação)
 
 - ✅ ZCHAT-CI-002 — erros de rede sem contexto e imports com query ignorados → diagnóstico de endpoint/fase/cause, GET explícito e navegação de query/fragmento com regressão do falso verde — `scripts/verify-deployment.mjs`, `tests/deploymentVerification.test.ts`.
