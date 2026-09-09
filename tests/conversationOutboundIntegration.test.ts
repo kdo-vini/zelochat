@@ -160,6 +160,7 @@ async function testNativeFromMeRequiresStrongEvidence() {
       }
       return {};
     },
+    ensureConversationSession: async () => {},
     recordNativeTakeover: async () => {
       takeoverWrites += 1;
       return {

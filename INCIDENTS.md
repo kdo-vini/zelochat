@@ -1,5 +1,85 @@
 # Incidentes e padrões conhecidos
 
+## IA respondia com produto errado: a frase do cliente ia crua para a busca (2026-09-09, segunda rodada)
+
+**Sintoma:** no simulador, "vc pode mandar o cardapio?" respondia
+"Encontrei: Batata frita com cheddar e bacon por R$ 49,90"; "vc pode mandar o
+cardapio do macarrao?" respondia "Encontrei mais de uma opção parecida. Qual
+delas você quer?" sem listar nada.
+
+**Causa-raiz:** o ZeloChat mandava a frase inteira do cliente como busca de
+produto. O matcher do ZeloMenu pontua nome, DESCRIÇÃO, categoria, grupo e
+opção, com fallback por sobreposição de tokens — então uma única palavra de
+preenchimento basta. O produto 1403 tem na descrição pública "essa porção vai
+surpreender **vc** com a cobertura": `vc` era o único token que a frase
+compartilhava com qualquer produto do catálogo. Colisão determinística, não
+alucinação do modelo.
+
+Três defeitos somados:
+1. Palavras de enquadramento (`vc`, `pode`, `mandar`, `cardapio`, `quero`,
+   `um`) iam para a busca.
+2. Pedir o cardápio caía numa busca de produto em vez de responder com o
+   cardápio.
+3. `renderCatalogReply` respondia ambiguidade com uma pergunta que **não
+   listava nenhuma opção**, e o guard `total > 12` contava candidatos em vez
+   de produtos distintos — 25 candidatos de 5 pratos viravam recusa.
+4. `isOrderingFollowUp` entregava ao fluxo canônico **qualquer** mensagem
+   posterior a uma pergunta, então "Entregar na creche do bela vista" e "Vou
+   pagar por pix" eram respondidos com listas de pratos.
+
+**Fix:** `stripCatalogQueryFraming` + `isCatalogMenuRequest` +
+`isOrderingFollowUpAnswer` em `src/domain/aiWhatsAppOrdering.ts`; ramo de
+pedido de cardápio e gate de follow-up em `server/aiWhatsAppOrdering.ts`;
+`renderCatalogReply` lista os produtos distintos em vez do beco sem saída.
+
+**Como foi verificado:** bancada temporária importando o matcher REAL do
+ZeloMenu (`src/domain/zelomenuCatalogDiscovery.ts` do repo vizinho) sobre o
+catálogo REAL de produção da Bem Servido (92 produtos publicados), dirigindo o
+handler real em dry-run. A bancada reproduziu os dois prints byte a byte antes
+da correção — é isso que a torna confiável. **Lição: a primeira rodada de
+correção deste dia foi declarada resolvida sem rodar os prompts reais; ela
+corrigia só o loop de repetição, não a resposta errada.**
+
+## IA repetia a mesma resposta e respondia por cima do operador (2026-09-09)
+
+**Sintoma:** na Bem Servido a IA respondeu três mensagens completamente
+diferentes ("Penne, molho branco, bacon, calabresa, mussarela, parmesão",
+"Entregar na creche do bela vista", "Vou pagar por pix") com o mesmo texto
+palavra por palavra, e em outra conversa respondeu 13 s depois de a dona já
+estar digitando pelo WhatsApp dela. 13 repetições idênticas em 10 conversas
+entre 01/09 e 09/09 (~12% de todas as respostas automáticas do período).
+
+**Causa-raiz A (repetição):** `findPriorOrderingQuery` escolhia como busca do
+catálogo a mensagem anterior mais recente que casava com as palavras-chave de
+`classifyOrderingTurn`, descartando o texto atual do cliente. Nenhuma das
+mensagens acima contém palavra-chave, então a busca rodou na "Vc pode me
+mandar o cardápio" de dois turnos antes e devolveu sempre a mesma lista. Como
+essa lista termina em "Qual você quer?", `isOrderingFollowUp` continuava
+verdadeiro e o turno seguinte reentrava no mesmo ramo: ponto fixo.
+
+**Causa-raiz B (IA por cima do operador):** `record_zelochat_native_outbound_takeover`
+lança `CONVERSATION_SESSION_NOT_FOUND` quando ainda não existe linha em
+`zelochat_sessions` — exatamente o caso em que o operador INICIA a conversa
+pelo celular. A exceção caía no replay worker (backoff 5/10/20/40 s, dead
+letter em 8 tentativas), e durante toda a janela a conversa seguia em
+`mode='ai'`. Na thread do iFood o takeover entrou 100 s atrasado, 0,8 s depois
+de a IA já ter respondido. 31 eventos caíram nisso em nove dias, vários sem
+nunca aplicar o takeover.
+
+**Fix:** `buildCatalogSearchQuery` usa o texto atual do cliente como busca
+(a pergunta anterior só volta a valer para respostas curtas de opção) e
+`repeatsLastAssistantReply` impede reenviar a mesma resposta canônica,
+devolvendo o turno para o assistente genérico —
+`src/domain/aiWhatsAppOrdering.ts:152`, `server/aiWhatsAppOrdering.ts:959`.
+O processador de `fromMe` cria a sessão e grava o takeover no mesmo passo em
+vez de deixar para o replay — `server/fromMeProcessor.ts:104`.
+
+**Fator agravante fora do nosso controle:** o provedor entregou os webhooks
+dessa instância com 45–60 s de atraso constante (inbound e outbound
+igualmente), o que alarga a janela em que a IA pode responder antes de o envio
+humano chegar. A ordem entre eventos é preservada, então o fix acima elimina o
+atraso que era nosso.
+
 ## Verificação do deploy: conexão sem contexto e import com query ignorado (2026-09-04)
 
 **Sintoma:** o job de produção registrou repetidos timeouts de conexão de 5s no runner; a mensagem genérica não identificava endpoint/fase/cause. Uma revisão local também demonstrou um falso verde: `import("./missing-abcdefgh.js?v=1")` era ignorado quando o entry já continha a versão esperada.

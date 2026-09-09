@@ -12,8 +12,38 @@ nenhum pedido na frente da fila), com 4 grupos prontos no painel de filtros,
 seletor de ordenação na barra e a linha da lista redesenhada para mostrar
 pedidos como dado principal. VIP e Aniversariantes saíram do painel (armadilhas:
 0 e 4 pessoas na base, respectivamente) mas o vocabulário continua suportando
-tag/mês quando fizerem sentido de novo. Aplicar a migration 068 antes de
-publicar o backend; campanhas continuam desligadas.
+tag/mês quando fizerem sentido de novo. Migration 068 já aplicada em produção;
+campanhas continuam desligadas.
+
+### Resposta errada da IA no cardápio (2026-09-09, segunda rodada)
+
+A primeira rodada do dia corrigiu só o loop de repetição e foi declarada
+resolvida cedo demais — a resposta errada continuou em produção. A causa real:
+o ZeloChat mandava a frase inteira do cliente como busca de produto, e o
+matcher do ZeloMenu pontua também a DESCRIÇÃO — a palavra "vc" da descrição da
+"Batata frita com cheddar e bacon" era o único token em comum com "vc pode
+mandar o cardapio?".
+
+Corrigido e verificado contra o matcher real do ZeloMenu sobre o catálogo real
+de produção (bancada que reproduzia os prints byte a byte antes do fix).
+Detalhes em [[INCIDENTS]] e [[FIXES_PROGRESS]].
+
+Regra que fica: mudança no comportamento da IA só é "corrigida" depois de
+rodar os prompts reais contra o catálogo real.
+
+### Correção de comportamento da IA no WhatsApp (2026-09-09)
+
+Duas causas-raiz confirmadas com dados de produção da Bem Servido e
+corrigidas com regressão: a busca do catálogo usava uma mensagem antiga em vez
+do texto atual do cliente (loop de resposta idêntica, 13 ocorrências em 10
+conversas desde 01/09) e o takeover nativo falhava quando o operador iniciava
+a conversa pelo celular, deixando a IA responder por cima até o replay
+worker (31 eventos em nove dias, alguns em dead letter). Detalhes em
+[[INCIDENTS]] e [[FIXES_PROGRESS]].
+
+Em aberto: o provedor de WhatsApp entregou webhooks dessa instância com
+45–60 s de atraso constante em 09/09 — fora do nosso controle, mas alarga a
+janela de corrida; vale monitorar se persiste.
 
 ### Modelos de entrega por bairro ou por rota — implementação local (2026-09-05)
 

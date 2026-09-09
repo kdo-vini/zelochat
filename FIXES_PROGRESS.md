@@ -2,9 +2,21 @@
 
 ## Clientes — segmento único e ordenação (2026-09-09)
 
-- ✅ CRM-SEG-001 — filtros de Clientes e campanhas tinham vocabulários divergentes e a listagem priorizava atividade de conversa → domínio compartilhado, RPC 068 com filtros/ordenação server-side por pedidos, valor, recência ou nome, cursor keyset por ordenação e `total_count`; a migration 068 precisa ser aplicada antes do deploy do backend — `src/domain/customerSegment.ts:1`, `supabase/migrations/068_customer_segment_sort.sql:1`, `server/customers/service.ts:38`
+- ✅ CRM-SEG-001 — filtros de Clientes e campanhas tinham vocabulários divergentes e a listagem priorizava atividade de conversa → domínio compartilhado, RPC 068 com filtros/ordenação server-side por pedidos, valor, recência ou nome, cursor keyset por ordenação e `total_count`; migration 068 aplicada em produção — `src/domain/customerSegment.ts:1`, `supabase/migrations/068_customer_segment_sort.sql:1`, `server/customers/service.ts:38`
 - ✅ CRM-SEG-002 — tela de Clientes abria ordenada por `updated_at` (carimbado a cada mensagem de WhatsApp); produção tinha 0 clientes com pedido nos primeiros 30 registros e VIP/Aniversariantes filtravam para lista vazia sempre (0 e 4 pessoas marcadas na base) → tela abre em "quem já comprou, mais pedidos primeiro" por padrão, seletor de ordenação (pedidos/valor/recência/nome) na barra, painel de filtros com 4 grupos prontos (Melhores clientes, Sumiram, Compraram uma vez só, Compraram esta semana) + faixa de pedidos/recência de compra, VIP e Aniversariantes removidos do painel (vocabulário continua suportando tag/mês), linha da lista redesenhada com pedidos como dado principal e "última compra" em vez de "última atividade", estado vazio oferece "Ver contatos sem compra" — `src/components/views/CustomersView.tsx:1`, `src/components/customers/CustomerFiltersPanel.tsx:1`, `src/components/customers/CustomerListRow.tsx:1`, `src/components/customers/CustomerList.tsx:1`, `src/services/customerApi.ts:23`, `tests/customerUiGuardrails.test.ts:1`
   - Fix incidental no domínio compartilhado: `countActiveSegmentCriteria` contava o escopo padrão (`buyers: 'buyers'`) como filtro ativo, deixando o badge do botão Filtros sempre em pelo menos 1 — `src/domain/customerSegment.ts:171`
+
+## Comportamento da IA no WhatsApp — 2026-09-09 (segunda rodada)
+
+- ✅ ZCHAT-AI-012 — frase crua do cliente ia para a busca e colidia com descrição de produto ("vc") → palavras de enquadramento removidas antes da busca — `src/domain/aiWhatsAppOrdering.ts:198`, `tests/aiWhatsAppOrdering.test.ts:322`
+- ✅ ZCHAT-AI-013 — pedir o cardápio virava busca de produto → pedido de cardápio responde com o cardápio — `src/domain/aiWhatsAppOrdering.ts:229`, `server/aiWhatsAppOrdering.ts:846`
+- ✅ ZCHAT-AI-014 — ambiguidade respondia pergunta sem listar opção e o guard contava candidatos em vez de produtos → lista os produtos distintos — `src/domain/aiWhatsAppOrdering.ts:659`
+- ✅ ZCHAT-AI-015 — qualquer mensagem após uma pergunta virava busca de catálogo (endereço, forma de pagamento) → só resposta curta que nomeia opção — `src/domain/aiWhatsAppOrdering.ts:836`, `server/aiWhatsAppOrdering.ts:867`
+
+## Comportamento da IA no WhatsApp — 2026-09-09
+
+- ✅ ZCHAT-AI-010 — busca do catálogo usava mensagem antiga e repetia a mesma resposta em loop → texto atual do cliente vira a busca e resposta idêntica à anterior não é reenviada — `src/domain/aiWhatsAppOrdering.ts:152`, `server/aiWhatsAppOrdering.ts:959`, `tests/aiWhatsAppOrdering.test.ts:305`
+- ✅ ZCHAT-AI-011 — takeover nativo falhava com CONVERSATION_SESSION_NOT_FOUND quando o operador iniciava a conversa, deixando a IA responder por cima até 7 min → sessão é criada e o takeover gravado no mesmo passo — `server/fromMeProcessor.ts:104`, `tests/fromMeProcessor.test.ts:93`
 
 ## Regressões de CI — 2026-09-04 (branch em validação)
 

@@ -4,6 +4,7 @@ import {
   AI_ORDER_CONFIRM_PREFIX,
   applyOrderingDefaults,
   applyFulfillmentTypeSelection,
+  buildCatalogSearchQuery,
   buildConfirmationButtons,
   classifyOrderingTurn,
   canonicalButtonMessageKey,
@@ -13,10 +14,14 @@ import {
   buildOrderingEntryReply,
   isOrderingEntryTurn,
   isOrderingFollowUp,
+  isOrderingFollowUpAnswer,
+  isCatalogMenuRequest,
+  stripCatalogQueryFraming,
   isOrderingSnapshotEditable,
   parseOrderingButton,
   renderCatalogReply,
   renderOrderingSummary,
+  repeatsLastAssistantReply,
   sanitizeCustomerForWire,
   sanitizeFulfillmentForWire,
   serializeOrderingState,
@@ -295,6 +300,80 @@ assert.equal(isOrderingFollowUp([
   { role: 'assistant', content: 'Encontrei mais de uma opção parecida. Qual delas você quer?' },
   { role: 'user', content: 'a segunda' },
 ]), true);
+
+// REGRESSION 2026-09-09 (Bem Servido / Laura Ribeiro): the customer's own
+// words are the catalog query. Before the fix the stale "Vc pode me mandar o
+// cardápio" from two turns earlier was searched instead, so a complete order
+// and then an address and then a payment method all got the same product list.
+const stalePriorQuery = [
+  { role: 'user', content: 'Bom dia' },
+  { role: 'user', content: 'Vc pode me mandar o cardápio' },
+  { role: 'user', content: 'Do macarrão' },
+  { role: 'assistant', content: 'Encontrei:\nBatata frita com cheddar e bacon por R$ 49,90\nQual você quer?' },
+];
+assert.equal(
+  buildCatalogSearchQuery(stalePriorQuery, 'Penne, molho branco, bacon, calabresa,mussarela, parmesão'),
+  'penne molho branco bacon calabresa mussarela parmesao',
+  'a written order is searched as written, never replaced by an older question',
+);
+assert.equal(
+  buildCatalogSearchQuery(stalePriorQuery, 'Entregar na creche do bela vista'),
+  'entregar na creche bela vista',
+);
+// A message that classifies on its own is still its own query, minus framing.
+assert.equal(buildCatalogSearchQuery(stalePriorQuery, 'quero uma coxinha'), 'coxinha');
+// A bare answer to an option question still borrows the question it answers.
+assert.equal(buildCatalogSearchQuery(optionSequence, 'frango'), 'mistura hoje');
+assert.equal(buildCatalogSearchQuery([], 'frango'), 'frango', 'with no prior question the answer is the query');
+
+// REGRESSION 2026-09-09: framing words never reach the catalog search. On the
+// real Bem Servido catalog "vc" is a word in the DESCRIPTION of "Batata frita
+// com cheddar e bacon" ("...vai surpreender vc com a cobertura"), and it was
+// the only token that sentence shared with any product — so a customer asking
+// for the menu was offered a portion of fries. Verified against ZeloMenu's
+// real matcher and the real production catalog.
+assert.equal(stripCatalogQueryFraming('vc pode mandar o cardapio do macarrao?'), 'macarrao');
+assert.equal(stripCatalogQueryFraming('vc pode mandar o cardapio?'), '');
+assert.equal(stripCatalogQueryFraming('quero um penne'), 'penne');
+assert.equal(stripCatalogQueryFraming('oi, tem marmita hoje?'), 'marmita hoje');
+
+// A customer who named the menu and nothing else gets the menu, not a search.
+assert.equal(isCatalogMenuRequest('vc pode mandar o cardapio?'), true);
+assert.equal(isCatalogMenuRequest('me manda o menu por favor'), true);
+assert.equal(isCatalogMenuRequest('vc pode mandar o cardapio do macarrao?'), false, 'a named item is a search, not a menu request');
+assert.equal(isCatalogMenuRequest('quero uma coxinha'), false);
+
+// REGRESSION 2026-09-09: `isOrderingFollowUp` alone used to hand the canonical
+// catalog path every message that came after a question, so an address and a
+// payment method were answered with lists of dishes. Only a short reply that
+// names an option is a follow-up answer.
+const afterOptionQuestion = [
+  { role: 'user', content: 'oq tem de mistura hoje' },
+  { role: 'assistant', content: 'Hoje tem Marmita do dia: Frango, Carne. Qual você quer?' },
+];
+assert.equal(isOrderingFollowUpAnswer(afterOptionQuestion, 'frango'), true);
+assert.equal(isOrderingFollowUpAnswer(afterOptionQuestion, 'o médio'), true);
+assert.equal(isOrderingFollowUpAnswer(afterOptionQuestion, 'Entregar na creche do bela vista'), false);
+assert.equal(isOrderingFollowUpAnswer(afterOptionQuestion, 'Vou pagar por pix'), false, 'payment is never a catalog answer');
+assert.equal(isOrderingFollowUpAnswer(afterOptionQuestion, 'Penne, molho branco, bacon, calabresa,mussarela, parmesão'), false);
+assert.equal(isOrderingFollowUpAnswer([{ role: 'assistant', content: 'Oi!' }], 'frango'), false, 'no question asked, no follow-up');
+
+// REGRESSION 2026-09-09: the loop breaker. A canonical reply identical to the
+// one already sent is never sent again — that repetition is what kept
+// isOrderingFollowUp true and re-entered the same branch every turn.
+const repeatedCatalogReply = 'Encontrei mais de uma opção parecida. Qual delas você quer?';
+assert.equal(repeatsLastAssistantReply([
+  { role: 'user', content: 'oi' },
+  { role: 'assistant', content: repeatedCatalogReply },
+], repeatedCatalogReply), true);
+assert.equal(repeatsLastAssistantReply([
+  { role: 'assistant', content: repeatedCatalogReply },
+  { role: 'user', content: 'a segunda' },
+], repeatedCatalogReply), true, 'a customer message in between does not make it a new reply');
+assert.equal(repeatsLastAssistantReply([
+  { role: 'assistant', content: 'Encontrei:\nPenne por R$ 22,00\nQual você quer?' },
+], repeatedCatalogReply), false);
+assert.equal(repeatsLastAssistantReply([], repeatedCatalogReply), false);
 
 // Concurrent retry dedupes only the exact provider message; Alterar remains distinct.
 const handledButtons = new Map<string, number>();
