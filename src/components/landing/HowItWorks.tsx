@@ -57,13 +57,13 @@ export function HowItWorks() {
     <section id="como-funciona" className="bg-[#EEF1F7] py-20 lg:py-24">
       <div className="max-w-[1200px] mx-auto px-6 lg:px-10">
         <div className="text-center max-w-[760px] mx-auto">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366]/10 border border-[#25D366]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-brand)]/10 border border-[var(--color-brand)]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" />
             Como funciona
           </span>
 
           <h2 className="mt-4 text-[34px] lg:text-[40px] font-bold tracking-tight text-[#0B1120] leading-[1.15]">
-            Do <span className="text-[#25D366]">"oi"</span> ao pedido pronto
+            Do <span className="text-[var(--color-brand)]">"oi"</span> ao pedido pronto
           </h2>
           <p className="mt-4 text-[15px] text-[#64748B] leading-relaxed">
             Cinco etapas. Uma conversa só. Sua equipe foca no que importa:
@@ -73,7 +73,7 @@ export function HowItWorks() {
 
         <div className="mt-14 relative">
           <div
-            className="hidden lg:block absolute top-[36px] left-[8%] right-[8%] border-t-2 border-dashed border-[#25D366]/30"
+            className="hidden lg:block absolute top-[36px] left-[8%] right-[8%] border-t-2 border-dashed border-[var(--color-brand)]/30"
             aria-hidden="true"
           />
 
@@ -89,7 +89,7 @@ export function HowItWorks() {
                   </div>
                 </div>
 
-                <div className="mt-5 w-[76px] h-[76px] rounded-[24px] bg-[#25D366]/10 border border-[#25D366]/25 flex items-center justify-center">
+                <div className="mt-5 w-[76px] h-[76px] rounded-[24px] bg-[var(--color-brand)]/10 border border-[var(--color-brand)]/25 flex items-center justify-center">
                   <Icon className="w-8 h-8 text-[#0B7A3B]" strokeWidth={1.8} />
                 </div>
 

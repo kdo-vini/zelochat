@@ -46,6 +46,7 @@ interface Props {
   chatView: React.ReactNode;
   dashboardState: { profile: ZeloState['profile'] };
   productionState: { orders: Order[] };
+  productionOrdersLoading: boolean;
   calendarState: { orders: Order[]; blockedDates: ZeloState['blockedDates']; businessInfo: ZeloState['businessInfo'] };
   aiConfigsState: { aiInstructions: ZeloState['aiInstructions']; blockedDates: ZeloState['blockedDates']; pixReceiptConfig: ZeloState['pixReceiptConfig'] };
   settingsState: { businessInfo: ZeloState['businessInfo']; blockedDates: ZeloState['blockedDates']; deliveryConfig: ZeloState['deliveryConfig']; drivers: ZeloState['drivers']; quickResponses: ZeloState['quickResponses']; triggers: ZeloState['triggers']; aiInstructions: ZeloState['aiInstructions']; pixReceiptConfig: ZeloState['pixReceiptConfig'] };
@@ -93,7 +94,7 @@ interface Props {
 export function MainContent({
   activeView, token, isGeneralMode, subscriptionLoading, subscriptionActive,
   setState, setActiveView,
-  chatView, dashboardState, productionState, calendarState,
+  chatView, dashboardState, productionState, productionOrdersLoading, calendarState,
   aiConfigsState, settingsState, profileState,
   onDragEnd, handleAddOrder, handleEditOrder, handleDeleteOrder,
   updateOrderStatus, reprintOrder, canPrint,
@@ -153,6 +154,7 @@ export function MainContent({
                   <DragDropContext onDragEnd={onDragEnd}>
                     <ProductionView
                       state={productionState}
+                      ordersLoading={productionOrdersLoading}
                       onDragEnd={onDragEnd}
                       setActiveView={setActiveView}
                       onAddOrder={handleAddOrder}

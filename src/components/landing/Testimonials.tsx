@@ -84,13 +84,13 @@ export function Testimonials() {
     <section id="beneficios" className="bg-[#F2F3F8] py-20 lg:py-24 overflow-hidden">
       <div className="max-w-[1200px] mx-auto px-6 lg:px-10">
         <div className="text-center max-w-[760px] mx-auto">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366]/10 border border-[#25D366]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-brand)]/10 border border-[var(--color-brand)]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" />
             Quem usa, recomenda
           </span>
 
           <h2 className="mt-4 text-[34px] lg:text-[40px] font-bold tracking-tight text-[#0B1120] leading-[1.15]">
-            Lanchonetes que <span className="text-[#25D366]">pararam de perder</span>
+            Lanchonetes que <span className="text-[var(--color-brand)]">pararam de perder</span>
             <br />
             pedido por demora
           </h2>
@@ -125,7 +125,7 @@ function TestimonialCard({ t }: { t: Testimonial }) {
     <div className="w-[360px] flex-shrink-0 bg-white rounded-2xl p-6 border border-[#E5E7EB]/60 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
       <div className="flex items-center gap-0.5">
         {Array.from({ length: 5 }).map((_, i) => (
-          <Star key={i} className="w-4 h-4 fill-[#25D366] text-[#25D366]" />
+          <Star key={i} className="w-4 h-4 fill-[var(--color-brand)] text-[var(--color-brand)]" />
         ))}
       </div>
       <p className="mt-4 text-[14px] text-[#0B1120] leading-relaxed">

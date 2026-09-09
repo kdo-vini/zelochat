@@ -14,7 +14,7 @@ export default function AuthGuard({ children, requireProfile = true }: AuthGuard
   if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-white">
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[#25D366]" />
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[var(--color-brand)]" />
       </div>
     );
   }
@@ -27,7 +27,7 @@ export default function AuthGuard({ children, requireProfile = true }: AuthGuard
     if (!profileChecked) {
       return (
         <div className="flex h-screen w-screen items-center justify-center bg-white">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[#25D366]" />
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[var(--color-brand)]" />
         </div>
       );
     }

@@ -217,7 +217,7 @@ export const CatalogView = ({
       <div className="space-y-6">
         <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="flex items-start gap-3">
-            <ShoppingBag className="mt-0.5 h-6 w-6 text-[#25D366]" />
+            <ShoppingBag className="mt-0.5 h-6 w-6 text-[var(--color-brand)]" />
             <div>
               <h2 className="text-2xl font-bold text-gray-800">Cardápio</h2>
               <p className="text-sm text-gray-500">
@@ -243,7 +243,7 @@ export const CatalogView = ({
             </button>
             <button
               onClick={() => setModal({ kind: 'produto', initial: null, defaultCategoriaId: null, defaultSubcategoriaId: null })}
-              className="flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1EBE5D]"
+              className="flex items-center gap-2 rounded-lg bg-[var(--color-brand)] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--color-brand-deep)]"
             >
               <Plus className="h-4 w-4" /> Novo produto
             </button>
@@ -353,7 +353,7 @@ export const CatalogView = ({
                   <button
                     onClick={() => void handleBulkPublish()}
                     disabled={!bulk.hasSelection || bulk.busyAction !== null}
-                    className="rounded-lg bg-[#25D366] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1EBE5D] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-lg bg-[var(--color-brand)] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-brand-deep)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {bulk.busyAction === 'set-publication' ? 'Publicando...' : 'Publicar no link'}
                   </button>
@@ -1109,7 +1109,7 @@ function SelectionCheckbox({
       checked={checked}
       onChange={onChange}
       aria-label={ariaLabel}
-      className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]"
+      className="h-4 w-4 rounded border-gray-300 text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
     />
   );
 }
@@ -1123,8 +1123,8 @@ function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center gap-4 py-12 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#25D366]/10">
-        <ShoppingBag className="h-8 w-8 text-[#25D366]" />
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-brand)]/10">
+        <ShoppingBag className="h-8 w-8 text-[var(--color-brand)]" />
       </div>
       <div>
         <h3 className="text-base font-bold text-gray-800">Comece cadastrando seu cardápio</h3>
@@ -1141,7 +1141,7 @@ function EmptyState({
         </button>
         <button
           onClick={onCreateProduto}
-          className="flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1EBE5D]"
+          className="flex items-center gap-2 rounded-lg bg-[var(--color-brand)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-brand-deep)]"
         >
           <Plus className="h-4 w-4" /> Criar produto
         </button>

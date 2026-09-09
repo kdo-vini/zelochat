@@ -76,7 +76,7 @@ function ActionBar({ onCancel, submitLabel, loading, disabled, destructive }: Ac
         type="submit"
         disabled={loading || disabled}
         className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-300 ${
-          destructive ? 'bg-red-600 hover:bg-red-700' : 'bg-[#25D366] hover:bg-[#1EBE5D]'
+          destructive ? 'bg-red-600 hover:bg-red-700' : 'bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)]'
         }`}
       >
         {loading ? 'Salvando...' : submitLabel}
@@ -87,7 +87,7 @@ function ActionBar({ onCancel, submitLabel, loading, disabled, destructive }: Ac
 
 const LABEL_CLS = 'block text-[12px] font-semibold text-gray-700 mb-1.5';
 const INPUT_CLS =
-  'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-[#25D366] focus:outline-none focus:ring-2 focus:ring-[#25D366]/20';
+  'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-[var(--color-brand)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20';
 
 // ---------- Categoria ----------
 type CategoriaModalProps = {
@@ -405,7 +405,7 @@ export function ProductModal({
             type="checkbox"
             checked={ocultar}
             onChange={(e) => setOcultar(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+            className="h-4 w-4 rounded border-gray-300 text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
           />
           Ocultar nos cardápios (produto fica inativo)
         </label>
@@ -581,7 +581,7 @@ export function ProductPublicationModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#25D366]/10 text-[#0B7A3B]">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-brand)]/10 text-[#0B7A3B]">
               <Globe2 className="h-4 w-4" />
             </div>
             <div className="min-w-0">
@@ -597,7 +597,7 @@ export function ProductPublicationModal({
               type="checkbox"
               checked={visivelOnline}
               onChange={(e) => setVisivelOnline(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
             />
             <span>
               <span className="block font-semibold text-gray-800">Publicado no ZeloMenu</span>
@@ -611,7 +611,7 @@ export function ProductPublicationModal({
               checked={pausado}
               disabled={!visivelOnline}
               onChange={(e) => setPausado(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-40"
             />
             <span>
               <span className="block font-semibold text-gray-800">Pausar temporariamente</span>
@@ -831,7 +831,7 @@ function ModifierGroupEditor({
             type="checkbox"
             checked={group.active}
             onChange={(event) => updateGroup({ active: event.target.checked })}
-            className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+            className="h-4 w-4 rounded border-gray-300 text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
           />
           Grupo ativo no link
         </label>
@@ -898,7 +898,7 @@ function ModifierGroupEditor({
                     ...group,
                     options: group.options.map((entry, index) => index === optionIndex ? { ...entry, active: event.target.checked } : entry),
                   })}
-                  className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+                  className="h-4 w-4 rounded border-gray-300 text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
                 />
                 Ativa
               </label>

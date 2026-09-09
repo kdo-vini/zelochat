@@ -11,7 +11,7 @@ export function ZeloPDVLink({ className, children }: Props) {
       href="https://zelopdv.com.br"
       target="_blank"
       rel="noopener noreferrer"
-      className={className ?? 'text-[#25D366] font-medium hover:underline'}
+      className={className ?? 'text-[var(--color-brand)] font-medium hover:underline'}
     >
       {children ?? 'ZeloPDV'}
     </a>

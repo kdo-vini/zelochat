@@ -664,7 +664,7 @@ export const ProfileView = ({ state, setState, empresa, saveEmpresa, token }: Pr
                       href={SUPPORT_WHATSAPP_URL}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex-1 text-center bg-[#25D366] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
+                      className="flex-1 text-center bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
                     >
                       Falar com a equipe
                     </a>

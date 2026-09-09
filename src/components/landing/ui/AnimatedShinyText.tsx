@@ -14,7 +14,7 @@ export function AnimatedShinyText({
       className={`inline-block bg-clip-text text-transparent ${className}`}
       style={{
         backgroundImage:
-          'linear-gradient(110deg, #25D366 25%, #5BE89A 45%, #ffffff 55%, #5BE89A 65%, #25D366 85%)',
+          'linear-gradient(110deg, var(--color-brand) 25%, #5BE89A 45%, #ffffff 55%, #5BE89A 65%, var(--color-brand) 85%)',
         backgroundSize: '200% 100%',
         animation: 'ast-sweep 4.5s linear infinite',
       }}

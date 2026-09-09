@@ -25,7 +25,7 @@ export function Hero() {
         <div className="relative max-w-[1200px] mx-auto px-6 lg:px-10 pt-10 pb-16 lg:pt-16 lg:pb-24 grid lg:grid-cols-[1.05fr_1fr] gap-12 lg:gap-16 items-center">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/5 border border-white/10 px-3 py-1 text-[11.5px] font-medium text-white/70">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#25D366] animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)] animate-pulse" />
               Plataforma de IA para WhatsApp · lanchonetes e deliveries
             </span>
 
@@ -50,7 +50,7 @@ export function Hero() {
             <div className="mt-7 flex flex-wrap items-center gap-3">
               <Link
                 to="/auth?mode=signup"
-                className="relative inline-flex items-center justify-center gap-2 overflow-hidden bg-[#25D366] hover:bg-[#1EBE5D] text-white text-[14.5px] font-semibold rounded-lg px-6 h-12 transition-colors shadow-[0_8px_24px_rgba(37,211,102,0.35)]"
+                className="relative inline-flex items-center justify-center gap-2 overflow-hidden bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white text-[14.5px] font-semibold rounded-lg px-6 h-12 transition-colors shadow-[0_8px_24px_rgba(37,211,102,0.35)]"
               >
                 <span
                   aria-hidden="true"
@@ -81,7 +81,7 @@ export function Hero() {
             <p className="mt-4 text-[12.5px] text-white/55 max-w-[520px]">
               <span className="text-white/80 font-medium">R${PRICING.chat.priceBRL}/mês</span>{' '}
               com o cardápio online incluso · cancele quando quiser. Se você usa o{' '}
-              <ZeloPDVLink className="text-[#25D366] font-medium hover:underline" />, já
+              <ZeloPDVLink className="text-[var(--color-brand)] font-medium hover:underline" />, já
               está integrado.
             </p>
 
@@ -103,7 +103,7 @@ export function Hero() {
 
           <div className="relative">
             <div className="relative rounded-[24px] overflow-hidden">
-              <BorderBeam size={260} duration={9} colorFrom="#25D366" colorTo="#5BE89A" />
+              <BorderBeam size={260} duration={9} colorFrom="var(--color-brand)" colorTo="#5BE89A" />
               <ChatPreview />
             </div>
           </div>
@@ -177,8 +177,8 @@ function StatCard({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="mt-1 flex-shrink-0 w-9 h-9 rounded-lg bg-[#25D366]/15 border border-[#25D366]/25 flex items-center justify-center">
-        <Icon className="w-[18px] h-[18px] text-[#25D366]" strokeWidth={2} aria-hidden="true" />
+      <span className="mt-1 flex-shrink-0 w-9 h-9 rounded-lg bg-[var(--color-brand)]/15 border border-[var(--color-brand)]/25 flex items-center justify-center">
+        <Icon className="w-[18px] h-[18px] text-[var(--color-brand)]" strokeWidth={2} aria-hidden="true" />
       </span>
       <div className="min-w-0">
         <p className="text-[19px] lg:text-[21px] font-bold text-white leading-tight">

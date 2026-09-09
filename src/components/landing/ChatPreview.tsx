@@ -26,19 +26,19 @@ const WHATSAPP_PATTERN =
 export function ChatPreview() {
   return (
     <div className="relative">
-      <div className="absolute -inset-6 -z-10 rounded-[32px] bg-[#25D366]/10 blur-3xl" />
+      <div className="absolute -inset-6 -z-10 rounded-[32px] bg-[var(--color-brand)]/10 blur-3xl" />
 
       <div className="rounded-[20px] bg-[#0F172A] border border-white/10 shadow-[0_32px_80px_-20px_rgba(37,211,102,0.35)] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-[#25D366] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-[var(--color-brand)] flex items-center justify-center">
               <MessageCircle className="w-[18px] h-[18px] text-white" strokeWidth={2.2} />
             </div>
             <div>
               <p className="text-[13.5px] font-semibold text-white leading-tight">
                 Juliana Silva
               </p>
-              <p className="text-[11px] text-[#25D366] leading-tight flex items-center gap-1 mt-0.5">
+              <p className="text-[11px] text-[var(--color-brand)] leading-tight flex items-center gap-1 mt-0.5">
                 <Sparkles className="w-2.5 h-2.5" />
                 IA atendendo
               </p>
@@ -88,9 +88,9 @@ export function ChatPreview() {
 
           <aside className="hidden md:flex w-[200px] flex-col border-l border-white/5 bg-[#0B1120] px-3 py-4">
             <SidecarHeader>Status do pedido</SidecarHeader>
-            <div className="rounded-md bg-[#25D366]/10 border border-[#25D366]/25 px-2 py-1.5 flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-[#25D366]" />
-              <span className="text-[11px] font-semibold text-[#25D366]">
+            <div className="rounded-md bg-[var(--color-brand)]/10 border border-[var(--color-brand)]/25 px-2 py-1.5 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-brand)]" />
+              <span className="text-[11px] font-semibold text-[var(--color-brand)]">
                 PIX analisado
               </span>
             </div>
@@ -109,7 +109,7 @@ export function ChatPreview() {
                   <br />
                   1x Coca-Cola 2L
                 </p>
-                <p className="text-[12px] text-[#25D366] font-semibold mt-1">
+                <p className="text-[12px] text-[var(--color-brand)] font-semibold mt-1">
                   R$ 67,90
                 </p>
               </div>
@@ -119,7 +119,7 @@ export function ChatPreview() {
               <p className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5">
                 Próxima ação
               </p>
-              <button className="w-full inline-flex items-center justify-between gap-1.5 rounded-md bg-[#25D366] hover:bg-[#1EBE5D] transition-colors px-2 py-1.5 text-[11px] font-semibold text-white">
+              <button className="w-full inline-flex items-center justify-between gap-1.5 rounded-md bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] transition-colors px-2 py-1.5 text-[11px] font-semibold text-white">
                 Enviar para preparo
                 <ArrowRight className="w-3 h-3" strokeWidth={2.6} />
               </button>
@@ -132,13 +132,13 @@ export function ChatPreview() {
             <span className="flex-1 text-[12.5px] text-white/40">Digite sua mensagem...</span>
             <Paperclip className="w-4 h-4 text-white/40" />
           </div>
-          <button className="w-10 h-10 rounded-lg bg-[#25D366] hover:bg-[#1EBE5D] text-white flex items-center justify-center transition-colors">
+          <button className="w-10 h-10 rounded-lg bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white flex items-center justify-center transition-colors">
             <Send className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      <div className="absolute -bottom-4 -right-4 w-11 h-11 rounded-full bg-[#25D366] text-white flex items-center justify-center shadow-[0_8px_20px_rgba(37,211,102,0.4)]">
+      <div className="absolute -bottom-4 -right-4 w-11 h-11 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center shadow-[0_8px_20px_rgba(37,211,102,0.4)]">
         <MessageCircle className="w-5 h-5" />
       </div>
     </div>
@@ -162,7 +162,7 @@ function MenuLinkCard() {
   return (
     <div className="mt-1.5 rounded-md bg-white border border-black/10 overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.08)]">
       <div className="flex items-center gap-2 px-2.5 py-2">
-        <div className="w-8 h-8 rounded-md bg-[#25D366]/15 flex items-center justify-center flex-shrink-0">
+        <div className="w-8 h-8 rounded-md bg-[var(--color-brand)]/15 flex items-center justify-center flex-shrink-0">
           <UtensilsCrossed className="w-4 h-4 text-[#0B7A3B]" strokeWidth={2.2} />
         </div>
         <div className="min-w-0">
@@ -270,7 +270,7 @@ function ReceiptBubble() {
         style={{ backgroundColor: WHATSAPP_USER_BUBBLE }}
       >
         <div className="rounded-md bg-black/[0.04] border border-black/5 px-2.5 py-2 flex items-center gap-2 w-[210px]">
-          <div className="w-9 h-9 rounded-md bg-[#25D366]/15 flex items-center justify-center flex-shrink-0">
+          <div className="w-9 h-9 rounded-md bg-[var(--color-brand)]/15 flex items-center justify-center flex-shrink-0">
             <FileText className="w-4 h-4 text-[#0B7A3B]" strokeWidth={2.2} />
           </div>
           <div className="min-w-0">

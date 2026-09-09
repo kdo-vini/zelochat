@@ -80,7 +80,7 @@ function LoginForm({ onSuccess }: LoginFormProps) {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="seu@email.com.br"
-          className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
+          className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
         />
       </div>
 
@@ -91,7 +91,7 @@ function LoginForm({ onSuccess }: LoginFormProps) {
           </label>
           <Link
             to="/auth/forgot-password"
-            className="text-sm text-[#25D366] hover:text-[#1EBE5D] transition-colors"
+            className="text-sm text-[var(--color-brand)] hover:text-[var(--color-brand-deep)] transition-colors"
           >
             Esqueci minha senha
           </Link>
@@ -109,7 +109,7 @@ function LoginForm({ onSuccess }: LoginFormProps) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? 'Entrando...' : 'Entrar'}
       </button>
@@ -242,7 +242,7 @@ function SignupForm({ onSwitchToLogin }: SignupFormProps) {
         <button
           type="button"
           onClick={onSwitchToLogin}
-          className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 font-semibold px-6 transition-colors"
+          className="w-full bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 font-semibold px-6 transition-colors"
         >
           Voltar ao login
         </button>
@@ -270,7 +270,7 @@ function SignupForm({ onSwitchToLogin }: SignupFormProps) {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="seu@email.com.br"
-          className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
+          className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
         />
       </div>
 
@@ -297,7 +297,7 @@ function SignupForm({ onSwitchToLogin }: SignupFormProps) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? 'Criando conta...' : 'Criar conta'}
       </button>

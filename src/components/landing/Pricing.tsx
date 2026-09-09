@@ -40,13 +40,13 @@ export function Pricing() {
     <section id="precos" className="bg-white py-20 lg:py-24">
       <div className="max-w-[1200px] mx-auto px-6 lg:px-10">
         <div className="text-center max-w-[760px] mx-auto">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366]/10 border border-[#25D366]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-brand)]/10 border border-[var(--color-brand)]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" />
             Preços
           </span>
 
           <h2 className="mt-4 text-[34px] lg:text-[40px] font-bold tracking-tight text-[#0B1120] leading-[1.15]">
-            Um plano. <span className="text-[#25D366]">Sem letra miúda.</span>
+            Um plano. <span className="text-[var(--color-brand)]">Sem letra miúda.</span>
             <br />
             Sem limite de conversa.
           </h2>
@@ -60,13 +60,13 @@ export function Pricing() {
 
         <div className="mt-14 max-w-[520px] mx-auto">
           <div className="relative rounded-[24px] bg-[#0B1120] text-white p-8 lg:p-10 shadow-[0_32px_80px_-20px_rgba(11,17,32,0.35)] overflow-hidden">
-            <BorderBeam size={300} duration={10} colorFrom="#25D366" colorTo="#A78BFA" />
-            <div className="pointer-events-none absolute -top-20 -right-20 w-[260px] h-[260px] rounded-full bg-[#25D366]/25 blur-[100px]" />
+            <BorderBeam size={300} duration={10} colorFrom="var(--color-brand)" colorTo="#A78BFA" />
+            <div className="pointer-events-none absolute -top-20 -right-20 w-[260px] h-[260px] rounded-full bg-[var(--color-brand)]/25 blur-[100px]" />
 
             <div className="relative">
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 border border-white/10 px-3 py-1 text-[11.5px] font-medium text-white/80">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" />
                   Plano único
                 </span>
                 <span className="text-[11.5px] text-white/50">Mensal</span>
@@ -96,7 +96,7 @@ export function Pricing() {
 
               <Link
                 to="/auth?mode=signup"
-                className="relative mt-8 inline-flex w-full items-center justify-center gap-2 overflow-hidden bg-[#25D366] hover:bg-[#1EBE5D] text-white text-[14.5px] font-semibold rounded-lg h-12 transition-colors shadow-[0_8px_24px_rgba(37,211,102,0.35)]"
+                className="relative mt-8 inline-flex w-full items-center justify-center gap-2 overflow-hidden bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white text-[14.5px] font-semibold rounded-lg h-12 transition-colors shadow-[0_8px_24px_rgba(37,211,102,0.35)]"
               >
                 <span
                   aria-hidden="true"
@@ -117,8 +117,8 @@ export function Pricing() {
               <ul className="mt-8 space-y-3">
                 {INCLUDED.map((item, i) => (
                   <li key={i} className="flex items-start gap-3 text-[13.5px] text-white/85">
-                    <span className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full bg-[#25D366]/15 border border-[#25D366]/30 flex items-center justify-center">
-                      <Check className="w-3 h-3 text-[#25D366]" strokeWidth={3} />
+                    <span className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full bg-[var(--color-brand)]/15 border border-[var(--color-brand)]/30 flex items-center justify-center">
+                      <Check className="w-3 h-3 text-[var(--color-brand)]" strokeWidth={3} />
                     </span>
                     {item}
                   </li>

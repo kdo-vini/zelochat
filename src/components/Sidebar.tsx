@@ -66,7 +66,7 @@ const NavButton: React.FC<NavButtonProps> = memo(({ item, active, expanded, badg
       )}
       {badge != null && badge > 0 && (
         <span className={`flex-shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-white text-[10px] font-bold ${
-          badgeTone === 'alert' ? 'bg-[var(--color-alert)]' : 'bg-[#25D366]'
+          badgeTone === 'alert' ? 'bg-[var(--color-alert)]' : 'bg-[var(--color-brand)]'
         } ${
           expanded ? '' : 'absolute top-1.5 right-1.5 min-w-[14px] h-[14px] text-[9px]'
         }`}>

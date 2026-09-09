@@ -117,14 +117,14 @@ export function FAQ() {
     <section id="faq" className="bg-[#F2F3F8] py-20 lg:py-24">
       <div className="max-w-[820px] mx-auto px-6 lg:px-10">
         <div className="text-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366]/10 border border-[#25D366]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-brand)]/10 border border-[var(--color-brand)]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" />
             FAQ
           </span>
 
           <h2 className="mt-4 text-[34px] lg:text-[40px] font-bold tracking-tight text-[#0B1120] leading-[1.15]">
             Perguntas que os{' '}
-            <span className="text-[#25D366]">donos sempre fazem</span>
+            <span className="text-[var(--color-brand)]">donos sempre fazem</span>
           </h2>
 
           <p className="mt-4 text-[15px] text-[#64748B] leading-relaxed">
@@ -142,8 +142,8 @@ export function FAQ() {
                 key={q}
                 className={`rounded-2xl border transition-all ${
                   open
-                    ? 'bg-white border-[#25D366]/30 shadow-[0_12px_32px_-16px_rgba(15,23,42,0.12)]'
-                    : 'bg-white border-[#E5E7EB]/80 hover:border-[#25D366]/20'
+                    ? 'bg-white border-[var(--color-brand)]/30 shadow-[0_12px_32px_-16px_rgba(15,23,42,0.12)]'
+                    : 'bg-white border-[#E5E7EB]/80 hover:border-[var(--color-brand)]/20'
                 }`}
               >
                 <button
@@ -160,7 +160,7 @@ export function FAQ() {
                   <span
                     className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
                       open
-                        ? 'bg-[#25D366] text-white rotate-45'
+                        ? 'bg-[var(--color-brand)] text-white rotate-45'
                         : 'bg-[#F2F3F8] text-[#0B1120]'
                     }`}
                     aria-hidden="true"

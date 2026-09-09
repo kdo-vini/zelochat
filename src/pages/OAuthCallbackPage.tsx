@@ -37,7 +37,7 @@ export default function OAuthCallbackPage() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white gap-4">
-      <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[#25D366]" />
+      <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[var(--color-brand)]" />
       <p className="text-sm text-[#64748B]">Autenticando...</p>
     </div>
   );

@@ -744,7 +744,6 @@ export function ChatView({
   const [selectedJids, setSelectedJids] = useState<Set<string>>(new Set());
   const [bulkActionLoading, setBulkActionLoading] = useState<null | 'read' | 'archive' | 'delete'>(null);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
-  const [markAllReadConfirm, setMarkAllReadConfirm] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
@@ -1009,8 +1008,6 @@ export function ChatView({
       await markManyRead(visibleUnreadJids);
     } catch (err) {
       setChatActionError(getFriendlyErrorMessage(err) ?? 'Não foi possível marcar como lidas.');
-    } finally {
-      setMarkAllReadConfirm(false);
     }
   }, [visibleUnreadJids, markManyRead]);
 
@@ -1820,12 +1817,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                     <button
                       onClick={() => {
                         if (visibleUnreadJids.length === 0) { setListMenuOpen(false); return; }
-                        if (visibleUnreadJids.length > 5) {
-                          setMarkAllReadConfirm(true);
-                          setListMenuOpen(false);
-                        } else {
-                          void runMarkAllVisibleRead();
-                        }
+                        void runMarkAllVisibleRead();
                       }}
                       disabled={visibleUnreadJids.length === 0}
                       className="w-full text-left px-3 py-2 text-[13px] text-[var(--color-ink)] hover:bg-[var(--color-surface-muted)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
@@ -2040,7 +2032,7 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                       {isEscalated ? (
                         <SlaTimer escalatedAt={s.escalatedAt} className="flex-shrink-0 ml-1" />
                       ) : (
-                        <span className={`text-[11px] text-[var(--color-ink-faint)] flex-shrink-0 ml-1 transition-opacity ${!selectionMode && hoveredSessionId === s.id ? 'opacity-0' : ''}`}>
+                        <span className={`text-[11px] text-[var(--color-ink-faint)] flex-shrink-0 ml-1 transition-opacity [@media(hover:none)]:opacity-0! ${!selectionMode && hoveredSessionId === s.id ? 'opacity-0' : ''}`}>
                           {formatLastMessageTime(s.lastMessageTime)}
                         </span>
                       )}
@@ -2049,7 +2041,16 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                       <p className="text-[12.5px] text-[var(--color-ink-muted)] truncate flex-1">{s.lastMessage}</p>
                       <div className="flex items-center gap-1 flex-shrink-0">
                         {(sessionTagsMap[s.id] ?? []).slice(0, 3).map((tag) => (
-                          <span key={tag.id} className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color }} title={tag.name} />
+                          <span
+                            key={tag.id}
+                            className="flex items-center gap-1 max-w-[52px] flex-shrink-0"
+                            title={tag.name}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color }} />
+                            <span className="text-[9.5px] font-medium text-[var(--color-ink-muted)] truncate leading-none">
+                              {tag.name}
+                            </span>
+                          </span>
                         ))}
                         {s.alerts && s.alerts.length > 0 && (
                           <span className="rounded-full bg-[var(--color-alert)] px-1.5 py-0.5 text-[10px] font-bold text-white">!</span>
@@ -2064,8 +2065,16 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
                   </div>
                 </button>
 
-                {!selectionMode && hoveredSessionId === s.id && (
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                {!selectionMode && (
+                  // Desktop/mouse: only reveal on hover (JS state, matches the rest of the
+                  // row's hover affordances). Touch (no hover capability, e.g. `hover: none`
+                  // media feature): always rendered and visible — there is no hover to wait
+                  // for, so the icons must have a permanent tap target instead.
+                  <div
+                    className={`absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-[var(--color-surface)] rounded-lg transition-opacity pointer-events-none [@media(hover:none)]:opacity-100! [@media(hover:none)]:pointer-events-auto! ${
+                      hoveredSessionId === s.id ? 'opacity-100 pointer-events-auto' : 'opacity-0'
+                    }`}
+                  >
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -3578,16 +3587,6 @@ ${order.observations ? `<p>Obs: ${escHtml(order.observations)}</p>` : ''}
         onConfirm={runBulkDelete}
         confirmLabel="Excluir"
         confirmLoadingLabel="Excluindo..."
-      />
-
-      <ConfirmModal
-        open={markAllReadConfirm}
-        title="Marcar todas como lidas?"
-        message={`Zerar o contador de não lidas em ${visibleUnreadJids.length} conversa${visibleUnreadJids.length === 1 ? '' : 's'}.`}
-        onClose={() => setMarkAllReadConfirm(false)}
-        onConfirm={runMarkAllVisibleRead}
-        confirmLabel="Marcar"
-        confirmLoadingLabel="Marcando..."
       />
 
       {/* ── Enviar contato modal ─────────────────────────────────── */}

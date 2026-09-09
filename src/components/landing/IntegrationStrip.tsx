@@ -31,7 +31,7 @@ export function IntegrationStrip() {
               key={label}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/[0.04] border border-white/10 text-white/75"
             >
-              <Icon className="w-[16px] h-[16px] text-[#25D366]" strokeWidth={2.2} aria-hidden="true" />
+              <Icon className="w-[16px] h-[16px] text-[var(--color-brand)]" strokeWidth={2.2} aria-hidden="true" />
               <span className="text-[13px] font-medium whitespace-nowrap">{label}</span>
             </div>
           ))}

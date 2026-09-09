@@ -194,7 +194,7 @@ function AudioPlayer({ src, messageId, isOutgoing }: { src: string; messageId: s
             );
           })}
         </div>
-        <span className="text-[10px] leading-none" style={{ color: '#8696a0' }}>{duration}</span>
+        <span className="text-[10px] leading-none" style={{ color: 'var(--color-ink-muted)' }}>{duration}</span>
       </div>
     </div>
   );
@@ -842,7 +842,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
               {message.attachment?.dataUrl ? (
                 <button
                   onClick={() => setLightbox({ type: 'image', src: message.attachment!.dataUrl! })}
-                  className="block cursor-pointer focus:outline-none"
+                  className="block cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/40 rounded"
                   aria-label="Visualizar imagem"
                 >
                   <img
@@ -871,7 +871,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
               {message.attachment?.dataUrl ? (
                 <button
                   onClick={() => setLightbox({ type: 'image', src: message.attachment!.dataUrl! })}
-                  className="block w-full cursor-pointer focus:outline-none"
+                  className="block w-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/40"
                   aria-label="Visualizar imagem"
                 >
                   <img
@@ -898,7 +898,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
               {message.attachment?.dataUrl ? (
                 <button
                   onClick={() => setLightbox({ type: 'video', src: message.attachment!.dataUrl! })}
-                  className="block w-full cursor-pointer focus:outline-none relative"
+                  className="block w-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/40 relative"
                   aria-label="Visualizar vídeo"
                 >
                   <video
@@ -942,7 +942,7 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                   isOutgoing={isOutgoing}
                 />
               ) : (
-                <div className="flex items-center gap-2" style={{ color: '#8696a0', fontSize: 12 }}>
+                <div className="flex items-center gap-2" style={{ color: 'var(--color-ink-muted)', fontSize: 12 }}>
                   <FileAudio className="h-4 w-4 flex-shrink-0" strokeWidth={1.8} />
                   <span>Áudio indisponível</span>
                   <span style={{ fontSize: 10.5, color: '#a0aab2' }}>

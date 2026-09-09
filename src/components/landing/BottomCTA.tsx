@@ -21,7 +21,7 @@ export function BottomCTA() {
                 <h3 className="text-[26px] lg:text-[32px] font-bold leading-[1.1] tracking-tight">
                   Cada dia sem ZeloChat,
                   <br />
-                  é <span className="text-[#25D366]">pedido indo pro concorrente.</span>
+                  é <span className="text-[var(--color-brand)]">pedido indo pro concorrente.</span>
                 </h3>
                 <p className="mt-3 text-[14.5px] text-white/70 max-w-[520px]">
                   Configure em 10 minutos. A IA atende, leva o cliente pro seu
@@ -34,7 +34,7 @@ export function BottomCTA() {
               <div className="flex flex-col items-start lg:items-end gap-2 flex-shrink-0">
                 <Link
                   to="/auth?mode=signup"
-                  className="relative inline-flex items-center justify-center gap-2 overflow-hidden bg-[#25D366] hover:bg-[#1EBE5D] text-white text-[14.5px] font-semibold rounded-lg px-6 h-12 transition-colors shadow-[0_8px_24px_rgba(37,211,102,0.35)]"
+                  className="relative inline-flex items-center justify-center gap-2 overflow-hidden bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white text-[14.5px] font-semibold rounded-lg px-6 h-12 transition-colors shadow-[0_8px_24px_rgba(37,211,102,0.35)]"
                 >
                   <span
                     aria-hidden="true"

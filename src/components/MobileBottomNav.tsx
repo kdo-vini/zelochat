@@ -52,7 +52,7 @@ export function MobileBottomNav({
               <span className="text-[10.5px] font-medium leading-none">{item.label}</span>
               {badge > 0 && (
                 <span className={`absolute top-1.5 left-1/2 ml-1 rounded-full min-w-[16px] h-[16px] px-1 flex items-center justify-center text-[9.5px] font-bold text-white ${
-                  isAlert ? 'bg-[var(--color-alert)]' : 'bg-[#25D366]'
+                  isAlert ? 'bg-[var(--color-alert)]' : 'bg-[var(--color-brand)]'
                 }`}>
                   {badge > 99 ? '99+' : badge}
                 </span>

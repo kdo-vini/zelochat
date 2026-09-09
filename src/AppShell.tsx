@@ -217,6 +217,7 @@ export default function AppShell() {
 
   const {
     orders: supabaseOrders,
+    loading: ordersLoading,
     refresh: refreshOrders,
     addOrder: addOrderToSupabase,
     updateOrderStatus: updateOrderStatusInSupabase,
@@ -1034,6 +1035,7 @@ export default function AppShell() {
         }
         dashboardState={dashboardState}
         productionState={productionState}
+        productionOrdersLoading={ordersLoading}
         calendarState={calendarState}
         aiConfigsState={aiConfigsState}
         settingsState={settingsState}

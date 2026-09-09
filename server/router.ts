@@ -1128,6 +1128,18 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
 });
 
 
+/**
+ * Generic PT-BR fallback for server errors that don't have a specific mapped
+ * message. Never expose err.message (or "HTTP ${status}"-style detail) to
+ * the client — log the real error server-side and show this fixed copy
+ * instead. Mirrors the spirit of getZeloImpressaoFriendlyMessage on the
+ * client (src/services/zeloImpressaoClient.ts), just without per-case
+ * mapping — this is strictly the last-resort catch-all.
+ */
+function friendlyServerErrorMessage(): string {
+  return 'Não foi possível concluir a ação. Tente novamente em instantes.';
+}
+
 function sendDriverError(res: Response, error: unknown): void {
   const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
 
@@ -1151,7 +1163,8 @@ function sendDriverError(res: Response, error: unknown): void {
     return;
   }
 
-  res.status(500).json({ error: message });
+  console.error('[Router] Driver action error:', error);
+  res.status(500).json({ error: friendlyServerErrorMessage() });
 }
 
 function sendZeloMenuCartError(res: Response, error: unknown): void {
@@ -1380,7 +1393,8 @@ router.get('/api/status', async (req: Request, res: Response) => {
       sendAuthError(res, err);
       return;
     }
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+    console.error('[Router] GET /api/status error:', err);
+    res.status(500).json({ error: friendlyServerErrorMessage() });
   }
 });
 
@@ -1406,7 +1420,8 @@ router.get('/api/qr', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'A exclusão definitiva desta conta já está em processamento.' });
       return;
     }
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+    console.error('[Router] GET /api/qr error:', err);
+    res.status(500).json({ error: friendlyServerErrorMessage() });
   }
 });
 
@@ -1439,8 +1454,8 @@ router.post('/api/whatsapp/disconnect', async (req: Request, res: Response) => {
       sendAuthError(res, err);
       return;
     }
-    const msg = err instanceof Error ? err.message : 'Erro ao desconectar.';
-    res.status(500).json({ error: msg });
+    console.error('[Router] POST /api/whatsapp/disconnect error:', err);
+    res.status(500).json({ error: friendlyServerErrorMessage() });
   }
 });
 
@@ -1468,7 +1483,8 @@ router.post('/api/qr/refresh', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'A exclusão definitiva desta conta já está em processamento.' });
       return;
     }
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+    console.error('[Router] POST /api/qr/refresh error:', err);
+    res.status(500).json({ error: friendlyServerErrorMessage() });
   }
 });
 

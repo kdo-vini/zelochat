@@ -104,14 +104,14 @@ export function FeaturesGrid() {
     <section id="recursos" className="bg-[#F2F3F8] py-20 lg:py-24">
       <div className="max-w-[1200px] mx-auto px-6 lg:px-10">
         <div className="text-center max-w-[760px] mx-auto">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366]/10 border border-[#25D366]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]" aria-hidden="true" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-brand)]/10 border border-[var(--color-brand)]/20 px-3 py-1 text-[12px] font-semibold text-[#0B7A3B]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-brand)]" aria-hidden="true" />
             Recursos
           </span>
 
           <h2 className="mt-4 text-[34px] lg:text-[40px] font-bold tracking-tight text-[#0B1120] leading-[1.15]">
             Não é só chatbot. É o{' '}
-            <span className="text-[#25D366]">fluxo de pedidos</span>
+            <span className="text-[var(--color-brand)]">fluxo de pedidos</span>
             <br className="hidden md:block" />
             {' '}da sua loja rodando dentro do WhatsApp.
           </h2>
@@ -151,16 +151,16 @@ function HeroFeatureCard({ feature }: { feature: Feature }) {
     <article
       className={`group relative rounded-2xl overflow-hidden flex flex-col transition-all ${
         highlight
-          ? 'bg-gradient-to-br from-white to-[#F0FDF4] border border-[#25D366]/30 shadow-[0_12px_40px_-16px_rgba(37,211,102,0.25)]'
-          : 'bg-white border border-[#E5E7EB]/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:border-[#25D366]/30 hover:shadow-[0_12px_32px_-12px_rgba(15,23,42,0.12)]'
+          ? 'bg-gradient-to-br from-white to-[#F0FDF4] border border-[var(--color-brand)]/30 shadow-[0_12px_40px_-16px_rgba(37,211,102,0.25)]'
+          : 'bg-white border border-[#E5E7EB]/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:border-[var(--color-brand)]/30 hover:shadow-[0_12px_32px_-12px_rgba(15,23,42,0.12)]'
       }`}
     >
       <div className="p-6 lg:p-7 flex-1">
         <div
           className={`w-11 h-11 rounded-xl flex items-center justify-center mb-4 ${
             highlight
-              ? 'bg-[#25D366] text-white'
-              : 'bg-[#25D366]/10 text-[#0B7A3B]'
+              ? 'bg-[var(--color-brand)] text-white'
+              : 'bg-[var(--color-brand)]/10 text-[#0B7A3B]'
           }`}
         >
           <Icon className="w-[20px] h-[20px]" strokeWidth={2} aria-hidden="true" />
@@ -182,9 +182,9 @@ function HeroFeatureCard({ feature }: { feature: Feature }) {
 function SupportingFeatureCard({ feature }: { feature: Feature }) {
   const { icon: Icon, title, description } = feature;
   return (
-    <article className="rounded-2xl bg-white border border-[#E5E7EB]/70 p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:border-[#25D366]/30 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.1)] transition-all">
+    <article className="rounded-2xl bg-white border border-[#E5E7EB]/70 p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:border-[var(--color-brand)]/30 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.1)] transition-all">
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-9 h-9 rounded-lg bg-[#25D366]/10 text-[#0B7A3B] flex items-center justify-center flex-shrink-0">
+        <div className="w-9 h-9 rounded-lg bg-[var(--color-brand)]/10 text-[#0B7A3B] flex items-center justify-center flex-shrink-0">
           <Icon className="w-[18px] h-[18px]" strokeWidth={2} aria-hidden="true" />
         </div>
         <h3 className="text-[15px] font-semibold text-[#0B1120] leading-tight">
@@ -216,7 +216,7 @@ function ChatFlowVisual() {
         </div>
       </div>
       <div className="flex justify-center pt-0.5">
-        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#25D366]">
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[var(--color-brand)]">
           <CheckCircle2 className="w-3 h-3" />
           Pedido recebido no painel
         </span>
@@ -228,7 +228,7 @@ function ChatFlowVisual() {
 function PixVisual() {
   return (
     <div className="rounded-xl bg-white border border-[#E5E7EB] p-3 flex items-center gap-3">
-      <div className="w-11 h-11 rounded-lg bg-[#25D366]/15 flex items-center justify-center flex-shrink-0">
+      <div className="w-11 h-11 rounded-lg bg-[var(--color-brand)]/15 flex items-center justify-center flex-shrink-0">
         <Receipt className="w-5 h-5 text-[#0B7A3B]" strokeWidth={2} aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
@@ -252,7 +252,7 @@ function KanbanVisual() {
       <KanbanCol label="Pronto" tone="green" cards={1} />
       <div className="col-span-3 mt-1 flex items-center justify-between text-[10px] text-[#64748B] px-1">
         <span className="inline-flex items-center gap-1">
-          <Bell className="w-3 h-3 text-[#25D366]" aria-hidden="true" />
+          <Bell className="w-3 h-3 text-[var(--color-brand)]" aria-hidden="true" />
           Cliente avisado
         </span>
         <span className="inline-flex items-center gap-1 text-[#0B1120] font-medium">
@@ -282,7 +282,7 @@ function KanbanCol({
   };
   return (
     <div
-      className={`rounded-md p-1.5 ${active ? 'ring-2 ring-[#25D366]/40' : ''}`}
+      className={`rounded-md p-1.5 ${active ? 'ring-2 ring-[var(--color-brand)]/40' : ''}`}
       style={{ background: '#F8FAFC' }}
     >
       <div

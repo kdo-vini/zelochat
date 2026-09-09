@@ -89,7 +89,7 @@ export function ConfirmModal({
               onClick={handleConfirm}
               disabled={loading}
               className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-300 ${
-                destructive ? 'bg-red-600 hover:bg-red-700' : 'bg-[#25D366] hover:bg-[#1EBE5D]'
+                destructive ? 'bg-red-600 hover:bg-red-700' : 'bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)]'
               }`}
             >
               {loading ? confirmLoadingLabel : confirmLabel}

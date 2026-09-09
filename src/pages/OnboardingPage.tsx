@@ -233,7 +233,7 @@ export default function OnboardingPage() {
                 <div
                   key={s}
                   className={`h-1.5 w-10 rounded-full transition-colors ${
-                    s <= step ? 'bg-[#25D366]' : 'bg-[#E5E7EB]'
+                    s <= step ? 'bg-[var(--color-brand)]' : 'bg-[#E5E7EB]'
                   }`}
                 />
               ))}
@@ -266,7 +266,7 @@ export default function OnboardingPage() {
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
                     placeholder="Ex.: Lanchonete do João"
-                    className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
+                    className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
                   />
                 </div>
 
@@ -282,7 +282,7 @@ export default function OnboardingPage() {
                     required
                     value={businessType}
                     onChange={(e) => setBusinessType(e.target.value as BusinessType)}
-                    className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] bg-white"
+                    className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:border-transparent text-[#0B1120] bg-white"
                   >
                     <option value="" disabled>
                       Selecione o tipo de negócio
@@ -299,7 +299,7 @@ export default function OnboardingPage() {
                   type="button"
                   onClick={handleStep1Next}
                   disabled={!isStep1Valid}
-                  className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                  className="w-full bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-2"
                 >
                   Próximo →
                 </button>
@@ -337,7 +337,7 @@ export default function OnboardingPage() {
                       className={`border rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:border-transparent text-[#0B1120] placeholder:text-[#64748B] ${
                         phoneError
                           ? 'border-red-400 focus:ring-red-300'
-                          : 'border-[#E5E7EB] focus:ring-[#25D366]'
+                          : 'border-[#E5E7EB] focus:ring-[var(--color-brand)]'
                       }`}
                     />
                     {phoneError && (
@@ -362,7 +362,7 @@ export default function OnboardingPage() {
                       required
                       value={timezone}
                       onChange={(e) => setTimezone(e.target.value)}
-                      className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] bg-white"
+                      className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:border-transparent text-[#0B1120] bg-white"
                     >
                       {TIMEZONE_OPTIONS.map((tz) => (
                         <option key={tz.value} value={tz.value}>
@@ -389,7 +389,7 @@ export default function OnboardingPage() {
                     <button
                       type="submit"
                       disabled={loading || !isStep2Valid}
-                      className="flex-1 bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {loading ? 'Salvando...' : 'Concluir e entrar'}
                     </button>

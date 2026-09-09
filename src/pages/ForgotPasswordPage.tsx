@@ -52,7 +52,7 @@ export default function ForgotPasswordPage() {
             </div>
             <Link
               to="/auth"
-              className="block w-full text-center bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 leading-[2.75rem] font-semibold transition-colors"
+              className="block w-full text-center bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 leading-[2.75rem] font-semibold transition-colors"
             >
               Voltar ao login
             </Link>
@@ -80,14 +80,14 @@ export default function ForgotPasswordPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="seu@email.com.br"
-                className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
+                className="border border-[#E5E7EB] rounded-lg h-11 px-3 w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:border-transparent text-[#0B1120] placeholder:text-[#64748B]"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Enviando...' : 'Enviar instruções'}
             </button>

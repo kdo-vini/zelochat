@@ -123,7 +123,7 @@ function SocialIcon({
       href={href}
       aria-label={label}
       {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-      className="w-9 h-9 rounded-lg bg-[#F2F3F8] hover:bg-[#25D366]/10 text-[#64748B] hover:text-[#25D366] flex items-center justify-center transition-colors"
+      className="w-9 h-9 rounded-lg bg-[#F2F3F8] hover:bg-[var(--color-brand)]/10 text-[#64748B] hover:text-[var(--color-brand)] flex items-center justify-center transition-colors"
     >
       <Icon className="w-4 h-4" aria-hidden="true" />
     </a>

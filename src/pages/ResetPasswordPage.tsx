@@ -113,7 +113,7 @@ export default function ResetPasswordPage() {
             </p>
             <Link
               to="/auth/forgot-password"
-              className="block w-full text-center bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 leading-[2.75rem] font-semibold transition-colors"
+              className="block w-full text-center bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 leading-[2.75rem] font-semibold transition-colors"
             >
               Solicitar novo link
             </Link>
@@ -127,7 +127,7 @@ export default function ResetPasswordPage() {
     return (
       <div className="landing-theme min-h-screen flex items-center justify-center bg-[#F8FAFC]">
         <div className="flex flex-col items-center gap-3">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[#25D366]" />
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#E5E7EB] border-t-[var(--color-brand)]" />
           <p className="text-sm text-[#64748B]">Verificando link...</p>
         </div>
       </div>
@@ -171,13 +171,13 @@ export default function ResetPasswordPage() {
                   <li
                     key={rule.label}
                     className={`flex items-center gap-2 text-sm transition-colors ${
-                      passing ? 'text-[#25D366]' : 'text-[#64748B]'
+                      passing ? 'text-[var(--color-brand)]' : 'text-[#64748B]'
                     }`}
                   >
                     <span
                       className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 transition-colors ${
                         passing
-                          ? 'bg-[#25D366] border-[#25D366]'
+                          ? 'bg-[var(--color-brand)] border-[var(--color-brand)]'
                           : 'border-[#D1D5DB] bg-white'
                       }`}
                     >
@@ -202,7 +202,7 @@ export default function ResetPasswordPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white rounded-lg h-11 font-semibold px-6 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Atualizando...' : 'Atualizar senha'}
             </button>

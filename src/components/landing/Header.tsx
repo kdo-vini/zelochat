@@ -55,7 +55,7 @@ export function Header() {
           </Link>
           <Link
             to="/auth?mode=signup"
-            className="inline-flex items-center gap-1.5 bg-[#25D366] hover:bg-[#1EBE5D] text-white text-[13.5px] font-semibold rounded-lg px-4 h-10 transition-colors shadow-[0_4px_14px_rgba(37,211,102,0.25)]"
+            className="inline-flex items-center gap-1.5 bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)] text-white text-[13.5px] font-semibold rounded-lg px-4 h-10 transition-colors shadow-[0_4px_14px_rgba(37,211,102,0.25)]"
           >
             Começar agora
             <ArrowRight className="w-4 h-4" strokeWidth={2.4} />

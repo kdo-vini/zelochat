@@ -837,6 +837,7 @@ export const ProductionView = ({
   isAuthenticated,
   focusedOrderRequest,
   focusedOrderRequestKey,
+  ordersLoading,
 }: {
   state: ProductionState;
   onDragEnd: (r: DropResult) => void;
@@ -850,6 +851,11 @@ export const ProductionView = ({
   isAuthenticated: boolean;
   focusedOrderRequest?: OrderFocusRequest | null;
   focusedOrderRequestKey?: number | null;
+  // Só distingue "ainda carregando" de "dia genuinamente vazio" — ver useOrders().loading.
+  // Como orders só é substituído quando um fetch termina, feedOrders só fica vazio
+  // durante loading no primeiro carregamento (ou quando já não há pedidos mesmo),
+  // então isso não pisca a cada refresh de 30s em segundo plano.
+  ordersLoading?: boolean;
 }) => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -1070,7 +1076,17 @@ export const ProductionView = ({
           {/* Scrollable feed */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
             <AnimatePresence initial={false}>
-              {feedOrders.length === 0 ? (
+              {feedOrders.length === 0 && ordersLoading ? (
+                <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  className="py-12 flex flex-col items-center gap-2 text-center"
+                >
+                  <div className="w-5 h-5 rounded-full border-2 border-[var(--color-brand)] border-t-transparent animate-spin" />
+                  <p className="text-[12.5px] text-[var(--color-ink-faint)]">
+                    Carregando pedidos…
+                  </p>
+                </motion.div>
+              ) : feedOrders.length === 0 ? (
                 <motion.div
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                   className="py-12 flex flex-col items-center gap-2 text-center"
