@@ -22,6 +22,9 @@ import {
   isOrderingSnapshotEditable,
   isCatalogMenuRequest,
   isDeliveryFeeQuestion,
+  isOrderingStartButtonText,
+  mentionsMenu,
+  AI_ORDER_START_REPLY,
   parseOrderingButton,
   renderCatalogReply,
   repeatsLastAssistantReply,
@@ -826,17 +829,29 @@ export async function tryHandleAiWhatsAppOrdering(
   // `isOrderingGreeting` stays false for it, so control falls through to
   // the normal catalog/order flow exactly as before.
   let entryDispatched = false;
+  let entryResponseText: string | undefined;
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
     const response = buildOrderingEntryPayload(entry.menuUrl);
     try {
       await dispatchAiPayload(permit, response, 'entry', dryRun, isPermitCurrent);
       entryDispatched = true;
+      entryResponseText = response.text;
       metric({ ...metricBase, stage: 'entry', outcome: 'sent' });
       if (isOrderingGreeting(text)) return { handled: true, response: response.text };
     } catch (error) {
       if (error instanceof OrderingSuppressedError) return { handled: true };
       throw error;
     }
+  }
+  // FIX 2026-09-09: a tap on our own "Pedir por aqui" button arrived as plain
+  // text, with no button id, so the button handler never saw it — see
+  // `isOrderingStartButtonText`. Answer it here exactly as the tap is
+  // answered, before any classification, so the label can never be read as an
+  // order intent again.
+  if (isOrderingStartButtonText(text)) {
+    await sendText(permit, AI_ORDER_START_REPLY, 'button-start-text', dryRun, isPermitCurrent);
+    metric({ ...metricBase, stage: 'entry', outcome: 'start_button_text' });
+    return { handled: true, response: AI_ORDER_START_REPLY };
   }
   // FIX 2026-09-09: "vc pode mandar o cardapio?" is a request for the MENU,
   // not a product search. It used to fall through to `searchCatalog` with the
@@ -853,20 +868,31 @@ export async function tryHandleAiWhatsAppOrdering(
   // the wrong answer — it opens with "Estamos atendendo" — so the turn goes to
   // the generic assistant, which knows the reopening time and can offer the
   // menu without claiming anyone is working.
-  if (!entryDispatched && isCatalogMenuRequest(text)) {
+  const answerMenuRequest = async (outcome: string): Promise<AiOrderingHandleResult> => {
+    // The entry card IS the menu, so a turn that already sent it says nothing
+    // more. Following it with a second message is what answered "Boa noite /
+    // Gostaria do cardápio por favorn" with a card AND "Não encontrei uma
+    // opção disponível com esse nome" (Bem Servido, 2026-09-09 22:31).
+    if (entryDispatched) {
+      metric({ ...metricBase, stage: 'entry', outcome: `${outcome}_after_entry` });
+      return { handled: true, response: entryResponseText };
+    }
     if (entry.storeOpen !== true || !entry.menuUrl) {
-      metric({ ...metricBase, stage: 'entry', outcome: 'menu_request_store_closed' });
+      metric({ ...metricBase, stage: 'entry', outcome: `${outcome}_store_closed` });
       return { handled: false };
     }
     const response = buildOrderingEntryPayload(entry.menuUrl);
+    await dispatchAiPayload(permit, response, 'menu-request', dryRun, isPermitCurrent);
+    metric({ ...metricBase, stage: 'entry', outcome });
+    return { handled: true, response: response.text };
+  };
+  if (isCatalogMenuRequest(text)) {
     try {
-      await dispatchAiPayload(permit, response, 'menu-request', dryRun, isPermitCurrent);
+      return await answerMenuRequest('menu_request');
     } catch (error) {
       if (error instanceof OrderingSuppressedError) return { handled: true };
       throw error;
     }
-    metric({ ...metricBase, stage: 'entry', outcome: 'menu_request' });
-    return { handled: true, response: response.text };
   }
   if (entry.menuUrl && isDeliveryFeeQuestion(text)) {
     const response = buildDeliveryFeeReply(entry.menuUrl);
@@ -999,6 +1025,22 @@ export async function tryHandleAiWhatsAppOrdering(
     }
     if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
     const catalog = await client.searchCatalog({ empresaId, query, limit: 12 });
+    // FIX 2026-09-09: `isCatalogMenuRequest` decides from a closed list of
+    // framing words, and natural Portuguese does not fit in one — "Gostaria do
+    // cardápio por favorn" (typo) and "Depois me manda ó cardápio, fazendo
+    // favor" both escaped it and were answered "Não encontrei uma opção
+    // disponível com esse nome" (Bem Servido, 2026-09-09). The catalog itself
+    // is the reliable judge: the customer named the menu and nothing they said
+    // matches a product, so the menu is the answer. A message that does NOT
+    // name the menu keeps the plain "hoje não temos isso".
+    if (!catalog.total && mentionsMenu(text)) {
+      try {
+        return await answerMenuRequest('menu_request_no_match');
+      } catch (error) {
+        if (error instanceof OrderingSuppressedError) return { handled: true };
+        throw error;
+      }
+    }
     const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp;
     // Candidate ambiguity is resolved in the conversation, never delegated to
     // the model: a valid ID is not enough to prove which sellable item the

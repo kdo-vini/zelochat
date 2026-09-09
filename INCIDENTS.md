@@ -1,5 +1,48 @@
 # Incidentes e padrões conhecidos
 
+## Cardápio pedido virava busca de produto, e o próprio botão virava pedido (2026-09-09, quarta rodada)
+
+**Sintoma (dois clientes reais da Bem Servido, 09/09):**
+- "Boa noite" + "Gostaria do cardápio por favorn" → cartão do cardápio E, logo
+  depois, "Não encontrei uma opção disponível com esse nome".
+- "Boa tarde" + "Depois me manda ó cardápio , fazendo favor" → "Não encontrei
+  uma opção disponível com esse nome".
+- Toque no botão "Pedir por aqui" → "Não consegui conferir o pedido com
+  segurança agora; vou chamar um atendente para ajudar" (22:32:40, evento em
+  `zelochat_escalation_events`, `repeated_ai_failure`).
+
+**Causa-raiz A:** `isCatalogMenuRequest` decidia comparando cada palavra da
+mensagem contra uma lista fechada de "enquadramento". Português natural não
+cabe numa lista: um typo (`favorn`) ou palavras comuns (`depois`, `fazendo`,
+`ó`) escapam, a mensagem deixa de ser reconhecida como pedido de cardápio e o
+resto vira query de produto. Corrigir alargando a lista só adia o próximo caso.
+
+Agora quem decide é o catálogo: se o cliente **nomeou o cardápio** e a busca
+**não achou nada**, a resposta é o cardápio — independente de vocabulário. Uma
+mensagem que não nomeia o cardápio mantém o "Hoje não temos isso". E o cartão
+de entrada, quando já foi enviado no mesmo turno, encerra o turno: nunca mais
+é seguido de uma segunda mensagem dizendo que não achou nada.
+
+**Causa-raiz B:** o WhatsApp entregou o toque no botão "Pedir por aqui" como
+mensagem de **texto**, sem id de botão, então `tryHandleAiWhatsAppOrderingButton`
+nunca viu. O handler de texto leu o rótulo como intenção de pedido (`pedir` é
+palavra-chave), buscou "pedir por aqui" no catálogo, deixou o planner montar
+um rascunho com o que voltou e estourou na mutação canônica. O cliente tocou
+no botão que nós oferecemos e recebeu "vou chamar um atendente".
+`isOrderingStartButtonText` casa o rótulo exato (regra de hard button do
+CLAUDE.md) antes de qualquer classificação; rótulo e matcher compartilham a
+constante `AI_ORDER_START_BUTTON_LABEL` para não divergirem.
+
+**Fix:** `src/domain/aiWhatsAppOrdering.ts` (`mentionsMenu`,
+`isOrderingStartButtonText`, `AI_ORDER_START_BUTTON_LABEL`,
+`AI_ORDER_START_REPLY`) e `server/aiWhatsAppOrdering.ts` (`answerMenuRequest`
+compartilhado pelas duas camadas, ramo do botão antes da classificação).
+
+**Não resolvido:** qual erro exatamente estourou na mutação canônica depois do
+planner. Os logs ficam no Dokploy, fora de alcance daqui, e o evento de
+escalação só guarda a categoria. O caminho que levava até lá some com o fix do
+rótulo, mas a falha subjacente pode existir para pedidos legítimos.
+
 ## IA dizia "Estamos atendendo" com a loja fechada, e narrava a própria busca (2026-09-09, terceira rodada)
 
 **Sintoma:** no simulador, "vc pode mandar o cardapio?" respondia "Olá!

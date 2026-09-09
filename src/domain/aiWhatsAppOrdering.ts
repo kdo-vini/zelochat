@@ -64,6 +64,38 @@ export function buildOrderingEntryReply(menuUrl: string): string {
   return `Olá! Estamos atendendo. Você pode ver o cardápio e fazer o pedido por aqui: ${menuUrl}\n\nSe preferir, também pode fazer o pedido por escrito nesta conversa que eu monto com você.`;
 }
 
+/**
+ * The entry card's action button. Label and matcher share this constant so a
+ * copy change can never leave `isOrderingStartButtonText` matching the old
+ * wording — see FIX 2026-09-09 there.
+ */
+export const AI_ORDER_START_BUTTON_LABEL = 'Pedir por aqui';
+
+/** What both the button tap and its typed label answer with. */
+export const AI_ORDER_START_REPLY = 'Pode escrever ou mandar um áudio com o que você quer pedir.';
+
+/**
+ * FIX 2026-09-09: WhatsApp delivered a tap on "Pedir por aqui" as a plain
+ * TEXT message, with no button id, so `tryHandleAiWhatsAppOrderingButton`
+ * never saw it. The text handler then read the label as an order intent
+ * ("pedir" is one of its keywords), searched the catalog for "pedir por
+ * aqui", let the planner build a draft out of whatever came back and blew up
+ * in the canonical mutation — the customer tapped the button we offered and
+ * got "vou chamar um atendente" (Bem Servido, 2026-09-09 22:32).
+ *
+ * CLAUDE.md's hard-button rule allows the exact label as well as the real id,
+ * and that is exactly this case: an exact, whole-message match on our own
+ * button label. A message that merely CONTAINS the words stays a normal turn.
+ */
+export function isOrderingStartButtonText(text: string): boolean {
+  return normalize(text) === normalize(AI_ORDER_START_BUTTON_LABEL);
+}
+
+/** True when the customer named the menu itself anywhere in the message. */
+export function mentionsMenu(text: string): boolean {
+  return catalogQueryWords(text).some((word) => MENU_WORDS.has(word));
+}
+
 export function buildOrderingEntryPayload(menuUrl: string): {
   kind: 'buttons';
   text: string;
@@ -72,7 +104,7 @@ export function buildOrderingEntryPayload(menuUrl: string): {
   return {
     kind: 'buttons',
     text: `Olá! Estamos atendendo. Veja o cardápio e faça seu pedido por aqui: ${menuUrl}\n\nSe preferir, pode fazer o pedido por escrito ou mandar um áudio nesta conversa que eu monto com você.`,
-    buttons: [{ id: AI_ORDER_START_BUTTON, label: 'Pedir por aqui' }],
+    buttons: [{ id: AI_ORDER_START_BUTTON, label: AI_ORDER_START_BUTTON_LABEL }],
   };
 }
 

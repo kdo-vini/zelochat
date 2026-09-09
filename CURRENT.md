@@ -1,5 +1,24 @@
 # ZeloChat — Foco atual
 
+### Pedido de cardápio e botão de entrada (2026-09-09, quarta rodada)
+
+Dois casos reais de produção mostraram que decidir "isso é pedido de cardápio?"
+por lista fechada de palavras é frágil por construção: um typo (`favorn`) ou
+uma frase natural (`Depois me manda ó cardápio, fazendo favor`) escapam e a
+mensagem vira busca de produto. Agora quem decide é o catálogo — nomeou o
+cardápio e a busca não achou nada, a resposta é o cardápio. E o cartão de
+entrada, quando já foi enviado no turno, encerra o turno.
+
+Separado: o toque no botão "Pedir por aqui" chegava como texto sem id, o
+handler de texto lia como intenção de pedido e escalava para humano. O rótulo
+exato agora responde como o toque, antes de qualquer classificação.
+
+Em aberto: qual erro estourou na mutação canônica depois do planner naquele
+turno — os logs estão no Dokploy e o evento de escalação só guarda a
+categoria. O caminho some com o fix, mas a falha pode existir para pedidos
+legítimos. Também segue em aberto: com a loja fechada, uma pergunta de
+catálogo ainda responde a lista de pratos (pré-existente).
+
 ### Copy e horário nas respostas da IA (2026-09-09, terceira rodada)
 
 O ramo de pedido de cardápio da rodada anterior não checava se a loja estava

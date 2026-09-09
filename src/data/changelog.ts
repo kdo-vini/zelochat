@@ -25,7 +25,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-09-09',
     category: 'hotfix',
     title: 'IA entende melhor o que o cliente pediu',
-    description: 'Quando o cliente pedia o cardápio, a IA às vezes respondia com um prato aleatório que não tinha nada a ver. Agora ela manda o cardápio quando pedem o cardápio, lista os pratos certos quando pedem um tipo específico, e deixa de tentar adivinhar quando o cliente está falando de endereço ou pagamento.',
+    description: 'Quem pedia o cardápio às vezes recebia um prato aleatório, ou o cardápio seguido de um "não encontrei" — bastava um erro de digitação ou um "fazendo favor" no fim da frase. E quem tocava no botão "Pedir por aqui" era mandado para um atendente. Agora o cardápio é enviado uma vez só, quem pede um tipo específico recebe os pratos certos, o botão responde como deveria, e endereço ou forma de pagamento deixam de virar chute.',
   },
   {
     date: '2026-09-09',

@@ -16,6 +16,8 @@ import {
   isOrderingFollowUp,
   isOrderingFollowUpAnswer,
   isCatalogMenuRequest,
+  isOrderingStartButtonText,
+  mentionsMenu,
   stripCatalogQueryFraming,
   isOrderingSnapshotEditable,
   parseOrderingButton,
@@ -272,6 +274,75 @@ const openDryRunClient: OrderingClient = {
     return snapshot();
   },
 };
+// REGRESSION 2026-09-09 (Bem Servido, prod): three real messages that the
+// canonical flow answered wrongly. The catalog here finds NOTHING, which is
+// what the real catalog returns once the framing words are stripped off a
+// message whose only real content is "please send me the menu".
+const searchedQueries: string[] = [];
+const emptyCatalogClient: OrderingClient = {
+  ...dryRunClient,
+  searchCatalog: async ({ query }) => {
+    searchedQueries.push(query);
+    return { total: 0, ambiguous: false, results: [] };
+  },
+};
+const askOrdering = async (text: string, storeOpen: boolean | null = true) => {
+  searchedQueries.length = 0;
+  return tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    sessionWith(text),
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen },
+    { dryRun: true, client: emptyCatalogClient },
+  );
+};
+
+// "Boa noite" + "Gostaria do cardápio por favorn": the greeting sent the entry
+// card and the typo ("favorn") escaped the framing word list, so the leftovers
+// were searched and the customer got a SECOND message saying nothing matched.
+// The entry card is the menu — the turn says nothing more.
+const greetingPlusMenuTypo = await askOrdering('Boa noite\nGostaria do cardápio por favorn');
+assert.equal(greetingPlusMenuTypo.handled, true);
+assert.match(greetingPlusMenuTypo.response ?? '', /Veja o cardápio e faça seu pedido por aqui/);
+assert.doesNotMatch(greetingPlusMenuTypo.response ?? '', /não temos|não encontrei/i, 'the entry card is never followed by a "nothing found"');
+
+// "Depois me manda ó cardápio , fazendo favor": no greeting, and "depois" and
+// "fazendo" are framing words no closed list will ever contain. The catalog
+// finding nothing is the reliable signal that the customer wanted the menu.
+const menuRequestWithUnknownFraming = await askOrdering('Depois me manda ó cardápio , fazendo favor');
+assert.equal(menuRequestWithUnknownFraming.handled, true);
+assert.match(menuRequestWithUnknownFraming.response ?? '', /Veja o cardápio e faça seu pedido por aqui/);
+assert.ok(searchedQueries.length > 0, 'this one only resolves AFTER the search comes back empty');
+
+// Same message with the store closed: the entry copy claims "Estamos
+// atendendo", so the generic assistant takes the turn instead.
+for (const storeOpen of [false, null]) {
+  const closed = await askOrdering('Depois me manda ó cardápio , fazendo favor', storeOpen);
+  assert.equal(closed.handled, false, `storeOpen=${storeOpen} hands the menu request to the generic assistant`);
+}
+
+// A message that does NOT name the menu keeps the plain answer.
+const unknownItem = await askOrdering('tem sushi?');
+assert.equal(unknownItem.handled, true);
+assert.match(unknownItem.response ?? '', /hoje não temos isso/i);
+
+// A tap on our own entry button arrived as plain text. It must answer like the
+// tap does — never be read as an order intent and escalated.
+const startButtonAsText = await askOrdering('Pedir por aqui');
+assert.equal(startButtonAsText.handled, true);
+assert.equal(startButtonAsText.response, 'Pode escrever ou mandar um áudio com o que você quer pedir.');
+assert.deepEqual(searchedQueries, [], 'the button label never reaches the catalog');
+assert.equal(isOrderingStartButtonText('pedir por aqui'), true, 'accent/case insensitive');
+assert.equal(isOrderingStartButtonText('quero pedir por aqui mesmo'), false, 'only a whole-message match is the button');
+
+// `mentionsMenu` is what makes the empty-search fallback vocabulary-proof: it
+// asks only whether the customer named the menu, never how they framed it.
+assert.equal(mentionsMenu('Gostaria do cardápio por favorn'), true);
+assert.equal(mentionsMenu('Depois me manda ó cardápio , fazendo favor'), true);
+assert.equal(mentionsMenu('me manda o menu'), true);
+assert.equal(mentionsMenu('tem sushi?'), false);
+
 const sessionWithPointer = (text: string): StoredSession => {
   const session = sessionWith(text);
   session.messages.push({
