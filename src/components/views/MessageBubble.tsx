@@ -1036,6 +1036,28 @@ const MessageBubbleInner = React.memo(function MessageBubble({
                 <WhatsAppText text={displayText} />
               </span>
             )}
+            {parsed.interactive && (
+              <div
+                className="mt-2 flex flex-col gap-1 border-t pt-2"
+                style={{ borderColor: 'rgba(17,27,33,0.10)' }}
+              >
+                <span className="text-[10.5px] font-medium uppercase tracking-wide" style={{ color: '#667781' }}>
+                  {parsed.interactive.kind === 'buttons' ? 'Botões enviados' : 'Lista enviada'}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {parsed.interactive.options.map((option, index) => (
+                    <span
+                      key={`${option.id || option.label}-${index}`}
+                      className="rounded-full px-2 py-[3px] text-[12px] font-medium"
+                      style={{ background: 'rgba(17,27,33,0.06)', color: '#111b21' }}
+                      title={[option.section, option.description].filter(Boolean).join(' — ') || undefined}
+                    >
+                      {option.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <MetaRow
               timestamp={message.timestamp}
               isOutgoing={isOutgoing}

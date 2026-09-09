@@ -2,6 +2,8 @@
 
 ## Comportamento da IA no WhatsApp — 2026-09-09 (quarta rodada)
 
+- ✅ ZCHAT-UI-004 — botão/lista enviados não apareciam na conversa: o conteúdo persistia só o texto → controles vão no mesmo envelope estruturado da mídia e a bolha mostra os rótulos — `server/conversationOutbound.ts:189`, `src/domain/chat.ts:150`, `src/components/views/MessageBubble.tsx:1039`
+
 - ✅ ZCHAT-AI-019 — lista fechada de palavras não reconhecia pedido de cardápio com typo ou frase natural → catálogo decide: nomeou cardápio + busca vazia = responde cardápio — `src/domain/aiWhatsAppOrdering.ts:95`, `server/aiWhatsAppOrdering.ts:1007`
 - ✅ ZCHAT-AI-020 — cartão de entrada era seguido de uma segunda mensagem dizendo que não achou nada → turno que já enviou o cartão não fala de novo — `server/aiWhatsAppOrdering.ts:871`
 - ✅ ZCHAT-AI-021 — toque no botão "Pedir por aqui" chegava como texto, virava pedido e escalava para humano → rótulo exato responde como o toque, antes de qualquer classificação — `src/domain/aiWhatsAppOrdering.ts:90`, `server/aiWhatsAppOrdering.ts:843`

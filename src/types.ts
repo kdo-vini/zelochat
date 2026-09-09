@@ -505,6 +505,18 @@ export interface ChatAttachment {
   durationSeconds?: number;
 }
 
+/**
+ * The tappable controls a message carried on WhatsApp — reply buttons or list
+ * rows. Persisted alongside the message so the conversation view can show what
+ * the customer actually saw: without it a button message is stored as its text
+ * alone and the operator has no way to tell whether the buttons went out.
+ */
+export interface ChatInteractiveControls {
+  kind: 'buttons' | 'list';
+  /** Label the customer taps, in the order it was presented. */
+  options: Array<{ id: string; label: string; description?: string; section?: string }>;
+}
+
 export type AudioTranscriptStatus = 'pending' | 'done' | 'failed';
 
 export interface MessageReaction {

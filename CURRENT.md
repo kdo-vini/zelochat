@@ -2,6 +2,11 @@
 
 ### Pedido de cardápio e botão de entrada (2026-09-09, quarta rodada)
 
+Botão e lista enviados agora aparecem na conversa do ZeloChat: o conteúdo da
+mensagem persistia só o texto, então não dava para saber se os controles
+foram enviados. **Não verificado em navegador** — exercitar a bolha exigiria
+logar com a conta do cliente em produção; a ida e volta do dado tem teste.
+
 Dois casos reais de produção mostraram que decidir "isso é pedido de cardápio?"
 por lista fechada de palavras é frágil por construção: um typo (`favorn`) ou
 uma frase natural (`Depois me manda ó cardápio, fazendo favor`) escapam e a

@@ -1,6 +1,6 @@
 import { format, isToday, isYesterday, differenceInCalendarDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import type { ChatAttachment, ChatMessage } from '../types';
+import type { ChatAttachment, ChatInteractiveControls, ChatMessage } from '../types';
 export { normalizeWhatsAppTextFormatting } from './whatsappFormatting';
 import { normalizeWhatsAppTextFormatting } from './whatsappFormatting';
 
@@ -11,7 +11,9 @@ type StructuredMessagePayload = {
   text: string;
   preview: string;
   contentForModel: string;
-  attachment: ChatAttachment;
+  /** Absent on a message whose only structure is its interactive controls. */
+  attachment?: ChatAttachment;
+  interactive?: ChatInteractiveControls;
 };
 
 export type ParsedChatContent = {
@@ -20,6 +22,7 @@ export type ParsedChatContent = {
   preview: string;
   contentForModel: string;
   attachment?: ChatAttachment;
+  interactive?: ChatInteractiveControls;
 };
 
 export type ImageContentForModel = {
@@ -135,6 +138,31 @@ export function serializeStructuredMessage(params: {
     attachment,
   };
 
+  return `${STRUCTURED_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
+}
+
+/**
+ * Persists a message together with the controls it carried on WhatsApp.
+ *
+ * FIX 2026-09-09: an outbound button message was stored as its text alone, so
+ * nothing downstream — the conversation view included — could tell whether the
+ * buttons were part of the send. `preview` and `contentForModel` stay the
+ * plain text on purpose: the session list and the AI's own history must read
+ * exactly what they read before, only the rendering gains the controls.
+ */
+export function serializeInteractiveMessage(params: {
+  text?: string;
+  interactive: ChatInteractiveControls;
+}): string {
+  const text = normalizeWhatsAppTextFormatting(params.text?.trim() ?? '');
+  if (!params.interactive.options.length) return text;
+  const payload: StructuredMessagePayload = {
+    version: 1,
+    text,
+    preview: text,
+    contentForModel: text,
+    interactive: params.interactive,
+  };
   return `${STRUCTURED_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 }
 
@@ -295,11 +323,12 @@ export function parseStructuredMessage(content: string): ParsedChatContent {
     ) as StructuredMessagePayload;
 
     return {
-      kind: parsed.attachment.type,
+      kind: parsed.attachment?.type ?? 'text',
       text: parsed.text,
       preview: parsed.preview,
       contentForModel: parsed.contentForModel,
       attachment: parsed.attachment,
+      interactive: parsed.interactive,
     };
   } catch {
     return {

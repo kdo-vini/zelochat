@@ -18,6 +18,8 @@ import {
   type TakeoverPolicy,
 } from '../src/domain/outbound.js';
 import { recordConversationOutboundMetric } from './outbound/observability.js';
+import { serializeInteractiveMessage } from '../src/domain/chat.js';
+import type { ChatInteractiveControls } from '../src/types.js';
 import { wakeOutboundWorker } from './outbound/wake.js';
 
 const parsedConversationSendWaitMs = Number.parseInt(process.env.CONVERSATION_SEND_WAIT_MS || '10000', 10);
@@ -184,6 +186,49 @@ function legacyMediaIntentFingerprint(payload: Extract<OutboundPayload, { kind: 
     fileName: payload.attachment.fileName,
     mimeType: payload.attachment.mimeType,
   })).digest('hex');
+}
+
+/**
+ * FIX 2026-09-09: this used to return only `payload.text` for a button message
+ * and `payload.body` for a list, so `zelochat_messages.content` kept the words
+ * and threw the controls away. The operator opening the conversation could not
+ * tell whether the "Pedir por aqui" button had actually been sent — and neither
+ * could we, when a customer reported tapping one. The controls now ride along
+ * in the same structured envelope media already uses, and `preview` /
+ * `contentForModel` inside it stay the plain text so the session list and the
+ * AI's history read exactly what they read before.
+ */
+function interactiveControls(payload: OutboundPayload): ChatInteractiveControls | null {
+  if (payload.kind === 'buttons') {
+    const options = payload.buttons
+      .filter((button) => button.label.trim())
+      .map((button) => ({ id: button.id, label: button.label }));
+    return options.length ? { kind: 'buttons', options } : null;
+  }
+  if (payload.kind === 'list') {
+    const options: ChatInteractiveControls['options'] = [];
+    for (const section of payload.sections as Array<{ title?: unknown; rows?: unknown }>) {
+      const sectionTitle = typeof section?.title === 'string' ? section.title : undefined;
+      if (!Array.isArray(section?.rows)) continue;
+      for (const row of section.rows as Array<{ id?: unknown; title?: unknown; description?: unknown }>) {
+        if (typeof row?.title !== 'string' || !row.title.trim()) continue;
+        options.push({
+          id: typeof row.id === 'string' ? row.id : '',
+          label: row.title,
+          description: typeof row.description === 'string' ? row.description : undefined,
+          section: sectionTitle,
+        });
+      }
+    }
+    return options.length ? { kind: 'list', options } : null;
+  }
+  return null;
+}
+
+function messageContent(payload: OutboundPayload): string {
+  const controls = interactiveControls(payload);
+  const text = messagePreview(payload);
+  return controls ? serializeInteractiveMessage({ text, interactive: controls }) : text;
 }
 
 function messagePreview(payload: OutboundPayload): string {
@@ -617,7 +662,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
           payload: initialPayload,
           payloadFingerprint: initialFingerprint,
           aiPermit: request.aiPermit,
-          messageText: messagePreview(request.payload),
+          messageText: messageContent(request.payload),
           origin: request.origin,
         });
         if (!job) {
@@ -645,7 +690,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
           idempotencyKey: request.idempotencyKey,
           payload: initialPayload,
           payloadFingerprint: initialFingerprint,
-          messageText: messagePreview(request.payload),
+          messageText: messageContent(request.payload),
           origin: request.origin,
         });
         if (!job || !isExpectedSystemJob(job, request as ConversationOutboundRequest & { origin: SystemOutboundOrigin }, initialPayload, initialFingerprint)) {
@@ -668,7 +713,7 @@ export function createConversationOutboundDispatcher(dependencies: ConversationO
           idempotencyKey: request.idempotencyKey,
           payload: initialPayload,
           payloadFingerprint: initialFingerprint,
-          messageText: messagePreview(request.payload),
+          messageText: messageContent(request.payload),
         });
       } catch {
         throw new Error(FRIENDLY_PREPARE_FAILED);

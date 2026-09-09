@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import type { AiTurnPermit } from '../server/conversationControl.js';
 import { createConversationOutboundDispatcher } from '../server/conversationOutbound.js';
+import { parseStructuredMessage } from '../src/domain/chat.js';
 import type { OutboundPayload, PersistedOutboundPayload } from '../src/domain/outbound.js';
 
 process.on('uncaughtException', (error) => { console.error(error); process.exit(1); });
@@ -851,6 +852,63 @@ for (const retryKind of ['exact', 'divergent'] as const) {
   assert.equal(result.state, 'queued');
   assert.deepEqual(repo.mediaPersisted, ['e1/job-1']);
   assert.equal([...repo.jobs.values()][0].status, 'queued');
+}
+
+// REGRESSION 2026-09-09: an outbound button/list message persisted only its
+// text, so nothing downstream could tell that controls had been sent and the
+// operator could not see them in the conversation.
+{
+  const repo = new FakeRepo();
+  const captured: string[] = [];
+  const dispatch = createConversationOutboundDispatcher({
+    sendWaitMs: 1,
+    beginHumanOutbound: async (params: any) => { captured.push(params.messageText); return repo.beginHumanOutbound(params); },
+    enqueueAiOutbound: repo.enqueueAiOutbound.bind(repo),
+    enqueueSystemOutbound: repo.enqueueSystemOutbound.bind(repo),
+    claimMediaPreparation: repo.claimMediaPreparation.bind(repo),
+    markPrepared: repo.markPrepared.bind(repo),
+    markFailedBeforeDispatch: repo.markFailedBeforeDispatch.bind(repo),
+    readJob: repo.readJob.bind(repo),
+    cancelPendingReply: async () => undefined,
+    fingerprintPayload: async () => 'buttons-fingerprint',
+    broadcastMessageIntent: async () => undefined,
+  } as any);
+  await dispatch.dispatchConversationOutbound({
+    empresaId: 'e1', remoteJid: 'j1', actorUserId: 'u1',
+    origin: 'human_zelochat', takeoverPolicy: 'take_over',
+    idempotencyKey: 'buttons-1',
+    payload: { kind: 'buttons', text: 'Veja o cardápio', buttons: [{ id: 'AI_ORDER_START', label: 'Pedir por aqui' }] },
+  } as any);
+  assert.equal(captured.length, 1);
+  const parsed = parseStructuredMessage(captured[0]);
+  assert.equal(parsed.interactive?.options[0]?.label, 'Pedir por aqui', 'the button label is persisted with the message');
+  assert.equal(parsed.text, 'Veja o cardápio');
+  assert.equal(parsed.preview, 'Veja o cardápio', 'the session list still shows plain text');
+}
+
+// A payload with no controls is stored exactly as before — no envelope.
+{
+  const repo = new FakeRepo();
+  const captured: string[] = [];
+  const dispatch = createConversationOutboundDispatcher({
+    sendWaitMs: 1,
+    beginHumanOutbound: async (params: any) => { captured.push(params.messageText); return repo.beginHumanOutbound(params); },
+    enqueueAiOutbound: repo.enqueueAiOutbound.bind(repo),
+    enqueueSystemOutbound: repo.enqueueSystemOutbound.bind(repo),
+    claimMediaPreparation: repo.claimMediaPreparation.bind(repo),
+    markPrepared: repo.markPrepared.bind(repo),
+    markFailedBeforeDispatch: repo.markFailedBeforeDispatch.bind(repo),
+    readJob: repo.readJob.bind(repo),
+    cancelPendingReply: async () => undefined,
+    fingerprintPayload: async () => 'text-fingerprint',
+    broadcastMessageIntent: async () => undefined,
+  } as any);
+  await dispatch.dispatchConversationOutbound({
+    empresaId: 'e1', remoteJid: 'j1', actorUserId: 'u1',
+    origin: 'human_zelochat', takeoverPolicy: 'take_over',
+    idempotencyKey: 'text-1', payload: { kind: 'text', text: 'Oi!' },
+  } as any);
+  assert.deepEqual(captured, ['Oi!'], 'a plain message is untouched');
 }
 
 console.log('conversationOutbound: ok');

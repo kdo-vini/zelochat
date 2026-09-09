@@ -5,6 +5,7 @@ import {
   maskTime24h,
   normalizeWhatsAppTextFormatting,
   parseStructuredMessage,
+  serializeInteractiveMessage,
   serializeStructuredMessage,
 } from '../src/domain/chat.js';
 import type { ChatAttachment, ChatMessage } from '../src/types.js';
@@ -90,6 +91,53 @@ await runSuite('Chat domain utilities', [
         '[Áudio: "quero dois refrigerantes"]',
         'completed audio transcript replaces placeholder',
       );
+    },
+  },
+ {
+    // REGRESSION 2026-09-09: an outbound button message was persisted as its
+    // text alone, so the conversation view could not show whether the buttons
+    // went out and the operator had no way to tell.
+    name: 'interactive controls survive the round trip',
+    run: () => {
+      const content = serializeInteractiveMessage({
+        text: 'Olá! Veja o cardápio e faça seu pedido por aqui: https://menu.zelopdv.com.br/bemservido',
+        interactive: { kind: 'buttons', options: [{ id: 'AI_ORDER_START', label: 'Pedir por aqui' }] },
+      });
+      const parsed = parseStructuredMessage(content);
+      assertEqual(parsed.interactive?.kind, 'buttons', 'controls are read back');
+      assertEqual(parsed.interactive?.options[0]?.label, 'Pedir por aqui', 'the label the customer tapped');
+      assert(parsed.text.includes('Veja o cardápio'), 'the text is unchanged');
+      // The session list and the AI history must read exactly what they read
+      // before this envelope existed.
+      assertEqual(parsed.preview, parsed.text, 'preview stays the plain text');
+      assertEqual(parsed.contentForModel, parsed.text, 'the model still sees only the words');
+      assertEqual(parsed.kind, 'text', 'an attachment-less envelope is still a text message');
+      assertEqual(parsed.attachment, undefined, 'no attachment invented');
+    },
+  },
+  {
+    name: 'list rows keep their section and description',
+    run: () => {
+      const parsed = parseStructuredMessage(serializeInteractiveMessage({
+        text: 'Escolha a mistura',
+        interactive: {
+          kind: 'list',
+          options: [{ id: 'REQ:a|b|c', label: 'Frango', description: 'Filé empanado', section: '4. Escolha a mistura' }],
+        },
+      }));
+      assertEqual(parsed.interactive?.options[0]?.section, '4. Escolha a mistura', 'section survives');
+      assertEqual(parsed.interactive?.options[0]?.description, 'Filé empanado', 'description survives');
+    },
+  },
+  {
+    name: 'a message with no controls is stored as plain text',
+    run: () => {
+      const content = serializeInteractiveMessage({
+        text: 'Bom dia!',
+        interactive: { kind: 'buttons', options: [] },
+      });
+      assertEqual(content, 'Bom dia!', 'no envelope when there is nothing to record');
+      assertEqual(parseStructuredMessage(content).interactive, undefined, 'nothing to render');
     },
   },
 ]);
