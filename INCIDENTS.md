@@ -1,5 +1,44 @@
 # Incidentes e padrões conhecidos
 
+## IA dizia "Estamos atendendo" com a loja fechada, e narrava a própria busca (2026-09-09, terceira rodada)
+
+**Sintoma:** no simulador, "vc pode mandar o cardapio?" respondia "Olá!
+Estamos atendendo..." mesmo com a loja fechada, enquanto "estao atendendo?"
+respondia corretamente "Agora a loja está fechada, mas reabrimos às 18:00".
+Separadamente, toda resposta de catálogo abria com "Encontrei:" — a IA
+relatando o próprio ato de procurar em vez de responder ao cliente.
+
+**Causa-raiz A:** o ramo de pedido de cardápio adicionado na rodada anterior
+não checava `entry.storeOpen`, ao contrário do ramo de saudação logo acima
+dele. `buildOrderingEntryPayload` abre com "Estamos atendendo" — afirmação
+falsa com a loja fechada.
+
+Corrigir só a gate abria um segundo buraco: com a loja fechada a mensagem
+voltava a cair na busca de produto, e `buildCatalogSearchQuery` devolvia a
+frase crua quando a limpeza esvaziava a query (`stripCatalogQueryFraming(x)
+|| x`) — exatamente a colisão de token que aquele ramo existe para impedir.
+Agora um pedido de cardápio nunca chega à busca: com a loja aberta responde o
+cardápio, fechada devolve o turno para o assistente genérico, que sabe o
+horário de reabertura. E a query vazia deixou de virar fallback para a frase
+crua — um "quero" sozinho é conversa a continuar, não busca a rodar.
+
+**Causa-raiz B (copy):** `renderCatalogReply` falava do processo interno:
+"Encontrei:", "Não encontrei uma opção disponível com esse nome", "Quer
+filtrar por tipo ou faixa de preço?". Quem atende no balcão responde "tem sim"
+ou "hoje não" — e "filtrar" não é palavra que o cliente usou.
+
+**Fix:** `server/aiWhatsAppOrdering.ts` (gate de loja fechada + guarda de query
+vazia) e `src/domain/aiWhatsAppOrdering.ts` (`buildCatalogSearchQuery` sem
+fallback para a frase crua; textos "Tem sim:", "Hoje não temos isso.", "Tem
+mais de uma parecida.", "Prefere ver por tipo ou por faixa de preço?"). O
+texto continua terminando em "Qual você quer?" porque `isOrderingFollowUp`
+usa exatamente essa pergunta para manter o fluxo de pedido.
+
+**Em aberto:** com a loja fechada, uma pergunta de catálogo ("tem caldos hj?")
+ainda responde a lista. É comportamento pré-existente, não regressão; mudar
+isso suprimiria resposta de cardápio fora do horário para todos os clientes e
+precisa de decisão de produto.
+
 ## IA respondia com produto errado: a frase do cliente ia crua para a busca (2026-09-09, segunda rodada)
 
 **Sintoma:** no simulador, "vc pode mandar o cardapio?" respondia

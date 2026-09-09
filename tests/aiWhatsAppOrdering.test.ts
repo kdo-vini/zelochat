@@ -217,6 +217,34 @@ assert.match(dryRunCatalog.response ?? '', /Carne de panela/);
 assert.match(dryRunCatalog.response ?? '', /Bisteca de porco/);
 assert.deepEqual(dryRunCalls, [], 'canonical dry-run never invokes mutation methods');
 
+// REGRESSION 2026-09-09: the menu-request branch answers with the entry card,
+// whose copy opens "Estamos atendendo". With the store CLOSED that states the
+// opposite of the truth, so the turn belongs to the generic assistant, which
+// knows the reopening time. `storeOpen: null` (unknown) is treated as closed,
+// matching the entry turn above it.
+for (const storeOpen of [false, null]) {
+  const closedMenuRequest = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    sessionWith('vc pode mandar o cardapio?'),
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen },
+    { dryRun: true, client: dryRunClient },
+  );
+  assert.equal(closedMenuRequest.handled, false, `storeOpen=${storeOpen} must not claim "Estamos atendendo"`);
+  assert.equal(closedMenuRequest.response, undefined);
+}
+const openMenuRequest = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('vc pode mandar o cardapio?'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  { dryRun: true, client: dryRunClient },
+);
+assert.equal(openMenuRequest.handled, true);
+assert.match(openMenuRequest.response ?? '', /menu\.zelopdv\.com\.br\/bemservido/);
+
 // C6 / PR I-8: a greeting VARIANT that isn't an exact "oi"-style match
 // ("tá atendendo?", "estão atendendo?", "boa noite, tão aberto?") must still
 // report handled:true once the entry card has been dispatched — otherwise
@@ -500,7 +528,22 @@ const fromPriceReply = renderCatalogReply({
   }],
 }, 'quero uma massa');
 assert.match(fromPriceReply, /a partir de R\$\s*22,00/);
-assert.match(renderCatalogReply({ total: 20, ambiguous: false, results: [] }, 'lanche'), /filtrar/i);
+// REGRESSION 2026-09-09: customer-facing copy answers the customer, it does
+// not narrate the search. "Encontrei" / "Não encontrei uma opção disponível
+// com esse nome" / "filtrar" all described what the machine was doing.
+assert.match(renderCatalogReply({ total: 20, ambiguous: false, results: [] }, 'lanche'), /prefere ver por tipo/i);
+assert.match(renderCatalogReply({ total: 0, ambiguous: false, results: [] }, 'sushi'), /hoje não temos isso/i);
+const foundReply = renderCatalogReply({
+  total: 1, ambiguous: false,
+  results: [{ productId: 1, publicName: 'Caldo verde', currentPrice: 17.99, matchReason: 'name', ambiguous: false }],
+}, 'tem caldos hj?');
+assert.match(foundReply, /^Tem sim:/);
+assert.match(foundReply, /Caldo verde por R\$\s*17,99/);
+assert.doesNotMatch(
+  [foundReply, renderCatalogReply({ total: 0, ambiguous: false, results: [] }, 'sushi')].join('\n'),
+  /encontrei|filtrar/i,
+  'the reply never reports back on the act of searching',
+);
 assert.match(renderCatalogReply({ total: 2, ambiguous: true, results: [] }, 'x'), /qual/i);
 assert.match(renderCatalogReply({
   total: 2,

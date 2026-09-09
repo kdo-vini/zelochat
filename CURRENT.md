@@ -1,5 +1,20 @@
 # ZeloChat — Foco atual
 
+### Copy e horário nas respostas da IA (2026-09-09, terceira rodada)
+
+O ramo de pedido de cardápio da rodada anterior não checava se a loja estava
+aberta e afirmava "Estamos atendendo" com a loja fechada. Corrigir só a gate
+reabria a colisão de token (a query vazia caía de volta na frase crua), então
+um pedido de cardápio agora nunca chega à busca. O texto das respostas também
+deixou de narrar o processo interno: "Tem sim" / "Hoje não temos isso" no
+lugar de "Encontrei" / "Não encontrei uma opção disponível com esse nome".
+
+Verificado com a mesma bancada (matcher real do ZeloMenu + catálogo real de
+produção), agora também com `storeOpen=false`. Detalhes em [[INCIDENTS]].
+
+Em aberto: com a loja fechada, uma pergunta de catálogo ainda responde a
+lista de pratos. Pré-existente, precisa de decisão de produto.
+
 ### Resposta errada da IA no cardápio (2026-09-09, segunda rodada)
 
 A primeira rodada do dia corrigiu só o loop de repetição e foi declarada

@@ -274,8 +274,12 @@ export function buildCatalogSearchQuery(messages: OrderingConversationMessage[],
   const current = text.trim();
   const chosen = pickCatalogQuerySource(messages, current);
   // Framing is stripped from whichever source won, so a stale question does
-  // not carry its own filler into the search either.
-  return stripCatalogQueryFraming(chosen) || chosen;
+  // not carry its own filler into the search either. When nothing but framing
+  // was said the result is '' — deliberately NOT the raw sentence, which is
+  // the token soup this whole path exists to avoid. The caller treats an empty
+  // query as "this turn names no product" and lets the generic assistant take
+  // it (a bare "quero" is a conversation to continue, not a search to run).
+  return stripCatalogQueryFraming(chosen);
 }
 
 function pickCatalogQuerySource(messages: OrderingConversationMessage[], current: string): string {
@@ -754,12 +758,19 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string, me
     if (!current || (item.modifierGroups?.length ?? 0) > (current.modifierGroups?.length ?? 0)) productsById.set(item.productId, item);
   }
   const uniqueProducts = [...productsById.values()].slice(0, 12);
-  const ambiguousReply = 'Encontrei mais de uma opção parecida. Qual delas você quer?';
-  const narrowReply = 'Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?';
+  // FIX 2026-09-09: the customer-facing copy narrated the machine's own work
+  // ("Encontrei", "Não encontrei uma opção disponível com esse nome", "Quer
+  // filtrar por tipo ou faixa de preço?"). Someone behind the counter asked
+  // "tem caldos hoje?" answers "tem sim" or "hoje não" — they do not report
+  // back on the act of looking, and "filtrar" is not a word the customer used.
+  // The reply still ends in "Qual você quer?" because `isOrderingFollowUp`
+  // keys the ordering flow off exactly that question.
+  const ambiguousReply = 'Tem mais de uma parecida. Qual delas você quer?';
+  const narrowReply = 'Tem bastante coisa nesse tipo. Prefere ver por tipo ou por faixa de preço?';
   if (!uniqueProducts.length) {
     if (result.ambiguous && !requestedGroup) return finish(ambiguousReply);
     if (result.total > 0) return finish(narrowReply);
-    return finish('Não encontrei uma opção disponível com esse nome. Quer tentar de outro jeito?');
+    return finish('Hoje não temos isso. Quer tentar outro nome?');
   }
   // FIX 2026-09-09: ambiguity used to short-circuit into "Encontrei mais de
   // uma opção parecida. Qual delas você quer?" — a question that listed
@@ -793,7 +804,7 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string, me
       : money(item.currentPrice);
     return `${customerText(item.publicName)} por ${price}`;
   }).join('\n');
-  return finish(`${requestedGroup ? 'As opções disponíveis são' : 'Encontrei'}:\n${choices}\nQual você quer?`);
+  return finish(`${requestedGroup ? 'As opções são' : 'Tem sim'}:\n${choices}\nQual você quer?`);
 }
 
 export function renderOrderingDraftPreview(draft: OrderingDraft, result: CatalogReplyResult): string {

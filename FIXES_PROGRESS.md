@@ -1,5 +1,11 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Comportamento da IA no WhatsApp — 2026-09-09 (terceira rodada)
+
+- ✅ ZCHAT-AI-016 — pedido de cardápio afirmava "Estamos atendendo" com a loja fechada → loja aberta responde o cardápio, fechada devolve ao assistente genérico — `server/aiWhatsAppOrdering.ts:848`, `tests/aiWhatsAppOrdering.test.ts:220`
+- ✅ ZCHAT-AI-017 — query vazia caía de volta na frase crua, reabrindo a colisão de token → turno sem produto nomeado não roda busca — `src/domain/aiWhatsAppOrdering.ts:278`, `server/aiWhatsAppOrdering.ts:995`
+- ✅ ZCHAT-AI-018 — resposta narrava a própria busca ("Encontrei", "filtrar") → fala como atendente: "Tem sim", "Hoje não temos isso" — `src/domain/aiWhatsAppOrdering.ts:757`, `tests/aiWhatsAppOrdering.test.ts:530`
+
 ## Comportamento da IA no WhatsApp — 2026-09-09 (segunda rodada)
 
 - ✅ ZCHAT-AI-012 — frase crua do cliente ia para a busca e colidia com descrição de produto ("vc") → palavras de enquadramento removidas antes da busca — `src/domain/aiWhatsAppOrdering.ts:198`, `tests/aiWhatsAppOrdering.test.ts:322`

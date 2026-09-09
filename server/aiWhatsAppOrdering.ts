@@ -845,7 +845,19 @@ export async function tryHandleAiWhatsAppOrdering(
   // surpreender vc com a cobertura"), the only product in the catalog sharing
   // any token with that sentence, so the customer who asked for the menu was
   // offered a portion of fries. Answer with the menu.
-  if (!entryDispatched && entry.menuUrl && isCatalogMenuRequest(text)) {
+  //
+  //
+  // Either way this turn never reaches the product search: the query for a
+  // message that is nothing but framing falls back to the raw sentence, which
+  // is the collision above. With the store CLOSED the entry payload is also
+  // the wrong answer — it opens with "Estamos atendendo" — so the turn goes to
+  // the generic assistant, which knows the reopening time and can offer the
+  // menu without claiming anyone is working.
+  if (!entryDispatched && isCatalogMenuRequest(text)) {
+    if (entry.storeOpen !== true || !entry.menuUrl) {
+      metric({ ...metricBase, stage: 'entry', outcome: 'menu_request_store_closed' });
+      return { handled: false };
+    }
     const response = buildOrderingEntryPayload(entry.menuUrl);
     try {
       await dispatchAiPayload(permit, response, 'menu-request', dryRun, isPermitCurrent);
@@ -978,6 +990,13 @@ export async function tryHandleAiWhatsAppOrdering(
     const context = await customerContext(session, empresaId);
     let draft: OrderingDraft | null = null;
     const query = buildCatalogSearchQuery(session.messages, text);
+    // FIX 2026-09-09: nothing but framing was said, so there is no product to
+    // look up. Searching the raw sentence instead is what answered "vc pode
+    // mandar o cardapio?" with a portion of fries.
+    if (!query) {
+      metric({ ...metricBase, stage: 'plan', outcome: 'no_catalog_query' });
+      return { handled: entryDispatched };
+    }
     if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
     const catalog = await client.searchCatalog({ empresaId, query, limit: 12 });
     const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp;

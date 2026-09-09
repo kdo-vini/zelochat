@@ -186,8 +186,11 @@ await runSuite('AI simulator canonical ordering parity', [
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'tem salmão hoje?',
       }, { orderingClient: emptyCatalogClient });
-      assertIncludes(result.reply, 'Não encontrei', 'unavailable item is stated plainly');
-      assert(!/temos sim/i.test(result.reply), 'unavailable item is not presented as available');
+      // 2026-09-09: the copy says "Hoje não temos isso" instead of the old
+      // "Não encontrei uma opção disponível com esse nome" — same meaning,
+      // answered from the customer's side rather than the search's.
+      assertIncludes(result.reply, 'Hoje não temos', 'unavailable item is stated plainly');
+      assert(!/tem sim/i.test(result.reply), 'unavailable item is not presented as available');
     },
   },
   {

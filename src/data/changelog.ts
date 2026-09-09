@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-09-09',
     category: 'hotfix',
+    title: 'IA responde como atendente, e respeita o horário',
+    description: 'Ela dizia "Estamos atendendo" mesmo com a loja fechada, e começava as respostas com "Encontrei", como se estivesse narrando o que fazia. Agora responde "Tem sim" ou "Hoje não temos isso", e quando a loja está fechada avisa o horário de reabertura em vez de convidar para pedir.',
+  },
+  {
+    date: '2026-09-09',
+    category: 'hotfix',
     title: 'IA entende melhor o que o cliente pediu',
     description: 'Quando o cliente pedia o cardápio, a IA às vezes respondia com um prato aleatório que não tinha nada a ver. Agora ela manda o cardápio quando pedem o cardápio, lista os pratos certos quando pedem um tipo específico, e deixa de tentar adivinhar quando o cliente está falando de endereço ou pagamento.',
   },
