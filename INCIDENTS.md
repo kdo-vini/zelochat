@@ -1,5 +1,45 @@
 # Incidentes e padrões conhecidos
 
+## IA respondia com produto errado: a frase do cliente ia crua para a busca (2026-09-09, segunda rodada)
+
+**Sintoma:** no simulador, "vc pode mandar o cardapio?" respondia
+"Encontrei: Batata frita com cheddar e bacon por R$ 49,90"; "vc pode mandar o
+cardapio do macarrao?" respondia "Encontrei mais de uma opção parecida. Qual
+delas você quer?" sem listar nada.
+
+**Causa-raiz:** o ZeloChat mandava a frase inteira do cliente como busca de
+produto. O matcher do ZeloMenu pontua nome, DESCRIÇÃO, categoria, grupo e
+opção, com fallback por sobreposição de tokens — então uma única palavra de
+preenchimento basta. O produto 1403 tem na descrição pública "essa porção vai
+surpreender **vc** com a cobertura": `vc` era o único token que a frase
+compartilhava com qualquer produto do catálogo. Colisão determinística, não
+alucinação do modelo.
+
+Três defeitos somados:
+1. Palavras de enquadramento (`vc`, `pode`, `mandar`, `cardapio`, `quero`,
+   `um`) iam para a busca.
+2. Pedir o cardápio caía numa busca de produto em vez de responder com o
+   cardápio.
+3. `renderCatalogReply` respondia ambiguidade com uma pergunta que **não
+   listava nenhuma opção**, e o guard `total > 12` contava candidatos em vez
+   de produtos distintos — 25 candidatos de 5 pratos viravam recusa.
+4. `isOrderingFollowUp` entregava ao fluxo canônico **qualquer** mensagem
+   posterior a uma pergunta, então "Entregar na creche do bela vista" e "Vou
+   pagar por pix" eram respondidos com listas de pratos.
+
+**Fix:** `stripCatalogQueryFraming` + `isCatalogMenuRequest` +
+`isOrderingFollowUpAnswer` em `src/domain/aiWhatsAppOrdering.ts`; ramo de
+pedido de cardápio e gate de follow-up em `server/aiWhatsAppOrdering.ts`;
+`renderCatalogReply` lista os produtos distintos em vez do beco sem saída.
+
+**Como foi verificado:** bancada temporária importando o matcher REAL do
+ZeloMenu (`src/domain/zelomenuCatalogDiscovery.ts` do repo vizinho) sobre o
+catálogo REAL de produção da Bem Servido (92 produtos publicados), dirigindo o
+handler real em dry-run. A bancada reproduziu os dois prints byte a byte antes
+da correção — é isso que a torna confiável. **Lição: a primeira rodada de
+correção deste dia foi declarada resolvida sem rodar os prompts reais; ela
+corrigia só o loop de repetição, não a resposta errada.**
+
 ## IA repetia a mesma resposta e respondia por cima do operador (2026-09-09)
 
 **Sintoma:** na Bem Servido a IA respondeu três mensagens completamente

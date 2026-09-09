@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-09-09',
     category: 'hotfix',
+    title: 'IA entende melhor o que o cliente pediu',
+    description: 'Quando o cliente pedia o cardápio, a IA às vezes respondia com um prato aleatório que não tinha nada a ver. Agora ela manda o cardápio quando pedem o cardápio, lista os pratos certos quando pedem um tipo específico, e deixa de tentar adivinhar quando o cliente está falando de endereço ou pagamento.',
+  },
+  {
+    date: '2026-09-09',
+    category: 'hotfix',
     title: 'IA para de repetir a mesma resposta',
     description: 'Quando o cliente escrevia o pedido, a IA às vezes respondia sempre a mesma coisa, como se não estivesse lendo. Agora ela responde ao que o cliente acabou de mandar e, se não tiver nada novo a dizer, passa a conversa adiante em vez de repetir.',
   },

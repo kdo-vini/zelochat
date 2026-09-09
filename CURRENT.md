@@ -1,5 +1,21 @@
 # ZeloChat — Foco atual
 
+### Resposta errada da IA no cardápio (2026-09-09, segunda rodada)
+
+A primeira rodada do dia corrigiu só o loop de repetição e foi declarada
+resolvida cedo demais — a resposta errada continuou em produção. A causa real:
+o ZeloChat mandava a frase inteira do cliente como busca de produto, e o
+matcher do ZeloMenu pontua também a DESCRIÇÃO — a palavra "vc" da descrição da
+"Batata frita com cheddar e bacon" era o único token em comum com "vc pode
+mandar o cardapio?".
+
+Corrigido e verificado contra o matcher real do ZeloMenu sobre o catálogo real
+de produção (bancada que reproduzia os prints byte a byte antes do fix).
+Detalhes em [[INCIDENTS]] e [[FIXES_PROGRESS]].
+
+Regra que fica: mudança no comportamento da IA só é "corrigida" depois de
+rodar os prompts reais contra o catálogo real.
+
 ### Correção de comportamento da IA no WhatsApp (2026-09-09)
 
 Duas causas-raiz confirmadas com dados de produção da Bem Servido e

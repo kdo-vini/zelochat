@@ -158,6 +158,101 @@ export function findPriorOrderingQuery(messages: OrderingConversationMessage[], 
 const FOLLOW_UP_ANSWER_MAX_WORDS = 3;
 
 /**
+ * Framing words a customer uses to ASK for something. None of them is a
+ * product word, and every one of them is noise inside a catalog search.
+ *
+ * FIX 2026-09-09: we used to send the customer's raw sentence to the catalog
+ * search. ZeloMenu scores a product on its name, description, category, group
+ * and option names, and falls back to per-token overlap — so a single filler
+ * token is enough to pull an unrelated product in. On the Bem Servido
+ * catalog, "vc pode mandar o cardapio?" matched exactly one product:
+ * "Batata frita com cheddar e bacon", whose public description reads "essa
+ * porcao vai surpreender VC com a cobertura". The customer asked for the menu
+ * and was offered a portion of fries. Verified against the real ZeloMenu
+ * matcher and the real production catalog, not a hand-written double.
+ */
+const CATALOG_QUERY_FRAMING_WORDS = new Set([
+  'vc', 'vcs', 'voce', 'voces', 'tu', 'me', 'mim', 'nos',
+  'pf', 'pfv', 'favor', 'obrigado', 'obrigada', 'bora',
+  'pode', 'podes', 'poderia', 'poderiam', 'consegue', 'conseguiria', 'da',
+  'manda', 'mandar', 'mande', 'envia', 'enviar', 'envie', 'passa', 'passar',
+  'mostra', 'mostrar', 'ver', 'quero', 'queria', 'gostaria', 'desejo', 'queremos',
+  'oi', 'ola', 'bom', 'boa', 'dia', 'tarde', 'noite',
+  'cardapio', 'menu', 'lista',
+]);
+
+/** Words that only ever name the menu itself, never an item on it. */
+const MENU_WORDS = new Set(['cardapio', 'menu', 'lista']);
+
+/**
+ * Bare articles. ZeloMenu already discards `a/as/da/de/do/o/os/oq/que/tem`
+ * from the query, but not these — and a token that survives is scored against
+ * every product DESCRIPTION, so "quero um penne" was matching "Marmita do
+ * dia" on the word "um". Dropping them costs nothing: no customer
+ * distinguishes two products by an article.
+ */
+const CATALOG_QUERY_ARTICLES = new Set(['um', 'uma', 'uns', 'umas']);
+
+/**
+ * The words ZeloMenu's own `normalizeDiscoveryQuery` already discards.
+ * Dropping them here too is provably neutral for scoring and keeps the query
+ * we log and pass to `requestedModifierGroup` readable.
+ */
+const ZELOMENU_DISCARDED_WORDS = new Set(['a', 'as', 'da', 'de', 'do', 'o', 'os', 'oq', 'que', 'tem']);
+
+/**
+ * Everything that carries no product meaning — used only to decide whether
+ * the customer named anything at all. Includes the words ZeloMenu itself
+ * discards, so "vc pode mandar o cardapio?" reduces to nothing rather than to
+ * a lone "o".
+ */
+const CATALOG_QUERY_MEANINGLESS = new Set([
+  ...CATALOG_QUERY_FRAMING_WORDS,
+  ...CATALOG_QUERY_ARTICLES,
+  'a', 'as', 'o', 'os', 'de', 'do', 'da', 'dos', 'das', 'oq', 'que', 'tem',
+  'no', 'na', 'nos', 'nas', 'em', 'pra', 'para', 'por', 'e', 'ou', 'com',
+  'ai', 'aqui', 'seu', 'sua', 'hoje', 'ta', 'esta',
+]);
+
+function catalogQueryWords(text: string): string[] {
+  return normalize(text)
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * Drop the framing and keep whatever the customer actually named. Returns ''
+ * when nothing but framing was said — that is a request for the menu, not a
+ * product search (see `isCatalogMenuRequest`).
+ */
+export function stripCatalogQueryFraming(text: string): string {
+  return catalogQueryWords(text)
+    .filter((word) => !CATALOG_QUERY_FRAMING_WORDS.has(word)
+      && !CATALOG_QUERY_ARTICLES.has(word)
+      && !ZELOMENU_DISCARDED_WORDS.has(word))
+    .join(' ')
+    .trim();
+}
+
+/** True when the customer named no product term at all in this text. */
+function namesNothing(text: string): boolean {
+  return catalogQueryWords(text).every((word) => CATALOG_QUERY_MEANINGLESS.has(word));
+}
+
+/**
+ * FIX 2026-09-09: "vc pode mandar o cardapio?" asks for the MENU. It used to
+ * fall through to a product search and answer with whatever token noise hit
+ * first. When the customer named the menu and nothing else, answer with the
+ * menu.
+ */
+export function isCatalogMenuRequest(text: string): boolean {
+  const words = catalogQueryWords(text);
+  if (!words.some((word) => MENU_WORDS.has(word))) return false;
+  return namesNothing(text);
+}
+
+/**
  * FIX 2026-09-09: the catalog query for THIS turn used to be
  * `findPriorOrderingQuery` alone, which threw the customer's own words away
  * whenever they carried none of `classifyOrderingTurn`'s keywords. "Penne,
@@ -177,10 +272,21 @@ const FOLLOW_UP_ANSWER_MAX_WORDS = 3;
  */
 export function buildCatalogSearchQuery(messages: OrderingConversationMessage[], text: string): string {
   const current = text.trim();
+  const chosen = pickCatalogQuerySource(messages, current);
+  // Framing is stripped from whichever source won, so a stale question does
+  // not carry its own filler into the search either.
+  return stripCatalogQueryFraming(chosen) || chosen;
+}
+
+function pickCatalogQuerySource(messages: OrderingConversationMessage[], current: string): string {
   if (!current) return findPriorOrderingQuery(messages, current);
-  if (classifyOrderingTurn(current, false).kind === 'catalog_or_order') return current;
-  const words = current.split(/\s+/).filter(Boolean);
-  if (words.length > FOLLOW_UP_ANSWER_MAX_WORDS) return current;
+  // A message that still names something after the framing is removed is the
+  // query, however it classifies.
+  if (!namesNothing(current)) {
+    if (classifyOrderingTurn(current, false).kind === 'catalog_or_order') return current;
+    const words = current.split(/\s+/).filter(Boolean);
+    if (words.length > FOLLOW_UP_ANSWER_MAX_WORDS) return current;
+  }
   return findPriorOrderingQuery(messages, current);
 }
 
@@ -642,15 +748,31 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string, me
     ? `${text}\n\nCardápio digital: ${menuUrl}\nSe preferir, pode fazer o pedido por escrito aqui comigo.`
     : text;
   const requestedGroup = requestedModifierGroup(query);
-  if (result.ambiguous && !requestedGroup) return finish('Encontrei mais de uma opção parecida. Qual delas você quer?');
-  if ((!requestedGroup && result.total > 12) || (!result.results.length && result.total > 0)) return finish('Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?');
-  if (!result.results.length) return finish('Não encontrei uma opção disponível com esse nome. Quer tentar de outro jeito?');
   const productsById = new Map<number, CatalogReplyResult['results'][number]>();
   for (const item of result.results) {
     const current = productsById.get(item.productId);
     if (!current || (item.modifierGroups?.length ?? 0) > (current.modifierGroups?.length ?? 0)) productsById.set(item.productId, item);
   }
   const uniqueProducts = [...productsById.values()].slice(0, 12);
+  const ambiguousReply = 'Encontrei mais de uma opção parecida. Qual delas você quer?';
+  const narrowReply = 'Tem bastante opção no cardápio. Quer filtrar por tipo ou faixa de preço?';
+  if (!uniqueProducts.length) {
+    if (result.ambiguous && !requestedGroup) return finish(ambiguousReply);
+    if (result.total > 0) return finish(narrowReply);
+    return finish('Não encontrei uma opção disponível com esse nome. Quer tentar de outro jeito?');
+  }
+  // FIX 2026-09-09: ambiguity used to short-circuit into "Encontrei mais de
+  // uma opção parecida. Qual delas você quer?" — a question that listed
+  // NOTHING, so the customer had nothing to pick from and their next message
+  // came back through the same branch to the same dead end. Listing the
+  // distinct products IS the disambiguation. The old `result.total > 12`
+  // guard also counted raw candidates, not products: a query matching one
+  // option inside each of 25 dishes refused to answer even though it had only
+  // five distinct dishes to show. Only ask the customer to narrow when the
+  // LIST itself would be too long, and keep the bare question for the one
+  // case a list cannot resolve — fewer than two products to choose between.
+  if (!requestedGroup && uniqueProducts.length >= 12) return finish(narrowReply);
+  if (result.ambiguous && !requestedGroup && uniqueProducts.length < 2) return finish(ambiguousReply);
   const choices = uniqueProducts.map((item) => {
     const groups = requestedGroup ? (item.modifierGroups ?? []).filter((candidate) => requestedGroup.test(candidate.name)) : [];
     const groupChoices = groups.flatMap((group) => {
@@ -832,4 +954,36 @@ export function snapshotToDraft(snapshot: OrderingSnapshot): OrderingDraft {
     fulfillment: sanitizeFulfillmentForWire(snapshot.fulfillment),
     paymentMethod: snapshot.payment.declaredMethod ?? undefined,
   };
+}
+
+/**
+ * Logistics words. A message about how the order gets paid or delivered is
+ * never an answer to "qual você quer?" — searching the catalog for it returns
+ * whatever token noise happens to hit.
+ */
+const ORDER_LOGISTICS_TERMS = /\b(pix|dinheiro|cartao|credito|debito|troco|pagar|pagamento|pago|entrega|entregar|entregue|retirada|retirar|buscar|endereco|rua|avenida|bairro|numero|cep|delivery)\b/;
+
+/**
+ * FIX 2026-09-09: `isOrderingFollowUp` alone used to decide that the canonical
+ * catalog path owned this turn — it only asks whether the PREVIOUS assistant
+ * message ended in a question, so once the AI had said "Qual você quer?" every
+ * later message was force-fitted into a product search. On the real Bem
+ * Servido catalog that answered "Entregar na creche do bela vista" with a list
+ * of six dishes and "Penne, molho branco, bacon, calabresa, mussarela,
+ * parmesão" with eleven unrelated ones, because ZeloMenu scores per-token and
+ * something always matches.
+ *
+ * A follow-up answer is what the escape hatch was written for: a SHORT reply
+ * naming an option ("frango", "o médio", "a de 600"). Anything longer, and
+ * anything about payment or delivery, goes to the generic assistant, which is
+ * built to read a free-form sentence.
+ */
+export function isOrderingFollowUpAnswer(
+  messages: OrderingConversationMessage[],
+  text: string,
+): boolean {
+  if (!isOrderingFollowUp(messages)) return false;
+  if (ORDER_LOGISTICS_TERMS.test(normalize(text))) return false;
+  const words = catalogQueryWords(text).filter((word) => !CATALOG_QUERY_MEANINGLESS.has(word));
+  return words.length > 0 && words.length <= FOLLOW_UP_ANSWER_MAX_WORDS;
 }

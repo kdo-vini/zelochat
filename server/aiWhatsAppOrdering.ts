@@ -16,10 +16,11 @@ import {
   type CanonicalButtonHandling,
   classifyOrderingTurn,
   findLatestOrderingState,
-  isOrderingFollowUp,
+  isOrderingFollowUpAnswer,
   isOrderingEntryTurn,
   isOrderingGreeting,
   isOrderingSnapshotEditable,
+  isCatalogMenuRequest,
   isDeliveryFeeQuestion,
   parseOrderingButton,
   renderCatalogReply,
@@ -837,6 +838,24 @@ export async function tryHandleAiWhatsAppOrdering(
       throw error;
     }
   }
+  // FIX 2026-09-09: "vc pode mandar o cardapio?" is a request for the MENU,
+  // not a product search. It used to fall through to `searchCatalog` with the
+  // whole sentence; on the Bem Servido catalog the filler token "vc" matched
+  // the DESCRIPTION of "Batata frita com cheddar e bacon" ("...vai
+  // surpreender vc com a cobertura"), the only product in the catalog sharing
+  // any token with that sentence, so the customer who asked for the menu was
+  // offered a portion of fries. Answer with the menu.
+  if (!entryDispatched && entry.menuUrl && isCatalogMenuRequest(text)) {
+    const response = buildOrderingEntryPayload(entry.menuUrl);
+    try {
+      await dispatchAiPayload(permit, response, 'menu-request', dryRun, isPermitCurrent);
+    } catch (error) {
+      if (error instanceof OrderingSuppressedError) return { handled: true };
+      throw error;
+    }
+    metric({ ...metricBase, stage: 'entry', outcome: 'menu_request' });
+    return { handled: true, response: response.text };
+  }
   if (entry.menuUrl && isDeliveryFeeQuestion(text)) {
     const response = buildDeliveryFeeReply(entry.menuUrl);
     await sendText(permit, response, 'delivery-fee', dryRun, isPermitCurrent);
@@ -845,7 +864,7 @@ export async function tryHandleAiWhatsAppOrdering(
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(priorState);
   const initialTurn = classifyOrderingTurn(text, hasPointer);
-  const followUp = !hasPointer && isOrderingFollowUp(session.messages);
+  const followUp = !hasPointer && isOrderingFollowUpAnswer(session.messages, text);
   if (initialTurn.kind === 'none' && !followUp) {
     // PR 1.31 — the canonical-vs-generic split: `handled:false` here is
     // exactly the signal `server/ai.ts` uses to let the generic AI model
