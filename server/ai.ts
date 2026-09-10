@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
@@ -1558,6 +1559,44 @@ function isScheduleGuardReply(text: string): boolean {
   );
 }
 
+/**
+ * Registro de decisão de um turno da IA.
+ *
+ * FIX 2026-09-10: os guards já logavam que tinham bloqueado, mas nunca POR QUE
+ * — e ainda escreviam o JID cru, contra a regra de nunca logar telefone. Para
+ * descobrir de onde vinha "Esse horário já passou hoje: 18:00" foi preciso
+ * reconstruir a conversa no banco na mão. Uma linha por turno, com a entrada
+ * que decidiu (horário lido, idade da mensagem de origem, papel dela), resolve
+ * essa classe em segundos.
+ *
+ * Nunca inclui texto de mensagem, JID, telefone, nome ou endereço: a conversa
+ * é identificada pelos 12 primeiros hex do sha256 do JID, a mesma convenção
+ * das métricas de pedido, o que permite correlacionar linhas sem identificar
+ * ninguém.
+ */
+export function logAiTurnDecision(input: {
+  empresaId: string;
+  jid: string;
+  path: string;
+  detail?: Record<string, string | number | boolean | null | undefined>;
+}): void {
+  const line = {
+    empresaId: input.empresaId,
+    conversationKey: createHash('sha256').update(input.jid, 'utf8').digest('hex').slice(0, 12),
+    path: input.path,
+    ...(input.detail ?? {}),
+  };
+  console.log(`[AiTurnDecision] ${JSON.stringify(line)}`);
+}
+
+/** Há quantas horas esta mensagem chegou — o dado que faltava nos guards. */
+function messageAgeHours(timestamp: string | null | undefined, now: Date): number | null {
+  if (!timestamp) return null;
+  const parsed = Date.parse(timestamp);
+  if (Number.isNaN(parsed)) return null;
+  return Math.round(((now.getTime() - parsed) / 3600000) * 10) / 10;
+}
+
 function findRecentScheduleContextGuard(
   empresaId: string,
   messages: { role: string; content: string | null; preview: string; kind: string; audio_transcript?: string | null; audio_transcript_status?: string | null }[],
@@ -3110,12 +3149,12 @@ async function isAutoReplyStillAllowed(
   // FIX 2026-08-30: uma checagem local podia envelhecer durante modelo/tools → o permit persistente falha fechado antes de todo outbound automático.
   try {
     if (!(await isAiPermitCurrent(permit))) {
-      console.log(`[ai] aborted ${context}: stale AI permit for empresa=${empresaId} jid=${jid}`);
+      console.log(`[ai] aborted ${context}: stale AI permit for empresa=${empresaId} jid=${redactJid(jid)}`);
       return false;
     }
     const freshSession = await getSession(jid, empresaId);
     if (freshSession && (!freshSession.autoReply || freshSession.status === 'escalated')) {
-      console.log(`[ai] aborted ${context}: auto_reply off or session escalated for empresa=${empresaId} jid=${jid}`);
+      console.log(`[ai] aborted ${context}: auto_reply off or session escalated for empresa=${empresaId} jid=${redactJid(jid)}`);
       return false;
     }
     return true;
@@ -3542,7 +3581,7 @@ export async function generateAndSendReply(
       pendingForEdit.pickupTime,
     );
     if (pendingScheduleGuard) {
-      console.log(`[AI] Blocking pending order before confirmation: invalid schedule for empresa=${resolvedEmpresaId} jid=${jid}`);
+      console.log(`[AI] Blocking pending order before confirmation: invalid schedule for empresa=${resolvedEmpresaId} jid=${redactJid(jid)}`);
       await clearPendingOrder(jid, resolvedEmpresaId, permit);
       await enqueueAutomatedText({ permit, text: pendingScheduleGuard.reply, origin: 'ai_auto', purpose: 'pending-schedule-guard' });
       return pendingScheduleGuard.reply;
@@ -3739,7 +3778,7 @@ export async function generateAndSendReply(
       )
     : null;
   if (blockedDateFromMessage) {
-    console.log(`[AI] Blocking reply before OpenAI: requested blocked date ${blockedDateFromMessage.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
+    logAiTurnDecision({ empresaId: resolvedEmpresaId, jid, path: 'guard_blocked_date', detail: { source: 'customer_message', date: blockedDateFromMessage.date } });
     return sendBlockedDateReply(jid, resolvedEmpresaId, permit, blockedDateFromMessage);
   }
   // FIX 2026-09-09: `slice(-12)` dentro dos guards nao tem limite de tempo --
@@ -3752,7 +3791,7 @@ export async function generateAndSendReply(
     ? findRecentTodayBlockedOperationalGuard(resolvedEmpresaId, currentConversation)
     : null;
   if (todayBlockedOperationalContext) {
-    console.log(`[AI] Blocking reply before OpenAI: today blocked and recent order/payment context for empresa=${resolvedEmpresaId} jid=${jid}`);
+    logAiTurnDecision({ empresaId: resolvedEmpresaId, jid, path: 'guard_blocked_date', detail: { source: 'recent_history', date: todayBlockedOperationalContext.date } });
     return sendBlockedDateReply(jid, resolvedEmpresaId, permit, todayBlockedOperationalContext);
   }
   const recentScheduleContext = findRecentScheduleContextGuard(
@@ -3760,11 +3799,24 @@ export async function generateAndSendReply(
     isGeneralMode ? [] : currentConversation,
   );
   if (recentScheduleContext?.type === 'blocked_date') {
-    console.log(`[AI] Blocking reply before OpenAI: recent context has blocked date ${recentScheduleContext.blockedDate.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
+    logAiTurnDecision({ empresaId: resolvedEmpresaId, jid, path: 'guard_blocked_date', detail: { source: 'recent_schedule_context', date: recentScheduleContext.blockedDate.date } });
     return sendBlockedDateReply(jid, resolvedEmpresaId, permit, recentScheduleContext.blockedDate);
   }
   if (recentScheduleContext?.type === 'business_hours') {
-    console.log(`[AI] Blocking reply before OpenAI: recent context has invalid schedule for empresa=${resolvedEmpresaId} jid=${jid}`);
+    logAiTurnDecision({
+      empresaId: resolvedEmpresaId,
+      jid,
+      path: 'guard_business_hours',
+      detail: {
+        source: 'recent_schedule_context',
+        kind: recentScheduleContext.issue.kind,
+        // Estes tres campos sao exatamente o que faltava em 10/09: o horario
+        // lido, de quando veio a mensagem que o continha e quem a escreveu.
+        requestedMinutes: recentScheduleContext.issue.timeMinutes ?? null,
+        historyMessages: currentConversation.length,
+        oldestHistoryAgeHours: messageAgeHours(currentConversation[0]?.timestamp, new Date()),
+      },
+    });
     return sendBusinessHoursReply(jid, resolvedEmpresaId, permit, recentScheduleContext.issue);
   }
   const businessHoursIssueFromMessage = lastUserTextForDate
@@ -3777,7 +3829,16 @@ export async function generateAndSendReply(
       )
     : null;
   if (businessHoursIssueFromMessage) {
-    console.log(`[AI] Blocking reply before OpenAI: requested outside business hours for empresa=${resolvedEmpresaId} jid=${jid}`);
+    logAiTurnDecision({
+      empresaId: resolvedEmpresaId,
+      jid,
+      path: 'guard_business_hours',
+      detail: {
+        source: 'customer_message',
+        kind: businessHoursIssueFromMessage.kind,
+        requestedMinutes: businessHoursIssueFromMessage.timeMinutes ?? null,
+      },
+    });
     return sendBusinessHoursReply(jid, resolvedEmpresaId, permit, businessHoursIssueFromMessage);
   }
 
