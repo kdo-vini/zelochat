@@ -10,6 +10,7 @@ import {
 import { getServiceSupabase } from '../supabase.js';
 import { parseStructuredMessage } from '../../src/domain/chat.js';
 import {
+  CUSTOMER_SEGMENT_CHIPS,
   DEFAULT_CUSTOMER_SEGMENT,
   DEFAULT_CUSTOMER_SORT,
   isCustomerSortKey,
@@ -20,6 +21,10 @@ import {
 import { CustomerOrderingContext } from './orderingContextAdapter.js';
 
 export interface CustomerListResult { customers: CustomerSummary[]; nextCursor: string | null; hasMore: boolean; total: number | null; }
+export type CustomerSegmentCounts = { sumiram: number; 'uma-vez': number; melhores: number };
+export interface CustomerRpcClient {
+  rpc(name: string, params: Record<string, unknown>): unknown;
+}
 export interface CustomerRelationshipSummary { blocked: boolean; blockReason: string | null; optedOut: boolean; campaigns: number; automations: number; }
 export function buildCustomerRelationship(input: { blockedAt?: string | null; blockReason?: string | null; optedOut?: boolean; campaigns?: number | null; automations?: number | null }): CustomerRelationshipSummary {
   return {
@@ -34,7 +39,42 @@ export interface CustomerReadRepository {
   listPeople(empresaId: string, ownerUserId: string, filters: CustomerFilters, limit: number): Promise<any[]>;
   countOrders(empresaId: string, personIds: string[]): Promise<Record<string, { count: number; total: number; lastDeliveredAt: string | null }> >;
   lastConversations(empresaId: string, personIds: string[]): Promise<Record<string, string | null>>;
+  listTags?(empresaId: string, personIds: string[]): Promise<Record<string, string[]>>;
   getPerson(empresaId: string, ownerUserId: string, personId: string): Promise<any | null>;
+}
+
+function buildCustomerRpcParams(
+  empresaId: string,
+  ownerUserId: string,
+  segment: CustomerSegment,
+  sort: CustomerSortKey,
+  pageCursor: CustomerCursor | null,
+  rpcLimit: number,
+  tagIds: string[] | null = segment.tagIds ?? null,
+): Record<string, unknown> {
+  return {
+    p_empresa_id: empresaId,
+    p_owner_user_id: ownerUserId,
+    p_search: segment.search ?? null,
+    p_buyers: segment.buyers ?? null,
+    p_min_orders: segment.minOrders ?? null,
+    p_max_orders: segment.maxOrders ?? null,
+    p_min_total_value: segment.minTotalValue ?? null,
+    p_min_days_since_last_order: segment.minDaysSinceLastOrder ?? null,
+    p_max_days_since_last_order: segment.maxDaysSinceLastOrder ?? null,
+    p_has_phone: segment.hasWhatsApp ?? null,
+    p_tag_ids: tagIds,
+    p_birthday_month: segment.birthdayMonth ?? null,
+    p_origin: segment.origin ?? null,
+    p_sort: sort,
+    p_cursor_orders: pageCursor?.sort === 'orders' ? Number(pageCursor.value) : null,
+    p_cursor_value: pageCursor?.sort === 'value' ? pageCursor.value : null,
+    p_cursor_at: pageCursor?.sort === 'recent' ? (pageCursor.value || '-infinity') : null,
+    p_cursor_name: pageCursor?.sort === 'name' ? pageCursor.value : null,
+    p_cursor_id: pageCursor?.id ?? null,
+    p_inactive_after_days: 30,
+    p_limit: rpcLimit,
+  };
 }
 
 const defaultRepository: CustomerReadRepository = {
@@ -59,31 +99,8 @@ const defaultRepository: CustomerReadRepository = {
       tagIds = [...new Set([...(tagIds ?? []), ...vipIds])];
     }
     const cursor = decodeCustomerCursor(filters.cursor, sort);
-    const rpcParams = (pageCursor: CustomerCursor | null) => ({
-      p_empresa_id: empresaId,
-      p_owner_user_id: ownerUserId,
-      p_search: segment.search ?? null,
-      p_buyers: segment.buyers ?? null,
-      p_min_orders: segment.minOrders ?? null,
-      p_max_orders: segment.maxOrders ?? null,
-      p_min_total_value: segment.minTotalValue ?? null,
-      p_min_days_since_last_order: segment.minDaysSinceLastOrder ?? null,
-      p_max_days_since_last_order: segment.maxDaysSinceLastOrder ?? null,
-      p_has_phone: segment.hasWhatsApp ?? null,
-      p_tag_ids: tagIds,
-      p_birthday_month: segment.birthdayMonth ?? null,
-      p_origin: segment.origin ?? null,
-      p_sort: sort,
-      p_cursor_orders: pageCursor?.sort === 'orders' ? Number(pageCursor.value) : null,
-      p_cursor_value: pageCursor?.sort === 'value' ? pageCursor.value : null,
-      p_cursor_at: pageCursor?.sort === 'recent' ? (pageCursor.value || '-infinity') : null,
-      p_cursor_name: pageCursor?.sort === 'name' ? pageCursor.value : null,
-      p_cursor_id: pageCursor?.id ?? null,
-      p_inactive_after_days: 30,
-      p_limit: limit + 1,
-    });
     const fetchPage = async (pageCursor: CustomerCursor | null): Promise<any[]> => {
-      const { data, error } = await getServiceSupabase().rpc('list_zelochat_customers', rpcParams(pageCursor));
+      const { data, error } = await getServiceSupabase().rpc('list_zelochat_customers', buildCustomerRpcParams(empresaId, ownerUserId, segment, sort, pageCursor, limit + 1, tagIds));
       if (error) throw error;
       return (data ?? []).map((row) => ({ ...row, empresa_id: empresaId }));
     };
@@ -131,6 +148,18 @@ const defaultRepository: CustomerReadRepository = {
     const { data, error } = await getServiceSupabase().from('zelochat_sessions').select('pessoa_id,last_message_time').eq('empresa_id', empresaId).in('pessoa_id', personIds).order('last_message_time', { ascending: false }).limit(Math.min(5000, Math.max(100, personIds.length * 100)));
     if (error) throw error; const result: Record<string, string | null> = {}; for (const row of data ?? []) if (!result[row.pessoa_id]) result[row.pessoa_id] = row.last_message_time; return result;
   },
+  async listTags(empresaId, personIds) {
+    if (!personIds.length) return {};
+    const { data, error } = await getServiceSupabase().from('zelochat_person_tags').select('pessoa_id, zelochat_tags(name)').eq('empresa_id', empresaId).in('pessoa_id', personIds);
+    if (error) throw error;
+    const result: Record<string, string[]> = {};
+    for (const row of data ?? []) {
+      const embedded = Array.isArray(row.zelochat_tags) ? row.zelochat_tags : row.zelochat_tags ? [row.zelochat_tags] : [];
+      const names = embedded.map((tag) => tag?.name).filter((name): name is string => typeof name === 'string');
+      if (names.length) result[row.pessoa_id] = [...(result[row.pessoa_id] ?? []), ...names];
+    }
+    return result;
+  },
   async getPerson(empresaId, ownerUserId, personId) { const { data, error } = await getServiceSupabase().from('pessoas').select('*').eq('id', personId).eq('id_usuario', ownerUserId).eq('tipo', 'cliente').maybeSingle(); if (error) throw error; return data ? { ...data, empresa_id: empresaId } : null; },
 };
 
@@ -140,8 +169,11 @@ export async function listCustomers(empresaId: string, ownerUserId: string, filt
   const rows = await repository.listPeople(empresaId, ownerUserId, filters, limit);
   const ids = rows.map((row) => row.id);
   const aggregated = rows.some((row) => row.total_orders != null);
-  const orders = aggregated ? {} : await repository.countOrders(empresaId, ids);
-  const conversations = aggregated ? {} : await repository.lastConversations(empresaId, ids);
+  const [orders, conversations, tagsByPerson] = await Promise.all([
+    aggregated ? Promise.resolve({}) : repository.countOrders(empresaId, ids),
+    aggregated ? Promise.resolve({}) : repository.lastConversations(empresaId, ids),
+    repository.listTags ? repository.listTags(empresaId, ids) : Promise.resolve({}),
+  ]);
   const customers = rows.map((row) => {
     const order = orders[row.id] ?? { count: Number(row.total_orders ?? 0), total: Number(row.total_value ?? 0), lastDeliveredAt: row.last_order_at ?? null };
     const activity = row.activity_state
@@ -161,7 +193,7 @@ export async function listCustomers(empresaId: string, ownerUserId: string, filt
       orderCount: order.count,
       totalValue: order.total,
       openBalance: null,
-      tags: [],
+      tags: tagsByPerson[row.id] ?? [],
     };
   });
   const page = customers.slice(0, limit);
@@ -181,6 +213,19 @@ export async function listCustomers(empresaId: string, ownerUserId: string, filt
   }
   const total = filters.cursor ? null : Number(rows[0]?.total_count ?? 0);
   return { customers: page, hasMore, nextCursor, total };
+}
+
+export async function countCustomerSegments(empresaId: string, ownerUserId: string, client: CustomerRpcClient = getServiceSupabase() as unknown as CustomerRpcClient): Promise<CustomerSegmentCounts> {
+  const entries = await Promise.all(CUSTOMER_SEGMENT_CHIPS.map(async (preset) => {
+    const response = await client.rpc('list_zelochat_customers', buildCustomerRpcParams(empresaId, ownerUserId, preset.segment, preset.sort, null, 1)) as { data: unknown; error: unknown | null };
+    if (response.error) throw response.error;
+    const firstRow = Array.isArray(response.data) && response.data[0] && typeof response.data[0] === 'object'
+      ? response.data[0] as Record<string, unknown>
+      : null;
+    const rawCount = Number(firstRow?.total_count ?? 0);
+    return [preset.id, Number.isFinite(rawCount) ? Math.max(0, rawCount) : 0] as const;
+  }));
+  return Object.fromEntries(entries) as CustomerSegmentCounts;
 }
 
 export async function getCustomerDetail(empresaId: string, ownerUserId: string, personId: string, repository = defaultRepository): Promise<CustomerDetail | null> {

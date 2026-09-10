@@ -7,7 +7,7 @@ import { dispatchConversationOutbound, type DispatchResult } from '../conversati
 import type { OutboundPayload } from '../../src/domain/outbound.js';
 import type { ChatAttachment } from '../../src/types.js';
 import { parseCustomerFilters } from './filters.js';
-import { getCustomerDetail, listCustomerMessages, listCustomerOrders, listCustomerTimeline, listCustomers } from './service.js';
+import { countCustomerSegments, getCustomerDetail, listCustomerMessages, listCustomerOrders, listCustomerTimeline, listCustomers } from './service.js';
 import { createCustomersRouter, type CustomerMutationAccess, type CustomerWriteStore } from './mutations.js';
 import { createCustomerOrderingContextRouter } from './orderingContextRouter.js';
 
@@ -20,6 +20,7 @@ function sendCustomerReadError(res: Response, cause: unknown): void {
 }
 
 customerRouter.get('/api/customers', async (req, res) => { try { const access = await actor(req); res.json(await listCustomers(access.empresaId, access.ownerUserId, parseCustomerFilters(req.query as Record<string, unknown>))); } catch (cause) { sendCustomerReadError(res, cause); } });
+customerRouter.get('/api/customers/segment-counts', async (req, res) => { try { const access = await actor(req); res.json({ counts: await countCustomerSegments(access.empresaId, access.ownerUserId) }); } catch (cause) { sendCustomerReadError(res, cause); } });
 customerRouter.get('/api/customers/:personId', async (req, res) => { try { const access = await actor(req); const detail = await getCustomerDetail(access.empresaId, access.ownerUserId, req.params.personId); if (!detail) { res.status(404).json({ code: 'NOT_FOUND', message: 'Cliente não encontrado.' }); return; } res.json(detail); } catch (cause) { sendCustomerReadError(res, cause); } });
 customerRouter.get('/api/customers/:personId/messages', async (req, res) => { try { const access = await actor(req); if (!await getCustomerDetail(access.empresaId, access.ownerUserId, req.params.personId)) { res.status(404).json({ code: 'NOT_FOUND', message: 'Cliente não encontrado.' }); return; } res.json(await listCustomerMessages(access.empresaId, req.params.personId, typeof req.query.cursor === 'string' ? req.query.cursor : null, Number(req.query.limit) || 30)); } catch (cause) { sendCustomerReadError(res, cause); } });
 customerRouter.get('/api/customers/:personId/orders', async (req, res) => { try { const access = await actor(req); if (!await getCustomerDetail(access.empresaId, access.ownerUserId, req.params.personId)) { res.status(404).json({ code: 'NOT_FOUND', message: 'Cliente não encontrado.' }); return; } res.json(await listCustomerOrders(access.empresaId, req.params.personId, typeof req.query.cursor === 'string' ? req.query.cursor : null, Number(req.query.limit) || 30)); } catch (cause) { sendCustomerReadError(res, cause); } });

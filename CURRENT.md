@@ -1,5 +1,9 @@
 # ZeloChat — Foco atual
 
+### Clientes — Parte B: chips de segmento e linha da lista (2026-09-10)
+
+Entrega concluída no working tree: o domínio compartilha a comparação de segmentos e os três chips; a leitura de contagens usa o RPC existente uma vez por segmento, a listagem carrega tags em lote sem desenhá-las, e contatos sem pedido agora distinguem conversa recente de ausência total. Não há migration, alteração de RPC ou entrada no changelog.
+
 ### Busca do cardápio reescrita na origem (2026-09-09, quinta rodada)
 
 A causa-raiz das quatro rodadas anteriores era o ranking do ZeloMenu, não o

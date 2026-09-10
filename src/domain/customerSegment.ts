@@ -69,6 +69,12 @@ export const CUSTOMER_SEGMENT_PRESETS: readonly CustomerSegmentPreset[] = [
   },
 ];
 
+export const CUSTOMER_SEGMENT_CHIPS = [
+  CUSTOMER_SEGMENT_PRESETS.find((preset) => preset.id === 'sumiram')!,
+  CUSTOMER_SEGMENT_PRESETS.find((preset) => preset.id === 'uma-vez')!,
+  CUSTOMER_SEGMENT_PRESETS.find((preset) => preset.id === 'melhores')!,
+] as const;
+
 export interface CustomerSegmentSubject {
   name?: string | null;
   phone?: string | null;
@@ -82,6 +88,20 @@ export interface CustomerSegmentSubject {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const RESERVED_SEARCH = /[(),.*%\\]/u;
+
+export function segmentsEqual(a: CustomerSegment, b: CustomerSegment): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof CustomerSegment>;
+  for (const key of keys) {
+    const left = a[key];
+    const right = b[key];
+    if (Array.isArray(left) || Array.isArray(right)) {
+      if (JSON.stringify([...(left as string[] ?? [])].sort()) !== JSON.stringify([...(right as string[] ?? [])].sort())) return false;
+      continue;
+    }
+    if (left !== right) return false;
+  }
+  return true;
+}
 
 export function isCustomerSortKey(value: unknown): value is CustomerSortKey {
   return typeof value === 'string' && (CUSTOMER_SORT_KEYS as readonly string[]).includes(value);

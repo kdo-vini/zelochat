@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Clientes — Parte B: segmentos e linha da lista — 2026-09-10
+
+- ✅ CRM-SEG-003 — a tela não oferecia atalhos visíveis para os três segmentos mais úteis e a listagem escondia conversas de contatos sem pedido → chips com contagem resiliente, tags preenchidas no backend e terceira linha contextual para compra/conversa/inatividade, sem expor tags na linha — `src/components/customers/CustomerSegmentChips.tsx:1`, `server/customers/service.ts:215`, `src/components/customers/CustomerListRow.tsx:25`
+
 ## Clientes — rótulos, notas e paginação de pedidos — 2026-09-10
 
 - ✅ CRM-ORDERS-A — histórico exibia status técnicos, agregados de pedidos não deixavam claro que contavam somente entregues, notas internas não apareciam e a lista parava nos 30 primeiros pedidos → rótulos PT-BR centralizados no domínio, métricas renomeadas, notas visíveis no Resumo e carregamento incremental normalizado por cursor — `src/domain/orderStatusLabels.ts:1`, `src/components/customers/CustomerOrdersTab.tsx:1`, `src/components/customers/CustomerSummaryTab.tsx:136`, `src/services/customerApi.ts:336`

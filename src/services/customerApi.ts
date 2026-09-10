@@ -54,6 +54,12 @@ export interface CustomerPage {
   total: number | null;
 }
 
+export interface CustomerSegmentCounts {
+  sumiram: number;
+  'uma-vez': number;
+  melhores: number;
+}
+
 export interface CustomerMessagesPage {
   items: Array<{ id: string; session_id: string; role: string; content: string | null; sent_at: string; outbound_status?: string | null; outbound_error?: string | null; attachment?: import('../types').ChatAttachment | null }>;
   nextCursor: string | null;
@@ -285,6 +291,17 @@ export async function fetchCustomers(token: string, query: CustomerListQuery = {
     hasMore: body.hasMore ?? Boolean(body.nextCursor),
     total: body.total ?? null,
   };
+}
+
+export async function fetchSegmentCounts(token: string): Promise<CustomerSegmentCounts> {
+  const response = await apiFetch(apiUrl('/api/customers/segment-counts'), { headers: authHeaders(token) });
+  const body = await parseCustomerResponse<{ counts?: Partial<CustomerSegmentCounts> }>(response);
+  const counts = body.counts ?? {};
+  const count = (value: unknown): number => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  };
+  return { sumiram: count(counts.sumiram), 'uma-vez': count(counts['uma-vez']), melhores: count(counts.melhores) };
 }
 
 export async function fetchCustomer(token: string, personId: string): Promise<CustomerDetail> {

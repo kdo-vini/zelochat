@@ -10,13 +10,26 @@ interface Props {
 const currencyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' });
 
-function formatLastOrder(value: string | null): string {
-  if (!value) return 'Nunca comprou';
+function formatRelativeActivity(value: string | null, now: number): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const days = Math.max(0, Math.floor((now - date.getTime()) / 86_400_000));
+  return days <= 0 ? 'hoje' : days === 1 ? 'ontem' : `há ${days} dias`;
+}
+
+function formatLastOrder(value: string | null, now: number): string {
+  const relative = formatRelativeActivity(value, now);
+  if (!value || !relative) return 'Nunca comprou';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Nunca comprou';
-  const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
-  const relative = days <= 0 ? 'hoje' : days === 1 ? 'ontem' : `há ${days} dias`;
   return `Última compra ${dateFormatter.format(date)} · ${relative}`;
+}
+
+export function formatCustomerListActivity(customer: Pick<CustomerSummary, 'orderCount' | 'lastOrderAt' | 'lastActivityAt'>, now = Date.now()): string {
+  if (customer.orderCount > 0) return formatLastOrder(customer.lastOrderAt, now);
+  const relative = formatRelativeActivity(customer.lastActivityAt, now);
+  return relative ? `Sem compra · falou ${relative}` : 'Nunca comprou';
 }
 
 export const CustomerListRow = memo(function CustomerListRow({ customer, selected, onSelect }: Props) {
@@ -30,10 +43,7 @@ export const CustomerListRow = memo(function CustomerListRow({ customer, selecte
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-2 truncate text-[14px] font-semibold text-[var(--color-ink)]">
-            <span className="truncate">{customer.name || 'Sem nome'}</span>
-            {customer.orderCount === 0 && <span className="shrink-0 rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-ink-muted)]">Sem compra</span>}
-          </p>
+          <p className="truncate text-[14px] font-semibold text-[var(--color-ink)]">{customer.name || 'Sem nome'}</p>
           <p className="mt-0.5 truncate text-[12px] text-[var(--color-ink-muted)]">{phone ? `WhatsApp ${phone}` : 'Sem WhatsApp'}</p>
         </div>
         <div className="shrink-0 text-right">
@@ -41,7 +51,7 @@ export const CustomerListRow = memo(function CustomerListRow({ customer, selecte
           <p className="mt-0.5 text-[11px] text-[var(--color-ink-faint)]">{currencyFormatter.format(customer.totalValue)}</p>
         </div>
       </div>
-      <div className="mt-1 text-[11px] text-[var(--color-ink-faint)]">{formatLastOrder(customer.lastOrderAt)}</div>
+      <div className="mt-1 text-[11px] text-[var(--color-ink-faint)]">{formatCustomerListActivity(customer)}</div>
     </button>
   );
 });

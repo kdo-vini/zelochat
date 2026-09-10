@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { CUSTOMER_BUYER_SCOPE_LABELS, CUSTOMER_SEGMENT_PRESETS, DEFAULT_CUSTOMER_SEGMENT, DEFAULT_CUSTOMER_SORT, type CustomerBuyerScope, type CustomerSegment } from '../../domain/customerSegment';
+import { CUSTOMER_BUYER_SCOPE_LABELS, CUSTOMER_SEGMENT_PRESETS, DEFAULT_CUSTOMER_SEGMENT, DEFAULT_CUSTOMER_SORT, segmentsEqual, type CustomerBuyerScope, type CustomerSegment } from '../../domain/customerSegment';
 import { DEFAULT_CUSTOMER_FILTERS, type CustomerFilters } from '../../services/customerApi';
 
 interface Props {
@@ -27,20 +27,6 @@ function applyLastPurchaseOption(segment: CustomerSegment, option: LastPurchaseO
     case 'gone90': return { ...rest, minDaysSinceLastOrder: 90 };
     default: return rest;
   }
-}
-
-function segmentsEqual(a: CustomerSegment, b: CustomerSegment): boolean {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof CustomerSegment>;
-  for (const key of keys) {
-    const left = a[key];
-    const right = b[key];
-    if (Array.isArray(left) || Array.isArray(right)) {
-      if (JSON.stringify([...(left as string[] ?? [])].sort()) !== JSON.stringify([...(right as string[] ?? [])].sort())) return false;
-      continue;
-    }
-    if (left !== right) return false;
-  }
-  return true;
 }
 
 export function CustomerFiltersPanel({ filters, onChange, onClose }: Props) {

@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-09-10',
     category: 'medium',
+    title: 'Grupos de clientes logo na entrada',
+    description: 'Ao abrir Clientes você já vê quantas pessoas sumiram, quantas compraram uma vez só e quantas são as melhores — um toque filtra a lista por esse grupo. E quem ainda não comprou, mas conversou com a loja, agora aparece como contato recente em vez de "nunca comprou".',
+  },
+  {
+    date: '2026-09-10',
+    category: 'medium',
     title: 'Ficha do cliente mais completa',
     description: 'O histórico agora mostra a situação de cada pedido em português, dá para abrir os pedidos e as conversas mais antigas de quem já comprou várias vezes, e as anotações que você escreve sobre o cliente aparecem no resumo.',
   },

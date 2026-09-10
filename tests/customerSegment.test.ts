@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {
+  CUSTOMER_SEGMENT_CHIPS,
   CUSTOMER_SEGMENT_PRESETS,
   matchesCustomerSegment,
   parseCustomerSegment,
+  segmentsEqual,
   type CustomerSegmentSubject,
 } from '../src/domain/customerSegment.js';
 
@@ -40,4 +42,10 @@ assert.equal(matchesCustomerSegment(subject, { birthdayMonth: 9, origin: 'whatsa
 assert.equal(matchesCustomerSegment({ ...subject, lastOrderAt: 'invalid' }, { maxDaysSinceLastOrder: 30 }, now), false);
 
 for (const preset of CUSTOMER_SEGMENT_PRESETS) assert.deepEqual(parseCustomerSegment(preset.segment), preset.segment);
+assert.deepEqual(CUSTOMER_SEGMENT_CHIPS.map((preset) => preset.id), ['sumiram', 'uma-vez', 'melhores']);
+assert.equal(CUSTOMER_SEGMENT_CHIPS[0], CUSTOMER_SEGMENT_PRESETS.find((preset) => preset.id === 'sumiram'));
+assert.equal(segmentsEqual({ tagIds: [tagA, tagB] }, { tagIds: [tagB, tagA] }), true);
+assert.equal(segmentsEqual({}, { search: undefined }), true);
+assert.equal(segmentsEqual({ tagIds: [] }, { tagIds: undefined }), true);
+assert.equal(segmentsEqual({ tagIds: [tagA] }, { tagIds: [tagB] }), false);
 console.log('customerSegment: ok');
