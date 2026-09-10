@@ -10,6 +10,7 @@ import { isAiPermitCurrent, type AiTurnPermit } from './conversationControl.js';
 import {
   applyFulfillmentTypeSelection,
   buildOrderingEntryPayload,
+  buildStoreClosedPrefix,
   buildCanonicalConfirmationButtons,
   buildCatalogSearchQuery,
   buildDeliveryFeeReply,
@@ -781,7 +782,7 @@ export async function tryHandleAiWhatsAppOrdering(
   empresaId: string,
   session: StoredSession,
   permit: AiTurnPermit,
-  entry: { menuUrl: string | null; storeOpen: boolean | null },
+  entry: { menuUrl: string | null; storeOpen: boolean | null; nextOpenLabel?: string | null },
   options: AiOrderingHandlerOptions = {},
 ): Promise<AiOrderingHandleResult> {
   const startedAt = Date.now();
@@ -1051,7 +1052,12 @@ export async function tryHandleAiWhatsAppOrdering(
       draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
     }
     if (!draft) {
-      const response = renderCatalogReply(catalog, query, entry.menuUrl);
+      const response = renderCatalogReply(
+        catalog,
+        query,
+        entry.menuUrl,
+        entry.storeOpen === true ? null : buildStoreClosedPrefix(entry.nextOpenLabel),
+      );
       // FIX 2026-09-09: restating the previous reply word for word tells the
       // customer nothing and keeps `isOrderingFollowUp` true, so the next
       // message re-enters here and repeats it again — the fixed point that

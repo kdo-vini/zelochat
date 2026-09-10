@@ -703,7 +703,27 @@ function selectionRule(group: { minSelections?: number; maxSelections?: number |
   return '';
 }
 
-export function renderCatalogReply(result: CatalogReplyResult, query: string, menuUrl?: string | null): string {
+/**
+ * Como um atendente responde "tem caldo hoje?" com a loja fechada: diz que
+ * está fechado, diz quando abre, e mostra as opções do mesmo jeito. Recusar a
+ * lista seria pior — o cliente pode pedir pelo cardápio para depois.
+ *
+ * FIX 2026-09-09: a lista saía sem nenhuma menção ao horário, então o cliente
+ * recebia um convite para escolher de uma loja que não ia atender.
+ */
+export function buildStoreClosedPrefix(nextOpenLabel?: string | null): string {
+  const reopen = nextOpenLabel?.trim();
+  return reopen
+    ? `Agora estamos fechados, reabrimos ${reopen}. Mas olha o que temos:`
+    : 'Agora estamos fechados, mas olha o que temos:';
+}
+
+export function renderCatalogReply(
+  result: CatalogReplyResult,
+  query: string,
+  menuUrl?: string | null,
+  storeClosedPrefix?: string | null,
+): string {
   const finish = (text: string): string => menuUrl
     ? `${text}\n\nCardápio digital: ${menuUrl}\nSe preferir, pode fazer o pedido por escrito aqui comigo.`
     : text;
@@ -760,7 +780,13 @@ export function renderCatalogReply(result: CatalogReplyResult, query: string, me
       : money(item.currentPrice);
     return `${customerText(item.publicName)} por ${price}`;
   }).join('\n');
-  return finish(`${requestedGroup ? 'As opções são' : 'Tem sim'}:\n${choices}\nQual você quer?`);
+  // Com a loja fechada o cabeçalho vira a frase do horário: dizer "Tem sim:" e
+  // convidar a escolher, sem avisar que ninguém vai atender, é o que fazia a
+  // resposta soar de robô.
+  const heading = storeClosedPrefix?.trim()
+    ? storeClosedPrefix.trim()
+    : `${requestedGroup ? 'As opções são' : 'Tem sim'}:`;
+  return finish(`${heading}\n${choices}\nQual você quer?`);
 }
 
 export function renderOrderingDraftPreview(draft: OrderingDraft, result: CatalogReplyResult): string {

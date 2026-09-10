@@ -5,6 +5,7 @@
 - ✅ ZCHAT-AI-022 — ranking do ZeloMenu pontuava qualquer token compartilhado, com descrição valendo o mesmo que nome → cobertura ponderada por campo, stopwords linguísticas e typo; 14/18 para 18/18 no catálogo real — `zelomenu/src/domain/zelomenuCatalogDiscovery.ts`, `zelomenu/src/domain/portugueseStopwords.ts`
 - ✅ ZCHAT-AI-023 — listas de palavras no ZeloChat compensavam o ranking fraco e nunca fechavam → removidas; a frase do cliente vai como foi escrita — `src/domain/aiWhatsAppOrdering.ts:190`
 - ✅ ZCHAT-AI-024 — recibo de pedido do ZeloMenu virava pedido de cardápio e pergunta de taxa → intercepta antes da classificação e só agradece — `src/domain/aiWhatsAppOrdering.ts:131`, `server/aiWhatsAppOrdering.ts:829`
+- ✅ ZCHAT-AI-026 — pergunta de catálogo com a loja fechada devolvia lista seca convidando a escolher → abre dizendo que está fechado e quando reabre, e mostra as opções do mesmo jeito — `src/domain/aiWhatsAppOrdering.ts:706`, `server/ai.ts:3786`
 - ✅ ZCHAT-AI-025 — conversa de ontem continuava hoje ("Que bom!" para uma saudação 32h depois) → corte no último silêncio maior que 6h, no histórico do modelo e no gate de follow-up — `src/domain/conversationContinuity.ts`, `server/ai.ts:3850`
 
 ## Comportamento da IA no WhatsApp — 2026-09-09 (quarta rodada)

@@ -3783,6 +3783,9 @@ export async function generateAndSendReply(
         ? buildPublicStoreUrl(getZeloMenuPublicBaseUrl(), aiConfig.zelomenuSlug)
         : null,
       storeOpen: resolveOrderingEntryStoreOpen(resolvedEmpresaId, new Date(), getEmpresaTimezone(resolvedEmpresaId)),
+      // Para a resposta de catálogo com a loja fechada dizer quando reabre, em
+      // vez de convidar a escolher de uma loja que não vai atender.
+      nextOpenLabel: resolveWeeklyStatus(resolvedEmpresaId, new Date(), getEmpresaTimezone(resolvedEmpresaId)).nextOpenLabel,
     });
     if (ordering.handled) return ordering.response ?? null;
   }

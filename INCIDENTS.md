@@ -50,6 +50,12 @@ ranking fraco — `stripCatalogQueryFraming`, as três listas de palavras e
   gate de follow-up do fluxo canônico. Nada é apagado: o resumo do cliente
   segue no system prompt e as mensagens seguem no banco.
 
+**Loja fechada responde como gente:** uma pergunta de catálogo fora do horário
+não é mais respondida com uma lista seca convidando a escolher. `renderCatalogReply`
+recebe o prefixo de `buildStoreClosedPrefix` e abre com "Agora estamos fechados,
+reabrimos ainda hoje às 18:00. Mas olha o que temos:" — o horário vem do
+`nextOpenLabel` que `resolveWeeklyStatus` já calculava para o prompt.
+
 **Regra que fica:** ranking sem medição é chute. A suíte
 `zelomenuCatalogDiscovery.relevance.test.ts` congela o conjunto de avaliação —
 rode antes de publicar qualquer mudança de relevância.

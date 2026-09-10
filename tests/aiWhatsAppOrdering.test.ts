@@ -17,6 +17,7 @@ import {
   isOrderingFollowUpAnswer,
   isOrderingStartButtonText,
   isZeloMenuOrderReceipt,
+  buildStoreClosedPrefix,
   isDeliveryFeeQuestion,
   mentionsMenu,
   isOrderingSnapshotEditable,
@@ -338,6 +339,47 @@ assert.deepEqual(searchedQueries, [], 'recibo nunca vira busca de produto');
 assert.equal(isZeloMenuOrderReceipt('quero fazer um pedido'), false);
 assert.equal(isZeloMenuOrderReceipt('Pedido #D7957397'), false, 'sem a assinatura do rodape nao e o recibo');
 assert.equal(isZeloMenuOrderReceipt('Sistema Zelo Menu'), false, 'rodape sozinho tambem nao');
+
+// REGRESSION 2026-09-09: com a loja fechada a lista saia sem nenhuma mencao ao
+// horario, entao o cliente era convidado a escolher de uma loja que nao ia
+// atender. Um atendente diria que esta fechado, quando abre, e mostraria as
+// opcoes do mesmo jeito.
+const oneResultClient: OrderingClient = {
+  ...dryRunClient,
+  searchCatalog: async () => ({
+    total: 1,
+    ambiguous: false,
+    results: [{ productId: 211, publicName: 'Caldo verde', currentPrice: 17.99, matchReason: 'nome_publico', ambiguous: false }],
+  }),
+};
+const closedCatalogAnswer = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('tem caldos hj?'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: false, nextOpenLabel: 'ainda hoje as 18:00' },
+  { dryRun: true, client: oneResultClient },
+);
+assert.equal(closedCatalogAnswer.handled, true);
+assert.match(closedCatalogAnswer.response ?? '', /^Agora estamos fechados, reabrimos ainda hoje as 18:00\./);
+assert.match(closedCatalogAnswer.response ?? '', /Caldo verde/, 'as opcoes vem junto, nao no lugar');
+assert.doesNotMatch(closedCatalogAnswer.response ?? '', /Tem sim/, 'com a loja fechada o cabecalho e o horario');
+
+// Sem horario conhecido ainda avisa que esta fechado.
+assert.equal(buildStoreClosedPrefix(null), 'Agora estamos fechados, mas olha o que temos:');
+assert.equal(buildStoreClosedPrefix('   '), 'Agora estamos fechados, mas olha o que temos:');
+
+// Com a loja aberta nada muda.
+const openCatalogAnswer = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('tem caldos hj?'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true, nextOpenLabel: 'amanha as 10:00' },
+  { dryRun: true, client: oneResultClient },
+);
+assert.match(openCatalogAnswer.response ?? '', /^Tem sim:/);
+assert.doesNotMatch(openCatalogAnswer.response ?? '', /fechados/);
 
 // A tap on our own entry button arrived as plain text. It must answer like the
 // tap does — never be read as an order intent and escalated.
