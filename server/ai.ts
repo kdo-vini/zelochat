@@ -1591,6 +1591,21 @@ export function logAiTurnDecision(input: {
     ...(input.detail ?? {}),
   };
   console.log(`[AiTurnDecision] ${JSON.stringify(line)}`);
+
+  // ALERTA: um guard deterministico bloqueou a resposta por causa de uma
+  // mensagem antiga. E a assinatura exata dos tres defeitos de 09-10/09/2026 --
+  // contexto velho ressurgindo como se fosse do turno atual. O recorte por
+  // quebra de conversa (6h) ja impede o caso obvio; este alerta cobre o que
+  // passar por ele: uma conversa continua e longa, ou um recorte que falhe.
+  //
+  // Alerta, nao suprime: os defeitos dessa familia foram todos de logica, e
+  // logica errada se conserta -- nao se contorna em silencio. A decisao de
+  // bloquear continua valendo; o que muda e que agora da para ver.
+  const alert = staleGuardAlert(input.path, input.detail?.sourceAgeHours);
+  if (alert) {
+    console.warn(`[AiAlert] ${JSON.stringify({ ...line, alert, thresholdHours: staleGuardAlertHours() })}`);
+  }
+
   // O log fica sem PII; o rastro completo vai para a tabela service-role, que
   // e o unico lugar onde o texto da conversa pode ficar guardado.
   recordAiTurnTrace({
@@ -1599,8 +1614,29 @@ export function logAiTurnDecision(input: {
     path: input.path,
     inboundText: input.inboundText ?? null,
     replyText: input.replyText ?? null,
-    guardDetail: input.detail ? { ...input.detail } : null,
+    guardDetail: input.detail || alert ? { ...(input.detail ?? {}), ...(alert ? { alert } : {}) } : null,
   });
+}
+
+/** Janela a partir da qual um guard baseado em mensagem antiga vira alerta. */
+export function staleGuardAlertHours(): number {
+  const parsed = Number.parseInt(process.env.ZELOCHAT_STALE_GUARD_ALERT_HOURS ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 24;
+}
+
+/**
+ * `'stale_history_guard'` quando um caminho de guard bloqueou por causa de uma
+ * mensagem mais velha que a janela. Puro de proposito: e a regra do alerta, e
+ * regra de alerta sem teste vira ruido ou silencio.
+ */
+export function staleGuardAlert(
+  path: string,
+  sourceAgeHours: unknown,
+  thresholdHours: number = staleGuardAlertHours(),
+): 'stale_history_guard' | null {
+  if (!path.startsWith('guard_')) return null;
+  if (typeof sourceAgeHours !== 'number' || !Number.isFinite(sourceAgeHours)) return null;
+  return sourceAgeHours > thresholdHours ? 'stale_history_guard' : null;
 }
 
 /** Há quantas horas esta mensagem chegou — o dado que faltava nos guards. */
@@ -1611,11 +1647,21 @@ function messageAgeHours(timestamp: string | null | undefined, now: Date): numbe
   return Math.round(((now.getTime() - parsed) / 3600000) * 10) / 10;
 }
 
+type GuardMessage = {
+  role: string;
+  content: string | null;
+  preview: string;
+  kind: string;
+  timestamp?: string | null;
+  audio_transcript?: string | null;
+  audio_transcript_status?: string | null;
+};
+
 function findRecentScheduleContextGuard(
   empresaId: string,
-  messages: { role: string; content: string | null; preview: string; kind: string; audio_transcript?: string | null; audio_transcript_status?: string | null }[],
+  messages: GuardMessage[],
   now = new Date(),
-): ScheduleContextGuard | null {
+): (ScheduleContextGuard & { sourceAgeHours?: number | null }) | null {
   const recent = messages.slice(-12);
   let start = 0;
   for (let i = recent.length - 1; i >= 0; i--) {
@@ -1641,7 +1687,10 @@ function findRecentScheduleContextGuard(
     const text = buildContentForModel(msg as any) || msg.preview || '';
     if (!text) continue;
     const result = evaluateScheduleContextText(empresaId, text, now);
-    if (result) return result;
+    // A idade da mensagem que causou o bloqueio e o dado que faltava quando um
+    // "18:00" de 47 dias atras virou resposta de hoje. Vai junto do resultado
+    // para virar alerta em `logAiTurnDecision`.
+    if (result) return { ...result, sourceAgeHours: messageAgeHours(msg.timestamp, now) };
   }
 
   return null;
@@ -1649,9 +1698,9 @@ function findRecentScheduleContextGuard(
 
 function findRecentTodayBlockedOperationalGuard(
   empresaId: string,
-  messages: { role: string; content: string | null; preview: string; kind: string; audio_transcript?: string | null; audio_transcript_status?: string | null }[],
+  messages: GuardMessage[],
   now = new Date(),
-): { date: string; reason: string } | null {
+): { date: string; reason: string; sourceAgeHours?: number | null } | null {
   const recent = messages.slice(-12);
   let start = 0;
   for (let i = recent.length - 1; i >= 0; i--) {
@@ -1670,7 +1719,7 @@ function findRecentTodayBlockedOperationalGuard(
     const text = buildContentForModel(msg as any) || msg.preview || '';
     if (!text) continue;
     const blockedDate = findTodayBlockedDateFromOperationalText(empresaId, text, now);
-    if (blockedDate) return blockedDate;
+    if (blockedDate) return { ...blockedDate, sourceAgeHours: messageAgeHours(msg.timestamp, now) };
   }
 
   return null;
@@ -3805,7 +3854,7 @@ export async function generateAndSendReply(
     ? findRecentTodayBlockedOperationalGuard(resolvedEmpresaId, currentConversation)
     : null;
   if (todayBlockedOperationalContext) {
-    logAiTurnDecision({ empresaId: resolvedEmpresaId, jid, path: 'guard_blocked_date', detail: { source: 'recent_history', date: todayBlockedOperationalContext.date } });
+    logAiTurnDecision({ empresaId: resolvedEmpresaId, jid, path: 'guard_blocked_date', detail: { source: 'recent_history', date: todayBlockedOperationalContext.date, sourceAgeHours: todayBlockedOperationalContext.sourceAgeHours ?? null } });
     return sendBlockedDateReply(jid, resolvedEmpresaId, permit, todayBlockedOperationalContext);
   }
   const recentScheduleContext = findRecentScheduleContextGuard(
@@ -3813,7 +3862,7 @@ export async function generateAndSendReply(
     isGeneralMode ? [] : currentConversation,
   );
   if (recentScheduleContext?.type === 'blocked_date') {
-    logAiTurnDecision({ empresaId: resolvedEmpresaId, jid, path: 'guard_blocked_date', detail: { source: 'recent_schedule_context', date: recentScheduleContext.blockedDate.date } });
+    logAiTurnDecision({ empresaId: resolvedEmpresaId, jid, path: 'guard_blocked_date', detail: { source: 'recent_schedule_context', date: recentScheduleContext.blockedDate.date, sourceAgeHours: recentScheduleContext.sourceAgeHours ?? null } });
     return sendBlockedDateReply(jid, resolvedEmpresaId, permit, recentScheduleContext.blockedDate);
   }
   if (recentScheduleContext?.type === 'business_hours') {
@@ -3828,6 +3877,7 @@ export async function generateAndSendReply(
         // lido, de quando veio a mensagem que o continha e quem a escreveu.
         requestedMinutes: recentScheduleContext.issue.timeMinutes ?? null,
         historyMessages: currentConversation.length,
+        sourceAgeHours: recentScheduleContext.sourceAgeHours ?? null,
         oldestHistoryAgeHours: messageAgeHours(currentConversation[0]?.timestamp, new Date()),
       },
     });
