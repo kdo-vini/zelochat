@@ -1,3 +1,5 @@
+import type { CustomerSegment, CustomerSortKey } from './domain/customerSegment.js';
+
 export interface Product {
   id: string;
   name: string;
@@ -78,6 +80,7 @@ export interface CustomerSummary {
   phone: string | null;
   hasWhatsApp: boolean;
   lastActivityAt: string | null;
+  lastOrderAt: string | null;
   activityState: CustomerActivityState;
   totalOrders: number;
   totalValue: number;
@@ -223,6 +226,8 @@ export interface CustomerFilters {
   tags?: string[];
   cursor?: string | null;
   limit?: number;
+  segment?: CustomerSegment;
+  sort?: CustomerSortKey;
 }
 
 export type CustomerTimelineEvent =

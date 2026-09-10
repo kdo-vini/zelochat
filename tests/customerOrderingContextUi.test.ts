@@ -7,7 +7,7 @@ import type { CustomerDetail } from '../src/services/customerApi.js';
 
 const customer: CustomerDetail = {
   id: 'person-1', name: 'Ana', phone: '5511999999999', whatsapp: '5511999999999',
-  lastActivityAt: '2026-08-30T12:00:00.000Z', activityState: 'active', orderCount: 4,
+  lastOrderAt: '2026-08-20T12:00:00.000Z', lastActivityAt: '2026-08-30T12:00:00.000Z', activityState: 'active', orderCount: 4,
   totalValue: 100, openBalance: null, tags: ['VIP'], birthday: null, origin: 'WhatsApp',
   notes: null, automaticSummary: null,
   relationship: { blocked: false, blockReason: null, campaigns: 0, automations: 0 },
