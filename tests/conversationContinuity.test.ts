@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   CONVERSATION_IDLE_RESET_HOURS,
   messagesSinceConversationBreak,
@@ -88,5 +89,42 @@ assert.equal(
   assert.equal(startsNewConversation([], now), false, 'conversa vazia não é "nova" nem "velha"');
   assert.equal(startsNewConversation([{ timestamp: null }], now), false, 'sem hora, não afirma nada');
 }
+
+// REGRESSION 2026-09-10: o guard de agendamento lia `session.messages` cru e
+// sem filtro de papel. Um cliente escreveu "Boa noite! Ainda esta aberto?" as
+// 21:30 e recebeu "Esse horario ja passou hoje: 18:00" -- o 18:00 saiu de uma
+// resposta da PROPRIA LOJA enviada 47 dias antes, a unica outra mensagem da
+// conversa. Duas defesas: a conversa velha nao entra, e mensagem nossa nunca
+// e lida como horario pedido.
+{
+  const sessionMessages = [
+    { role: 'user', content: 'Boa tarde!\nVc tem alguma coisa ainda pro almoco?', timestamp: '2026-07-25T17:25:47Z' },
+    { role: 'assistant', content: 'Ola tudo bem ?? Hoje nosso atendimento comeca as 18:00 hs bjs e ate la', timestamp: '2026-07-25T17:25:51Z' },
+    { role: 'user', content: 'Boa noite!\nAinda esta aberto?', timestamp: '2026-09-10T00:30:20Z' },
+  ];
+  const current = messagesSinceConversationBreak(sessionMessages);
+  assert.deepEqual(
+    current.map((m) => m.role),
+    ['user'],
+    'a conversa de 47 dias atras nao entra no turno de hoje',
+  );
+  assert.equal(
+    current.some((m) => (m.content ?? '').includes('18:00')),
+    false,
+    'o 18:00 de julho nao alcanca o guard de hoje',
+  );
+}
+
+const guardSource = readFileSync(new URL('../server/ai.ts', import.meta.url), 'utf8');
+assert.match(
+  guardSource,
+  /findRecentTodayBlockedOperationalGuard\(resolvedEmpresaId, currentConversation\)/,
+  'o guard de data bloqueada le so a conversa atual',
+);
+assert.match(
+  guardSource,
+  /findRecentScheduleContextGuard\(\s*resolvedEmpresaId,\s*isGeneralMode \? \[\] : currentConversation,/,
+  'o guard de agendamento le so a conversa atual',
+);
 
 console.log('conversationContinuity tests passed');

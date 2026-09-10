@@ -1577,6 +1577,14 @@ function findRecentScheduleContextGuard(
 
   for (let i = recent.length - 1; i >= start; i--) {
     const msg = recent[i];
+    // FIX 2026-09-09: sem este filtro o guard lia as NOSSAS mensagens como se
+    // fossem horário pedido pelo cliente. Em 10/09 um cliente escreveu "Boa
+    // noite! Ainda está aberto?" às 21:30 e recebeu "Esse horário já passou
+    // hoje: 18:00" — o 18:00 veio de uma resposta da própria loja ("nosso
+    // atendimento começa as 18:00 hs") enviada 47 dias antes, a única outra
+    // mensagem da conversa. A função irmã logo abaixo já filtra por `user`;
+    // esta esquecia. Quem pede horário é o cliente.
+    if (msg.role !== 'user') continue;
     const text = buildContentForModel(msg as any) || msg.preview || '';
     if (!text) continue;
     const result = evaluateScheduleContextText(empresaId, text, now);
@@ -3734,8 +3742,14 @@ export async function generateAndSendReply(
     console.log(`[AI] Blocking reply before OpenAI: requested blocked date ${blockedDateFromMessage.date} for empresa=${resolvedEmpresaId} jid=${jid}`);
     return sendBlockedDateReply(jid, resolvedEmpresaId, permit, blockedDateFromMessage);
   }
+  // FIX 2026-09-09: `slice(-12)` dentro dos guards nao tem limite de tempo --
+  // doze mensagens podem cobrir meses. Foi assim que uma frase de 25/07 virou
+  // "Esse horario ja passou hoje: 18:00" para quem escreveu "Boa noite!" em
+  // 10/09. Os guards passam a ver so a conversa atual, igual ao historico que
+  // vai para o modelo.
+  const currentConversation = messagesSinceConversationBreak(session.messages);
   const todayBlockedOperationalContext = !isGeneralMode
-    ? findRecentTodayBlockedOperationalGuard(resolvedEmpresaId, session.messages)
+    ? findRecentTodayBlockedOperationalGuard(resolvedEmpresaId, currentConversation)
     : null;
   if (todayBlockedOperationalContext) {
     console.log(`[AI] Blocking reply before OpenAI: today blocked and recent order/payment context for empresa=${resolvedEmpresaId} jid=${jid}`);
@@ -3743,7 +3757,7 @@ export async function generateAndSendReply(
   }
   const recentScheduleContext = findRecentScheduleContextGuard(
     resolvedEmpresaId,
-    isGeneralMode ? [] : session.messages,
+    isGeneralMode ? [] : currentConversation,
   );
   if (recentScheduleContext?.type === 'blocked_date') {
     console.log(`[AI] Blocking reply before OpenAI: recent context has blocked date ${recentScheduleContext.blockedDate.date} for empresa=${resolvedEmpresaId} jid=${jid}`);

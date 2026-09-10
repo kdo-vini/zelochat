@@ -1,5 +1,38 @@
 # Incidentes e padrões conhecidos
 
+## "Esse horário já passou hoje: 18:00" para quem só perguntou se estava aberto (2026-09-10)
+
+**Sintoma:** cliente escreveu "Boa noite! Ainda está aberto?" às 21:30 e
+recebeu "Esse horário já passou hoje: 18:00. Agora são 21:30. O atendimento
+funciona das 11:00 às 22:50." — a resposta contradiz a si mesma (21:30 está
+dentro de 11:00–22:50) e ninguém tinha mencionado 18:00. Já havia acontecido
+igual em 03/09, também com 18:00.
+
+**Causa-raiz (duas, somadas):** `findRecentScheduleContextGuard` varre
+`messages.slice(-12)` procurando um horário pedido e valida contra o horário de
+funcionamento.
+1. Recebia `session.messages` **cru**. Doze mensagens não têm limite de tempo:
+   nessa conversa a única outra mensagem era de **25/07, 47 dias antes**.
+2. O laço **não filtrava o papel** da mensagem, então leu uma resposta da
+   PRÓPRIA LOJA — "Olá tudo bem?? Hoje nosso atendimento começa as 18:00 hs" —
+   como se fosse horário pedido pelo cliente. A função irmã logo abaixo
+   (`findRecentTodayBlockedOperationalGuard`) já filtrava por `user`; esta
+   esquecia.
+
+Confirmado no banco: o texto de entrada era exatamente "Boa noite!
+Ainda está
+aberto?", e `collectRequestedTimeMinutes` não extrai nada dele — o 18:00 só
+podia vir do histórico.
+
+**Fix:** os guards passam a receber `messagesSinceConversationBreak(session.messages)`,
+igual ao histórico que vai para o modelo, e o laço só considera mensagem do
+cliente — `server/ai.ts:1578`, `server/ai.ts:3742`.
+
+**Padrão que se repete:** é o terceiro defeito da mesma família em dois dias —
+contexto antigo ressurgindo como se fosse do turno atual (resposta repetida em
+loop, "Que bom!" para saudação de 32h antes, e agora este). Ao ler histórico
+para decidir qualquer coisa, corte na conversa atual e filtre o papel.
+
 ## Ranking da busca do cardápio reescrito, e continuidade de conversa (2026-09-09, quinta rodada)
 
 **Causa-raiz de uma família inteira de sintomas:** o ranking do ZeloMenu

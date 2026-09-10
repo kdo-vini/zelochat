@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Guard de agendamento lia histórico antigo — 2026-09-10
+
+- ✅ ZCHAT-AI-027 — "Esse horário já passou hoje: 18:00" para quem perguntou se estava aberto às 21:30: o guard lia `session.messages` cru (mensagem de 47 dias antes) e sem filtro de papel (leu resposta da própria loja como horário pedido) → corta na conversa atual e só considera mensagem do cliente — `server/ai.ts:1578`, `server/ai.ts:3742`
+
 ## Busca do cardápio e continuidade de conversa — 2026-09-09 (quinta rodada)
 
 - ✅ ZCHAT-AI-022 — ranking do ZeloMenu pontuava qualquer token compartilhado, com descrição valendo o mesmo que nome → cobertura ponderada por campo, stopwords linguísticas e typo; 14/18 para 18/18 no catálogo real — `zelomenu/src/domain/zelomenuCatalogDiscovery.ts`, `zelomenu/src/domain/portugueseStopwords.ts`
