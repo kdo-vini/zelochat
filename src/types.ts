@@ -209,6 +209,8 @@ export interface CustomerDetail extends CustomerSummary {
   automaticSummary?: string | null;
   relationship?: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
   orders?: Array<{ id: string; createdAt: string; status: string; total: number }>;
+  ordersNextCursor: string | null;
+  ordersHasMore: boolean;
   primaryJid?: string | null;
   orderingContext?: CustomerOrderingContextSnapshot;
 }

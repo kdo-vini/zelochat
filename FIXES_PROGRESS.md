@@ -1,5 +1,10 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Clientes — rótulos, notas e paginação de pedidos — 2026-09-10
+
+- ✅ CRM-ORDERS-A — histórico exibia status técnicos, agregados de pedidos não deixavam claro que contavam somente entregues, notas internas não apareciam e a lista parava nos 30 primeiros pedidos → rótulos PT-BR centralizados no domínio, métricas renomeadas, notas visíveis no Resumo e carregamento incremental normalizado por cursor — `src/domain/orderStatusLabels.ts:1`, `src/components/customers/CustomerOrdersTab.tsx:1`, `src/components/customers/CustomerSummaryTab.tsx:136`, `src/services/customerApi.ts:336`
+- ✅ CRM-ORDERS-B — paginação falhava com timestamps reais do Postgres e o detalhe reconstruía o cursor de pedidos no navegador → validador aceita e preserva precisão de 1–6 casas ou `+00:00`, servidor devolve cursor/hasMore e o cliente usa esses campos sem fabricar cursor — `server/customers/filters.ts:17`, `server/customers/service.ts:212`, `src/components/customers/CustomerOrdersTab.tsx:18`, `tests/customerBlockFixes.test.ts:20`
+
 ## Kanban escondia o motivo de falha ao mover pedido — 2026-09-10
 
 - ✅ ZCHAT-UI-005 — arrastar pedido de Preparando pra Pronto falhava com o toast genérico "Não consegui mover o pedido", mesmo quando o servidor já tinha uma mensagem específica e segura (`classifyOrderTransitionError`); catch confiava só numa lista fixa de cinco frases conhecidas e descartava qualquer erro fora dela → confia em qualquer `err.message` não vazio, já que tanto `apiFetch` (rede) quanto a rota `/api/orders/:id/status` (servidor) já entregam mensagem traduzida — `src/AppShell.tsx:701`; mojibake incidental corrigido em `src/hooks/useOrders.ts:269`. Ver `[[INCIDENTS]]` para a pista correlacionada (permission denied transitório em `zelo_orders`, não confirmada como causa raiz por falta de acesso aos logs do Dokploy).

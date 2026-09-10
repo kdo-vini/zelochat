@@ -14,9 +14,24 @@ const allowed = new Set([
   'maxOrders', 'minTotalValue', 'minDaysSinceLastOrder', 'maxDaysSinceLastOrder', 'sort',
 ]);
 
+const POSTGRES_TIMESTAMP = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.([0-9]{1,6}))?(?:Z|\+00:00)$/u;
+
 function isCanonicalTimestamp(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
-    && new Date(value).toISOString() === value;
+  const match = POSTGRES_TIMESTAMP.exec(value);
+  if (!match) return false;
+
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return false;
+
+  const [, year, month, day, hour, minute, second, , fraction = ''] = match;
+  const milliseconds = Number(`${fraction}000`.slice(0, 3));
+  return parsed.getUTCFullYear() === Number(year)
+    && parsed.getUTCMonth() + 1 === Number(month)
+    && parsed.getUTCDate() === Number(day)
+    && parsed.getUTCHours() === Number(hour)
+    && parsed.getUTCMinutes() === Number(minute)
+    && parsed.getUTCSeconds() === Number(second)
+    && parsed.getUTCMilliseconds() === milliseconds;
 }
 
 function numberQueryValue(query: Record<string, unknown>, key: string, label: string): number | undefined {
@@ -164,7 +179,9 @@ export function encodeTimelineCursor(occurredAt: string, kind: 'message' | 'orde
 }
 export function decodeTimelineCursor(cursor: string | null | undefined): { occurredAt: string; kind: 'message' | 'order'; id: string } | null {
   if (!cursor || !/^[A-Za-z0-9_-]{8,300}$/u.test(cursor)) throw new Error('Cursor inválido');
-  const [occurredAt, kind, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+  const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+  if (parts.length !== 3) throw new Error('Cursor inválido');
+  const [occurredAt, kind, id] = parts;
   if (!occurredAt || (kind !== 'message' && kind !== 'order') || !id || !isCanonicalTimestamp(occurredAt) || !validCustomerId(id)) throw new Error('Cursor inválido');
   return { occurredAt, kind, id };
 }

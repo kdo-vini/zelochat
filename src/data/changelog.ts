@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-10',
+    category: 'medium',
+    title: 'Ficha do cliente mais completa',
+    description: 'O histórico agora mostra a situação de cada pedido em português, dá para abrir os pedidos e as conversas mais antigas de quem já comprou várias vezes, e as anotações que você escreve sobre o cliente aparecem no resumo.',
+  },
+  {
     date: '2026-09-09',
     category: 'hotfix',
     title: 'Conversa recomeça do zero depois de horas parada',

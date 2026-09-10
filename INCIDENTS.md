@@ -1,5 +1,19 @@
 # Incidentes e padrões conhecidos
 
+## "Carregar mais" falhava no histórico de Clientes (2026-09-10)
+
+**Sintoma:** clientes com mais de 30 mensagens ou pedidos não conseguiam abrir
+a página seguinte no histórico.
+
+**Causa-raiz:** o cursor rejeitava timestamps reais do Postgres sem `Z` ou com
+seis casas decimais; no detalhe de pedidos, o navegador também reconstruía um
+cursor que o servidor já deveria fornecer.
+
+**Fix:** o validador preserva o timestamp cru com precisão de até seis casas,
+o servidor devolve `nextCursor`/`hasMore` e o cliente usa esses campos —
+`server/customers/filters.ts`, `server/customers/service.ts`,
+`src/components/customers/CustomerOrdersTab.tsx`.
+
 ## Kanban "Não consegui mover o pedido" escondia o motivo real (2026-09-10)
 
 **Sintoma:** operadora não conseguia arrastar um pedido de Preparando para

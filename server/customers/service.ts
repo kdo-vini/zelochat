@@ -113,7 +113,7 @@ const defaultRepository: CustomerReadRepository = {
         : sort === 'value'
           ? String(last.total_value ?? 0)
           : sort === 'recent'
-            ? last.last_order_at ? new Date(last.last_order_at).toISOString() : ''
+            ? last.last_order_at ?? ''
             : String(last.nome ?? '').toLowerCase();
       pageCursor = { sort, value: nextValue, id: last.id };
       page = await fetchPage(pageCursor);
@@ -175,7 +175,7 @@ export async function listCustomers(empresaId: string, ownerUserId: string, filt
       : sort === 'value'
         ? String(lastRow.total_value ?? lastCustomer.totalValue)
         : sort === 'recent'
-          ? lastCustomer.lastOrderAt ? new Date(lastCustomer.lastOrderAt).toISOString() : ''
+          ? lastCustomer.lastOrderAt ?? ''
           : String(lastRow.nome ?? '').toLowerCase();
     nextCursor = encodeCustomerCursor(sort, value, lastRow.id);
   }
@@ -215,7 +215,7 @@ export async function getCustomerDetail(empresaId: string, ownerUserId: string, 
     CustomerOrderingContext.get({ empresaId, pessoaId: personId }),
   ]);
   const orders = orderPage.items.map((order) => ({ id: order.id, createdAt: order.created_at, status: order.status, total: Number(order.total ?? 0) }));
-  return { ...summary, tags, birthday, aniversario: birthday, notes: relationship?.internal_notes ?? null, internalNotes: relationship?.internal_notes ?? null, automaticSummary: relationship?.ai_summary ?? null, aiSummary: relationship?.ai_summary ?? null, relationship: relationshipDto, whatsappBlockedAt: relationship?.whatsapp_blocked_at ?? null, whatsappBlockReason: relationship?.whatsapp_block_reason ?? null, lastManualContactAt: relationship?.last_manual_contact_at ?? null, orders, sessions, primaryJid, orderingContext };
+  return { ...summary, tags, birthday, aniversario: birthday, notes: relationship?.internal_notes ?? null, internalNotes: relationship?.internal_notes ?? null, automaticSummary: relationship?.ai_summary ?? null, aiSummary: relationship?.ai_summary ?? null, relationship: relationshipDto, whatsappBlockedAt: relationship?.whatsapp_blocked_at ?? null, whatsappBlockReason: relationship?.whatsapp_block_reason ?? null, lastManualContactAt: relationship?.last_manual_contact_at ?? null, orders, ordersNextCursor: orderPage.nextCursor, ordersHasMore: orderPage.hasMore, sessions, primaryJid, orderingContext };
 }
 
 export function customerReadRepository(): CustomerReadRepository { return defaultRepository; }

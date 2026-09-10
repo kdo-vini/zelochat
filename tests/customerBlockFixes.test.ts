@@ -19,7 +19,28 @@ const deps: BackfillDependencies = {
 const dry = await runCustomerBackfill({ empresaId: 'e', dryRun: true, dependencies: deps });
 assert.equal(dry.counts.linked, 1); assert.equal(previewCalls, 1); assert.equal(mutatingResolveCalls, 0); assert.equal(writes, 0);
 const cursor = encodeCustomerCursor('orders', '1', row.id); assert.deepEqual(decodeCustomerCursor(cursor, 'orders'), { sort: 'orders', value: '1', id: row.id });
-const timelineCursor = encodeTimelineCursor(row.updated_at, 'order', row.id); assert.deepEqual(decodeTimelineCursor(timelineCursor), { occurredAt: row.updated_at, kind: 'order', id: row.id });
+// Timestamps reais vindos de produção: precisão de microssegundos, sem fração e o formato legado com Z.
+const productionTimestamps = [
+  '2026-09-10T14:50:32.375571+00:00',
+  '2026-09-10T20:26:25+00:00',
+  '2026-08-25T10:00:00.000Z',
+] as const;
+for (const occurredAt of productionTimestamps) {
+  const timelineCursor = encodeTimelineCursor(occurredAt, 'order', row.id);
+  assert.deepEqual(decodeTimelineCursor(timelineCursor), { occurredAt, kind: 'order', id: row.id });
+}
+const customerRecentCursor = encodeCustomerCursor('recent', productionTimestamps[0], row.id);
+assert.deepEqual(decodeCustomerCursor(customerRecentCursor, 'recent'), { sort: 'recent', value: productionTimestamps[0], id: row.id });
+for (const occurredAt of [
+  '2026-09-10T14:50:32Z,id.neq.x',
+  '2026-09-10T14:50:32+00:00,and(id.eq.1)',
+  '2026-09-10T14:50:32.375571+03:00',
+  '2026-13-45T99:99:99Z',
+  "2026-09-10T14:50:32'Z",
+]) {
+  assert.throws(() => decodeTimelineCursor(encodeTimelineCursor(occurredAt, 'order', row.id)));
+}
+assert.throws(() => decodeTimelineCursor(encodeTimelineCursor(productionTimestamps[0], 'order', 'not-a-uuid')));
 assert.throws(() => parseCustomerFilters({ q: 'Ana),id.neq.x' }));
 assert.throws(() => decodeCustomerCursor('not-a-valid-cursor'));
 assert.equal(isMissingCustomerContractError({ code: 'PGRST202', message: 'Could not find function create_zelo_order with p_pessoa_id' }), true);

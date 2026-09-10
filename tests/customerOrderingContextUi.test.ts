@@ -11,7 +11,7 @@ const customer: CustomerDetail = {
   totalValue: 100, openBalance: null, tags: ['VIP'], birthday: null, origin: 'WhatsApp',
   notes: null, automaticSummary: null,
   relationship: { blocked: false, blockReason: null, campaigns: 0, automations: 0 },
-  orders: [], primaryJid: null, sessions: [],
+  orders: [], ordersNextCursor: null, ordersHasMore: false, primaryJid: null, sessions: [],
   orderingContext: {
     fulfillmentType: { value: 'delivery', source: 'last_order' },
     deliveryAddress: {

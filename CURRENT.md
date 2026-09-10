@@ -59,6 +59,15 @@ produção), agora também com `storeOpen=false`. Detalhes em [[INCIDENTS]].
 Em aberto: com a loja fechada, uma pergunta de catálogo ainda responde a
 lista de pratos. Pré-existente, precisa de decisão de produto.
 
+### Clientes — histórico de pedidos e continuidade da paginação (2026-09-10)
+
+Correção de continuidade concluída: cursores de mensagens, pedidos e linha do
+tempo preservam os timestamps reais do Postgres sem perder microssegundos; o
+detalhe de cliente agora recebe do servidor o cursor e o `hasMore` dos pedidos,
+sem reconstrução no navegador. A lista de Clientes também mantém a precisão do
+timestamp cru na ordenação por recência. Cobertura inclui os formatos reais de
+produção e a guarda contra injeção.
+
 ### Clientes — segmento único, ordenação e tela redesenhada (2026-09-09)
 
 Backend e frontend concluídos, revisados e verificados localmente (tsc, suíte

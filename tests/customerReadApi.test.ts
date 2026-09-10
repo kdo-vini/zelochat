@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { decodeCustomerCursor } from '../server/customers/filters.js';
 import { buildCustomerRelationship, listCustomers } from '../server/customers/service.js';
 const repo = { listPeople: async () => [{ id: 'p1', nome: 'Ana', contato: '5511', updated_at: '2026-01-01' }], countOrders: async () => ({ p1: { count: 1, total: 25, lastDeliveredAt: '2026-08-20T00:00:00Z' } }), lastConversations: async () => ({ p1: '2026-08-01T00:00:00Z' }), getPerson: async () => null };
 const result = await listCustomers('e', 'o', { limit: 10 }, repo); assert.equal(result.customers[0].totalOrders, 1); assert.equal(result.customers[0].activityState, 'active');
@@ -9,5 +10,13 @@ const nameRepo = { listPeople: async () => [
 const nameResult = await listCustomers('e', 'o', { limit: 1, sort: 'name' }, nameRepo);
 assert.equal(nameResult.nextCursor !== null, true);
 assert.equal(Buffer.from(nameResult.nextCursor!, 'base64url').toString('utf8'), 'v2|name||11111111-1111-4111-8111-111111111111');
+// Timestamp cru de produção: o cursor da lista não pode perder as seis casas decimais.
+const recentTimestamp = '2026-09-10T14:50:32.375571+00:00';
+const recentRepo = { listPeople: async () => [
+  { id: '11111111-1111-4111-8111-111111111111', nome: 'Mais recente', contato: null, total_orders: 2, total_value: 50, last_order_at: recentTimestamp, last_activity_at: recentTimestamp, activity_state: 'active', has_whatsapp: false, total_count: 2 },
+  { id: '22222222-2222-4222-8222-222222222222', nome: 'Anterior', contato: null, total_orders: 1, total_value: 10, last_order_at: '2026-09-09T14:50:32+00:00', last_activity_at: '2026-09-09T14:50:32+00:00', activity_state: 'active', has_whatsapp: false, total_count: 2 },
+], countOrders: async () => ({}), lastConversations: async () => ({}), getPerson: async () => null };
+const recentResult = await listCustomers('e', 'o', { limit: 1, sort: 'recent' }, recentRepo);
+assert.deepEqual(decodeCustomerCursor(recentResult.nextCursor, 'recent'), { sort: 'recent', value: recentTimestamp, id: '11111111-1111-4111-8111-111111111111' });
 const relationship = buildCustomerRelationship({ blockedAt: null, optedOut: true, campaigns: 3, automations: 2 }); assert.equal(relationship.optedOut, true); assert.equal(relationship.campaigns, 3); assert.equal(relationship.automations, 2);
 console.log('customerReadApi: ok');

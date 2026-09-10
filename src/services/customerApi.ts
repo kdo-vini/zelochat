@@ -60,6 +60,12 @@ export interface CustomerMessagesPage {
   hasMore: boolean;
 }
 
+export interface CustomerOrdersPage {
+  items: CustomerDetail['orders'];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface CustomerDetail extends CustomerSummary {
   birthday: { day: number; month: number; year?: number | null } | null;
   origin: string | null;
@@ -68,6 +74,8 @@ export interface CustomerDetail extends CustomerSummary {
   automaticSummary: string | null;
   relationship: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
   orders: Array<{ id: string; createdAt: string; status: string; total: number }>;
+  ordersNextCursor: string | null;
+  ordersHasMore: boolean;
   primaryJid: string | null;
   sessions: Array<{ id: string; remoteJid: string; lastMessageTime: string; status: string }>;
   orderingContext: CustomerOrderingContextSnapshot;
@@ -283,7 +291,7 @@ export async function fetchCustomer(token: string, personId: string): Promise<Cu
   const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { headers: authHeaders(token) });
   const body = await parseCustomerResponse<Partial<CustomerDetail> & Record<string, unknown>>(response);
   const summary = normalizeCustomerSummary(body);
-  return { ...summary, birthday: (body.birthday ?? body.aniversario ?? null) as CustomerDetail['birthday'], origin: (body.origin as string | null | undefined) ?? null, notes: (body.notes ?? body.internalNotes ?? null) as string | null, automaticSummary: (body.automaticSummary ?? body.aiSummary ?? null) as string | null, relationship: (body.relationship ?? { blocked: Boolean(body.whatsappBlockedAt), blockReason: body.whatsappBlockReason ?? null, campaigns: 0, automations: 0 }) as CustomerDetail['relationship'], orders: Array.isArray(body.orders) ? body.orders as CustomerDetail['orders'] : [], primaryJid: (body.primaryJid as string | null | undefined) ?? null, sessions: Array.isArray(body.sessions) ? body.sessions as CustomerDetail['sessions'] : [], orderingContext: normalizeCustomerOrderingContext(body.orderingContext) };
+  return { ...summary, birthday: (body.birthday ?? body.aniversario ?? null) as CustomerDetail['birthday'], origin: (body.origin as string | null | undefined) ?? null, notes: (body.notes ?? body.internalNotes ?? null) as string | null, automaticSummary: (body.automaticSummary ?? body.aiSummary ?? null) as string | null, relationship: (body.relationship ?? { blocked: Boolean(body.whatsappBlockedAt), blockReason: body.whatsappBlockReason ?? null, campaigns: 0, automations: 0 }) as CustomerDetail['relationship'], orders: Array.isArray(body.orders) ? body.orders as CustomerDetail['orders'] : [], ordersNextCursor: typeof body.ordersNextCursor === 'string' ? body.ordersNextCursor : null, ordersHasMore: body.ordersHasMore === true, primaryJid: (body.primaryJid as string | null | undefined) ?? null, sessions: Array.isArray(body.sessions) ? body.sessions as CustomerDetail['sessions'] : [], orderingContext: normalizeCustomerOrderingContext(body.orderingContext) };
 }
 
 export type CustomerPatch = Partial<Pick<CustomerDetail, 'name' | 'tags' | 'notes'>> & { birthday?: CustomerDetail['birthday']; phones?: string[]; whatsappBlocked?: boolean };
@@ -328,6 +336,26 @@ export async function fetchCustomerMessages(token: string, personId: string, cur
   if (cursor) params.set('cursor', cursor);
   const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/messages?${params.toString()}`), { headers: authHeaders(token) });
   return parseCustomerResponse<CustomerMessagesPage>(response);
+}
+
+type CustomerOrderApiRow = { id?: unknown; status?: unknown; total?: unknown; created_at?: unknown; createdAt?: unknown };
+
+function normalizeCustomerOrder(value: CustomerOrderApiRow): CustomerDetail['orders'][number] {
+  return {
+    id: String(value.id ?? ''),
+    createdAt: String(value.created_at ?? value.createdAt ?? ''),
+    status: String(value.status ?? ''),
+    total: Number(value.total ?? 0),
+  };
+}
+
+export async function fetchCustomerOrders(token: string, personId: string, cursor: string | null = null, limit = 30): Promise<CustomerOrdersPage> {
+  const params = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 100)) });
+  if (cursor) params.set('cursor', cursor);
+  const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}/orders?${params.toString()}`), { headers: authHeaders(token) });
+  const body = await parseCustomerResponse<Partial<CustomerOrdersPage> & { items?: CustomerOrderApiRow[] }>(response);
+  const items = Array.isArray(body.items) ? body.items.map(normalizeCustomerOrder) : [];
+  return { items, nextCursor: body.nextCursor ?? null, hasMore: body.hasMore ?? Boolean(body.nextCursor) };
 }
 
 export type CustomerSendStatus = 'sent' | 'queued' | 'failed_before_dispatch' | 'delivery_uncertain';
