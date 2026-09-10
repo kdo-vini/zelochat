@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { recordAiTurnTrace } from './aiTurnTrace.js';
 import type {
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
@@ -1579,6 +1580,9 @@ export function logAiTurnDecision(input: {
   jid: string;
   path: string;
   detail?: Record<string, string | number | boolean | null | undefined>;
+  /** Texto do cliente e resposta enviada — vao para o rastro, nunca para o log. */
+  inboundText?: string | null;
+  replyText?: string | null;
 }): void {
   const line = {
     empresaId: input.empresaId,
@@ -1587,6 +1591,16 @@ export function logAiTurnDecision(input: {
     ...(input.detail ?? {}),
   };
   console.log(`[AiTurnDecision] ${JSON.stringify(line)}`);
+  // O log fica sem PII; o rastro completo vai para a tabela service-role, que
+  // e o unico lugar onde o texto da conversa pode ficar guardado.
+  recordAiTurnTrace({
+    empresaId: input.empresaId,
+    remoteJid: input.jid,
+    path: input.path,
+    inboundText: input.inboundText ?? null,
+    replyText: input.replyText ?? null,
+    guardDetail: input.detail ? { ...input.detail } : null,
+  });
 }
 
 /** Há quantas horas esta mensagem chegou — o dado que faltava nos guards. */
@@ -3968,6 +3982,21 @@ export async function generateAndSendReply(
       }));
     if (!response) return null;
     console.log(`[AiTrace] openai_response empresa=${resolvedEmpresaId} jid=${redactJid(jid)} finish=${response.choices[0]?.finish_reason ?? '<none>'} usage=${response.usage?.total_tokens ?? '<none>'} elapsedMs=${Date.now() - startedAt}`);
+    // Rastro do turno do modelo: o prompt EXATO que foi enviado, incluindo o
+    // historico ja recortado pela quebra de conversa. E o que permite ver, sem
+    // reconstruir nada, o que a IA realmente leu antes de responder.
+    recordAiTurnTrace({
+      empresaId: resolvedEmpresaId,
+      remoteJid: jid,
+      sessionId: session.id,
+      path: 'model',
+      inboundText: lastUserTextForDate ?? null,
+      systemPrompt: systemInstruction,
+      runtimeMessages: messages,
+      replyText: response.choices[0]?.message?.content ?? null,
+      model: OPENAI_MODEL,
+      durationMs: Date.now() - startedAt,
+    });
     recordAiUsage({
       empresaId: resolvedEmpresaId,
       feature: 'ai_auto_reply',

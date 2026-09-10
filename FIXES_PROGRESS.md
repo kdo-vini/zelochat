@@ -2,6 +2,8 @@
 
 ## Guard de agendamento lia histórico antigo — 2026-09-10
 
+- ✅ ZCHAT-OBS-001 — diagnosticar um turno exigia reconstruir a conversa no banco na mão → `zelochat_ai_turn_traces` guarda entrada, prompt exato e resposta por turno; service-role apenas, retenção 14 dias, desligável por env — `supabase/migrations/069_ai_turn_traces.sql`, `server/aiTurnTrace.ts`, `tests/aiTurnTrace.test.ts`
+
 - ✅ ZCHAT-AI-027 — "Esse horário já passou hoje: 18:00" para quem perguntou se estava aberto às 21:30: o guard lia `session.messages` cru (mensagem de 47 dias antes) e sem filtro de papel (leu resposta da própria loja como horário pedido) → corta na conversa atual e só considera mensagem do cliente — `server/ai.ts:1578`, `server/ai.ts:3742`
 
 ## Busca do cardápio e continuidade de conversa — 2026-09-09 (quinta rodada)
