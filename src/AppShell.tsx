@@ -701,13 +701,14 @@ export default function AppShell() {
     void updateOrderStatusInSupabase(orderId, newStatus).catch((err) => {
       console.error('[App] updateOrderStatus Supabase failed:', err);
       setState((prev) => ({ ...prev, orders: prevOrders }));
-      const detail = err instanceof Error ? err.message : '';
-      const isFriendlyStatusError = detail === 'Pedido não encontrado.'
-        || detail.startsWith('O pedido foi alterado em outra tela.')
-        || detail.startsWith('O pedido não pode avançar a partir do estado atual.')
-        || detail.startsWith('A quantidade de um item ultrapassa o estoque atual.')
-        || detail.startsWith('Você não tem permissão para atualizar este pedido.');
-      toast.error(isFriendlyStatusError
+      // Every error that reaches this catch is already operator-safe Portuguese:
+      // `apiFetch` converts transport failures into WaServerOfflineError, and the
+      // PATCH route runs every failure through classifyOrderTransitionError before
+      // responding. Trust `detail` instead of gatekeeping it behind a fixed list of
+      // known strings — that allowlist is what silently swallowed the real reason
+      // (e.g. an unclassified 500) behind a useless generic toast.
+      const detail = err instanceof Error && err.message.trim() ? err.message.trim() : '';
+      toast.error(detail
         ? detail + ' O pedido voltou para a coluna anterior.'
         : 'Não consegui mover o pedido. Voltei pra coluna anterior.');
     });

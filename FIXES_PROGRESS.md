@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Kanban escondia o motivo de falha ao mover pedido — 2026-09-10
+
+- ✅ ZCHAT-UI-005 — arrastar pedido de Preparando pra Pronto falhava com o toast genérico "Não consegui mover o pedido", mesmo quando o servidor já tinha uma mensagem específica e segura (`classifyOrderTransitionError`); catch confiava só numa lista fixa de cinco frases conhecidas e descartava qualquer erro fora dela → confia em qualquer `err.message` não vazio, já que tanto `apiFetch` (rede) quanto a rota `/api/orders/:id/status` (servidor) já entregam mensagem traduzida — `src/AppShell.tsx:701`; mojibake incidental corrigido em `src/hooks/useOrders.ts:269`. Ver `[[INCIDENTS]]` para a pista correlacionada (permission denied transitório em `zelo_orders`, não confirmada como causa raiz por falta de acesso aos logs do Dokploy).
+
 ## Guard de agendamento lia histórico antigo — 2026-09-10
 
 - ✅ ZCHAT-OBS-002 — nada avisava quando um guard bloqueava por contexto velho (a assinatura dos três defeitos da semana) → guards reportam a idade da mensagem que causou o bloqueio e `[AiAlert]` dispara acima de 24h — `server/ai.ts:1600`, `tests/staleGuardAlert.test.ts`

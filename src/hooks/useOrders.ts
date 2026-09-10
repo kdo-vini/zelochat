@@ -266,7 +266,7 @@ export function useOrders(
     const token = session?.access_token;
     if (!token) throw new Error('Faça login para atualizar pedidos.');
     const current = orders.find((order) => order.id === id);
-    if (!current) throw new Error('Pedido nÃ£o encontrado.');
+    if (!current) throw new Error('Pedido não encontrado.');
     await updateOrderStatusApi(token, id, status, current.revision ?? 0);
     const accepted = current.requiresAcceptance === true && (status === 'pending' || status === 'preparing');
     // Optimistically stamp closedAt on delivery so the Produção board keeps the

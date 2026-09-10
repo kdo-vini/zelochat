@@ -1,5 +1,47 @@
 # Incidentes e padrões conhecidos
 
+## Kanban "Não consegui mover o pedido" escondia o motivo real (2026-09-10)
+
+**Sintoma:** operadora não conseguia arrastar um pedido de Preparando para
+Pronto; o card voltava pra coluna anterior com o toast genérico "Não consegui
+mover o pedido. Voltei pra coluna anterior." — sem nenhuma pista do motivo.
+Só voltou a funcionar depois de reiniciar o computador inteiro.
+
+**Causa-raiz:** o handler de drag-and-drop (`src/AppShell.tsx`) só confiava no
+texto de erro do servidor se ele batesse com uma lista fixa de cinco frases
+conhecidas (`REVISION_CONFLICT`, estoque, permissão, etc.). Qualquer erro fora
+dessa lista — inclusive o texto já traduzido que `classifyOrderTransitionError`
+gera pra "erro desconhecido" (`server/router.ts` → `src/domain/orderTransitionError.ts`)
+— caía no fallback genérico, escondendo a causa real tanto do operador quanto
+de quem for investigar depois. `apiFetch` (`src/config.ts`) já converte falha
+de rede em `WaServerOfflineError` com mensagem própria, e a rota
+`PATCH /api/orders/:id/status` já roda todo erro por `classifyOrderTransitionError`
+antes de responder — ou seja, todo erro que chega nesse catch já é
+Português seguro pra mostrar; a lista fixa não protegia nada, só mascarava.
+
+Nos logs do Postgres do projeto compartilhado (via MCP Supabase) apareceram
+dois `permission denied for table zelo_orders` (role `authenticated`, origem
+PostgREST — a leitura direta que `useOrders.ts` faz da tabela) às 15:50:48 e
+15:59:48 UTC, bem na janela do relato, sem nenhuma migration rodando nesse
+horário e com os grants de `authenticated`/`zelo_orders` corretos ao checar
+depois — indica um blip transitório de conexão/role no lado do banco, não uma
+mudança de schema. Esse não é o código que faz o PATCH de status (que usa
+`getServiceSupabase()`, role de serviço), então é uma pista correlacionada,
+não a causa-raiz confirmada do 500 específico que a operadora bateu — os logs
+do Express (Dokploy) é que teriam o `[orders/status] transição recusada` daquele
+momento, e este repo não tem acesso a eles.
+
+**Fix:** o catch agora confia em qualquer mensagem de erro não-vazia (`err.message`)
+em vez de comparar com a lista fixa — `src/AppShell.tsx`. De quebra, corrigido
+um mojibake (`Pedido nÃ£o encontrado.` → `Pedido não encontrado.`) no mesmo
+fluxo em `src/hooks/useOrders.ts:269` que também nunca batia com a checagem antiga.
+
+**Recovery:** se reaparecer, o toast agora mostra o motivo real — seguir a
+orientação nele (atualizar a tela, corrigir estoque, etc.) em vez de reiniciar
+a máquina. Se voltar a mostrar o genérico "Não consegui mover o pedido" sem
+detalhe, o erro chegou como objeto não-`Error` ou com mensagem vazia — checar
+os logs do Dokploy pra ver o que a rota `/api/orders/:id/status` respondeu.
+
 ## "Esse horário já passou hoje: 18:00" para quem só perguntou se estava aberto (2026-09-10)
 
 **Sintoma:** cliente escreveu "Boa noite! Ainda está aberto?" às 21:30 e
