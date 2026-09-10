@@ -1,5 +1,59 @@
 # Incidentes e padrões conhecidos
 
+## Ranking da busca do cardápio reescrito, e continuidade de conversa (2026-09-09, quinta rodada)
+
+**Causa-raiz de uma família inteira de sintomas:** o ranking do ZeloMenu
+pontuava `45 + tokens_compartilhados * 10`, com nome, descrição, categoria e
+opção valendo o mesmo. Um único token em comum já valia 55 pontos. Por isso
+"vc pode mandar o cardapio?" casou com "Batata frita com cheddar e bacon" — a
+descrição pública diz "vai surpreender **vc** com a cobertura" — e por isso
+cada correção no ZeloChat virava uma lista de palavras que nunca fechava.
+
+**Medição antes de mexer.** Bancada com a busca REAL do ZeloMenu sobre o
+catálogo REAL de produção (92 produtos publicados) e consultas reais de
+clientes: **14/18 antes, 18/18 depois**. Duas hipóteses foram descartadas com
+dado, não com opinião:
+
+1. *Stopwords derivadas da frequência do catálogo não funcionam aqui.* Num
+   cardápio de 92 itens as palavras mais buscadas SÃO as mais frequentes: com
+   corte em 15%, `marmita(23) frango(26) carne(21) arroz(16)` viravam
+   "stopword". A primeira reescrita ficou PIOR que o algoritmo antigo (10/16).
+2. *O que quebra são palavras funcionais do português.* `do` está em 7 de 92
+   produtos ("Marmita **do** dia") — longe de qualquer corte de frequência — e
+   casava "Gostaria **do** cardápio" com "Marmita do dia" com nota 1,00.
+
+**Fix (ZeloMenu):** `src/domain/zelomenuCatalogDiscovery.ts` passa a ranquear
+por cobertura — a fração do peso da consulta que o produto cobre, cada acerto
+valendo conforme o campo (nome 1,0 · categoria 0,7 · grupo/opção 0,6 ·
+descrição 0,3), com piso de relevância em 0,45; stopwords linguísticas em
+`src/domain/portugueseStopwords.ts` (lista Snowball, a mesma do dicionário
+`portuguese` do Postgres, mais abreviações de WhatsApp); typo por trigrama
+(≥0,7) e por distância de edição 1 — trigrama sozinho não pega troca de letra
+no miolo de palavra curta ("marmyta" x "marmita" dá 0,45). `confidence` agora é
+a cobertura 0..1, que é o que o campo sempre prometeu.
+
+**Fix (ZeloChat):** removidas as compensações que só existiam por causa do
+ranking fraco — `stripCatalogQueryFraming`, as três listas de palavras e
+`isCatalogMenuRequest`. A frase do cliente vai para a busca como foi escrita.
+
+**Dois outros defeitos da mesma rodada:**
+- O recibo de checkout do ZeloMenu chega como mensagem do cliente e contém
+  "cardápio digital" e "Entrega · o quanto antes", então casava com o pedido de
+  cardápio E com `isDeliveryFeeQuestion`: quem tinha acabado de fechar R$ 46,00
+  recebia o cartão do cardápio e uma explicação de frete. Agora
+  `isZeloMenuOrderReceipt` intercepta antes de qualquer classificação e só
+  agradece.
+- O histórico ia inteiro para o modelo, então conversa de ontem continuava
+  hoje: "Boa" / "Noite" às 20h51, 32 horas depois do último turno, virava "Que
+  bom! Se precisar de algo é só avisar". `messagesSinceConversationBreak` corta
+  no último silêncio maior que 6 horas, tanto no histórico do modelo quanto no
+  gate de follow-up do fluxo canônico. Nada é apagado: o resumo do cliente
+  segue no system prompt e as mensagens seguem no banco.
+
+**Regra que fica:** ranking sem medição é chute. A suíte
+`zelomenuCatalogDiscovery.relevance.test.ts` congela o conjunto de avaliação —
+rode antes de publicar qualquer mudança de relevância.
+
 ## Cardápio pedido virava busca de produto, e o próprio botão virava pedido (2026-09-09, quarta rodada)
 
 **Sintoma (dois clientes reais da Bem Servido, 09/09):**

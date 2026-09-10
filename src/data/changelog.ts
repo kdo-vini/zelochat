@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-09-09',
     category: 'hotfix',
+    title: 'Conversa recomeça do zero depois de horas parada',
+    description: 'Se o cliente sumia e voltava no dia seguinte, a IA continuava a conversa antiga e respondia coisas sem sentido, tipo "Que bom!" para um "boa noite". Agora, depois de algumas horas sem mensagem, ela começa do zero.',
+  },
+  {
+    date: '2026-09-09',
+    category: 'hotfix',
     title: 'IA responde como atendente, e respeita o horário',
     description: 'Ela dizia "Estamos atendendo" mesmo com a loja fechada, e começava as respostas com "Encontrei", como se estivesse narrando o que fazia. Agora responde "Tem sim" ou "Hoje não temos isso", e quando a loja está fechada avisa o horário de reabertura em vez de convidar para pedir.',
   },
@@ -25,13 +31,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-09-09',
     category: 'hotfix',
     title: 'IA entende melhor o que o cliente pediu',
-    description: 'Quem pedia o cardápio às vezes recebia um prato aleatório, ou o cardápio seguido de um "não encontrei" — bastava um erro de digitação ou um "fazendo favor" no fim da frase. E quem tocava no botão "Pedir por aqui" era mandado para um atendente. Agora o cardápio é enviado uma vez só, quem pede um tipo específico recebe os pratos certos, o botão responde como deveria, e endereço ou forma de pagamento deixam de virar chute.',
-  },
-  {
-    date: '2026-09-09',
-    category: 'hotfix',
-    title: 'IA para de repetir a mesma resposta',
-    description: 'Quando o cliente escrevia o pedido, a IA às vezes respondia sempre a mesma coisa, como se não estivesse lendo. Agora ela responde ao que o cliente acabou de mandar e, se não tiver nada novo a dizer, passa a conversa adiante em vez de repetir.',
+    description: 'Quem pedia o cardápio às vezes recebia um prato aleatório, ou o cardápio seguido de um "não encontrei" — bastava um erro de digitação. A busca do cardápio foi refeita: agora entende plural, perdoa erro de digitação ("marmyta" acha marmita) e para de responder com prato quando o cliente só está falando de endereço ou pagamento. Ela também parou de repetir a mesma resposta quando não tinha nada novo a dizer. Quem já fechou o pedido pelo cardápio digital recebe só um obrigado, e quem toca em "Pedir por aqui" é atendido em vez de mandado para um humano.',
   },
   {
     date: '2026-09-09',

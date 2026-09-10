@@ -47,6 +47,7 @@ import { isBuiltinTriggerId, getBuiltinTrigger } from './builtinTriggers.js';
 import { getOpenAIClient } from './openaiClient.js';
 import { isSupportedPixReceiptAttachment, validatePixReceipt } from './pixReceiptValidator.js';
 import { redactJid } from './redact.js';
+import { messagesSinceConversationBreak } from '../src/domain/conversationContinuity.js';
 import {
   classifyConfirmationIntent,
   classifyPendingOrderTurn,
@@ -3841,7 +3842,12 @@ export async function generateAndSendReply(
     // O system prompt JÁ inclui customerHistory, então perder turnos antigos
     // do prompt de runtime não perde memória do cliente.
     const HISTORY_CAP = 60;
-    const filteredHistory = session.messages
+    // FIX 2026-09-09: sem isto o histórico ia inteiro, e uma conversa de ontem
+    // continuava hoje — "Boa" / "Noite" 32 horas depois virava "Que bom! Se
+    // precisar de algo é só avisar", como se respondesse ao turno anterior.
+    // O resumo do cliente segue no system prompt, então nada de memória se
+    // perde: só para de fingir que a frase de hoje responde a de ontem.
+    const filteredHistory = messagesSinceConversationBreak(session.messages)
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .filter((m) => !!m.content) // skip tool-call-only assistant rows (content is null)
       .filter((m) => !/^\[Rea[çc]ão|^\[Voto em enquete/i.test(m.content ?? '')); // skip reactions/polls — no actionable intent

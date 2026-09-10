@@ -15,10 +15,10 @@ import {
   isOrderingEntryTurn,
   isOrderingFollowUp,
   isOrderingFollowUpAnswer,
-  isCatalogMenuRequest,
   isOrderingStartButtonText,
+  isZeloMenuOrderReceipt,
+  isDeliveryFeeQuestion,
   mentionsMenu,
-  stripCatalogQueryFraming,
   isOrderingSnapshotEditable,
   parseOrderingButton,
   renderCatalogReply,
@@ -219,34 +219,6 @@ assert.match(dryRunCatalog.response ?? '', /Carne de panela/);
 assert.match(dryRunCatalog.response ?? '', /Bisteca de porco/);
 assert.deepEqual(dryRunCalls, [], 'canonical dry-run never invokes mutation methods');
 
-// REGRESSION 2026-09-09: the menu-request branch answers with the entry card,
-// whose copy opens "Estamos atendendo". With the store CLOSED that states the
-// opposite of the truth, so the turn belongs to the generic assistant, which
-// knows the reopening time. `storeOpen: null` (unknown) is treated as closed,
-// matching the entry turn above it.
-for (const storeOpen of [false, null]) {
-  const closedMenuRequest = await tryHandleAiWhatsAppOrdering(
-    fakePermit.remoteJid,
-    fakePermit.empresaId,
-    sessionWith('vc pode mandar o cardapio?'),
-    fakePermit,
-    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen },
-    { dryRun: true, client: dryRunClient },
-  );
-  assert.equal(closedMenuRequest.handled, false, `storeOpen=${storeOpen} must not claim "Estamos atendendo"`);
-  assert.equal(closedMenuRequest.response, undefined);
-}
-const openMenuRequest = await tryHandleAiWhatsAppOrdering(
-  fakePermit.remoteJid,
-  fakePermit.empresaId,
-  sessionWith('vc pode mandar o cardapio?'),
-  fakePermit,
-  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
-  { dryRun: true, client: dryRunClient },
-);
-assert.equal(openMenuRequest.handled, true);
-assert.match(openMenuRequest.response ?? '', /menu\.zelopdv\.com\.br\/bemservido/);
-
 // C6 / PR I-8: a greeting VARIANT that isn't an exact "oi"-style match
 // ("tá atendendo?", "estão atendendo?", "boa noite, tão aberto?") must still
 // report handled:true once the entry card has been dispatched — otherwise
@@ -326,6 +298,46 @@ for (const storeOpen of [false, null]) {
 const unknownItem = await askOrdering('tem sushi?');
 assert.equal(unknownItem.handled, true);
 assert.match(unknownItem.response ?? '', /hoje não temos isso/i);
+
+// REGRESSION 2026-09-09: o recibo do checkout do ZeloMenu chega como mensagem
+// do cliente. Contem "cardapio digital" e "Entrega - o quanto antes", entao
+// casava com o pedido de cardapio E com isDeliveryFeeQuestion ("entrega" +
+// "quanto"): quem tinha acabado de fechar R$ 46,00 recebia o cartao do
+// cardapio seguido de uma explicacao de taxa de entrega.
+const zeloMenuReceipt = [
+  'Novo pedido pelo cardapio digital.',
+  '',
+  'Pedido #D7957397',
+  'Cliente: Geraldo',
+  'Telefone: (14) 98800-0900',
+  '',
+  '1x Marmita do dia (1. Escolha o tamanho: Tamanho P) - R$ 18,00',
+  '',
+  'Subtotal: R$ 36,00',
+  'Entrega: R$ 10,00',
+  'Total: R$ 46,00',
+  'Entrega - o quanto antes',
+  'Endereco: Alameda dos Ticos-Ticos, 30',
+  'Pagamento: Dinheiro',
+  '',
+  '---',
+  'zelopdv.com.br',
+  'Sistema Zelo Menu',
+].join('\n');
+
+assert.equal(isZeloMenuOrderReceipt(zeloMenuReceipt), true);
+assert.equal(isDeliveryFeeQuestion(zeloMenuReceipt), true, 'o recibo REALMENTE casa com a pergunta de taxa — por isso precisa ser interceptado antes');
+assert.equal(mentionsMenu(zeloMenuReceipt), true, 'e tambem menciona cardapio');
+
+const receiptTurn = await askOrdering(zeloMenuReceipt);
+assert.equal(receiptTurn.handled, true);
+assert.equal(receiptTurn.response, 'Recebemos seu pedido, obrigado! \u{1F64F}');
+assert.deepEqual(searchedQueries, [], 'recibo nunca vira busca de produto');
+
+// Uma mensagem que so fala de pedido nao e recibo.
+assert.equal(isZeloMenuOrderReceipt('quero fazer um pedido'), false);
+assert.equal(isZeloMenuOrderReceipt('Pedido #D7957397'), false, 'sem a assinatura do rodape nao e o recibo');
+assert.equal(isZeloMenuOrderReceipt('Sistema Zelo Menu'), false, 'rodape sozinho tambem nao');
 
 // A tap on our own entry button arrived as plain text. It must answer like the
 // tap does — never be read as an order intent and escalated.
@@ -412,35 +424,27 @@ const stalePriorQuery = [
 ];
 assert.equal(
   buildCatalogSearchQuery(stalePriorQuery, 'Penne, molho branco, bacon, calabresa,mussarela, parmesão'),
-  'penne molho branco bacon calabresa mussarela parmesao',
+  'Penne, molho branco, bacon, calabresa,mussarela, parmesão',
   'a written order is searched as written, never replaced by an older question',
 );
 assert.equal(
   buildCatalogSearchQuery(stalePriorQuery, 'Entregar na creche do bela vista'),
-  'entregar na creche bela vista',
+  'Entregar na creche do bela vista',
 );
-// A message that classifies on its own is still its own query, minus framing.
-assert.equal(buildCatalogSearchQuery(stalePriorQuery, 'quero uma coxinha'), 'coxinha');
+// A message that classifies on its own is always its own query.
+assert.equal(buildCatalogSearchQuery(stalePriorQuery, 'quero uma coxinha'), 'quero uma coxinha');
 // A bare answer to an option question still borrows the question it answers.
-assert.equal(buildCatalogSearchQuery(optionSequence, 'frango'), 'mistura hoje');
+assert.equal(buildCatalogSearchQuery(optionSequence, 'frango'), 'oq tem de mistura hoje');
 assert.equal(buildCatalogSearchQuery([], 'frango'), 'frango', 'with no prior question the answer is the query');
 
-// REGRESSION 2026-09-09: framing words never reach the catalog search. On the
-// real Bem Servido catalog "vc" is a word in the DESCRIPTION of "Batata frita
-// com cheddar e bacon" ("...vai surpreender vc com a cobertura"), and it was
-// the only token that sentence shared with any product — so a customer asking
-// for the menu was offered a portion of fries. Verified against ZeloMenu's
-// real matcher and the real production catalog.
-assert.equal(stripCatalogQueryFraming('vc pode mandar o cardapio do macarrao?'), 'macarrao');
-assert.equal(stripCatalogQueryFraming('vc pode mandar o cardapio?'), '');
-assert.equal(stripCatalogQueryFraming('quero um penne'), 'penne');
-assert.equal(stripCatalogQueryFraming('oi, tem marmita hoje?'), 'marmita hoje');
-
-// A customer who named the menu and nothing else gets the menu, not a search.
-assert.equal(isCatalogMenuRequest('vc pode mandar o cardapio?'), true);
-assert.equal(isCatalogMenuRequest('me manda o menu por favor'), true);
-assert.equal(isCatalogMenuRequest('vc pode mandar o cardapio do macarrao?'), false, 'a named item is a search, not a menu request');
-assert.equal(isCatalogMenuRequest('quero uma coxinha'), false);
+// 2026-09-09: the framing-word stripper and `isCatalogMenuRequest` are gone.
+// Both existed only to compensate for a ranking that scored any shared token,
+// and neither could ever cover natural Portuguese — a typo ("favorn") or an
+// ordinary word ("depois", "fazendo") walked straight past them. ZeloMenu now
+// ranks by coverage with Portuguese stopwords and field weights, so the
+// customer's sentence goes in as written; `mentionsMenu` + an empty result is
+// what recognises a menu request, and it is exercised through the handler
+// below.
 
 // REGRESSION 2026-09-09: `isOrderingFollowUp` alone used to hand the canonical
 // catalog path every message that came after a question, so an address and a

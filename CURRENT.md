@@ -1,5 +1,25 @@
 # ZeloChat — Foco atual
 
+### Busca do cardápio reescrita na origem (2026-09-09, quinta rodada)
+
+A causa-raiz das quatro rodadas anteriores era o ranking do ZeloMenu, não o
+ZeloChat: pontuava qualquer token compartilhado, com descrição valendo o mesmo
+que nome. Reescrito para cobertura ponderada por campo, com stopwords
+linguísticas e tolerância a typo — **14/18 para 18/18** no catálogo real de
+produção. As listas de palavras que o ZeloChat mantinha para compensar foram
+removidas.
+
+Junto: recibo de pedido do ZeloMenu agora só recebe agradecimento, e conversa
+parada há mais de 6 horas recomeça do zero em vez de continuar a de ontem.
+
+**Ordem de publicação: ZeloMenu primeiro**, ZeloChat depois — o ZeloChat tolera
+ranking melhor sem mudança nenhuma, então não precisa ser simultâneo.
+
+Em aberto: `ambiguous` continua com a semântica antiga (conta sentidos), de
+propósito — os testes existentes codificam decisões de produto sobre quando a
+IA pergunta em vez de montar o pedido. Com o ranking melhor ela dispara bem
+menos; vale reavaliar com dado depois de publicar.
+
 ### Pedido de cardápio e botão de entrada (2026-09-09, quarta rodada)
 
 Botão e lista enviados agora aparecem na conversa do ZeloChat: o conteúdo da

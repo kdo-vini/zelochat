@@ -20,8 +20,9 @@ import {
   isOrderingEntryTurn,
   isOrderingGreeting,
   isOrderingSnapshotEditable,
-  isCatalogMenuRequest,
   isDeliveryFeeQuestion,
+  isZeloMenuOrderReceipt,
+  ZELOMENU_ORDER_RECEIPT_REPLY,
   isOrderingStartButtonText,
   mentionsMenu,
   AI_ORDER_START_REPLY,
@@ -828,6 +829,16 @@ export async function tryHandleAiWhatsAppOrdering(
   // BOTH a greeting AND an order ("oi, quero uma coxinha") is unaffected:
   // `isOrderingGreeting` stays false for it, so control falls through to
   // the normal catalog/order flow exactly as before.
+  // FIX 2026-09-09: o recibo do checkout do ZeloMenu chega como mensagem do
+  // cliente e casava com o pedido de cardápio ("cardápio digital") e com a
+  // pergunta de taxa ("Entrega · o quanto antes"), então quem tinha acabado de
+  // fechar o pedido recebia o cartão do cardápio e uma explicação de frete.
+  // Vem antes de qualquer classificação: agradece e encerra o turno.
+  if (isZeloMenuOrderReceipt(text)) {
+    await sendText(permit, ZELOMENU_ORDER_RECEIPT_REPLY, 'order-receipt', dryRun, isPermitCurrent);
+    metric({ ...metricBase, stage: 'entry', outcome: 'order_receipt' });
+    return { handled: true, response: ZELOMENU_ORDER_RECEIPT_REPLY };
+  }
   let entryDispatched = false;
   let entryResponseText: string | undefined;
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
@@ -886,14 +897,6 @@ export async function tryHandleAiWhatsAppOrdering(
     metric({ ...metricBase, stage: 'entry', outcome });
     return { handled: true, response: response.text };
   };
-  if (isCatalogMenuRequest(text)) {
-    try {
-      return await answerMenuRequest('menu_request');
-    } catch (error) {
-      if (error instanceof OrderingSuppressedError) return { handled: true };
-      throw error;
-    }
-  }
   if (entry.menuUrl && isDeliveryFeeQuestion(text)) {
     const response = buildDeliveryFeeReply(entry.menuUrl);
     await sendText(permit, response, 'delivery-fee', dryRun, isPermitCurrent);
@@ -1025,14 +1028,13 @@ export async function tryHandleAiWhatsAppOrdering(
     }
     if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
     const catalog = await client.searchCatalog({ empresaId, query, limit: 12 });
-    // FIX 2026-09-09: `isCatalogMenuRequest` decides from a closed list of
-    // framing words, and natural Portuguese does not fit in one — "Gostaria do
-    // cardápio por favorn" (typo) and "Depois me manda ó cardápio, fazendo
-    // favor" both escaped it and were answered "Não encontrei uma opção
-    // disponível com esse nome" (Bem Servido, 2026-09-09). The catalog itself
-    // is the reliable judge: the customer named the menu and nothing they said
-    // matches a product, so the menu is the answer. A message that does NOT
-    // name the menu keeps the plain "hoje não temos isso".
+    // FIX 2026-09-09: the customer named the menu and nothing they said
+    // matches a product, so the menu is the answer. This used to be decided
+    // BEFORE the search, from a closed list of framing words — a list natural
+    // Portuguese never fits in: "Gostaria do cardápio por favorn" (typo) and
+    // "Depois me manda ó cardápio, fazendo favor" both walked past it. The
+    // catalog itself is the reliable judge. A message that does NOT name the
+    // menu keeps the plain "hoje não temos isso".
     if (!catalog.total && mentionsMenu(text)) {
       try {
         return await answerMenuRequest('menu_request_no_match');

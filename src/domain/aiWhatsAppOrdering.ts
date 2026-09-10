@@ -6,6 +6,8 @@
  * across the ZeloMenu boundary and for dispatching the resulting payloads.
  */
 
+import { messagesSinceConversationBreak } from './conversationContinuity';
+
 export const AI_ORDER_CONFIRM_PREFIX = 'ZOC:';
 export const AI_ORDER_ALTER_BUTTON = 'ZOA';
 export const AI_ORDER_CANCEL_BUTTON = 'ZOC_CANCEL';
@@ -114,6 +116,25 @@ export function isExplicitHumanRequest(text: string): boolean {
   return humanTerm && /\b(?:quero|preciso|falar|chama|chame|transfere|transferir|por favor)\b/.test(normalized);
 }
 
+/**
+ * O recibo que o ZeloMenu monta no checkout e o cliente envia para a loja.
+ * Assinatura estável do template (`src/domain/whatsappOrder.ts` no ZeloMenu):
+ * o rodapé "Sistema Zelo Menu" e a linha "Pedido #XXXXXXXX".
+ *
+ * FIX 2026-09-09: esse texto entrava na classificação como qualquer mensagem.
+ * Contém "cardápio digital" e "Entrega · o quanto antes" — logo casava com o
+ * pedido de cardápio E com `isDeliveryFeeQuestion` ("entrega" + "quanto"), e o
+ * cliente que acabou de fechar um pedido de R$ 46,00 recebia o cartão do
+ * cardápio seguido de uma explicação sobre taxa de entrega. Quem já pediu não
+ * precisa de nada disso: agradecer e sair do caminho.
+ */
+export function isZeloMenuOrderReceipt(text: string): boolean {
+  const normalized = normalize(text);
+  return normalized.includes('sistema zelo menu') && /pedido\s*#\s*\S/.test(normalized);
+}
+
+export const ZELOMENU_ORDER_RECEIPT_REPLY = 'Recebemos seu pedido, obrigado! 🙏';
+
 export function isDeliveryFeeQuestion(text: string): boolean {
   const normalized = normalize(text);
   const mentionsDelivery = /\b(?:entrega|delivery|frete)\b/.test(normalized);
@@ -189,140 +210,43 @@ export function findPriorOrderingQuery(messages: OrderingConversationMessage[], 
  */
 const FOLLOW_UP_ANSWER_MAX_WORDS = 3;
 
-/**
- * Framing words a customer uses to ASK for something. None of them is a
- * product word, and every one of them is noise inside a catalog search.
- *
- * FIX 2026-09-09: we used to send the customer's raw sentence to the catalog
- * search. ZeloMenu scores a product on its name, description, category, group
- * and option names, and falls back to per-token overlap — so a single filler
- * token is enough to pull an unrelated product in. On the Bem Servido
- * catalog, "vc pode mandar o cardapio?" matched exactly one product:
- * "Batata frita com cheddar e bacon", whose public description reads "essa
- * porcao vai surpreender VC com a cobertura". The customer asked for the menu
- * and was offered a portion of fries. Verified against the real ZeloMenu
- * matcher and the real production catalog, not a hand-written double.
- */
-const CATALOG_QUERY_FRAMING_WORDS = new Set([
-  'vc', 'vcs', 'voce', 'voces', 'tu', 'me', 'mim', 'nos',
-  'pf', 'pfv', 'favor', 'obrigado', 'obrigada', 'bora',
-  'pode', 'podes', 'poderia', 'poderiam', 'consegue', 'conseguiria', 'da',
-  'manda', 'mandar', 'mande', 'envia', 'enviar', 'envie', 'passa', 'passar',
-  'mostra', 'mostrar', 'ver', 'quero', 'queria', 'gostaria', 'desejo', 'queremos',
-  'oi', 'ola', 'bom', 'boa', 'dia', 'tarde', 'noite',
-  'cardapio', 'menu', 'lista',
-]);
-
 /** Words that only ever name the menu itself, never an item on it. */
 const MENU_WORDS = new Set(['cardapio', 'menu', 'lista']);
 
-/**
- * Bare articles. ZeloMenu already discards `a/as/da/de/do/o/os/oq/que/tem`
- * from the query, but not these — and a token that survives is scored against
- * every product DESCRIPTION, so "quero um penne" was matching "Marmita do
- * dia" on the word "um". Dropping them costs nothing: no customer
- * distinguishes two products by an article.
- */
-const CATALOG_QUERY_ARTICLES = new Set(['um', 'uma', 'uns', 'umas']);
-
-/**
- * The words ZeloMenu's own `normalizeDiscoveryQuery` already discards.
- * Dropping them here too is provably neutral for scoring and keeps the query
- * we log and pass to `requestedModifierGroup` readable.
- */
-const ZELOMENU_DISCARDED_WORDS = new Set(['a', 'as', 'da', 'de', 'do', 'o', 'os', 'oq', 'que', 'tem']);
-
-/**
- * Everything that carries no product meaning — used only to decide whether
- * the customer named anything at all. Includes the words ZeloMenu itself
- * discards, so "vc pode mandar o cardapio?" reduces to nothing rather than to
- * a lone "o".
- */
-const CATALOG_QUERY_MEANINGLESS = new Set([
-  ...CATALOG_QUERY_FRAMING_WORDS,
-  ...CATALOG_QUERY_ARTICLES,
-  'a', 'as', 'o', 'os', 'de', 'do', 'da', 'dos', 'das', 'oq', 'que', 'tem',
-  'no', 'na', 'nos', 'nas', 'em', 'pra', 'para', 'por', 'e', 'ou', 'com',
-  'ai', 'aqui', 'seu', 'sua', 'hoje', 'ta', 'esta',
-]);
-
 function catalogQueryWords(text: string): string[] {
-  return normalize(text)
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-/**
- * Drop the framing and keep whatever the customer actually named. Returns ''
- * when nothing but framing was said — that is a request for the menu, not a
- * product search (see `isCatalogMenuRequest`).
- */
-export function stripCatalogQueryFraming(text: string): string {
-  return catalogQueryWords(text)
-    .filter((word) => !CATALOG_QUERY_FRAMING_WORDS.has(word)
-      && !CATALOG_QUERY_ARTICLES.has(word)
-      && !ZELOMENU_DISCARDED_WORDS.has(word))
-    .join(' ')
-    .trim();
-}
-
-/** True when the customer named no product term at all in this text. */
-function namesNothing(text: string): boolean {
-  return catalogQueryWords(text).every((word) => CATALOG_QUERY_MEANINGLESS.has(word));
-}
-
-/**
- * FIX 2026-09-09: "vc pode mandar o cardapio?" asks for the MENU. It used to
- * fall through to a product search and answer with whatever token noise hit
- * first. When the customer named the menu and nothing else, answer with the
- * menu.
- */
-export function isCatalogMenuRequest(text: string): boolean {
-  const words = catalogQueryWords(text);
-  if (!words.some((word) => MENU_WORDS.has(word))) return false;
-  return namesNothing(text);
+  return normalize(text).replace(/[^a-z0-9\s]+/g, ' ').split(/\s+/).filter(Boolean);
 }
 
 /**
  * FIX 2026-09-09: the catalog query for THIS turn used to be
  * `findPriorOrderingQuery` alone, which threw the customer's own words away
  * whenever they carried none of `classifyOrderingTurn`'s keywords. "Penne,
- * molho branco, bacon, calabresa, mussarela, parmesão" — a complete order —
+ * molho branco, bacon, calabresa, mussarela, parmesao" -- a complete order --
  * has none of them, so the search ran on the stale "Vc pode me mandar o
- * cardápio" from two turns earlier and answered with the same product list.
- * That list ends in "Qual você quer?", which keeps `isOrderingFollowUp` true,
- * so the next message re-entered the same branch, re-ran the same stale
- * query and sent the same sentence again: a fixed point the conversation
- * could not leave (Bem Servido, 2026-09-09 — three identical replies to
- * three different messages; 13 occurrences across 10 conversations in the
- * nine days before the fix).
+ * cardapio" from two turns earlier and answered with the same product list.
+ * That list ends in "Qual voce quer?", which keeps `isOrderingFollowUp` true,
+ * so the next message re-entered the same branch and sent the same sentence
+ * again: a fixed point the conversation could not leave (Bem Servido,
+ * 2026-09-09 -- three identical replies to three different messages).
  *
  * The prior question is still the query when the current message is a bare
- * follow-up answer, because that is the case it was written for. It is never
- * a substitute for a message that says something.
+ * follow-up answer, because that is the case it was written for. It is never a
+ * substitute for a message that says something.
+ *
+ * 2026-09-09 (segunda parte): this also stripped "framing words" before
+ * searching, because ZeloMenu scored any shared token and one filler word was
+ * enough to pull an unrelated product in. That list could never be complete --
+ * a typo ("favorn") or an ordinary word ("depois", "fazendo") walked straight
+ * past it. ZeloMenu now ranks by coverage, with Portuguese stopwords and field
+ * weights, so the customer's sentence goes in as written and the ranking
+ * decides.
  */
 export function buildCatalogSearchQuery(messages: OrderingConversationMessage[], text: string): string {
   const current = text.trim();
-  const chosen = pickCatalogQuerySource(messages, current);
-  // Framing is stripped from whichever source won, so a stale question does
-  // not carry its own filler into the search either. When nothing but framing
-  // was said the result is '' — deliberately NOT the raw sentence, which is
-  // the token soup this whole path exists to avoid. The caller treats an empty
-  // query as "this turn names no product" and lets the generic assistant take
-  // it (a bare "quero" is a conversation to continue, not a search to run).
-  return stripCatalogQueryFraming(chosen);
-}
-
-function pickCatalogQuerySource(messages: OrderingConversationMessage[], current: string): string {
   if (!current) return findPriorOrderingQuery(messages, current);
-  // A message that still names something after the framing is removed is the
-  // query, however it classifies.
-  if (!namesNothing(current)) {
-    if (classifyOrderingTurn(current, false).kind === 'catalog_or_order') return current;
-    const words = current.split(/\s+/).filter(Boolean);
-    if (words.length > FOLLOW_UP_ANSWER_MAX_WORDS) return current;
-  }
+  if (classifyOrderingTurn(current, false).kind === 'catalog_or_order') return current;
+  const words = current.split(/\s+/).filter(Boolean);
+  if (words.length > FOLLOW_UP_ANSWER_MAX_WORDS) return current;
   return findPriorOrderingQuery(messages, current);
 }
 
@@ -1025,8 +949,11 @@ export function isOrderingFollowUpAnswer(
   messages: OrderingConversationMessage[],
   text: string,
 ): boolean {
-  if (!isOrderingFollowUp(messages)) return false;
+  // FIX 2026-09-09: um "Qual você quer?" de ontem mantinha este gate aberto e
+  // transformava o "oi" de hoje em resposta de opção. A pergunta só continua
+  // valendo dentro da mesma conversa.
+  if (!isOrderingFollowUp(messagesSinceConversationBreak(messages))) return false;
   if (ORDER_LOGISTICS_TERMS.test(normalize(text))) return false;
-  const words = catalogQueryWords(text).filter((word) => !CATALOG_QUERY_MEANINGLESS.has(word));
+  const words = catalogQueryWords(text);
   return words.length > 0 && words.length <= FOLLOW_UP_ANSWER_MAX_WORDS;
 }
