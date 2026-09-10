@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Clientes — somente compradores viram ficha — 2026-09-10
+
+- ✅ CRM-IDENTITY-001 — mensagem no WhatsApp criava ficha mesmo sem pedido e pedidos deixavam conversas anteriores soltas → inbound agora apenas vincula fichas existentes, com fallback para contatos PDV formatados; pedido carimba a família de sessões nulas no tenant, sempre como enriquecimento fail-open — `server/customers/identity.ts:43`, `server/customers/repository.ts:56`, `server/messageHandler.ts:1219`, `server/canonicalOrders.ts:181`, `server/zelomenuCartSessions.ts:1032`
+
 ## Clientes — Parte B: segmentos e linha da lista — 2026-09-10
 
 - ✅ CRM-SEG-003 — a tela não oferecia atalhos visíveis para os três segmentos mais úteis e a listagem escondia conversas de contatos sem pedido → chips com contagem resiliente, tags preenchidas no backend e terceira linha contextual para compra/conversa/inatividade, sem expor tags na linha — `src/components/customers/CustomerSegmentChips.tsx:1`, `server/customers/service.ts:215`, `src/components/customers/CustomerListRow.tsx:25`

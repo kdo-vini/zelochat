@@ -20,6 +20,8 @@ export interface EnsureCustomerForSessionInput {
   phone?: string | null;
   observedName?: string | null;
   source?: CustomerSource;
+  /** Conversations may link to a ficha, but only orders may create one. */
+  createIfMissing?: boolean;
   persistPessoaId?: (pessoaId: string | null) => Promise<void>;
 }
 
@@ -39,6 +41,44 @@ export async function ensureCustomerForSession(
   }
   try {
     const repository = dependencies.repository ?? supabaseCustomerIdentityRepository;
+    if (input.createIfMissing === false) {
+      if (!repository.findExistingByPhone) {
+        throw new Error('customer identity lookup is unavailable');
+      }
+
+      const candidates = await repository.findExistingByPhone({ ownerUserId: input.ownerUserId, phone });
+      const candidatePersonIds = [...new Set(candidates
+        .filter((candidate) => candidate.contact === undefined || normalizeWhatsAppPhone(candidate.contact) === phone)
+        .map((candidate) => candidate.pessoaId)
+        .filter((pessoaId): pessoaId is string => typeof pessoaId === 'string' && pessoaId.length > 0))];
+
+      if (candidatePersonIds.length === 0) {
+        const result: CustomerIdentityResult = { status: 'incomplete', pessoaId: null };
+        await input.persistPessoaId?.(null);
+        return result;
+      }
+
+      if (candidatePersonIds.length > 1) {
+        const result: CustomerIdentityResult = {
+          status: 'conflict',
+          pessoaId: null,
+          candidatePersonIds,
+          reason: 'Mais de uma pessoa corresponde ao telefone',
+        };
+        if (repository.recordConflict) {
+          await repository.recordConflict({
+            empresaId: input.empresaId,
+            ownerUserId: input.ownerUserId,
+            phone,
+            jid: input.jid,
+            candidatePersonIds,
+            reason: result.reason,
+          });
+        }
+        return result;
+      }
+    }
+
     const result = await repository.ensureFromWhatsApp({
       ownerUserId: input.ownerUserId,
       phone,

@@ -48,6 +48,7 @@ import {
 } from '../src/domain/zelomenuCart.js';
 import { resolveCustomerForOrder } from './customers/identity.js';
 import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
+import { linkCustomerToSessionFamily } from './messageHandler.js';
 
 type SessionRow = {
   id: string;
@@ -1028,6 +1029,14 @@ async function createAcceptedOrderRecord(input: {
         source: 'zelomenu',
       });
       pessoaId = identity.status === 'linked' || identity.status === 'created' ? identity.pessoaId : null;
+      if (pessoaId) {
+        try {
+          await linkCustomerToSessionFamily({ empresaId: input.empresaId, phone: input.customer.phone, pessoaId });
+        } catch (error) {
+          // CRM is enrichment; a session-linking failure must not invalidate the order.
+          console.error('[ZeloMenu] customer session link unavailable; preserving order:', error);
+        }
+      }
     } catch (error) {
       // Identity is enrichment; confirmation remains valid with its snapshot.
       console.error('[ZeloMenu] customer identity unavailable; preserving order snapshot:', error);

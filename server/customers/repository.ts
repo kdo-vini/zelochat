@@ -10,7 +10,17 @@ export interface CustomerIdentityResult {
   reason?: string | null;
 }
 
+export interface ExistingCustomerCandidate {
+  pessoaId: string;
+  /** Present only for the legacy `pessoas.contato` fallback. */
+  contact?: string | null;
+}
+
 export interface CustomerIdentityRepository {
+  findExistingByPhone?(input: {
+    ownerUserId: string;
+    phone: string;
+  }): Promise<ExistingCustomerCandidate[]>;
   ensureFromWhatsApp(input: {
     ownerUserId: string;
     phone: string;
@@ -46,6 +56,42 @@ function resultFromRpc(value: unknown): CustomerIdentityResult {
 
 /** The only adapter allowed to decide identity/merge. PDV owns this RPC. */
 export const supabaseCustomerIdentityRepository: CustomerIdentityRepository = {
+  async findExistingByPhone(input) {
+    const supabase = getServiceSupabase();
+    const { data: identityRows, error: identityError } = await supabase
+      .from('pessoa_identities')
+      .select('pessoa_id')
+      .eq('id_usuario', input.ownerUserId)
+      .eq('kind', 'phone')
+      .eq('value_normalized', input.phone)
+      .limit(50);
+
+    if (identityError) throw identityError;
+
+    const identityCandidates = (identityRows ?? [])
+      .map((row) => row?.pessoa_id)
+      .filter((pessoaId): pessoaId is string => typeof pessoaId === 'string');
+    if (identityCandidates.length) {
+      return [...new Set(identityCandidates)].map((pessoaId) => ({ pessoaId }));
+    }
+
+    // Legacy PDV fichas may predate the identity table and store formatted
+    // contacts. The caller re-runs the existing JS normalizer on these rows.
+    const suffix = input.phone.slice(-8);
+    const suffixPattern = `%${suffix.split('').join('%')}`;
+    const { data: legacyRows, error: legacyError } = await supabase
+      .from('pessoas')
+      .select('id, contato')
+      .eq('id_usuario', input.ownerUserId)
+      .ilike('contato', suffixPattern)
+      .limit(100);
+
+    if (legacyError) throw legacyError;
+
+    return (legacyRows ?? [])
+      .filter((row) => typeof row?.id === 'string')
+      .map((row) => ({ pessoaId: row.id as string, contact: row.contato ?? null }));
+  },
   async ensureFromWhatsApp(input) {
     // FIX 2026-09-04: the PDV-owned RPC accepts three arguments and returns
     // pessoaId. Extra JID/source arguments made every enrichment miss its RPC.

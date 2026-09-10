@@ -1,6 +1,6 @@
 import { broadcast } from './ws.js';
 import { getEmpresaUserId, getServiceSupabase, uploadReceivedMedia } from './supabase.js';
-import { ensureCustomerForSession } from './customers/identity.js';
+import { ensureCustomerForSession, normalizeWhatsAppPhone } from './customers/identity.js';
 import { transcribeAudio, type TranscriptionOutcome } from './transcription.js';
 import { trackBackgroundWork } from './runtime/backgroundWork.js';
 import { dispatchConversationOutbound } from './conversationOutbound.js';
@@ -459,7 +459,7 @@ interface LatestSessionActivity {
   sentAt: string;
 }
 
-interface SessionFamily {
+export interface SessionFamily {
   primary: SessionRow;
   latest: SessionRow;
   rows: SessionRow[];
@@ -1130,7 +1130,7 @@ async function fetchAllSessionRows(
   return normalizeSessionRows((data as unknown) as Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }>);
 }
 
-async function fetchSessionFamily(empresaId: string, jid: string): Promise<SessionFamily | null> {
+export async function fetchSessionFamily(empresaId: string, jid: string): Promise<SessionFamily | null> {
   const supabase = getServiceSupabase();
 
   // Step 1: fetch just the target row to obtain customer_phone for the family lookup.
@@ -1146,19 +1146,19 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
   }
 
   const targetPessoaId = (targetData as SessionRow | null)?.pessoa_id ?? null;
+  let personRows: SessionRow[] = [];
   if (targetPessoaId) {
-    const { data: personRows, error: personError } = await supabase
+    const { data: personSessionRows, error: personError } = await supabase
       .from('zelochat_sessions')
       .select(SESSION_COLUMNS_FULL)
       .eq('empresa_id', empresaId)
       .eq('pessoa_id', targetPessoaId)
       .order('updated_at', { ascending: false });
     if (personError) throw new Error(personError.message);
-    const rows = (personRows as SessionRow[]) ?? [];
-    if (rows.length) return { primary: pickPrimarySessionRow(rows), latest: pickLatestSessionRow(rows), rows };
+    personRows = (personSessionRows as SessionRow[]) ?? [];
   }
 
-  // Step 2: build the normalized phone key only for unresolved sessions.
+  // Step 2: build the normalized phone key for the family lookup.
   const normalizedPhone = phoneFromJid(jid) || jid;
   const targetKey = buildContactKey(normalizedPhone);
 
@@ -1179,6 +1179,13 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
   if (normalizedPhone && normalizedPhone !== storedPhone) {
     orClauses.push(`customer_phone.eq.${normalizedPhone}`);
   }
+  // An order only gives us the phone, so the target row may not exist yet.
+  // Match the last eight digits while allowing formatting separators; the
+  // in-memory contact key below remains the final family check.
+  const phoneSuffix = normalizedPhone.replace(/\D/g, '').slice(-8);
+  if (phoneSuffix.length === 8) {
+    orClauses.push(`customer_phone.ilike.*${phoneSuffix.split('').join('*')}`);
+  }
 
   const { data: familyData, error: familyError } = await supabase
     .from('zelochat_sessions')
@@ -1194,9 +1201,11 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
   // Step 4: apply the same in-memory key matching as the original implementation
   // to handle edge cases where the OR query may return rows from a different
   // contact with the same stored phone (unlikely but defensive).
-  const familyRows = ((familyData as SessionRow[]) ?? []).filter(
-    (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey,
-  );
+  const familyRows = [...personRows, ...((familyData as SessionRow[]) ?? [])]
+    .filter((row, index, rows) => rows.findIndex((candidate) => candidate.id === row.id) === index)
+    .filter(
+      (row) => row.remote_jid === jid || buildSessionKeyFromRow(row) === targetKey || (targetPessoaId !== null && row.pessoa_id === targetPessoaId),
+    );
 
   if (familyRows.length === 0) {
     return null;
@@ -1212,6 +1221,34 @@ async function fetchSessionFamily(empresaId: string, jid: string): Promise<Sessi
 export async function fetchSessionFamilyJids(empresaId: string, jid: string): Promise<string[]> {
   const family = await fetchSessionFamily(empresaId, jid);
   return family?.rows.map((row) => row.remote_jid) ?? [jid];
+}
+
+/**
+ * Links already-created customer fichas to their existing WhatsApp sessions.
+ * This is deliberately best-effort enrichment: callers must keep the order
+ * valid when this update cannot be completed.
+ */
+export async function linkCustomerToSessionFamily(input: {
+  empresaId: string;
+  phone: string;
+  pessoaId: string;
+}): Promise<void> {
+  const normalizedPhone = normalizeWhatsAppPhone(input.phone);
+  if (!normalizedPhone) return;
+
+  const family = await fetchSessionFamily(input.empresaId, `${normalizedPhone}@s.whatsapp.net`);
+  const sessionIds = [...new Set((family?.rows ?? [])
+    .filter((row) => row.pessoa_id === null)
+    .map((row) => row.id))];
+  if (!sessionIds.length) return;
+
+  const { error } = await getServiceSupabase()
+    .from('zelochat_sessions')
+    .update({ pessoa_id: input.pessoaId })
+    .eq('empresa_id', input.empresaId)
+    .in('id', sessionIds)
+    .is('pessoa_id', null);
+  if (error) throw new Error(error.message);
 }
 
 export async function ensureSession(params: {
@@ -1230,6 +1267,8 @@ export async function ensureSession(params: {
   let pessoaId = existing?.pessoa_id ?? null;
   const ownerUserId = await getEmpresaUserId(params.empresaId);
   if (ownerUserId) {
+    // FIX 2026-09-10: inbound WhatsApp may link an existing ficha but cannot
+    // create one; orders remain the creation path and this lookup stays open.
     // FIX 2026-08-25: identity enrichment is best-effort; failures/conflicts
     // preserve the session and message with its existing pessoa_id.
     const identity = await ensureCustomerForSession({
@@ -1238,6 +1277,7 @@ export async function ensureSession(params: {
       jid: params.jid,
       phone: params.customerPhone ?? phoneFromJid(params.jid),
       observedName: params.customerName ?? null,
+      createIfMissing: false,
     });
     if (identity.status === 'linked' || identity.status === 'created') pessoaId = identity.pessoaId;
   }

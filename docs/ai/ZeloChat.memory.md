@@ -6,6 +6,11 @@ Produção usa Node24 e loader tsx/esm: o loader misto causou buscas patológica
 
 > Ver também: [[CLAUDE]] · [[CODE_REVIEW]] · [[FIXES_PROGRESS]] · [[ZeloChat.audit-report]]
 
+### Identidade de clientes após 2026-09-10
+- Regra de produto: conversa de WhatsApp sozinha não cria ficha em `pessoas`; `ensureCustomerForSession` recebe `createIfMissing: false` no caminho inbound, enquanto pedido/backfill preservam o default `true`.
+- O vínculo-only consulta primeiro `pessoa_identities` por `(id_usuario, kind='phone', value_normalized)` e, para fichas legadas, candidatos de `pessoas.contato` por sufixo com separadores e normalização em JavaScript. `pessoas`, `pessoa_identities` e o RPC continuam pertencendo ao ZeloPDV e são somente leitura/contrato para o ZeloChat.
+- Após identidade resolvida em pedido, `linkCustomerToSessionFamily` usa a família telefônica de `messageHandler`, atualiza apenas sessões `pessoa_id is null` dentro de `empresa_id`, e falha aberto para não invalidar o pedido.
+
 ## Purpose
 
 ### Auditoria 2026-09-04 — CRM, carregamento e impressão (correções locais)

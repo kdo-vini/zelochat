@@ -6,6 +6,7 @@ import { getEmpresaUserId, getServiceSupabase } from './supabase.js';
 import { resolveCustomerForOrder } from './customers/identity.js';
 import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
 import { isMissingCustomerContractError } from './customers/contract.js';
+import { linkCustomerToSessionFamily } from './messageHandler.js';
 
 export const LEGACY_CANONICAL_ORDER_SELECT = [
   'id', 'source', 'revision', 'status', 'total', 'observations', 'created_at',
@@ -177,6 +178,14 @@ export async function createManualZeloOrder(input: ManualOrderInput): Promise<Or
   if (ownerUserId) {
     const identity = await resolveCustomerForOrder({ empresaId: input.empresaId, ownerUserId, phone: input.customerPhone, observedName: input.customerName, source: 'manual' });
     pessoaId = identity.status === 'linked' || identity.status === 'created' ? identity.pessoaId : null;
+    if (pessoaId) {
+      try {
+        await linkCustomerToSessionFamily({ empresaId: input.empresaId, phone: input.customerPhone, pessoaId });
+      } catch (error) {
+        // CRM is enrichment; a session-linking failure must not invalidate the order.
+        console.error('[ZeloChat] customer session link unavailable; preserving order:', error);
+      }
+    }
   }
 
   const snapshots = {

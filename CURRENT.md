@@ -1,5 +1,13 @@
 # ZeloChat — Foco atual
 
+### Clientes — somente compradores viram ficha (2026-09-10)
+
+Entrega no working tree: mensagem recebida não cria ficha; se a ficha já existe,
+o telefone é resolvido primeiro por `pessoa_identities` e depois por contato PDV
+formatado. A resolução segue fail-open. Depois de resolver a pessoa no pedido,
+as sessões sem `pessoa_id` da família telefônica são carimbadas somente dentro da
+empresa. Sem migration, alteração de RPC ou changelog.
+
 ### Clientes — Parte B: chips de segmento e linha da lista (2026-09-10)
 
 Entrega concluída no working tree: o domínio compartilha a comparação de segmentos e os três chips; a leitura de contagens usa o RPC existente uma vez por segmento, a listagem carrega tags em lote sem desenhá-las, e contatos sem pedido agora distinguem conversa recente de ausência total. Não há migration, alteração de RPC ou entrada no changelog.
