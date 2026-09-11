@@ -12,6 +12,8 @@ import {
   findLatestOrderingState,
   handleCanonicalButtonOnce,
   buildOrderingEntryReply,
+  ENTRY_CARD_DEDUPE_WINDOW_MS,
+  isEntryDispatchSuppressed,
   isOrderingEntryTurn,
   isOrderingFollowUp,
   isOrderingFollowUpAnswer,
@@ -177,6 +179,18 @@ assert.equal(isOrderingEntryTurn('quero uma marmita'), false);
 const entryReply = buildOrderingEntryReply('https://menu.zelopdv.com.br/bemservido');
 assert.match(entryReply, /https:\/\/menu\.zelopdv\.com\.br\/bemservido/);
 assert.match(entryReply, /pedido por escrito/i);
+
+// REGRESSION 2026-09-10 (Bem Servido, prod): "Boa noite" then, 5s later,
+// "Está atendendo ?" — both greeting-shaped — sent the identical entry card
+// twice, 19s apart, because each landed in its own debounce cycle with its
+// own trigger message id (so the outbound idempotency key differed). No
+// prior dispatch → never suppressed. A dispatch a moment ago, still inside
+// the window → suppressed. Once the window has fully elapsed → no longer
+// suppressed, exactly like `recentlyHandled` in router.ts for button clicks.
+assert.equal(isEntryDispatchSuppressed(null, 1_000), false, 'no prior dispatch, nothing to suppress');
+assert.equal(isEntryDispatchSuppressed(1_000, 1_000 + 19_000), true, '19s later — the real regression window');
+assert.equal(isEntryDispatchSuppressed(1_000, 1_000 + ENTRY_CARD_DEDUPE_WINDOW_MS), true, 'right at the edge is still suppressed');
+assert.equal(isEntryDispatchSuppressed(1_000, 1_000 + ENTRY_CARD_DEDUPE_WINDOW_MS + 1), false, 'one ms past the window is a fresh greeting again');
 
 const dryRunCalls: string[] = [];
 const dryRunClient = {

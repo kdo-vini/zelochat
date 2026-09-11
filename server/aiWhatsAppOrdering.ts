@@ -20,6 +20,8 @@ import {
   isOrderingFollowUpAnswer,
   isOrderingEntryTurn,
   isOrderingGreeting,
+  isEntryDispatchSuppressed,
+  ENTRY_CARD_DEDUPE_WINDOW_MS,
   isOrderingSnapshotEditable,
   isDeliveryFeeQuestion,
   isZeloMenuOrderReceipt,
@@ -247,6 +249,34 @@ function metric(ctx: OrderingMetricContext): void {
   // Strict allowlist enforced by buildOrderingMetricLine's fixed shape:
   // never JID (only its hash), message text, names, addresses, token or cart.
   console.info('[AiOrderingMetric]', JSON.stringify(buildOrderingMetricLine(ctx)));
+}
+
+// FIX 2026-09-11: see `isEntryDispatchSuppressed` in the domain module for
+// why this exists — in short, two of the customer's own messages can each
+// independently reach the entry branch below and nothing else stops the same
+// card from being sent twice. In-memory, per-process, exactly like router.ts's
+// `recentlyHandled` guard for retried button clicks; a dryRun (simulator) turn
+// never touches it, since it never really dispatches anything.
+const lastEntryDispatchAt = new Map<string, number>();
+
+// unref: this file is imported by the test suite too, and an unref'd
+// interval is invisible to the event loop's "anything still pending?" check —
+// it never keeps a short-lived script (or a test run) alive on its own,
+// exactly like it wouldn't matter either way in the real server, which has
+// the HTTP listener for that.
+setInterval(() => {
+  const cutoff = Date.now() - ENTRY_CARD_DEDUPE_WINDOW_MS;
+  for (const [key, ts] of lastEntryDispatchAt) {
+    if (ts < cutoff) lastEntryDispatchAt.delete(key);
+  }
+}, 60_000).unref();
+
+function entryDispatchKey(empresaId: string, jid: string): string {
+  return `${empresaId}:${jid}`;
+}
+
+function markEntryDispatched(empresaId: string, jid: string): void {
+  lastEntryDispatchAt.set(entryDispatchKey(empresaId, jid), Date.now());
 }
 
 async function dispatchAiPayload(
@@ -844,15 +874,26 @@ export async function tryHandleAiWhatsAppOrdering(
   let entryResponseText: string | undefined;
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
     const response = buildOrderingEntryPayload(entry.menuUrl);
-    try {
-      await dispatchAiPayload(permit, response, 'entry', dryRun, isPermitCurrent);
+    // FIX 2026-09-11: a second greeting-shaped message from the same
+    // customer, minutes (or even seconds) apart, must never re-send the
+    // identical card — see `isEntryDispatchSuppressed`.
+    if (!dryRun && isEntryDispatchSuppressed(lastEntryDispatchAt.get(entryDispatchKey(empresaId, jid)), Date.now())) {
       entryDispatched = true;
       entryResponseText = response.text;
-      metric({ ...metricBase, stage: 'entry', outcome: 'sent' });
-      if (isOrderingGreeting(text)) return { handled: true, response: response.text };
-    } catch (error) {
-      if (error instanceof OrderingSuppressedError) return { handled: true };
-      throw error;
+      metric({ ...metricBase, stage: 'entry', outcome: 'duplicate_suppressed' });
+      if (isOrderingGreeting(text)) return { handled: true, response: entryResponseText };
+    } else {
+      try {
+        await dispatchAiPayload(permit, response, 'entry', dryRun, isPermitCurrent);
+        if (!dryRun) markEntryDispatched(empresaId, jid);
+        entryDispatched = true;
+        entryResponseText = response.text;
+        metric({ ...metricBase, stage: 'entry', outcome: 'sent' });
+        if (isOrderingGreeting(text)) return { handled: true, response: response.text };
+      } catch (error) {
+        if (error instanceof OrderingSuppressedError) return { handled: true };
+        throw error;
+      }
     }
   }
   // FIX 2026-09-09: a tap on our own "Pedir por aqui" button arrived as plain
@@ -894,7 +935,15 @@ export async function tryHandleAiWhatsAppOrdering(
       return { handled: false };
     }
     const response = buildOrderingEntryPayload(entry.menuUrl);
+    // Same duplicate-guard as the entry branch above — a menu request that
+    // lands in its own debounce cycle right after the entry card already
+    // went out must not resend it.
+    if (!dryRun && isEntryDispatchSuppressed(lastEntryDispatchAt.get(entryDispatchKey(empresaId, jid)), Date.now())) {
+      metric({ ...metricBase, stage: 'entry', outcome: `${outcome}_duplicate_suppressed` });
+      return { handled: true, response: response.text };
+    }
     await dispatchAiPayload(permit, response, 'menu-request', dryRun, isPermitCurrent);
+    if (!dryRun) markEntryDispatched(empresaId, jid);
     metric({ ...metricBase, stage: 'entry', outcome });
     return { handled: true, response: response.text };
   };

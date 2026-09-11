@@ -59,6 +59,31 @@ export function isOrderingGreeting(text: string): boolean {
 }
 
 /**
+ * FIX 2026-09-11: two customer messages that each independently read as a
+ * greeting ("Boa noite" then, seconds later, "Está atendendo?") can land in
+ * two SEPARATE debounce cycles instead of the one `replyDebouncer.ts` is
+ * supposed to coalesce them into — a slow/delayed webhook delivery is enough
+ * to split them. `dispatchAiPayload`'s idempotency key is scoped to the
+ * triggering message id, so two different messages get two different keys:
+ * nothing stopped the identical "Estamos atendendo..." card from going out
+ * twice in a row (Bem Servido, 2026-09-10 — customer got it 19s apart and
+ * never replied again). This mirrors the `recentlyHandled` guard router.ts
+ * already applies to retried button clicks — a short per-conversation window
+ * during which a second entry dispatch is suppressed instead of resent.
+ */
+export const ENTRY_CARD_DEDUPE_WINDOW_MS = 45_000;
+
+/** True when the entry card was already dispatched to this conversation recently enough to skip sending it again. */
+export function isEntryDispatchSuppressed(
+  lastDispatchedAtMs: number | null | undefined,
+  nowMs: number,
+  windowMs: number = ENTRY_CARD_DEDUPE_WINDOW_MS,
+): boolean {
+  if (lastDispatchedAtMs == null) return false;
+  return nowMs - lastDispatchedAtMs <= windowMs;
+}
+
+/**
  * Entry copy retained for old callers.  The live handler uses the structured
  * payload below so the entry message has exactly one action button.
  */

@@ -2289,14 +2289,17 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
             notify_customer_out_for_delivery?: boolean;
           } | null;
 
+          const isDelivery = !!existing.deliveryAddress;
+          // out_for_delivery não existe pra retirada — sem isso, um pedido de
+          // retirada arrastado até essa coluna manda "saiu pra entrega" pro
+          // cliente segundos depois de "pronto pra retirada, pode vir buscar".
           const flagOn =
             (status === 'preparing' && flags?.notify_customer_preparing) ||
             (status === 'ready' && flags?.notify_customer_ready) ||
-            (status === 'out_for_delivery' && flags?.notify_customer_out_for_delivery);
+            (status === 'out_for_delivery' && isDelivery && flags?.notify_customer_out_for_delivery);
 
           if (flagOn) {
             const customerName = existing.customerName.split(' ')[0] || 'tudo bem';
-            const isDelivery = !!existing.deliveryAddress;
             const templates: Record<string, string> = {
               preparing: `Olá ${customerName}! 👨‍🍳 Recebemos seu pedido e já estamos preparando. Em breve avisamos quando estiver pronto!`,
               ready: isDelivery
