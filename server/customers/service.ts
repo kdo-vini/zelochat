@@ -1,4 +1,4 @@
-import type { CustomerDetail, CustomerFilters, CustomerSummary, CustomerTimelineEntry } from '../../src/types.js';
+import type { CustomerDetail, CustomerFilters, CustomerOrder, CustomerSummary, CustomerTimelineEntry } from '../../src/types.js';
 import {
   decodeCustomerCursor,
   decodeTimelineCursor,
@@ -35,9 +35,126 @@ export function buildCustomerRelationship(input: { blockedAt?: string | null; bl
     automations: Math.max(0, Number(input.automations ?? 0)),
   };
 }
+export type CustomerOrderOrigin = 'delivery' | 'counter';
+export interface CustomerDeliveredOrderAggregateRow { pessoa_id?: unknown; total?: unknown; closed_at?: unknown; created_at?: unknown; }
+export interface CustomerCounterSaleAggregateRow { id_cliente?: unknown; id_pessoa?: unknown; valor_total?: unknown; data_hora?: unknown; }
+export interface CustomerOrderListItem extends Omit<CustomerOrder, 'createdAt'> { created_at: string; closed_at?: string | null; }
+
+type CustomerOrderAggregate = { count: number; total: number; lastDeliveredAt: string | null };
+
+function numericAmount(value: unknown): number {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function latestTimestamp(current: string | null, candidate: unknown): string | null {
+  if (typeof candidate !== 'string' || !candidate) return current;
+  if (!current) return candidate;
+  const currentTime = orderTimestampMicros(current);
+  const candidateTime = orderTimestampMicros(candidate);
+  if (currentTime !== null && candidateTime !== null) return candidateTime > currentTime ? candidate : current;
+  return candidate > current ? candidate : current;
+}
+
+export function aggregateCustomerOrderRows(
+  deliveredRows: readonly CustomerDeliveredOrderAggregateRow[],
+  counterSaleRows: readonly CustomerCounterSaleAggregateRow[],
+): Record<string, CustomerOrderAggregate> {
+  const result: Record<string, CustomerOrderAggregate> = {};
+  const add = (personId: unknown, total: unknown, occurredAt: unknown) => {
+    if (typeof personId !== 'string' || !personId) return;
+    const current = result[personId] ?? { count: 0, total: 0, lastDeliveredAt: null };
+    current.count += 1;
+    current.total += numericAmount(total);
+    current.lastDeliveredAt = latestTimestamp(current.lastDeliveredAt, occurredAt);
+    result[personId] = current;
+  };
+  for (const row of deliveredRows) add(row.pessoa_id, row.total, row.closed_at ?? row.created_at);
+  for (const row of counterSaleRows) add(row.id_cliente ?? row.id_pessoa, row.valor_total, row.data_hora);
+  return result;
+}
+
+function orderTimestampMicros(value: string): bigint | null {
+  const fractionMatch = /\.([0-9]{1,6})(?=(?:Z|[+-][0-9]{2}:[0-9]{2})$)/u.exec(value);
+  const base = fractionMatch ? value.replace(/\.[0-9]{1,6}(?=(?:Z|[+-][0-9]{2}:[0-9]{2})$)/u, '') : value;
+  const baseMilliseconds = Date.parse(base);
+  if (!Number.isFinite(baseMilliseconds)) return null;
+  return BigInt(baseMilliseconds) * 1000n + BigInt((fractionMatch?.[1] ?? '').padEnd(6, '0') || 0);
+}
+
+function compareOrderTimestamps(left: string, right: string): number {
+  const leftMicros = orderTimestampMicros(left);
+  const rightMicros = orderTimestampMicros(right);
+  if (leftMicros !== null && rightMicros !== null) return leftMicros < rightMicros ? -1 : leftMicros > rightMicros ? 1 : 0;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function orderOriginFromId(id: string): CustomerOrderOrigin {
+  return /^\d+$/u.test(id) ? 'counter' : 'delivery';
+}
+
+function compareOrderIds(left: string, right: string, origin: CustomerOrderOrigin): number {
+  if (origin === 'counter' && /^\d+$/u.test(left) && /^\d+$/u.test(right)) {
+    const leftId = BigInt(left);
+    const rightId = BigInt(right);
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  }
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function orderComesAfterCursor(item: CustomerOrderListItem, cursor: { occurredAt: string; id: string }): boolean {
+  const cursorOrigin = orderOriginFromId(cursor.id);
+  const timestampComparison = compareOrderTimestamps(item.created_at, cursor.occurredAt);
+  if (timestampComparison !== 0) return timestampComparison < 0;
+  const itemOriginRank = item.origin === 'delivery' ? 0 : 1;
+  const cursorOriginRank = cursorOrigin === 'delivery' ? 0 : 1;
+  if (itemOriginRank !== cursorOriginRank) return itemOriginRank > cursorOriginRank;
+  return compareOrderIds(item.id, cursor.id, item.origin) < 0;
+}
+
+function compareCustomerOrderItems(left: CustomerOrderListItem, right: CustomerOrderListItem): number {
+  const timestampComparison = compareOrderTimestamps(right.created_at, left.created_at);
+  if (timestampComparison !== 0) return timestampComparison;
+  const leftOriginRank = left.origin === 'delivery' ? 0 : 1;
+  const rightOriginRank = right.origin === 'delivery' ? 0 : 1;
+  if (leftOriginRank !== rightOriginRank) return leftOriginRank - rightOriginRank;
+  return -compareOrderIds(left.id, right.id, left.origin);
+}
+
+type CustomerDeliveryListRow = { id?: unknown; status?: unknown; total?: unknown; created_at?: unknown; closed_at?: unknown };
+type CustomerCounterSaleListRow = { id?: unknown; id_cliente?: unknown; id_pessoa?: unknown; valor_total?: unknown; data_hora?: unknown };
+
+function normalizeCustomerDeliveryOrder(row: CustomerDeliveryListRow): CustomerOrderListItem | null {
+  if (typeof row.id !== 'string' || typeof row.created_at !== 'string' || !row.created_at) return null;
+  return { id: row.id, status: typeof row.status === 'string' ? row.status : null, total: numericAmount(row.total), created_at: row.created_at, closed_at: typeof row.closed_at === 'string' ? row.closed_at : null, origin: 'delivery' };
+}
+
+function normalizeCustomerCounterSale(row: CustomerCounterSaleListRow): CustomerOrderListItem | null {
+  if ((typeof row.id !== 'string' && typeof row.id !== 'number' && typeof row.id !== 'bigint') || typeof row.data_hora !== 'string' || !row.data_hora) return null;
+  return { id: String(row.id), status: null, total: numericAmount(row.valor_total), created_at: row.data_hora, origin: 'counter' };
+}
+
+export function mergeCustomerOrderRows(
+  deliveredRows: readonly CustomerDeliveryListRow[],
+  counterSaleRows: readonly CustomerCounterSaleListRow[],
+  cursor: { occurredAt: string; kind: 'message' | 'order'; id: string } | null = null,
+  limit = 30,
+): { items: CustomerOrderListItem[]; nextCursor: string | null; hasMore: boolean } {
+  if (cursor?.kind && cursor.kind !== 'order') throw new Error('Cursor inválido');
+  const pageLimit = Math.min(Math.max(limit, 1), 100);
+  const items = [...deliveredRows.map(normalizeCustomerDeliveryOrder), ...counterSaleRows.map(normalizeCustomerCounterSale)]
+    .filter((item): item is CustomerOrderListItem => item !== null)
+    .filter((item) => !cursor || orderComesAfterCursor(item, cursor))
+    .sort(compareCustomerOrderItems);
+  const page = items.slice(0, pageLimit);
+  const hasMore = items.length > pageLimit;
+  const last = page[page.length - 1];
+  return { items: page, nextCursor: hasMore && last ? encodeTimelineCursor(last.created_at, 'order', last.id) : null, hasMore };
+}
+
 export interface CustomerReadRepository {
   listPeople(empresaId: string, ownerUserId: string, filters: CustomerFilters, limit: number): Promise<any[]>;
-  countOrders(empresaId: string, personIds: string[]): Promise<Record<string, { count: number; total: number; lastDeliveredAt: string | null }> >;
+  countOrders(empresaId: string, personIds: string[], ownerUserId: string): Promise<Record<string, { count: number; total: number; lastDeliveredAt: string | null }> >;
   lastConversations(empresaId: string, personIds: string[]): Promise<Record<string, string | null>>;
   listTags?(empresaId: string, personIds: string[]): Promise<Record<string, string[]>>;
   getPerson(empresaId: string, ownerUserId: string, personId: string): Promise<any | null>;
@@ -138,11 +255,21 @@ const defaultRepository: CustomerReadRepository = {
     if (!filters.cursor && matchingRows[0]) matchingRows[0] = { ...matchingRows[0], total_count: matchingRows.length };
     return matchingRows;
   },
-  async countOrders(empresaId, personIds) {
+  async countOrders(empresaId, personIds, ownerUserId) {
     if (!personIds.length) return {};
-    const { data, error } = await getServiceSupabase().from('zelo_orders').select('pessoa_id,total,status,closed_at,created_at').eq('empresa_id', empresaId).in('pessoa_id', personIds).eq('status', 'delivered').order('closed_at', { ascending: false }).limit(Math.min(5000, Math.max(100, personIds.length * 100)));
-    if (error) throw error; const result: Record<string, { count: number; total: number; lastDeliveredAt: string | null }> = {};
-    for (const row of data ?? []) { const current = result[row.pessoa_id] ?? { count: 0, total: 0, lastDeliveredAt: null }; current.count++; current.total += Number(row.total ?? 0); current.lastDeliveredAt = current.lastDeliveredAt && current.lastDeliveredAt > (row.closed_at ?? row.created_at) ? current.lastDeliveredAt : (row.closed_at ?? row.created_at); result[row.pessoa_id] = current; } return result;
+    const supabase = getServiceSupabase();
+    const batchLimit = Math.min(5000, Math.max(100, personIds.length * 100));
+    const [deliveredResponse, counterResponse] = await Promise.all([
+      supabase.from('zelo_orders').select('pessoa_id,total,status,closed_at,created_at').eq('empresa_id', empresaId).in('pessoa_id', personIds).eq('status', 'delivered').order('closed_at', { ascending: false }).limit(batchLimit),
+      supabase.from('vendas').select('id_cliente,id_pessoa,valor_total,data_hora').or(`id_cliente.in.(${personIds.join(',')}),id_pessoa.in.(${personIds.join(',')})`).eq('id_usuario', ownerUserId).limit(batchLimit),
+    ]);
+    if (deliveredResponse.error) throw deliveredResponse.error;
+    if (counterResponse.error) throw counterResponse.error;
+    const counterRows = (counterResponse.data ?? []).filter((row) => {
+      const personId = row.id_cliente ?? row.id_pessoa;
+      return typeof personId === 'string' && personIds.includes(personId);
+    });
+    return aggregateCustomerOrderRows(deliveredResponse.data ?? [], counterRows);
   },
   async lastConversations(empresaId, personIds) {
     const { data, error } = await getServiceSupabase().from('zelochat_sessions').select('pessoa_id,last_message_time').eq('empresa_id', empresaId).in('pessoa_id', personIds).order('last_message_time', { ascending: false }).limit(Math.min(5000, Math.max(100, personIds.length * 100)));
@@ -170,7 +297,7 @@ export async function listCustomers(empresaId: string, ownerUserId: string, filt
   const ids = rows.map((row) => row.id);
   const aggregated = rows.some((row) => row.total_orders != null);
   const [orders, conversations, tagsByPerson] = await Promise.all([
-    aggregated ? Promise.resolve({}) : repository.countOrders(empresaId, ids),
+    aggregated ? Promise.resolve({}) : repository.countOrders(empresaId, ids, ownerUserId),
     aggregated ? Promise.resolve({}) : repository.lastConversations(empresaId, ids),
     repository.listTags ? repository.listTags(empresaId, ids) : Promise.resolve({}),
   ]);
@@ -256,10 +383,10 @@ export async function getCustomerDetail(empresaId: string, ownerUserId: string, 
   const birthday = row.aniversario_mes ? { day: Number(row.aniversario_dia ?? 0), month: Number(row.aniversario_mes), year: row.aniversario_ano ? Number(row.aniversario_ano) : null } : null;
   const relationshipDto = buildCustomerRelationship({ blockedAt: relationship?.whatsapp_blocked_at, blockReason: relationship?.whatsapp_block_reason, optedOut: Boolean(optOut), campaigns: campaignCount, automations: automationCount });
   const [orderPage, orderingContext] = await Promise.all([
-    listCustomerOrders(empresaId, personId, null, 30),
+    listCustomerOrders(empresaId, personId, null, 30, ownerUserId),
     CustomerOrderingContext.get({ empresaId, pessoaId: personId }),
   ]);
-  const orders = orderPage.items.map((order) => ({ id: order.id, createdAt: order.created_at, status: order.status, total: Number(order.total ?? 0) }));
+  const orders = orderPage.items.map((order) => ({ id: order.id, createdAt: order.created_at, status: order.status, total: Number(order.total ?? 0), origin: order.origin }));
   return { ...summary, tags, birthday, aniversario: birthday, notes: relationship?.internal_notes ?? null, internalNotes: relationship?.internal_notes ?? null, automaticSummary: relationship?.ai_summary ?? null, aiSummary: relationship?.ai_summary ?? null, relationship: relationshipDto, whatsappBlockedAt: relationship?.whatsapp_blocked_at ?? null, whatsappBlockReason: relationship?.whatsapp_block_reason ?? null, lastManualContactAt: relationship?.last_manual_contact_at ?? null, orders, ordersNextCursor: orderPage.nextCursor, ordersHasMore: orderPage.hasMore, sessions, primaryJid, orderingContext };
 }
 
@@ -277,11 +404,33 @@ export async function listCustomerMessages(empresaId: string, personId: string, 
   const { data, error } = await query; if (error) throw error; const rows = data ?? []; const hasMore = rows.length > limit; const last = rows[limit - 1]; const items = rows.slice(0, limit).map((row) => { const parsed = parseStructuredMessage(row.content ?? ''); return { ...row, content: parsed.text || null, attachment: parsed.attachment ?? null }; }); return { items, nextCursor: hasMore && last ? encodeTimelineCursor(last.sent_at, 'message', last.id) : null, hasMore };
 }
 
-export async function listCustomerOrders(empresaId: string, personId: string, cursor: string | null, limit = 30) {
-  let query = getServiceSupabase().from('zelo_orders').select('id,status,total,created_at,closed_at').eq('empresa_id', empresaId).eq('pessoa_id', personId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(Math.min(limit, 100) + 1);
+export async function listCustomerOrders(empresaId: string, personId: string, cursor: string | null, limit = 30, ownerUserId?: string) {
   const decoded = cursor ? decodeTimelineCursor(cursor) : null;
-  if (decoded) query = query.or(`created_at.lt.${decoded.occurredAt},and(created_at.eq.${decoded.occurredAt},id.lt.${decoded.id})`);
-  const { data, error } = await query; if (error) throw error; const rows = data ?? []; const hasMore = rows.length > limit; const last = rows[limit - 1]; return { items: rows.slice(0, limit), nextCursor: hasMore && last ? encodeTimelineCursor(last.created_at, 'order', last.id) : null, hasMore };
+  if (decoded?.kind && decoded.kind !== 'order') throw new Error('Cursor inválido');
+  const pageLimit = Math.min(Math.max(limit, 1), 100);
+  const supabase = getServiceSupabase();
+  let deliveryQuery = supabase.from('zelo_orders').select('id,status,total,created_at,closed_at').eq('empresa_id', empresaId).eq('pessoa_id', personId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageLimit + 1);
+  let counterQuery = ownerUserId
+    ? supabase.from('vendas').select('id,id_cliente,id_pessoa,valor_total,data_hora').or(`id_cliente.eq.${personId},id_pessoa.eq.${personId}`).eq('id_usuario', ownerUserId).order('data_hora', { ascending: false }).order('id', { ascending: false }).limit(pageLimit + 1)
+    : null;
+  if (decoded) {
+    const counterCursor = orderOriginFromId(decoded.id) === 'counter';
+    if (counterCursor) {
+      deliveryQuery = deliveryQuery.lt('created_at', decoded.occurredAt);
+      if (counterQuery) counterQuery = counterQuery.or(`data_hora.lt.${decoded.occurredAt},and(data_hora.eq.${decoded.occurredAt},id.lt.${decoded.id})`);
+    } else {
+      deliveryQuery = deliveryQuery.or(`created_at.lt.${decoded.occurredAt},and(created_at.eq.${decoded.occurredAt},id.lt.${decoded.id})`);
+      if (counterQuery) counterQuery = counterQuery.lte('data_hora', decoded.occurredAt);
+    }
+  }
+  const [deliveredResponse, counterResponse] = await Promise.all([
+    deliveryQuery,
+    counterQuery ?? Promise.resolve({ data: [], error: null }),
+  ]);
+  if (deliveredResponse.error) throw deliveredResponse.error;
+  if (counterResponse.error) throw counterResponse.error;
+  const counterRows = (counterResponse.data ?? []).filter((row) => (row.id_cliente ?? row.id_pessoa) === personId);
+  return mergeCustomerOrderRows(deliveredResponse.data ?? [], counterRows, decoded, pageLimit);
 }
 
 export async function listCustomerTimeline(empresaId: string, ownerUserId: string, personId: string, cursor: string | null, limit = 30) {

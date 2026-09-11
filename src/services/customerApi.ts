@@ -9,6 +9,7 @@ import type {
   CustomerOrderingHabitualTime,
   CustomerOrderingLastOrder,
   CustomerOrderingOverrides,
+  CustomerOrder,
 } from '../types';
 
 export type {
@@ -79,7 +80,7 @@ export interface CustomerDetail extends CustomerSummary {
   notes: string | null;
   automaticSummary: string | null;
   relationship: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
-  orders: Array<{ id: string; createdAt: string; status: string; total: number }>;
+  orders: CustomerOrder[];
   ordersNextCursor: string | null;
   ordersHasMore: boolean;
   primaryJid: string | null;
@@ -308,7 +309,7 @@ export async function fetchCustomer(token: string, personId: string): Promise<Cu
   const response = await apiFetch(apiUrl(`/api/customers/${encodeURIComponent(personId)}`), { headers: authHeaders(token) });
   const body = await parseCustomerResponse<Partial<CustomerDetail> & Record<string, unknown>>(response);
   const summary = normalizeCustomerSummary(body);
-  return { ...summary, birthday: (body.birthday ?? body.aniversario ?? null) as CustomerDetail['birthday'], origin: (body.origin as string | null | undefined) ?? null, notes: (body.notes ?? body.internalNotes ?? null) as string | null, automaticSummary: (body.automaticSummary ?? body.aiSummary ?? null) as string | null, relationship: (body.relationship ?? { blocked: Boolean(body.whatsappBlockedAt), blockReason: body.whatsappBlockReason ?? null, campaigns: 0, automations: 0 }) as CustomerDetail['relationship'], orders: Array.isArray(body.orders) ? body.orders as CustomerDetail['orders'] : [], ordersNextCursor: typeof body.ordersNextCursor === 'string' ? body.ordersNextCursor : null, ordersHasMore: body.ordersHasMore === true, primaryJid: (body.primaryJid as string | null | undefined) ?? null, sessions: Array.isArray(body.sessions) ? body.sessions as CustomerDetail['sessions'] : [], orderingContext: normalizeCustomerOrderingContext(body.orderingContext) };
+  return { ...summary, birthday: (body.birthday ?? body.aniversario ?? null) as CustomerDetail['birthday'], origin: (body.origin as string | null | undefined) ?? null, notes: (body.notes ?? body.internalNotes ?? null) as string | null, automaticSummary: (body.automaticSummary ?? body.aiSummary ?? null) as string | null, relationship: (body.relationship ?? { blocked: Boolean(body.whatsappBlockedAt), blockReason: body.whatsappBlockReason ?? null, campaigns: 0, automations: 0 }) as CustomerDetail['relationship'], orders: Array.isArray(body.orders) ? body.orders.map(normalizeCustomerOrder) : [], ordersNextCursor: typeof body.ordersNextCursor === 'string' ? body.ordersNextCursor : null, ordersHasMore: body.ordersHasMore === true, primaryJid: (body.primaryJid as string | null | undefined) ?? null, sessions: Array.isArray(body.sessions) ? body.sessions as CustomerDetail['sessions'] : [], orderingContext: normalizeCustomerOrderingContext(body.orderingContext) };
 }
 
 export type CustomerPatch = Partial<Pick<CustomerDetail, 'name' | 'tags' | 'notes'>> & { birthday?: CustomerDetail['birthday']; phones?: string[]; whatsappBlocked?: boolean };
@@ -355,14 +356,17 @@ export async function fetchCustomerMessages(token: string, personId: string, cur
   return parseCustomerResponse<CustomerMessagesPage>(response);
 }
 
-type CustomerOrderApiRow = { id?: unknown; status?: unknown; total?: unknown; created_at?: unknown; createdAt?: unknown };
+type CustomerOrderApiRow = { id?: unknown; status?: unknown; total?: unknown; created_at?: unknown; createdAt?: unknown; origin?: unknown };
 
-function normalizeCustomerOrder(value: CustomerOrderApiRow): CustomerDetail['orders'][number] {
+function normalizeCustomerOrder(value: unknown): CustomerDetail['orders'][number] {
+  const row = value && typeof value === 'object' ? value as CustomerOrderApiRow : {};
+  const total = Number(row.total ?? 0);
   return {
-    id: String(value.id ?? ''),
-    createdAt: String(value.created_at ?? value.createdAt ?? ''),
-    status: String(value.status ?? ''),
-    total: Number(value.total ?? 0),
+    id: String(row.id ?? ''),
+    createdAt: String(row.created_at ?? row.createdAt ?? ''),
+    status: typeof row.status === 'string' ? row.status : null,
+    total: Number.isFinite(total) ? total : 0,
+    origin: row.origin === 'counter' ? 'counter' : 'delivery',
   };
 }
 

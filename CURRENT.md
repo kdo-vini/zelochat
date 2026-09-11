@@ -1,5 +1,12 @@
 # ZeloChat — Foco atual
 
+### Clientes — vendas de balcão contam como compra (2026-09-10)
+
+Implementação preparada no working tree: os agregados, a contagem alternativa e a
+aba de histórico passam a unir pedidos entregues com vendas registradas no balcão,
+sem usar o caderno de fiado. A migration `070_customer_aggregates_include_counter_sales.sql`
+está escrita, mas ainda não foi aplicada; fica pendente para o deploy.
+
 ### Clientes — somente compradores viram ficha (2026-09-10)
 
 Entrega no working tree: mensagem recebida não cria ficha; se a ficha já existe,

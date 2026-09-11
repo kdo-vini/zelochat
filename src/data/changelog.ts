@@ -18,6 +18,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-09-10',
     category: 'medium',
+    title: 'Vendas de balcão entram no histórico do cliente',
+    description: 'Compras feitas diretamente no balcão agora entram na contagem, no total gasto e no histórico do cliente, junto com os pedidos entregues.',
+  },
+  {
+    date: '2026-09-10',
+    category: 'medium',
     title: 'Grupos de clientes logo na entrada',
     description: 'Ao abrir Clientes você já vê quantas pessoas sumiram, quantas compraram uma vez só e quantas são as melhores — um toque filtra a lista por esse grupo. E quem ainda não comprou, mas conversou com a loja, agora aparece como contato recente em vez de "nunca comprou".',
   },

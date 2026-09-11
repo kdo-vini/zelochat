@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Clientes — compras incluem vendas de balcão — 2026-09-10
+
+- 🟡 CRM-ORDERS-C — Clientes só contabilizavam pedidos entregues, deixando vendas concluídas no balcão como “Nunca comprou” → migration 070, caminho alternativo do serviço e histórico unem as duas fontes por pessoa, com filtro do proprietário, cursor compartilhado e origem `Balcão`; a migration aguarda aplicação junto do deploy — `supabase/migrations/070_customer_aggregates_include_counter_sales.sql:1`, `server/customers/service.ts:38`, `src/components/customers/CustomerOrdersTab.tsx:38`, `tests/customerCounterSales.test.ts:1`
+
 ## Clientes — somente compradores viram ficha — 2026-09-10
 
 - ✅ CRM-IDENTITY-001 — mensagem no WhatsApp criava ficha mesmo sem pedido e pedidos deixavam conversas anteriores soltas → inbound agora apenas vincula fichas existentes, com fallback para contatos PDV formatados; pedido carimba a família de sessões nulas no tenant, sempre como enriquecimento fail-open — `server/customers/identity.ts:43`, `server/customers/repository.ts:56`, `server/messageHandler.ts:1219`, `server/canonicalOrders.ts:181`, `server/zelomenuCartSessions.ts:1032`

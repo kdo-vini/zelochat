@@ -208,11 +208,21 @@ export interface CustomerDetail extends CustomerSummary {
   notes?: string | null;
   automaticSummary?: string | null;
   relationship?: { blocked: boolean; blockReason: string | null; optedOut?: boolean; campaigns: number; automations: number };
-  orders?: Array<{ id: string; createdAt: string; status: string; total: number }>;
+  orders?: CustomerOrder[];
   ordersNextCursor: string | null;
   ordersHasMore: boolean;
   primaryJid?: string | null;
   orderingContext?: CustomerOrderingContextSnapshot;
+}
+
+export type CustomerOrderOrigin = 'delivery' | 'counter';
+
+export interface CustomerOrder {
+  id: string;
+  createdAt: string;
+  status: string | null;
+  total: number;
+  origin: CustomerOrderOrigin;
 }
 
 export interface CustomerFilters {

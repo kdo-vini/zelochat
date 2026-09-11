@@ -177,11 +177,14 @@ export function decodeCustomerCursor(cursor: string | null | undefined, expected
 export function encodeTimelineCursor(occurredAt: string, kind: 'message' | 'order', id: string): string {
   return Buffer.from(`${occurredAt}|${kind}|${id}`).toString('base64url');
 }
-export function decodeTimelineCursor(cursor: string | null | undefined): { occurredAt: string; kind: 'message' | 'order'; id: string } | null {
+export type TimelineCursor = { occurredAt: string; kind: 'message' | 'order'; id: string };
+
+export function decodeTimelineCursor(cursor: string | null | undefined): TimelineCursor | null {
   if (!cursor || !/^[A-Za-z0-9_-]{8,300}$/u.test(cursor)) throw new Error('Cursor inválido');
   const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
   if (parts.length !== 3) throw new Error('Cursor inválido');
   const [occurredAt, kind, id] = parts;
-  if (!occurredAt || (kind !== 'message' && kind !== 'order') || !id || !isCanonicalTimestamp(occurredAt) || !validCustomerId(id)) throw new Error('Cursor inválido');
+  if (!occurredAt || (kind !== 'message' && kind !== 'order') || !id || !isCanonicalTimestamp(occurredAt)) throw new Error('Cursor inválido');
+  if (kind === 'message' ? !validCustomerId(id) : !validCustomerId(id) && !/^\d+$/u.test(id)) throw new Error('Cursor inválido');
   return { occurredAt, kind, id };
 }
