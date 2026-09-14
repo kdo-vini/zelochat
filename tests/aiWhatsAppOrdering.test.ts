@@ -7,6 +7,8 @@ import {
   buildCatalogSearchQuery,
   buildConfirmationButtons,
   classifyOrderingTurn,
+  isOrderingQuestion,
+  isSingleProductCatalogAmbiguous,
   canonicalButtonMessageKey,
   findPriorOrderingQuery,
   findLatestOrderingState,
@@ -45,6 +47,7 @@ import {
   nextOrderingStatePatch,
   type OrderingClient,
 } from '../server/aiWhatsAppOrdering.js';
+import { buildPlannerHistory } from '../server/aiWhatsAppOrdering.js';
 import { composeOrderingTurn } from '../server/orderingTurnComposer.js';
 import type { StoredSession } from '../server/messageHandler.js';
 import type { AiTurnPermit } from '../server/conversationControl.js';
@@ -168,6 +171,34 @@ assert.notEqual(classifyOrderingTurn('confirmar mais tarde?', true).kind, 'confi
 // Partial cancel — "só a coca"/naming an item — is an edit, not a full cancel.
 assert.equal(classifyOrderingTurn('cancela a coca', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('cancela a entrega, vou retirar', true).kind, 'alter');
+// A customer naming what they want is ordering; asking about the menu is not.
+assert.equal(isOrderingQuestion('tem penne?'), true);
+assert.equal(isOrderingQuestion('Qual massa você tem'), true);
+assert.equal(isOrderingQuestion('vc tem suco de laranja'), true);
+assert.equal(isOrderingQuestion('A entrega é 10?'), true, 'normalize() strips the trailing "?", the raw text still counts');
+assert.equal(isOrderingQuestion('macarrão penne com azeitona'), false);
+assert.equal(isOrderingQuestion('Suco não, só marmita mesmo, tá? Pode ser azeitona, pode ser bacon.'), false, 'a trailing tag question is not a menu question');
+assert.equal(isOrderingQuestion('penne com bacon, ok?'), false);
+// Options of one dish are a specification; different dishes stay ambiguous.
+assert.equal(isSingleProductCatalogAmbiguous({ ambiguous: true, results: [{ productId: 1 } as any, { productId: 1 } as any] }), true);
+assert.equal(isSingleProductCatalogAmbiguous({ ambiguous: true, results: [{ productId: 1 } as any, { productId: 2 } as any] }), false);
+assert.equal(isSingleProductCatalogAmbiguous({ ambiguous: false, results: [{ productId: 1 } as any] }), false);
+assert.equal(isSingleProductCatalogAmbiguous({ ambiguous: true, results: [] }), false);
+// The planner hears earlier audios through their transcript and never gets
+// raw media JSON or empty turns.
+assert.deepEqual(buildPlannerHistory({
+  messages: [
+    { id: 'h1', role: 'user', kind: 'audio', content: '__ZELOCHAT_MEDIA__:{"version":1}', preview: '[Áudio]', audio_transcript: 'macarrão penne', audio_transcript_status: 'done', timestamp: '' },
+    { id: 'h2', role: 'user', kind: 'audio', content: '__ZELOCHAT_MEDIA__:{"version":1}', preview: '[Áudio]', audio_transcript: null, audio_transcript_status: 'pending', timestamp: '' },
+    { id: 'h3', role: 'user', kind: 'image', content: '__ZELOCHAT_MEDIA__:{"version":1,"dataUrl":"https://x"}', preview: '[Imagem] olha esse', timestamp: '' },
+    { id: 'h4', role: 'tool', kind: 'text', content: 'internal', preview: 'internal', timestamp: '' },
+    { id: 'h5', role: 'assistant', kind: 'text', content: 'Anotei!', preview: 'Anotei!', timestamp: '' },
+  ],
+} as any), [
+  { role: 'user', content: 'macarrão penne' },
+  { role: 'user', content: '[Imagem] olha esse' },
+  { role: 'assistant', content: 'Anotei!' },
+]);
 // Prompt-injection text never confirms — no accepted PT-BR token, no
 // English "confirm the order" bypass.
 assert.notEqual(
@@ -755,7 +786,7 @@ assert.match(accompanimentReply, /Acompanhamento 1/);
 assert.match(accompanimentReply, /Acompanhamento 12/);
 
 const orderingHandlerSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
-assert.match(orderingHandlerSource, /wantsOrder\s*&&\s*!catalog\.ambiguous/, 'ambiguous catalog candidates never reach cart planning');
+assert.match(orderingHandlerSource, /isSingleProductCatalogAmbiguous\(catalog\)/, 'same-product ambiguous candidates reach cart planning');
 assert.doesNotMatch(orderingHandlerSource, /sendTextMessage|sendButtonMessage/, 'canonical ordering must use the durable outbound dispatcher');
 // C4 / FN I1: every "summary vs. next requirement" decision must route
 // through the presenter-aware gate — the naive `readyForConfirmation &&

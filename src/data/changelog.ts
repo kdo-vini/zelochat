@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-14',
+    category: 'medium',
+    title: 'IA entende melhor pedidos por áudio e texto',
+    description: 'Quando o cliente descreve o pedido do jeito dele, como “macarrão penne com azeitona” ou num áudio, a IA agora monta o pedido direto na conversa, em vez de responder com a lista do cardápio.',
+  },
+  {
     date: '2026-09-10',
     category: 'medium',
     title: 'Vendas de balcão entram no histórico do cliente',

@@ -28,6 +28,9 @@ import {
   ZELOMENU_ORDER_RECEIPT_REPLY,
   isOrderingStartButtonText,
   mentionsMenu,
+  isExplicitHumanRequest,
+  isOrderingQuestion,
+  isSingleProductCatalogAmbiguous,
   AI_ORDER_START_REPLY,
   parseOrderingButton,
   renderCatalogReply,
@@ -587,10 +590,7 @@ async function planDraft(
   result: CatalogReplyResult,
   current: OrderingSnapshot | null,
 ): Promise<OrderingDraft | null> {
-  const history: ChatCompletionMessageParam[] = session.messages
-    .filter((message) => message.role === 'user' || message.role === 'assistant')
-    .slice(-10)
-    .map((message) => ({ role: message.role as 'user' | 'assistant', content: message.content || message.preview || '' }));
+  const history = buildPlannerHistory(session);
   const system = [
     'Você planeja um carrinho de lanchonete em português brasileiro.',
     'Use somente alterar_carrinho; nunca confirme ou cancele.',
@@ -618,6 +618,23 @@ async function planDraft(
   } catch {
     return null;
   }
+}
+
+/**
+ * FIX 2026-09-14: history used `content || preview`, which for an audio is a
+ * placeholder and for any media is the raw storage JSON — the planner never
+ * heard what the customer said in an earlier audio. Audio speaks through its
+ * transcript (none yet → left out), other media through its readable preview.
+ */
+export function buildPlannerHistory(session: Pick<StoredSession, 'messages'>): ChatCompletionMessageParam[] {
+  return session.messages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message) => ({
+      role: message.role as 'user' | 'assistant',
+      content: (message.kind === 'audio' ? message.audio_transcript : message.preview ?? message.content)?.trim() ?? '',
+    }))
+    .filter((message) => message.content)
+    .slice(-10);
 }
 
 function lastOrderDraft(context: Awaited<ReturnType<typeof customerContext>>): OrderingDraft | null {
@@ -956,14 +973,40 @@ export async function tryHandleAiWhatsAppOrdering(
   const hasPointer = Boolean(priorState);
   const initialTurn = classifyOrderingTurn(text, hasPointer);
   const followUp = !hasPointer && isOrderingFollowUpAnswer(session.messages, text);
-  if (initialTurn.kind === 'none' && !followUp) {
-    // PR 1.31 — the canonical-vs-generic split: `handled:false` here is
-    // exactly the signal `server/ai.ts` uses to let the generic AI model
-    // answer instead. Without this, that fall-through was invisible.
-    metric({ ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'fell_through_generic' });
-    return { handled: entryDispatched };
-  }
   const client = options.client ?? ZeloMenuInternalClient.fromEnv();
+  // FIX 2026-09-14: entry used to require a word from `classifyOrderingTurn`'s
+  // closed list, so "Macarrão, pene" and an audio listing penne, molho and
+  // azeitona never reached this flow — the generic model, which has no order
+  // tool, improvised a fake summary with an invented "Retirada: Amanhã"
+  // (Bem Servido, 2026-09-14). The store's own catalog now decides: ZeloMenu
+  // drops every token the store doesn't sell, so a hit means the customer
+  // named something on the menu.
+  let probedCatalog: CatalogReplyResult | null = null;
+  if (initialTurn.kind === 'none' && !followUp) {
+    const probeQuery = client && !isExplicitHumanRequest(text) && !isOrderingGreeting(text)
+      ? buildCatalogSearchQuery(session.messages, text)
+      : '';
+    if (client && probeQuery) {
+      try {
+        probedCatalog = await client.searchCatalog({ empresaId, query: probeQuery, limit: 12 });
+      } catch (error) {
+        if (error instanceof OrderingSuppressedError) return { handled: true };
+        // These turns never depended on ZeloMenu: an outage must leave them
+        // with the generic assistant, never turn "obrigada" into a handoff.
+        metric({ ...metricBase, stage: 'plan', outcome: 'catalog_probe_failed', errorCode: error instanceof ZeloMenuInternalError ? error.code : null });
+        return { handled: entryDispatched };
+      }
+    }
+    if (!probedCatalog?.total) {
+      // PR 1.31 — the canonical-vs-generic split: `handled:false` here is
+      // exactly the signal `server/ai.ts` uses to let the generic AI model
+      // answer instead. Without this, that fall-through was invisible.
+      metric({ ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'fell_through_generic' });
+      return { handled: entryDispatched };
+    }
+    metric({ ...metricBase, stage: 'plan', outcome: 'catalog_probe_hit' });
+  }
+  const enteredViaCatalogProbe = probedCatalog !== null;
   if (!client) {
     metric({ ...metricBase, stage: 'escalate', outcome: 'configuration_missing' });
     if (dryRun) return { handled: false };
@@ -1001,7 +1044,7 @@ export async function tryHandleAiWhatsAppOrdering(
       });
       return { handled: true, response };
     }
-    if (turn.kind === 'none' && !followUp) {
+    if (turn.kind === 'none' && !followUp && !enteredViaCatalogProbe) {
       metric({
         ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'fell_through_generic',
         orderingId: current?.orderingId, revision: current?.revision,
@@ -1077,7 +1120,7 @@ export async function tryHandleAiWhatsAppOrdering(
       return { handled: entryDispatched };
     }
     if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
-    const catalog = await client.searchCatalog({ empresaId, query, limit: 12 });
+    const catalog = probedCatalog ?? await client.searchCatalog({ empresaId, query, limit: 12 });
     // FIX 2026-09-09: the customer named the menu and nothing they said
     // matches a product, so the menu is the answer. This used to be decided
     // BEFORE the search, from a closed list of framing words — a list natural
@@ -1093,14 +1136,26 @@ export async function tryHandleAiWhatsAppOrdering(
         throw error;
       }
     }
-    const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp;
+    // A customer who names what the store sells without asking about it is
+    // ordering, keyword or not ("macarrão penne, molho vermelho, azeitona").
+    const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp
+      || (catalog.total > 0 && !isOrderingQuestion(text));
     // Candidate ambiguity is resolved in the conversation, never delegated to
     // the model: a valid ID is not enough to prove which sellable item the
-    // customer meant.
-    if (!draft && wantsOrder && !catalog.ambiguous) {
+    // customer meant. Several options of ONE product are a specification, not
+    // an ambiguity — the planner still has only that product to choose.
+    const plannerConsulted = !draft && wantsOrder && (!catalog.ambiguous || isSingleProductCatalogAmbiguous(catalog));
+    if (plannerConsulted) {
       draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
     }
     if (!draft) {
+      // Only the catalog let this turn in, and the planner, reading the whole
+      // conversation, found nothing to put in the cart. A product list would
+      // answer something the customer never asked.
+      if (enteredViaCatalogProbe && plannerConsulted) {
+        metric({ ...metricBase, stage: 'plan', outcome: 'catalog_probe_no_draft', orderingId: current?.orderingId, revision: current?.revision });
+        return { handled: entryDispatched };
+      }
       const response = renderCatalogReply(
         catalog,
         query,

@@ -1233,4 +1233,162 @@ console.log('===== Scenario 10: version skew fails closed, never a raw TypeError
 }
 
 console.log('\nScenarios 8 and 10 passed');
+
+// =============================================================================
+// Scenario 11 — the catalog, not a word list, lets an order into this flow.
+// Real turns from Bem Servido, 2026-09-14: none of them carried a keyword from
+// `classifyOrderingTurn`, so every one fell through to the generic model,
+// which has no order tool and improvised a summary with "Retirada: Amanhã" for
+// a same-day order. Catalog results below mirror what ZeloMenu's ranking
+// returned for these exact messages against the store's real 88-product menu.
+// =============================================================================
+console.log('===== Scenario 11: catalog-decided entry for orders without keywords =====');
+{
+  const permit: AiTurnPermit = {
+    empresaId: 'empresa-sol', conversationControlId: 'control-sol', remoteJid: '5518900000011@s.whatsapp.net',
+    epoch: '1', triggerMessageId: 'trigger-sol',
+  };
+  const entry = { menuUrl: 'https://menu.example/bemservido', storeOpen: true };
+  const t = (seconds: number) => new Date(seconds * 1000).toISOString();
+  const priorAssistant = { id: 'a-prev', waMessageId: 'a-prev', role: 'assistant' as const, kind: 'text' as const, content: 'Claro! O endereço é Avenida Nina Ferrato, 141.', preview: 'Claro! O endereço é Avenida Nina Ferrato, 141.', timestamp: t(1) };
+  const sessionWith = (messages: StoredSession['messages']): StoredSession => ({
+    id: 's-sol', customerName: 'Sol', customerPhone: '5518900000011', lastMessage: '',
+    lastMessageTime: t(0), unreadCount: 0, status: 'active', autoReply: true,
+    messages: [priorAssistant, ...messages],
+  });
+  const textTurn = (content: string) => sessionWith([
+    { id: 'u-text', waMessageId: 'u-text', role: 'user', kind: 'text', content, preview: content, timestamp: t(2) },
+  ]);
+  const audioTurn = (transcript: string) => sessionWith([
+    { id: 'u-audio', waMessageId: 'u-audio', role: 'user', kind: 'audio', content: null, preview: '[Áudio recebido]', audio_transcript: transcript, audio_transcript_status: 'done', timestamp: t(2) },
+  ]);
+
+  const product = (productId: number, publicName: string, modifierGroups: CatalogReplyResult['results'][number]['modifierGroups'] = []) => ({
+    productId, publicName, currentPrice: 22, displayPrice: { kind: 'from' as const, amount: 22 }, matchReason: 'nome_publico', ambiguous: false, modifierGroups,
+  });
+  const monteSuaMassa = product(843, 'Monte sua massa', [
+    { id: 'g-massa', name: 'Escolha a massa', minSelections: 1, maxSelections: 1, options: [{ id: 'o-penne', name: 'Penne', priceDelta: 0 }] },
+    { id: 'g-acomp', name: 'Acompanhamentos', minSelections: 0, maxSelections: 3, options: [{ id: 'o-azeitona', name: 'Azeitona', priceDelta: 0 }, { id: 'o-bacon', name: 'Bacon', priceDelta: 0 }] },
+  ]);
+  const massaCatalog: CatalogReplyResult = { total: 1, ambiguous: false, results: [monteSuaMassa] };
+  const massaOptionsAmbiguous: CatalogReplyResult = {
+    total: 3, ambiguous: true,
+    results: [{ ...monteSuaMassa, ambiguous: true }, { ...monteSuaMassa, matchReason: 'nome_da_opcao', ambiguous: true }, { ...monteSuaMassa, matchReason: 'nome_da_opcao', ambiguous: true }],
+  };
+  const macarraoCatalog: CatalogReplyResult = {
+    total: 25, ambiguous: true,
+    results: [{ ...product(1365, 'Macarrão com legumes 500 ml'), ambiguous: true }, { ...product(1333, 'Marmita de costela de panela com macarrão'), ambiguous: true }],
+  };
+  const sucoCatalog: CatalogReplyResult = { total: 1, ambiguous: false, results: [product(220, 'Suco de laranja 500 ml')] };
+  const emptyCatalog: CatalogReplyResult = { total: 0, ambiguous: false, results: [] };
+
+  const massaDraft = {
+    items: [{ lineId: 'line-843-1', productId: 843, quantity: 1, selectedOptions: [{ groupId: 'g-massa', optionSelections: [{ optionId: 'o-penne', quantity: 1 }] }] }],
+    fulfillment: { type: 'pickup' as const, asap: true },
+  };
+
+  const run = async (
+    session: StoredSession,
+    search: (query: string) => Promise<CatalogReplyResult>,
+    planned: typeof massaDraft | null,
+    turnEntry: { menuUrl: string | null; storeOpen: boolean | null } = entry,
+  ) => {
+    const searches: string[] = [];
+    const plannerTexts: string[] = [];
+    const client: OrderingClient = {
+      searchCatalog: async (input) => { searches.push(input.query); return search(input.query); },
+      updateDraft: async () => { throw new Error('dryRun never mutates'); },
+      confirmDraft: async () => { throw new Error('unused'); },
+      cancelDraft: async () => { throw new Error('unused'); },
+      getOrdering: async () => { throw new Error('unused'); },
+    };
+    const result = await tryHandleAiWhatsAppOrdering(permit.remoteJid, permit.empresaId, session, permit, turnEntry, {
+      client, dryRun: true, draftPlanner: async (_session, text) => { plannerTexts.push(text); return planned; },
+    });
+    return { result, searches, plannerTexts };
+  };
+
+  // 11:18 — typed, no keyword. Several dishes carry "macarrão", so the
+  // customer is asked which one, from the real list — never the generic model.
+  {
+    const text = 'Mi , manda ak na caixa federal as 12,30 pra mim\nMacarrão,pene';
+    assert.equal(classifyOrderingTurn(text, false).kind, 'none', 'precondition: the word list does not recognize this order');
+    const { result, searches, plannerTexts } = await run(textTurn(text), async () => macarraoCatalog, massaDraft);
+    assert.equal(result.handled, true, '"Macarrão,pene" stays in the canonical flow');
+    assert.equal(searches.length, 1, 'the probe result is reused, never searched twice');
+    assert.equal(plannerTexts.length, 0, 'ambiguity across different dishes is asked, never planned');
+    assert.match(result.response ?? '', /Macarrão com legumes/, 'the reply lists the real candidate dishes');
+  }
+
+  // 11:20 — audio with the full specification of one dish.
+  {
+    const transcript = 'Oh Migo, eu coloquei aí, ó. Ah, eu não consigo vender esse aplicativo. Eu não, eu não, não sou amiga de aplicativo, amiga. É o macarrão penne, o suco vermelho, o molho vermelho no caso, azeitona, pode ser carne moída. Aí você não ponha nem milho e nem ervilha e nem brócolis. Vê aí e me fala.';
+    assert.equal(classifyOrderingTurn(transcript, false).kind, 'none', 'precondition: the word list does not recognize this order');
+    const { result, plannerTexts } = await run(audioTurn(transcript), async () => massaCatalog, massaDraft);
+    assert.equal(result.handled, true, 'the audio order is handled canonically');
+    assert.deepEqual(plannerTexts, [transcript], 'the planner builds the cart from the transcript');
+    assert.match(result.response ?? '', /Monte sua massa/, 'the reply is the canonical draft, not an improvised summary');
+    assert.doesNotMatch(result.response ?? '', /Qual você quer\?/, 'the customer is not sent back to the product list');
+  }
+
+  // 11:22 — "só marmita mesmo, tá?": a tag question at the end of a statement
+  // is still an order, never the product list that reached the customer.
+  {
+    const transcript = 'Isso, só marmita mesmo. Eu fiz alguma coisa que eu apertei aqui e pediu suco. Suco não, só marmita mesmo, tá? Aí você me vê aí. Pode ser azeitona, pode ser bacon, menos milho, brócolis e ervilha.';
+    const { result, plannerTexts } = await run(audioTurn(transcript), async () => massaCatalog, massaDraft);
+    assert.equal(plannerTexts.length, 1, 'a trailing "tá?" does not turn the order into a menu question');
+    assert.doesNotMatch(result.response ?? '', /^Tem sim:/, 'no "Tem sim: Monte sua massa… Qual você quer?" reply');
+  }
+
+  // Several options of ONE dish come back `ambiguous` from ZeloMenu; that is a
+  // specification, and the planner still gets it.
+  {
+    const { result, plannerTexts } = await run(textTurn('penne com azeitona e bacon'), async () => massaOptionsAmbiguous, massaDraft);
+    assert.equal(plannerTexts.length, 1, 'same-product option matches reach the planner');
+    assert.equal(result.handled, true);
+  }
+
+  // Probe entered, planner found nothing to add: hand back to the generic
+  // assistant instead of answering with a product list nobody asked for.
+  {
+    const { result, plannerTexts } = await run(textTurn('Naoo suco não kkkk'), async () => sucoCatalog, null);
+    assert.equal(plannerTexts.length, 1, 'the planner was consulted');
+    assert.equal(result.handled, false, 'no draft from a probe-only turn falls through to the generic model');
+    assert.equal(result.response, undefined, 'no catalog list is sent');
+  }
+
+  // Nothing the store sells: unchanged fall-through.
+  {
+    const { result, plannerTexts } = await run(textTurn('Me manda o endereço'), async () => emptyCatalog, massaDraft);
+    assert.equal(result.handled, false, 'no catalog match keeps the generic assistant');
+    assert.equal(plannerTexts.length, 0);
+  }
+
+  // ZeloMenu down during the probe: silent fall-through, never a handoff or
+  // "tente de novo" for a message that never needed ZeloMenu.
+  {
+    const { result } = await run(textTurn('obrigada'), async () => { throw new ZeloMenuInternalError('INDISPONIVEL', 503, 'req'); }, massaDraft);
+    assert.equal(result.handled, false, 'a probe failure falls through to the generic model');
+    assert.equal(result.response, undefined, 'no transfer or retry text is produced');
+  }
+
+  // A menu question still gets the list.
+  {
+    const { result, plannerTexts } = await run(textTurn('tem penne?'), async () => massaCatalog, massaDraft);
+    assert.equal(plannerTexts.length, 0, 'a question is never planned into a cart');
+    assert.match(result.response ?? '', /^Tem sim:/, 'the catalog reply answers the question');
+  }
+
+  // Human requests and bare greetings never reach the probe.
+  for (const [text, turnEntry] of [
+    ['quero falar com um atendente', entry],
+    ['Boa noite', { menuUrl: entry.menuUrl, storeOpen: false }],
+  ] as const) {
+    const { result, searches } = await run(textTurn(text), async () => { throw new Error(`"${text}" must not search the catalog`); }, massaDraft, turnEntry);
+    assert.equal(searches.length, 0, `"${text}" does not search the catalog`);
+    assert.equal(result.handled, false, `"${text}" stays with the generic assistant`);
+  }
+}
+
+console.log('\nScenario 11 passed');
 console.log('\nhybridOrderingScenarios: all groups passed');

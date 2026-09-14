@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Pedido sem palavra-chave não chegava ao fluxo canônico — 2026-09-14
+
+- ✅ ZCHAT-AI-028 — Bem Servido: "Macarrão,pene" e dois áudios descrevendo o prato não tinham nenhuma palavra da lista de `classifyOrderingTurn`, então caíam no modelo genérico, que não tem ferramenta de pedido e inventou "Seu pedido confirmado… Retirada: Amanhã" para um pedido do mesmo dia (a dona lançou o pedido à mão, `source: manual`); o único turno com palavra-chave ("marmita") não tinha "quero/manda", e a busca marcava opções do mesmo prato como ambíguas, então voltou a lista "Tem sim: Monte sua massa… Qual você quer?" → entrada decidida por resultado no catálogo (falha da consulta cai no genérico em silêncio), citar produto sem perguntar conta como pedido, opções de um único produto vão ao planner, turno só do catálogo sem carrinho volta ao genérico, histórico do planner lê a transcrição do áudio. Conferido contra o catálogo real de 88 produtos: mensagens que não são pedido voltam sem resultado — `server/aiWhatsAppOrdering.ts:977`, `server/aiWhatsAppOrdering.ts:1141`, `server/aiWhatsAppOrdering.ts:629`, `src/domain/aiWhatsAppOrdering.ts:222`, `tests/hybridOrderingScenarios.test.ts:1238`
+
 ## Clientes — compras incluem vendas de balcão — 2026-09-10
 
 - 🟡 CRM-ORDERS-C — Clientes só contabilizavam pedidos entregues, deixando vendas concluídas no balcão como “Nunca comprou” → migration 070, caminho alternativo do serviço e histórico unem as duas fontes por pessoa, com filtro do proprietário, cursor compartilhado e origem `Balcão`; a migration aguarda aplicação junto do deploy — `supabase/migrations/070_customer_aggregates_include_counter_sales.sql:1`, `server/customers/service.ts:38`, `src/components/customers/CustomerOrdersTab.tsx:38`, `tests/customerCounterSales.test.ts:1`

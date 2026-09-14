@@ -212,6 +212,24 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
   return { kind: 'none' };
 }
 
+/** "só marmita mesmo, tá?" — a tag at the end of a statement, not a question. */
+const TAG_QUESTION = /(?:^|[\s,])(?:ta|tah|ok|ne|certo|beleza|blz|viu|entendeu|combinado)\s*\?/g;
+
+/**
+ * True when the customer is asking about the menu rather than naming what they
+ * want. `normalize` strips a trailing "?", so the raw text is checked here.
+ */
+export function isOrderingQuestion(text: string): boolean {
+  const lowered = text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
+  if (lowered.replace(TAG_QUESTION, ' ').includes('?')) return true;
+  return /^\s*(?:(?:voce|voces|vc|vcs)\s+)?(?:tem|teria|qual|quais|quanto|quando|como|onde|o que)\b/.test(lowered);
+}
+
+export function isSingleProductCatalogAmbiguous(result: Pick<CatalogReplyResult, 'ambiguous' | 'results'>): boolean {
+  if (!result.ambiguous) return false;
+  return new Set(result.results.map((candidate) => candidate.productId)).size === 1;
+}
+
 const messageText = (message: OrderingConversationMessage) =>
   (message.audio_transcript || message.preview || message.content || '').trim();
 
