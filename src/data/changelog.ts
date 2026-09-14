@@ -17,6 +17,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-09-14',
+    category: 'hotfix',
+    title: 'Avisos de entrega voltaram a chegar',
+    description: 'Quando o WhatsApp demorava para confirmar uma mensagem, os avisos seguintes para aquele contato (como "Nova entrega" para o motoboy e "saiu pra entrega" para o cliente) ficavam parados. Agora eles seguem normalmente depois de alguns minutos.',
+  },
+  {
+    date: '2026-09-14',
     category: 'medium',
     title: 'IA entende melhor pedidos por áudio e texto',
     description: 'Quando o cliente descreve o pedido do jeito dele, como “macarrão penne com azeitona” ou num áudio, a IA agora monta o pedido direto na conversa, em vez de responder com a lista do cardápio.',

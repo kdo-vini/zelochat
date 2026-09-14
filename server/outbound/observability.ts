@@ -9,6 +9,7 @@ export type ConversationOutboundMetric =
   | 'from_me_native'
   | 'from_me_pending_correlation'
   | 'delivery_uncertain'
+  | 'delivery_uncertain_hold_released'
   | 'queue_depth'
   | 'queue_oldest_seconds'
   | 'leases_stuck';

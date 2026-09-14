@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Espera de entrega incerta travava a conversa para sempre — 2026-09-14
+
+- ✅ ZCHAT-OUT-001 — envio com falha ambígua (`delivery_uncertain`) punha a conversa em espera e nada chamava `release_zelochat_outbound_hold`, então toda mensagem seguinte ficava na fila para sempre (Bem Servido: motoboy sem "Nova entrega" desde 10/09, clientes sem "saiu pra entrega"; 9 mensagens, 6 conversas) → dados limpos em produção e tarefa periódica libera a espera após 3 min sem reenviar a mensagem incerta — `server/outbound/uncertainHoldRelease.ts:1`, `server/outbound/worker.ts:421`, `tests/uncertainHoldRelease.test.ts:1`. Ver `[[INCIDENTS]]`.
+
 ## Pedido sem palavra-chave não chegava ao fluxo canônico — 2026-09-14
 
 - ✅ ZCHAT-AI-028 — Bem Servido: "Macarrão,pene" e dois áudios descrevendo o prato não tinham nenhuma palavra da lista de `classifyOrderingTurn`, então caíam no modelo genérico, que não tem ferramenta de pedido e inventou "Seu pedido confirmado… Retirada: Amanhã" para um pedido do mesmo dia (a dona lançou o pedido à mão, `source: manual`); o único turno com palavra-chave ("marmita") não tinha "quero/manda", e a busca marcava opções do mesmo prato como ambíguas, então voltou a lista "Tem sim: Monte sua massa… Qual você quer?" → entrada decidida por resultado no catálogo (falha da consulta cai no genérico em silêncio), citar produto sem perguntar conta como pedido, opções de um único produto vão ao planner, turno só do catálogo sem carrinho volta ao genérico, histórico do planner lê a transcrição do áudio. Conferido contra o catálogo real de 88 produtos: mensagens que não são pedido voltam sem resultado — `server/aiWhatsAppOrdering.ts:977`, `server/aiWhatsAppOrdering.ts:1141`, `server/aiWhatsAppOrdering.ts:629`, `src/domain/aiWhatsAppOrdering.ts:222`, `tests/hybridOrderingScenarios.test.ts:1238`

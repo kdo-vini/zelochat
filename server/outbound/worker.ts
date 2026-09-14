@@ -10,6 +10,7 @@ import { cleanupTerminalOutboundMedia } from './mediaStore.js';
 import { recordConversationOutboundMetric } from './observability.js';
 import { registerOutboundWorkerWaker, wakeOutboundWorker } from './wake.js';
 import { startPeriodicTask } from '../runtime/periodicTask.js';
+import { releaseStaleUncertainHolds } from './uncertainHoldRelease.js';
 
 const parseMs = (name: string, fallback: number): number => {
   const value = Number.parseInt(process.env[name] || '', 10);
@@ -417,6 +418,7 @@ export function startOutboundWorker(): OutboundWorker | null {
     registerOutboundWorkerWaker(() => worker.wake());
     startedWorker.start();
     startPeriodicTask('outboundMediaCleanup', cleanupTerminalOutboundMedia, 0, 60 * 60 * 1000);
+    startPeriodicTask('outboundUncertainHoldRelease', () => releaseStaleUncertainHolds(), 30_000, 60_000);
   }
   return startedWorker;
 }

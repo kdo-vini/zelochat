@@ -10,6 +10,7 @@ Status: engine sempre ativa; migrations `063–067` aplicadas em 2026-08-31 no p
 - O dispatcher durável é a única autoridade para outbounds de conversa; o worker mantém leases, fencing e lifecycle até `sent`, `failed_before_dispatch` ou `delivery_uncertain`.
 - Takeover altera modo/epoch da família de JIDs, não `status`, `escalated_at` nem SLA.
 - `delivery_uncertain` nunca é reenviado automaticamente.
+- A espera que um `delivery_uncertain` coloca na conversa é temporária: `releaseStaleUncertainHolds` (`server/outbound/uncertainHoldRelease.ts`, a cada minuto) a libera depois de `DELIVERY_UNCERTAIN_HOLD_GRACE_MS` (padrão 3 min) para a fila seguir. Sem isso a conversa ficava travada para sempre (incidente de 2026-09-14). Esperas `from_me_pending_correlation` continuam sendo resolvidas só pelo eco nativo.
 - `/api/healthz` é somente liveness e não prova saúde do banco, fila, worker ou WhatsApp.
 
 ## Aplicação das migrations

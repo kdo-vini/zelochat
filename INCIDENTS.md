@@ -1,5 +1,34 @@
 # Incidentes e padrões conhecidos
 
+## Mensagens presas na fila: motoboy e clientes sem aviso por dias (2026-09-14)
+
+**Sintoma:** avisos "🛵 Nova entrega" para o motoboy e "pedido prontinho" /
+"saiu pra entrega" para clientes não chegavam — nenhum erro visível para a
+loja. Nos logs, `[conversation_outbound_metric]` mostrava `queue_depth` parado
+em 9 e `queue_oldest_seconds` crescendo sem parar (578 mil segundos ≈ 6,7 dias).
+
+**Causa-raiz:** um envio que falha de forma ambígua (timeout de 15 s, 500 ou
+401 do provedor) vira `delivery_uncertain` e coloca a conversa em espera
+(`zelochat_conversation_ai_control.hold_job_id`), para que nada saia na frente
+antes de se saber se ele chegou. `claim_zelochat_outbound_job` pula toda
+mensagem de uma conversa em espera, e **nenhum código chamava**
+`release_zelochat_outbound_hold` — a espera era permanente. Bem Servido tinha
+6 conversas travadas desde 07/09, incluindo a do motoboy (travada em 10/09
+20:08 por um timeout).
+
+**Recuperação feita:** as 9 mensagens presas foram canceladas
+(`suppression_reason = 'stale_behind_uncertain_hold_2026-09-14'`, porque um
+"saiu pra entrega" de dias atrás só confunde) e as 6 esperas liberadas via
+`release_zelochat_outbound_hold`. Consulta de diagnóstico:
+`select count(*) from zelochat_conversation_ai_control where hold_job_id is not null;`
+
+**Fix:** `releaseStaleUncertainHolds` roda a cada minuto e libera esperas de
+`delivery_uncertain` com mais de 3 minutos (`DELIVERY_UNCERTAIN_HOLD_GRACE_MS`),
+e as que não protegem mais nada; a mensagem incerta nunca é reenviada e segue
+marcada "Não foi possível confirmar a entrega". Esperas de
+`from_me_pending_correlation` não são tocadas — `server/outbound/uncertainHoldRelease.ts`,
+`server/outbound/worker.ts:421`.
+
 ## "Carregar mais" falhava no histórico de Clientes (2026-09-10)
 
 **Sintoma:** clientes com mais de 30 mensagens ou pedidos não conseguiam abrir
