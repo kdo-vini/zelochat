@@ -332,17 +332,20 @@ export async function clearMissingOwnInstanceForEmpresa(
   return Boolean((data as { id?: string } | null)?.id);
 }
 
-export async function deleteInstance(empresaId: string): Promise<void> {
-  const instance = await getInstanceForEmpresa(empresaId);
-  if (!instance) return;
-  try {
-    await axios.delete(`${BASE_URL}/v2/instance/delete/${instance}`, { timeout: 15_000, headers: apiHeaders() });
-  } catch (err: any) {
-    const status = err?.response?.status;
-    // 404 → instance was already deleted upstream; treat as success.
-    if (status !== 404) throw err;
-  }
-  await getServiceSupabase()
+/**
+ * Deletes exactly the instance the caller read from `empresa_perfil`.
+ *
+ * FIX 2026-09-14: this used to resolve the name through `getInstanceForEmpresa`,
+ * which returns the fleet-wide FALLBACK_INSTANCE when the pointer is already
+ * gone or the lookup fails — a DB timeout during a sweep would have deleted
+ * another tenant's instance. The pointer is only cleared if it still names the
+ * deleted instance, so a customer who reconnected meanwhile keeps the new one.
+ */
+export async function deleteInstance(empresaId: string, instance: string): Promise<void> {
+  if (!empresaId) throw new Error('empresaId required');
+  if (!instance) throw new Error('instance required');
+  await deleteProviderInstanceExact(instance);
+  const { error } = await getServiceSupabase()
     .from('empresa_perfil')
     .update({
       whatsmiau_instance: null,
@@ -350,8 +353,10 @@ export async function deleteInstance(empresaId: string): Promise<void> {
       whatsmiau_phone: null,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', empresaId);
-  invalidateCache();
+    .eq('id', empresaId)
+    .eq('whatsmiau_instance', instance);
+  clearEmpresaCache(empresaId);
+  if (error) throw new Error(`Failed to clear WhatsApp instance pointer: ${error.message}`);
 }
 
 /**

@@ -371,7 +371,9 @@ Dois sweepers rodam em background e limpam instâncias órfãs automaticamente:
 
 **`server/subscriptionSweeper.ts`** — assinatura cancelada/expirada:
 - Roda 5min após startup + a cada 6h
-- Grace period: **7 dias** após expiração. Passado esse prazo, chama `deleteInstance()`.
+- Grace period: **7 dias** após expiração. Passado esse prazo, chama `deleteInstance(empresaId, instance)`.
+- **Quem só tem ZeloPDV também é varrido.** Conta com instância e **nenhuma** linha `chat`/`bundle` (quem cancelou o ZeloChat fica só com a linha `pdv`) não é "cadastro novo": o paywall não deixa ninguém sem `chat`/`bundle` chegar ao `/api/qr`. O prazo de 7 dias conta a partir da última mensagem recebida; sem nenhuma mensagem, a instância fica. Foi assim que Casa dos Salgados (parada desde 30/07) e a loja de teste Donutopia ficaram de fora até 14/09/2026.
+- `deleteInstance` apaga **exatamente** a instância lida no scan e só limpa o ponteiro se ele ainda aponta para ela. Nunca resolva o nome por `getInstanceForEmpresa` num caminho que apaga: em falha de leitura ele devolve a instância legada `WHATSMIAU_INSTANCE` da frota.
 - Provider-agnostic: tanto Stripe quanto AbacatePay/Pix escrevem na mesma tabela `subscriptions`. O check é `status='active' AND current_period_end > now` — uma assinatura Pix expirada (status='active' mas period_end no passado) é capturada corretamente.
 - Dados do cliente (mensagens, sessões, pedidos) são preservados. Só a instância Whatsmiau some.
 - Se o cliente renovar depois do grace, `/api/qr` cria a instância nova automaticamente.

@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Sweeper não apagava instância de quem cancelou só o ZeloChat — 2026-09-14
+
+- ✅ ZCHAT-OPS-001 — conta sem nenhuma linha `chat`/`bundle` era pulada como "nunca assinou", mas quem cancela o ZeloChat e mantém o ZeloPDV fica só com a linha `pdv`: Casa dos Salgados (sem mensagem desde 30/07) e Donutopia (teste) mantinham instância e o boot tentava registrar webhook delas a cada deploy → sem linha ZeloChat, o prazo de 7 dias conta da última mensagem recebida (sem mensagem nenhuma, não apaga); e `deleteInstance` passou a apagar a instância exata lida no scan, em vez de resolver por `getInstanceForEmpresa`, que devolve a instância legada da frota quando a leitura falha — `server/subscriptionSweeper.ts:64`, `server/instanceManager.ts:335`, `tests/subscriptionSweeper.test.ts:1`
+
 ## Espera de entrega incerta travava a conversa para sempre — 2026-09-14
 
 - ✅ ZCHAT-OUT-001 — envio com falha ambígua (`delivery_uncertain`) punha a conversa em espera e nada chamava `release_zelochat_outbound_hold`, então toda mensagem seguinte ficava na fila para sempre (Bem Servido: motoboy sem "Nova entrega" desde 10/09, clientes sem "saiu pra entrega"; 9 mensagens, 6 conversas) → dados limpos em produção e tarefa periódica libera a espera após 3 min sem reenviar a mensagem incerta — `server/outbound/uncertainHoldRelease.ts:1`, `server/outbound/worker.ts:421`, `tests/uncertainHoldRelease.test.ts:1`. Ver `[[INCIDENTS]]`.

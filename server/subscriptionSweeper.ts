@@ -51,15 +51,47 @@ export interface SweepResult {
   dryRun: boolean;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface SweepDecision {
+  candidate: boolean;
+  /** When ZeloChat access ended: the subscription expiry, or the last inbound message when no ZeloChat row is left. */
+  endedAt: number | null;
+}
+
 /**
- * Returns empresas whose latest 'chat'/'bundle' subscription is inactive AND
- * whose effective expiry is more than `graceDays` ago. Empresas with no
- * subscription row at all are skipped (could be fresh signup pre-paywall
- * warmup or manually-provisioned test). Empresas without a
- * `whatsmiau_instance` are not candidates (nothing to delete upstream).
+ * FIX 2026-09-14: an empresa with no 'chat'/'bundle' row used to be skipped as
+ * "never subscribed". But the paywall only lets a chat/bundle subscriber reach
+ * /api/qr, so an instance with no such row means ZeloChat access ended — a
+ * customer who kept only ZeloPDV has a single 'pdv' row. Casa dos Salgados
+ * (instance idle since 2026-07-30) and the Donutopia test store were never
+ * reaped. Without a ZeloChat expiry to anchor the grace period, the last
+ * inbound message is used; no message at all is left alone, as before.
+ */
+export function evaluateSweepCandidate(input: {
+  subscription: { status: string | null; expiry: number | null } | null;
+  lastInboundAt: number | null;
+  now: number;
+  graceMs: number;
+}): SweepDecision {
+  const { subscription, lastInboundAt, now, graceMs } = input;
+  if (!subscription) {
+    if (lastInboundAt == null) return { candidate: false, endedAt: null };
+    return { candidate: now - lastInboundAt > graceMs, endedAt: lastInboundAt };
+  }
+  const isActive = subscription.status === 'active' && subscription.expiry != null && subscription.expiry > now;
+  if (isActive) return { candidate: false, endedAt: null };
+  const expiredAt = subscription.expiry ?? 0;
+  if (expiredAt <= 0) return { candidate: false, endedAt: null };
+  return { candidate: now - expiredAt > graceMs, endedAt: expiredAt };
+}
+
+/**
+ * Returns empresas with a `whatsmiau_instance` whose ZeloChat access ended
+ * more than `graceDays` ago — see `evaluateSweepCandidate`.
  *
- * Two-query JS-side filter rather than a CTE — supabase-js doesn't expose
- * raw SQL and we'd rather avoid an RPC just for this.
+ * JS-side filter rather than a CTE — supabase-js doesn't expose raw SQL and
+ * we'd rather avoid an RPC just for this.
  */
 export async function findSweepCandidates(
   graceDays = DEFAULT_GRACE_DAYS,
@@ -111,50 +143,47 @@ export async function findSweepCandidates(
   }
 
   const now = Date.now();
-  const graceMs = graceDays * 24 * 60 * 60 * 1000;
+  const graceMs = graceDays * DAY_MS;
   const candidates: SweepCandidate[] = [];
 
   for (const e of empresas as Array<{ id: string; user_id: string; whatsmiau_instance: string }>) {
-    const latest = latestByUser.get(e.user_id);
-    let isCandidate = false;
-    let effectiveExpiry: string | null = null;
-    let daysSinceExpiry: number | null = null;
-
+    const latest = latestByUser.get(e.user_id) ?? null;
+    let lastInboundAt: number | null = null;
     if (!latest) {
-      // No subscription history. We don't sweep — could be a fresh signup
-      // pre-paywall warmup OR a manually-provisioned test account. Logging
-      // candidate would be misleading. Skip silently.
-      continue;
-    }
-
-    const isActive = latest.status === 'active' && latest.expiry != null && latest.expiry > now;
-    if (!isActive) {
-      const expiredAt = latest.expiry ?? 0;
-      effectiveExpiry = expiredAt > 0 ? new Date(expiredAt).toISOString() : null;
-      daysSinceExpiry = expiredAt > 0 ? (now - expiredAt) / (24 * 60 * 60 * 1000) : null;
-      if (expiredAt > 0 && now - expiredAt > graceMs) {
-        isCandidate = true;
+      const { data: lastInbound, error: inboundError } = await supabase
+        .from('zelochat_messages')
+        .select('sent_at')
+        .eq('empresa_id', e.id)
+        .eq('role', 'user')
+        .order('sent_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (inboundError) {
+        console.error(`[sweeper] last inbound read failed for empresa=${e.id}:`, inboundError.message);
+        continue;
       }
+      const sentAt = Date.parse((lastInbound as { sent_at?: string } | null)?.sent_at ?? '');
+      lastInboundAt = Number.isFinite(sentAt) ? sentAt : null;
     }
 
-    if (isCandidate) {
-      candidates.push({
-        empresaId: e.id,
-        userId: e.user_id,
-        instance: e.whatsmiau_instance,
-        status: latest.status,
-        effectiveExpiry,
-        daysSinceExpiry,
-      });
-    }
+    const decision = evaluateSweepCandidate({ subscription: latest, lastInboundAt, now, graceMs });
+    if (!decision.candidate) continue;
+    candidates.push({
+      empresaId: e.id,
+      userId: e.user_id,
+      instance: e.whatsmiau_instance,
+      status: latest ? latest.status : 'no_zelochat_subscription',
+      effectiveExpiry: decision.endedAt ? new Date(decision.endedAt).toISOString() : null,
+      daysSinceExpiry: decision.endedAt ? (now - decision.endedAt) / DAY_MS : null,
+    });
   }
 
   return candidates;
 }
 
 /**
- * Sweep canceled/expired subscriptions. Calls deleteInstance(empresaId) for
- * each candidate, which deletes the Whatsmiau instance upstream AND clears
+ * Sweep canceled/expired subscriptions. Calls deleteInstance(empresaId, instance)
+ * for each candidate, which deletes that exact instance upstream AND clears
  * `empresa_perfil.whatsmiau_instance`. Customer chat history is preserved.
  *
  * Failures on individual candidates are logged and counted but never thrown —
@@ -195,7 +224,7 @@ export async function sweepCanceledSubscriptions(
   for (const c of candidates) {
     if (isShuttingDown()) break;
     try {
-      await deleteInstance(c.empresaId);
+      await deleteInstance(c.empresaId, c.instance);
       console.log(`[sweeper] deleted instance ${redactInstance(c.instance)} for empresa ${c.empresaId}`);
       result.deleted += 1;
     } catch (err) {
