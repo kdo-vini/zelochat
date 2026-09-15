@@ -1,5 +1,22 @@
 # ZeloChat — Foco atual
 
+### Rastro da IA (`zelochat_ai_turn_traces`) estava mudo desde que subiu (2026-09-15)
+
+Achado no relatório diário da Bem Servido: a tabela criada em 09/09
+(ZCHAT-OBS-001) nunca gravou uma linha sequer, em nenhuma empresa. Causa:
+`server/ai.ts` passava `sessionId: session.id`, mas `StoredSession.id` é o JID
+da conversa (família de sessões), não a UUID da linha — todo insert quebrava
+com `22P02 invalid input syntax for type uuid`, engolido em silêncio pelo
+catch que protege o turno do cliente. Corrigido removendo o campo (commit
+`b1da535`); publicado via deploy manual pelo Dokploy CLI porque o auto-deploy
+por push não disparou desta vez — confirmado por `deployment.all` (commit
+`b1da535`, status `done`) e pelo `[Server] Listening` no boot seguinte.
+Detalhe em [[FIXES_PROGRESS]].
+
+Em aberto: por que o webhook de auto-deploy do GitHub App não disparou neste
+push (o repo não tem webhook clássico configurado — `gh api repos/.../hooks`
+vazio — então é integração via GitHub App; vale observar se se repete).
+
 ### Clientes — vendas de balcão contam como compra (2026-09-10)
 
 Implementação preparada no working tree: os agregados, a contagem alternativa e a

@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Rastro da IA nunca gravava nenhuma linha — 2026-09-15
+
+- ✅ ZCHAT-OBS-003 — `zelochat_ai_turn_traces` (ZCHAT-OBS-001) estava vazia desde que subiu em 09/09: o turno do modelo passava `sessionId: session.id`, mas `StoredSession.id` é o JID (`mapSession` monta a família de sessões com `id: canonicalRow.remote_jid`, não a UUID da linha) → todo insert falhava com Postgres `22P02 invalid input syntax for type uuid`, engolido em silêncio pelo catch que existe pra nunca custar a resposta ao cliente. Achado revisando o relatório diário da Bem Servido: a tabela estava zerada até para os dois turnos de modelo do dia. `remoteJid` já identifica a conversa, então o campo foi só removido em vez de plumbed até a UUID real — `server/ai.ts:4038`, `tests/aiTurnTrace.test.ts`. Deploy manual via Dokploy CLI (`application.deploy`) porque o auto-deploy por push não disparou desta vez; confirmado pelo `[Server] Listening` no boot às 13:44 e pelo `deployment.all` mostrando o commit `b1da535` como `done`.
+
 ## Sweeper não apagava instância de quem cancelou só o ZeloChat — 2026-09-14
 
 - ✅ ZCHAT-OPS-001 — conta sem nenhuma linha `chat`/`bundle` era pulada como "nunca assinou", mas quem cancela o ZeloChat e mantém o ZeloPDV fica só com a linha `pdv`: Casa dos Salgados (sem mensagem desde 30/07) e Donutopia (teste) mantinham instância e o boot tentava registrar webhook delas a cada deploy → sem linha ZeloChat, o prazo de 7 dias conta da última mensagem recebida (sem mensagem nenhuma, não apaga); e `deleteInstance` passou a apagar a instância exata lida no scan, em vez de resolver por `getInstanceForEmpresa`, que devolve a instância legada da frota quando a leitura falha — `server/subscriptionSweeper.ts:64`, `server/instanceManager.ts:335`, `tests/subscriptionSweeper.test.ts:1`
