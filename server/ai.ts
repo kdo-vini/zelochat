@@ -4038,7 +4038,6 @@ export async function generateAndSendReply(
     recordAiTurnTrace({
       empresaId: resolvedEmpresaId,
       remoteJid: jid,
-      sessionId: session.id,
       path: 'model',
       inboundText: lastUserTextForDate ?? null,
       systemPrompt: systemInstruction,
