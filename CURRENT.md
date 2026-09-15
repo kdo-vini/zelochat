@@ -8,14 +8,20 @@ Achado no relatório diário da Bem Servido: a tabela criada em 09/09
 da conversa (família de sessões), não a UUID da linha — todo insert quebrava
 com `22P02 invalid input syntax for type uuid`, engolido em silêncio pelo
 catch que protege o turno do cliente. Corrigido removendo o campo (commit
-`b1da535`); publicado via deploy manual pelo Dokploy CLI porque o auto-deploy
-por push não disparou desta vez — confirmado por `deployment.all` (commit
-`b1da535`, status `done`) e pelo `[Server] Listening` no boot seguinte.
-Detalhe em [[FIXES_PROGRESS]].
+`b1da535`), publicado pelo auto-deploy normal do Dokploy. Detalhe em
+[[FIXES_PROGRESS]].
 
-Em aberto: por que o webhook de auto-deploy do GitHub App não disparou neste
-push (o repo não tem webhook clássico configurado — `gh api repos/.../hooks`
-vazio — então é integração via GitHub App; vale observar se se repete).
+Nota sobre diagnóstico: cheguei a achar que o auto-deploy não tinha disparado
+para esse push porque `application.one` (Dokploy CLI/API) só traz uma lista
+curta/desatualizada de deployments — o build automático (`u6XLLrgnFX4p8AodankgL`,
+13:39:33Z, ~57s depois do push) já estava rodando, só não aparecia ali. Um
+deploy manual redundante foi disparado antes de perceber isso; sem efeito
+colateral (mesmo commit, ambos `done`). **Para checar deploy de um commit
+específico, usar `deployment.all {"applicationId":...}` (lista completa),
+nunca só o campo `deployments` de `application.one`.** O GitHub App do
+Dokploy (`dokploy-2026-05-19-jhiwua`, sem webhook clássico no repo — é
+integração via App, não `repo/hooks`) está corretamente configurado e
+respondendo normalmente.
 
 ### Clientes — vendas de balcão contam como compra (2026-09-10)
 
