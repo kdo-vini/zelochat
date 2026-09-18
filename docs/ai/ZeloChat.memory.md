@@ -1,5 +1,12 @@
 # ZeloChat Memory
 
+### Webhook raw e Disk I/O — 2026-09-18
+
+- O log `zelochat_webhook_events_raw` é seletivo: no caminho autenticado feliz, `messages.upsert` continua durável; contatos, conexão, deletes, receipts e tipos desconhecidos viram métricas agregadas e só são persistidos retroativamente se o processamento falhar. `token_missing` e `token_mismatch` continuam duráveis. `WEBHOOK_RAW_CAPTURE_ALL=1|true|yes` restaura captura ampla para rollback/diagnóstico.
+- Retry idêntico de `messages.upsert` é suprimido localmente por 10 minutos somente depois de um insert durável, usando tenant + instância + message id + SHA-256 canônico do payload sanitizado. A autoridade cross-replica é a RPC `record_zelochat_raw_webhook` + índice único parcial por tenant/tipo/fingerprint; payload distinto com o mesmo ID nunca é colapsado.
+- Retenção usa `purge_zelochat_webhook_events_raw_batch`, service-role only, advisory lock e `FOR UPDATE SKIP LOCKED`: 500 linhas por lote, serial, com pausa; sucessos ficam 7 dias e pendentes/falhas 21 dias. Índices de retenção são construídos concorrentemente. Nunca reintroduzir deletes amplos paralelos.
+- `ensureSession` deve permanecer no-op quando os valores materiais não mudam. Inbound conhecido é deduplicado antes de mídia/enriquecimento/sessão, mantendo o insert unique de mensagem como barreira race-safe. Após um insert realmente novo, `zelochat_apply_inbound_session_activity` atualiza preview, timestamp, não lidos e `updated_at` em uma única escrita; não voltar a chamar `zelochat_increment_unread` separadamente nesse fluxo.
+
 ### Runtime e impressão compartilhada — 2026-09-04
 
 Produção usa Node24 e loader tsx/esm: o loader misto causou buscas patológicas de módulos OpenAI no Windows. Usar npm ci --omit=dev com tsx explícito em dependencies. Build-info baked SHA é a autoridade; PUBLIC_APP_VERSION divergente falha build. Shutdown55s precisa60s externos. Auto impressão identifica companyStoreId pelo ownerUserId de /api/access/me e orderId por zelo_orders.id, nunca empresa_id/actor; capability nativa obrigatória, prioridade PDV, manual novoUUID. qs6.16.0 está em override enquanto Express4/body-parser prendem versão antiga.

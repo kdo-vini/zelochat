@@ -1080,8 +1080,8 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
   if (headerToken) {
     if (!safeEqualString(headerToken, webhookToken)) {
       console.warn(`[WebhookTrace] reject instance=${redactInstance(instance)} empresa=${empresaId} event=${bodyEvent || '<empty>'} reason=token_mismatch`);
-      const forgedRawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, 'token_mismatch');
-      await markWebhookEventProcessed(forgedRawEventId, 'unauthenticated');
+      const forgedRecord = await recordRawWebhookEvent(instance, empresaId, req.body, 'token_mismatch');
+      await markWebhookEventProcessed(forgedRecord.status === 'persisted' ? forgedRecord.id : null, 'unauthenticated');
       res.status(401).json({ error: 'invalid webhook token' });
       return;
     }
@@ -1095,22 +1095,22 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     authStatus = 'token_missing';
   }
 
-  // Defense layer: persist the raw payload BEFORE processing. If
+  // Defense layer: persist replayable/security payloads BEFORE processing. If
   // processWebhookEvent (or any helper it calls) regresses again like the
   // 2026-04-29 P0.14 incident, we can replay from this log instead of losing
-  // the data forever — Whatsmiau exposes no history endpoint. A durable event
-  // is mandatory before success ACK; failure returns a controlled 503 so the
-  // sender retries. Delivery receipts remain the explicit no-log exception.
+  // the data forever — Whatsmiau exposes no history endpoint. A durable
+  // replayable event is mandatory before success ACK. Low-value authenticated
+  // events and already-durable message retries are explicit no-log exceptions;
+  // if their processing throws, the catch path captures them retroactively.
   // The auth_status column captures whether the apikey header was present
   // and matched, so we can verify Whatsmiau adoption before flipping strict.
-  const rawEventId = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus);
-  console.log(`[WebhookTrace] raw_event_saved empresa=${empresaId} rawEventId=${rawEventId ?? '<none>'}`);
+  const rawRecord = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus);
+  const rawEventId = rawRecord.status === 'persisted' ? rawRecord.id : null;
+  // FIX 2026-09-18: persistência indiscriminada amplificava WAL/I/O → eventos sem replay são agregados em métricas e capturados apenas se falharem.
   // FIX 2026-08-30: falha do log raw ainda recebia ACK 200 e perdia replay → falhar fechado com 503 antes de qualquer processamento.
-  if (!rawEventId) {
-    if (bodyEvent !== 'messages.update') {
-      res.status(503).json({ error: 'Não foi possível receber esta atualização agora.' });
-      return;
-    }
+  if (rawRecord.status === 'failed') {
+    res.status(503).json({ error: 'Não foi possível receber esta atualização agora.' });
+    return;
   }
 
   // ACK immediately after the replay source is durable. AI/media processing
@@ -1123,7 +1123,12 @@ router.post('/webhook/:instance', async (req: Request, res: Response) => {
     await markWebhookEventProcessed(rawEventId);
   } catch (err) {
     console.error(`[Webhook] processWebhookEvent threw for instance "${redactInstance(instance)}":`, err);
-    await markWebhookEventFailed(rawEventId, err);
+    if (rawRecord.status === 'skipped') {
+      const failureRecord = await recordRawWebhookEvent(instance, empresaId, req.body, authStatus, { forcePersist: true });
+      if (failureRecord.status === 'persisted') await markWebhookEventFailed(failureRecord.id, err);
+    } else {
+      await markWebhookEventFailed(rawEventId, err);
+    }
   }
 });
 

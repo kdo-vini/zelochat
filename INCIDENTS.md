@@ -1,5 +1,26 @@
 # Incidentes e padrões conhecidos
 
+## Log bruto de webhooks monopolizava Disk I/O no Supabase Free (2026-09-18)
+
+**Sintoma:** o projeto compartilhado acumulou 401.783 inserts, 402.604 updates e
+466.395 deletes em `zelochat_webhook_events_raw`; inserts geraram 4,48 GB de
+WAL, e três limpezas por `processed_at` consumiram 142 s e 1,06 GB de WAL.
+
+**Causa-raiz:** a rota crítica persistia quase todo webhook antes de decidir se
+ele tinha valor de replay, deduplicava mensagens só depois do insert e limpava
+sucessos com varredura sequencial. Sincronizações de contatos, um contato por
+evento, responderam por 76,0% e 80,8% dos dois maiores picos. Em paralelo,
+`ensureSession` regravava `updated_at` antes da dedupe e multiplicava a escrita
+por oito índices.
+
+**Fix:** persistência seletiva de mensagens com dedupe exata de retry, captura
+retroativa de falhas, métricas agregadas e kill switch; retenção 7/21 dias por
+RPC service-role em lotes serializados/pausados e índices concorrentes; sessões
+ignoram redelivery e updates sem mudança, e preview+número de não lidos passam
+por um único update atômico — `server/webhookLog.ts`,
+`server/router.ts`, `server/webhookEventsSweeper.ts`, `server/messageHandler.ts`,
+`supabase/migrations/20260918044906_optimize_webhook_raw_io.sql`.
+
 ## Mensagens presas na fila: motoboy e clientes sem aviso por dias (2026-09-14)
 
 **Sintoma:** avisos "🛵 Nova entrega" para o motoboy e "pedido prontinho" /

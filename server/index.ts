@@ -566,8 +566,8 @@ httpServer.listen(PORT, () => {
   startAbandonedCartRecoverySweeper();
   startAutomationSweeper();
 
-  // Webhook events raw retention — deletes processed rows >30d and stuck rows
-  // >37d. Prevents unbounded table growth (hit 1.38 GB before this was added).
+  // Webhook events raw retention — bounded batches keep 7d of processed rows
+  // and 21d of stuck rows. The shorter success window preserves failed replay.
   startWebhookEventsSweeper();
 
   // Onboarding follow-up — Day 3, 7, 14, 21, 28 nutrition + conversion sequence

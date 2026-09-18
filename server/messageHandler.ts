@@ -61,6 +61,27 @@ const BULK_SESSION_RESOLUTION_CONCURRENCY = 4;
 const SESSION_COLUMNS_FULL = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, conversation_control_id, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at, customer_profile';
 const SESSION_COLUMNS_LIST = 'id, remote_jid, pessoa_id, customer_name, customer_phone, last_message, last_message_time, unread_count, status, auto_reply, conversation_control_id, profile_pic_url, escalated_at, acknowledged_at, pinned, updated_at';
 
+export function sessionValueChanged(current: unknown, next: unknown): boolean {
+  return current !== next;
+}
+
+export function sessionRowsNeedingRead<T extends Pick<SessionRow, 'unread_count'>>(rows: T[]): T[] {
+  return rows.filter((row) => row.unread_count !== 0);
+}
+
+export function sessionRowsNeedingArchive<T extends Pick<SessionRow, 'status' | 'escalated_at'>>(rows: T[]): T[] {
+  return rows.filter((row) => row.status !== 'archived' || row.escalated_at !== null);
+}
+
+export function sessionRowsNeedingPin<T extends Pick<SessionRow, 'pinned'>>(rows: T[], pinned: boolean): T[] {
+  return rows.filter((row) => row.pinned !== pinned);
+}
+
+export function sessionRowsNeedingRename<T extends Pick<SessionRow, 'customer_name'>>(rows: T[], name: string): T[] {
+  const trimmed = name.trim();
+  return rows.filter((row) => row.customer_name !== trimmed);
+}
+
 function normalizeSessionRows(
   rows: Array<Omit<SessionRow, 'customer_profile'> & { customer_profile?: string | null }> | null | undefined,
 ): SessionRow[] {
@@ -1308,20 +1329,38 @@ export async function ensureSession(params: {
   };
 
   if (existing) {
-    const { data, error } = await supabase
-      .from('zelochat_sessions')
-      .update(payload)
-      .eq('id', existing.id)
-      .select(SESSION_COLUMNS_FULL)
-      .single();
+    const desired = {
+      pessoa_id: payload.pessoa_id,
+      customer_name: payload.customer_name,
+      customer_phone: payload.customer_phone,
+      last_message: payload.last_message,
+      last_message_time: payload.last_message_time,
+      unread_count: payload.unread_count,
+      status: payload.status,
+      auto_reply: payload.auto_reply,
+      profile_pic_url: payload.profile_pic_url,
+    };
+    const patch = Object.fromEntries(
+      Object.entries(desired).filter(([key, value]) => sessionValueChanged(existing[key as keyof SessionRow], value)),
+    );
+    let data: SessionRow = existing;
+    if (Object.keys(patch).length > 0) {
+      const result = await supabase
+        .from('zelochat_sessions')
+        .update({ ...patch, updated_at: payload.updated_at })
+        .eq('id', existing.id)
+        .select(SESSION_COLUMNS_FULL)
+        .single();
 
-    if (error) {
-      throw new Error(error.message);
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      data = result.data as SessionRow;
     }
 
     await ensureConversationControl({ empresaId: params.empresaId, remoteJid: params.jid });
     const refreshedFamily = await fetchSessionFamily(params.empresaId, params.jid);
-    return refreshedFamily?.primary ?? (data as SessionRow);
+    return refreshedFamily?.primary ?? data;
   }
 
   const { data, error } = await supabase
@@ -1343,7 +1382,7 @@ export async function updateSessionProfilePic(empresaId: string, jid: string, pr
   const supabase = getServiceSupabase();
   const family = await fetchSessionFamily(empresaId, jid);
   const existing = family?.primary ?? null;
-  if (existing) {
+  if (existing && sessionValueChanged(existing.profile_pic_url, profilePicUrl)) {
     await supabase
       .from('zelochat_sessions')
       .update({ profile_pic_url: profilePicUrl })
@@ -2082,6 +2121,9 @@ export async function markSessionAsRead(jid: string, empresaId: string): Promise
     return;
   }
 
+  const rows = sessionRowsNeedingRead(family.rows);
+  if (rows.length === 0) return;
+
   const supabase = getServiceSupabase();
   const { error } = await supabase
     .from('zelochat_sessions')
@@ -2089,7 +2131,7 @@ export async function markSessionAsRead(jid: string, empresaId: string): Promise
       unread_count: 0,
       updated_at: new Date().toISOString(),
     })
-    .in('id', family.rows.map((row) => row.id));
+    .in('id', rows.map((row) => row.id));
 
   if (error) {
     throw new Error(error.message);
@@ -2107,6 +2149,7 @@ export async function markSessionAsRead(jid: string, empresaId: string): Promise
 async function resolveSessionRowsForJids(
   empresaId: string,
   jids: string[],
+  needsUpdate: (row: SessionRow) => boolean,
 ): Promise<{ targetIds: string[]; acceptedJids: string[] }> {
   const uniqueJids = Array.from(new Set(jids.filter(Boolean)));
   if (uniqueJids.length === 0) return { targetIds: [], acceptedJids: [] };
@@ -2178,10 +2221,11 @@ async function resolveSessionRowsForJids(
     const familyRows = allRows.filter(
       (row) => row.remote_jid === jid || familyKeys.has(buildSessionKeyFromRow(row)),
     );
-    if (familyRows.length === 0) continue;
+    const rowsToUpdate = familyRows.filter(needsUpdate);
+    if (rowsToUpdate.length === 0) continue;
 
     acceptedJids.push(jid);
-    for (const row of familyRows) targetIds.add(row.id);
+    for (const row of rowsToUpdate) targetIds.add(row.id);
   }
 
   return { targetIds: Array.from(targetIds), acceptedJids };
@@ -2196,7 +2240,11 @@ async function resolveSessionRowsForJids(
 export async function markSessionsAsRead(jids: string[], empresaId: string): Promise<void> {
   if (!empresaId || !Array.isArray(jids) || jids.length === 0) return;
 
-  const { targetIds, acceptedJids } = await resolveSessionRowsForJids(empresaId, jids);
+  const { targetIds, acceptedJids } = await resolveSessionRowsForJids(
+    empresaId,
+    jids,
+    (row) => sessionRowsNeedingRead([row]).length > 0,
+  );
   if (targetIds.length === 0) return;
 
   const supabase = getServiceSupabase();
@@ -2227,7 +2275,11 @@ export async function markSessionsAsRead(jids: string[], empresaId: string): Pro
 export async function archiveSessions(jids: string[], empresaId: string): Promise<void> {
   if (!empresaId || !Array.isArray(jids) || jids.length === 0) return;
 
-  const { targetIds, acceptedJids } = await resolveSessionRowsForJids(empresaId, jids);
+  const { targetIds, acceptedJids } = await resolveSessionRowsForJids(
+    empresaId,
+    jids,
+    (row) => sessionRowsNeedingArchive([row]).length > 0,
+  );
   if (targetIds.length === 0) return;
 
   const supabase = getServiceSupabase();
@@ -2264,6 +2316,8 @@ export async function setSessionPinned(
 
   const family = await fetchSessionFamily(empresaId, jid);
   if (!family) return;
+  const rows = sessionRowsNeedingPin(family.rows, pinned);
+  if (rows.length === 0) return;
 
   const supabase = getServiceSupabase();
   const { error } = await supabase
@@ -2272,7 +2326,7 @@ export async function setSessionPinned(
     // touching every row at once makes the canonical row ambiguous on the next open.
     .update({ pinned })
     .eq('empresa_id', empresaId)
-    .in('id', family.rows.map((row) => row.id));
+    .in('id', rows.map((row) => row.id));
 
   if (error) throw new Error(error.message);
 
@@ -2328,12 +2382,14 @@ export async function updateSessionName(
 
   const family = await fetchSessionFamily(empresaId, jid);
   if (!family) return;
+  const rows = sessionRowsNeedingRename(family.rows, name);
+  if (rows.length === 0) return;
 
   const supabase = getServiceSupabase();
   const { error } = await supabase
     .from('zelochat_sessions')
     .update({ customer_name: name.trim(), updated_at: new Date().toISOString() })
-    .in('id', family.rows.map((row) => row.id));
+    .in('id', rows.map((row) => row.id));
 
   if (error) throw new Error(error.message);
 }
@@ -2403,6 +2459,15 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   const displayTime = formatClock(sentAt);
   const incomingText = extractText(msg);
   const shouldTriggerAutoReply = shouldTriggerAutoReplyForMessage(msg);
+  const waMessageId = (msg.key?.id ?? null) as string | null;
+
+  // Redeliveries are common. Reject a known WhatsApp message before media
+  // download, identity enrichment and session maintenance. The message insert
+  // below remains the authoritative race-safe dedupe for concurrent deliveries.
+  if (waMessageId && await messageExistsByWhatsAppId(resolvedEmpresaId, waMessageId)) {
+    console.log(`[InboundTrace] message_handler_dedup_early empresa=${resolvedEmpresaId} jid=${redactJid(jid)} waMessageId=${waMessageId}`);
+    return false;
+  }
   // FIX 2026-07-31: wrappers eram desembrulhados só para texto → use o mesmo payload
   // normalizado na criação do anexo para não perder PDFs/documentos encapsulados.
   const message = unwrapMessage(msg.message);
@@ -2503,9 +2568,7 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     jid,
     customerName: proposedName,
     customerPhone: formatPhone(phone),
-    lastMessage: storedContent,
-    lastMessageTime: lastMessageTimeIso,
-    // unreadCount intentionally omitted — incremented atomically below via RPC
+    // Preview/unread are committed together only after a fresh message insert.
   });
 
   // P0.14 — persist the inbound message FIRST and dedup against retried
@@ -2519,8 +2582,6 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
   // Whatsmiau version), we fall back to the non-dedup insert so the message
   // still persists. The fallback path logs a warning so we notice if it
   // ever fires in prod.
-  const waMessageId = (msg.key?.id ?? null) as string | null;
-
   // Extract quoted/reply context from contextInfo (present when customer replies to a specific message)
   const contextInfo = message?.extendedTextMessage?.contextInfo
     ?? message?.imageMessage?.contextInfo
@@ -2569,11 +2630,17 @@ async function _handleIncomingMessage(msg: any, resolvedEmpresaId: string): Prom
     });
   }
 
-  // Atomic increment — runs ONLY for fresh messages. Avoids race condition when
-  // two DIFFERENT messages arrive simultaneously (the RPC is atomic at the DB
-  // layer); for the same message redelivered, the early-return above prevents
-  // re-entry entirely.
-  await getServiceSupabase().rpc('zelochat_increment_unread', { p_session_id: sessionRow.id });
+  // FIX 2026-09-18: preview + unread faziam dois UPDATEs por inbound → uma RPC
+  // atômica aplica ambos somente depois que o insert novo da mensagem existe.
+  const { error: sessionActivityError } = await getServiceSupabase().rpc(
+    'zelochat_apply_inbound_session_activity',
+    {
+      p_session_id: sessionRow.id,
+      p_last_message: storedContent,
+      p_last_message_time: lastMessageTimeIso,
+    },
+  );
+  if (sessionActivityError) throw new Error(sessionActivityError.message);
   // Opt-out is deterministic and fail-soft during rollout: the message is
   // already persisted, while an unavailable CRM table must never block chat.
   if (sessionRow.pessoa_id && isOptOutMessage(incomingText)) {
