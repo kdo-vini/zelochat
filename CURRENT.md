@@ -1,5 +1,15 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-19 — pedido descrito no chat (Bem Servido)
+
+Caminho canônico monta rascunho; modelo genérico conversa. Depois de
+"Pedir por aqui", nomear o prato monta o pedido quando um token identifica
+um único item (`resolveNamedCatalogMatch`). Pergunta sobre o que o pedido
+já inclui ("esse pedido vem arroz?", "lá no cardápio não mostra") cai no
+genérico (`isTalkingAboutPlacedOrder` / `isRequestingTheMenu`) em vez de
+abrir lista ou carrinho novo. Extra em carrinho aberto (`adicional`) é
+alteração. Ver [[FIXES_PROGRESS]] ZCHAT-AI-029 / ZCHAT-AI-030.
+
 ## Sessão 2026-09-19 — iFood: som de campainha
 
 Qualquer pedido novo na Produção toca `/sounds/ifood-arrival.mp3`

@@ -28,9 +28,12 @@ import {
   ZELOMENU_ORDER_RECEIPT_REPLY,
   isOrderingStartButtonText,
   mentionsMenu,
+  isRequestingTheMenu,
+  isTalkingAboutPlacedOrder,
   isExplicitHumanRequest,
   isOrderingQuestion,
   isSingleProductCatalogAmbiguous,
+  resolveCatalogForNamedOrder,
   AI_ORDER_START_REPLY,
   parseOrderingButton,
   renderCatalogReply,
@@ -887,6 +890,24 @@ export async function tryHandleAiWhatsAppOrdering(
     metric({ ...metricBase, stage: 'entry', outcome: 'order_receipt' });
     return { handled: true, response: ZELOMENU_ORDER_RECEIPT_REPLY };
   }
+  // FIX 2026-09-19: the canonical assembler owns drafts; the generic model
+  // owns conversation. A question about a placed order ("esse pedido vem
+  // arroz?", "lá no cardápio não mostra o acompanhamento") used to search
+  // the catalog because `pedido`/`cardápio`/`arroz` are classifier keywords
+  // — and any hit became a new cart or "Qual você quer?". Fall through
+  // before the entry card so a greeting-shaped question does not reopen
+  // the menu. Edits ("adicional mandioca") and new orders stay below.
+  if (isTalkingAboutPlacedOrder(text) || (mentionsMenu(text) && !isRequestingTheMenu(text))) {
+    if (priorState) {
+      try {
+        await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
+      } catch (persistError) {
+        console.warn('[AiOrdering] best-effort cursor persist on placed_order_talk threw:', persistError);
+      }
+    }
+    metric({ ...metricBase, stage: 'plan', outcome: 'placed_order_talk' });
+    return { handled: false };
+  }
   let entryDispatched = false;
   let entryResponseText: string | undefined;
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
@@ -1129,6 +1150,12 @@ export async function tryHandleAiWhatsAppOrdering(
     // catalog itself is the reliable judge. A message that does NOT name the
     // menu keeps the plain "hoje não temos isso".
     if (!catalog.total && mentionsMenu(text)) {
+      // FIX 2026-09-19: a mention of "cardápio" in a question about sides or
+      // a placed order is not a request to receive the menu again.
+      if (!isRequestingTheMenu(text)) {
+        metric({ ...metricBase, stage: 'plan', outcome: 'menu_mention_not_request', orderingId: current?.orderingId, revision: current?.revision });
+        return { handled: entryDispatched };
+      }
       try {
         return await answerMenuRequest('menu_request_no_match');
       } catch (error) {
@@ -1138,15 +1165,25 @@ export async function tryHandleAiWhatsAppOrdering(
     }
     // A customer who names what the store sells without asking about it is
     // ordering, keyword or not ("macarrão penne, molho vermelho, azeitona").
-    const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp
+    // `pedido` in a question ("esse pedido vem arroz?") is not a new order.
+    // An open cart still wants an update only when the customer is naming
+    // what to put in it, not asking what it already includes.
+    const namedOrderIntent = /\b(quero|vou querer|manda|coloca|adiciona|pedir|o de sempre)\b/i.test(text)
+      || (/\bpedido\b/i.test(text) && !isOrderingQuestion(text) && !isTalkingAboutPlacedOrder(text));
+    const wantsOrder = (Boolean(current) && !isOrderingQuestion(text) && !isTalkingAboutPlacedOrder(text))
+      || namedOrderIntent
+      || followUp
       || (catalog.total > 0 && !isOrderingQuestion(text));
+    const resolvedCatalog = resolveCatalogForNamedOrder(query, catalog);
     // Candidate ambiguity is resolved in the conversation, never delegated to
     // the model: a valid ID is not enough to prove which sellable item the
     // customer meant. Several options of ONE product are a specification, not
     // an ambiguity — the planner still has only that product to choose.
-    const plannerConsulted = !draft && wantsOrder && (!catalog.ambiguous || isSingleProductCatalogAmbiguous(catalog));
+    // A query token that uniquely names one of several similar dishes is the
+    // same: the customer already chose (Bem Servido / Anderson, 2026-09-18).
+    const plannerConsulted = !draft && wantsOrder && (!resolvedCatalog.ambiguous || isSingleProductCatalogAmbiguous(resolvedCatalog));
     if (plannerConsulted) {
-      draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
+      draft = await (options.draftPlanner ?? planDraft)(session, text, resolvedCatalog, current);
     }
     if (!draft) {
       // Only the catalog let this turn in, and the planner, reading the whole
@@ -1157,7 +1194,7 @@ export async function tryHandleAiWhatsAppOrdering(
         return { handled: entryDispatched };
       }
       const response = renderCatalogReply(
-        catalog,
+        resolvedCatalog,
         query,
         entry.menuUrl,
         entry.storeOpen === true ? null : buildStoreClosedPrefix(entry.nextOpenLabel),
@@ -1183,7 +1220,7 @@ export async function tryHandleAiWhatsAppOrdering(
       return { handled: true, response };
     }
     if (dryRun) {
-      const response = renderOrderingDraftPreview(draft, catalog);
+      const response = renderOrderingDraftPreview(draft, resolvedCatalog);
       metric({ ...metricBase, stage: 'update', outcome: 'dry_run_preview', orderingId: current?.orderingId, revision: current?.revision });
       return { handled: true, response };
     }

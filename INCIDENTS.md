@@ -1,5 +1,13 @@
 # Incidentes e padrões conhecidos
 
+## Pedido escrito no WhatsApp virava lista ou link (Bem Servido, 2026-09-18)
+
+**Sintoma:** cliente toca "Pedir por aqui", escreve o prato ("Marmita média bife a cavalo") e a IA devolve outra opção ("pizzaolo") ou o cardápio de novo; depois do recibo, pergunta sobre acompanhamento ganha o cartão de entrada. A dona assume a conversa.
+
+**Causa-raiz:** busca ambígua entre pratos parecidos bloqueava o planner; a palavra "cardápio" numa pergunta sobre o pedido reabria o atalho do menu; extra/bebida de 3 palavras reusava a query do prato; `pedido` em pergunta ligava o assembler mesmo com hit no catálogo.
+
+**Fix:** token que identifica um único prato monta o pedido; falar sobre o cardápio não pede o menu; adicional/bebida não é escolha de opção; pergunta sobre o pedido já feito (`isTalkingAboutPlacedOrder`) cai no modelo genérico; `adicional` no carrinho aberto é alteração — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`. ZCHAT-AI-029 / ZCHAT-AI-030.
+
 ## Log bruto de webhooks monopolizava Disk I/O no Supabase Free (2026-09-18)
 
 **Sintoma:** o projeto compartilhado acumulou 401.783 inserts, 402.604 updates e
