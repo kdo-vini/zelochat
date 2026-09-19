@@ -44,6 +44,8 @@ describe('pedidos canonicos', () => {
     });
     assert.equal(order.source, 'ifood');
     assert.equal(order.ifoodDisplayId, '7421');
+    assert.equal(order.customerPhone, '0800');
+    assert.equal(order.deliveryCode, '4321');
   });
 
   it('inclui os modificadores selecionados no nome do item (bug: sumiam do Kanban)', () => {

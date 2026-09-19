@@ -2,6 +2,7 @@
 
 ## Canal iFood na Produção — 2026-09-19
 
+- ✅ ZCHAT-TS-PHONE-01 — `tsc` quebrava o deploy: `phone` tipado como `object` sem `localizer`/`number`. `canonicalRowToOrder` agora usa `objectValue()` (já existente) para `customer.phone` e `fulfillment.ifood` — `src/domain/canonicalOrders.ts:99`, `tests/canonicalOrders.test.ts`.
 - ✅ ZCHAT-IFOOD-SOUND-01 — campainha `/sounds/ifood-arrival.mp3` em
   **qualquer** pedido novo (refresh + realtime INSERT), não só iFood.
 - ✅ ZCHAT-IFOOD-MARK-01 — card da fila, Kanban e drawer de pedido `source=ifood` mostram moldura circular com `/ifood-logo.png` + pill `iFood #displayId` (`IfoodChannelBadge`). `canonicalRowToOrder` passa `ifoodDisplayId` de `fulfillment.ifood.displayId`.
