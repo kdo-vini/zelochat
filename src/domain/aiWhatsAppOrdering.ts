@@ -224,7 +224,7 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
     if (/^(?:quero\s+)?(?:cancela|cancelar)(?:\s+(?:o|meu|esse|este))?\s+pedido(?:\s+(?:agora|por favor))?$/.test(normalized)) return { kind: 'cancel' };
     if (BARE_CONFIRM.test(normalized)) return { kind: 'confirm' };
     if (/^(?:nao|n)$/.test(normalized)) return { kind: 'ask_change' };
-    if (CONFIRM_LEAD_WITH_MORE.test(normalized) || /\b(troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|cancela|cancelar|prefiro|quero)\b/.test(normalized)) {
+    if (CONFIRM_LEAD_WITH_MORE.test(normalized) || /\b(troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|adicional|cancela|cancelar|prefiro|quero)\b/.test(normalized)) {
       return { kind: 'alter', instruction: text.trim() };
     }
   }
@@ -246,6 +246,30 @@ export function isOrderingQuestion(text: string): boolean {
   const lowered = text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
   if (lowered.replace(TAG_QUESTION, ' ').includes('?')) return true;
   return /^\s*(?:(?:voce|voces|vc|vcs)\s+)?(?:tem|teria|qual|quais|quanto|quando|como|onde|o que)\b/.test(lowered);
+}
+
+/**
+ * FIX 2026-09-19 (Bem Servido / Silvia): the canonical path assembles a draft.
+ * The generic assistant is the layer that talks. "Micheli esse pedido vem
+ * arroz?" is a question about an order that already exists — searching the
+ * catalog (the word `pedido` is a classifier keyword, and `arroz` hits the
+ * menu) either listed dishes or started a new cart. Starting a new order
+ * ("quero fazer um pedido") and editing an open one ("adicional mandioca")
+ * are not this: those stay with the assembler.
+ */
+export function isTalkingAboutPlacedOrder(text: string): boolean {
+  const normalized = normalize(text);
+  if (/\b(?:quero|vou|vamos|queria|gostaria)\s+(?:fazer|montar)?\s*(?:um\s+)?pedido\b/.test(normalized)
+    || /\b(?:fazer|montar)\s+(?:um\s+)?pedido\b/.test(normalized)
+    || /\bpedir\b/.test(normalized)
+    || /\b(?:troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|adicional|cancela|cancelar|prefiro)\b/.test(normalized)) {
+    return false;
+  }
+  const refersToOrder = /\b(?:esse|este|meu|nesse|neste)\s+pedido\b/.test(normalized)
+    || /\bo\s+pedido\s+(?:vem|inclui|tem|ja)\b/.test(normalized);
+  if (!refersToOrder) return false;
+  return isOrderingQuestion(text)
+    || /\b(?:vem(?:\s+com)?|nao\s+mostra|nao\s+aparece|nao\s+inclui|acompanhament)\b/.test(normalized);
 }
 
 export function isSingleProductCatalogAmbiguous(result: Pick<CatalogReplyResult, 'ambiguous' | 'results'>): boolean {

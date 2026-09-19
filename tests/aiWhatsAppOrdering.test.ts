@@ -25,6 +25,7 @@ import {
   isDeliveryFeeQuestion,
   mentionsMenu,
   isRequestingTheMenu,
+  isTalkingAboutPlacedOrder,
   conversationHasZeloMenuReceipt,
   resolveNamedCatalogMatch,
   isOrderingSnapshotEditable,
@@ -148,6 +149,8 @@ assert.deepEqual(classifyOrderingTurn('cancela o pedido', true), { kind: 'cancel
 assert.deepEqual(classifyOrderingTurn('quero cancelar meu pedido por favor', true), { kind: 'cancel' });
 assert.equal(classifyOrderingTurn('cancelar só a coca', true).kind, 'alter');
 assert.equal(classifyOrderingTurn('não, prefiro retirar', true).kind, 'alter');
+assert.equal(classifyOrderingTurn('Adicional mandioca frita', true).kind, 'alter', 'adicional on an open cart is an edit, not a new catalog search');
+assert.equal(classifyOrderingTurn('Adicional mandioca frita', false).kind, 'none', 'without an open cart, adicional is not a keyword');
 assert.equal(classifyOrderingTurn('tem carne de porco?', false).kind, 'catalog_or_order');
 assert.equal(classifyOrderingTurn('quero falar com um atendente humano', false).kind, 'none');
 assert.equal(classifyOrderingTurn('quero falar com alguém', false).kind, 'none');
@@ -428,6 +431,61 @@ assert.equal(isZeloMenuOrderReceipt('Sistema Zelo Menu'), false, 'rodape sozinho
   assert.doesNotMatch(silviaFollowUp.response ?? '', /Veja o cardápio e faça seu pedido por aqui/);
 }
 
+// Same diagnosis with catalog HITS: "esse pedido vem arroz?" used to search,
+// match a dish, and treat `pedido` as wantsOrder — so the generic assistant
+// never saw a conversational question.
+{
+  const plannerTexts: string[] = [];
+  const searched: string[] = [];
+  const sidesWithHits = sessionWith('Micheli esse pedido vem arroz, salada e batata palha?');
+  sidesWithHits.messages = [
+    {
+      id: 'receipt', waMessageId: 'receipt', role: 'user', kind: 'text',
+      content: zeloMenuReceipt, preview: zeloMenuReceipt, timestamp: new Date(0).toISOString(),
+    },
+    {
+      id: 'thanks', waMessageId: 'thanks', role: 'assistant', kind: 'text',
+      content: 'Recebemos seu pedido, obrigado! 🙏', preview: 'Recebemos seu pedido, obrigado! 🙏',
+      timestamp: new Date(1).toISOString(),
+    },
+    {
+      id: 'sides', waMessageId: 'sides', role: 'user', kind: 'text',
+      content: 'Micheli esse pedido vem arroz, salada e batata palha?',
+      preview: 'Micheli esse pedido vem arroz, salada e batata palha?',
+      timestamp: new Date(2).toISOString(),
+    },
+  ];
+  const questionWithHits = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    sidesWithHits,
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: true,
+      client: {
+        ...dryRunClient,
+        searchCatalog: async ({ query }) => {
+          searched.push(query);
+          return {
+            total: 1,
+            ambiguous: false,
+            results: [{ productId: 879, publicName: 'Marmita do dia', currentPrice: 18, matchReason: 'nome_publico', ambiguous: false }],
+          };
+        },
+      },
+      draftPlanner: async (_session, text) => {
+        plannerTexts.push(text);
+        return { items: [{ productId: 879, quantity: 1 }] };
+      },
+    },
+  );
+  assert.equal(questionWithHits.handled, false, 'a question about the placed order is conversation, even when the catalog would match');
+  assert.deepEqual(searched, [], 'does not search the catalog for a placed-order question');
+  assert.deepEqual(plannerTexts, [], 'does not open a new draft from "esse pedido vem arroz?"');
+  assert.doesNotMatch(questionWithHits.response ?? '', /Tem sim|Qual você quer|Veja o cardápio/);
+}
+
 // REGRESSION 2026-09-09: com a loja fechada a lista saia sem nenhuma mencao ao
 // horario, entao o cliente era convidado a escolher de uma loja que nao ia
 // atender. Um atendente diria que esta fechado, quando abre, e mostraria as
@@ -581,6 +639,31 @@ assert.ok(
   'loadCanonicalSnapshot must pass the session JID as the 3rd getOrdering argument',
 );
 
+// REGRESSION 2026-09-18: "Adicional mandioca frita" with an open cart used to
+// classify as `none` (adicional was not an alter verb) and fall through, or
+// as a 3-word follow-up that reprinted the dish list. It is an edit.
+{
+  const plannerTexts: string[] = [];
+  const extraOnCart = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    sessionWithPointer('Adicional mandioca frita'),
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: true,
+      client: openDryRunClient,
+      draftPlanner: async (_session, text) => {
+        plannerTexts.push(text);
+        return { items: [{ productId: 10, quantity: 1, notes: 'adicional mandioca frita' }] };
+      },
+    },
+  );
+  assert.deepEqual(plannerTexts, ['Adicional mandioca frita'], 'an extra on the open cart reaches the planner');
+  assert.equal(extraOnCart.handled, true);
+  assert.doesNotMatch(extraOnCart.response ?? '', /Qual você quer\?/);
+}
+
 // A deterministic catalog question keeps a bare option reply in the ordering flow.
 const optionSequence = [
   { role: 'user', content: 'oq tem de mistura hoje' },
@@ -728,6 +811,13 @@ assert.equal(
   isRequestingTheMenu('Micheli esse pedido vem arroz, salada e batata? Lá no cardápio não mostra o acompanhamento'),
   false,
 );
+
+assert.equal(isTalkingAboutPlacedOrder('Micheli esse pedido vem arroz, salada e batata palha?'), true);
+assert.equal(isTalkingAboutPlacedOrder('esse pedido vem com salada?'), true);
+assert.equal(isTalkingAboutPlacedOrder('meu pedido já saiu?'), true);
+assert.equal(isTalkingAboutPlacedOrder('quero fazer um pedido'), false, 'starting a new order is not talking about a placed one');
+assert.equal(isTalkingAboutPlacedOrder('Adicional mandioca frita'), false, 'an extra on the open cart is an edit');
+assert.equal(isTalkingAboutPlacedOrder('marmita média bife a cavalo'), false);
 
 const silviaReceiptMessages = [
   { role: 'user' as const, content: zeloMenuReceipt },

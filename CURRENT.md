@@ -2,10 +2,13 @@
 
 ## Sessão 2026-09-19 — pedido descrito no chat (Bem Servido)
 
-Depois de "Pedir por aqui", nomear o prato monta o pedido quando um token da
-frase identifica um único item (não joga o primo "pizzaolo" como escolha).
-Pergunta sobre o que o pedido inclui, depois do recibo, não reabre o cardápio.
-`resolveNamedCatalogMatch` + `isRequestingTheMenu`. Ver [[FIXES_PROGRESS]] ZCHAT-AI-029.
+Caminho canônico monta rascunho; modelo genérico conversa. Depois de
+"Pedir por aqui", nomear o prato monta o pedido quando um token identifica
+um único item (`resolveNamedCatalogMatch`). Pergunta sobre o que o pedido
+já inclui ("esse pedido vem arroz?", "lá no cardápio não mostra") cai no
+genérico (`isTalkingAboutPlacedOrder` / `isRequestingTheMenu`) em vez de
+abrir lista ou carrinho novo. Extra em carrinho aberto (`adicional`) é
+alteração. Ver [[FIXES_PROGRESS]] ZCHAT-AI-029 / ZCHAT-AI-030.
 
 ## Sessão 2026-09-19 — iFood: som de campainha
 
