@@ -249,6 +249,7 @@ export function useOrders(
       pickupDate: payload.pickupDate,
       pickupTime: payload.pickupTime,
       deliveryAddress: payload.deliveryAddress,
+      deliveryFee: payload.deliveryFee,
       paymentMethod: payload.paymentMethod,
       observations: payload.observations,
       idempotencyKey: payload.idempotencyKey,
@@ -262,18 +263,29 @@ export function useOrders(
     return order;
   }, [session?.user?.id, session?.access_token]);
 
-  const updateOrderStatus = useCallback(async (id: string, status: Order['status']): Promise<void> => {
+  const updateOrderStatus = useCallback(async (
+    id: string,
+    status: Order['status'],
+    extra: { deliveryCode?: string } = {},
+  ): Promise<{ order?: Order; ifoodCommand?: { intent: string; status: string | null } }> => {
     const token = session?.access_token;
     if (!token) throw new Error('Faça login para atualizar pedidos.');
     const current = orders.find((order) => order.id === id);
     if (!current) throw new Error('Pedido não encontrado.');
-    await updateOrderStatusApi(token, id, status, current.revision ?? 0);
+    const result = await updateOrderStatusApi(token, id, status, current.revision ?? 0, extra);
+    const next = result.order ?? {
+      ...current,
+      status,
+      ...(status === 'delivered' && !current.closedAt ? { closedAt: new Date().toISOString() } : {}),
+      ...(current.requiresAcceptance === true && (status === 'pending' || status === 'preparing')
+        ? { requiresAcceptance: false }
+        : {}),
+    };
+    if (result.ifoodCommand) {
+      setOrders((prev) => prev.map((o) => (o.id === id ? next : o)));
+      return result;
+    }
     const accepted = current.requiresAcceptance === true && (status === 'pending' || status === 'preparing');
-    // Optimistically stamp closedAt on delivery so the Produção board keeps the
-    // card during its linger window (see filterProductionBoardOrders). The
-    // server sets the authoritative closed_at ~immediately; the AppShell sync
-    // effect treats same-status rows as equal, so this optimistic value is what
-    // reaches the board until a full status change re-syncs.
     const stampClosedAt = status === 'delivered' && !current.closedAt;
     const updatedOrder = {
       ...current,
@@ -282,6 +294,7 @@ export function useOrders(
       ...(accepted ? { requiresAcceptance: false } : {}),
     };
     setOrders((prev) => prev.map((o) => (o.id === id ? updatedOrder : o)));
+    return result;
   }, [session?.access_token, orders]);
 
   const deleteOrder = useCallback(async (id: string): Promise<void> => {

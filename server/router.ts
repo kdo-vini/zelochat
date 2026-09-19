@@ -2167,6 +2167,12 @@ router.post('/api/orders/manual', express.json({ limit: '50kb' }), async (req: R
     }
 
     const deliveryAddress = typeof body.deliveryAddress === 'string' ? body.deliveryAddress.trim() : '';
+    const deliveryFeeRaw = body.deliveryFee;
+    const deliveryFee = typeof deliveryFeeRaw === 'number'
+      ? deliveryFeeRaw
+      : typeof deliveryFeeRaw === 'string'
+        ? Number(deliveryFeeRaw.replace(',', '.'))
+        : undefined;
     const paymentMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
     const observations = typeof body.observations === 'string' ? body.observations.trim() : '';
     // Client-supplied so a retry after a lost response reuses the same key
@@ -2183,6 +2189,7 @@ router.post('/api/orders/manual', express.json({ limit: '50kb' }), async (req: R
       pickupDate,
       pickupTime,
       deliveryAddress: deliveryAddress || undefined,
+      deliveryFee: deliveryFee != null && Number.isFinite(deliveryFee) && deliveryFee >= 0 ? deliveryFee : undefined,
       paymentMethod: paymentMethod || undefined,
       observations: observations || undefined,
       idempotencyKey: idempotencyKey || undefined,
@@ -2240,7 +2247,11 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
   try {
     const empresaId = await requireEmpresaId(req);
     const orderId = req.params.id;
-    const { status, expectedRevision } = (req.body ?? {}) as { status?: string; expectedRevision?: number };
+    const { status, expectedRevision, deliveryCode } = (req.body ?? {}) as {
+      status?: string;
+      expectedRevision?: number;
+      deliveryCode?: string;
+    };
 
     if (!status || !ALLOWED.includes(status) || !Number.isSafeInteger(expectedRevision) || expectedRevision! < 0) {
       res.status(400).json({ error: 'Status inválido.' });
@@ -2258,13 +2269,20 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
     const oldStatus = existing.status;
 
     const { actorUserId: userId } = await requireActorAccess(req);
-    const updated = await transitionCanonicalOrder({
+    const transitioned = await transitionCanonicalOrder({
       empresaId,
       orderId,
       expectedRevision: expectedRevision!,
       status: status as typeof existing.status,
       actorId: userId,
+      deliveryCode: typeof deliveryCode === 'string' ? deliveryCode : undefined,
     });
+    const updated = transitioned.order;
+
+    if (transitioned.ifoodCommand) {
+      res.json({ ok: true, order: updated, ifoodCommand: transitioned.ifoodCommand });
+      return;
+    }
 
     // ZLM-301 — reflete a mudança de status no ticket de cozinha do PDV (bundle).
     // Best-effort + flag-gated: nunca derruba o update do pedido no ZeloChat.
@@ -2294,7 +2312,7 @@ router.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
             notify_customer_out_for_delivery?: boolean;
           } | null;
 
-          const isDelivery = !!existing.deliveryAddress;
+          const isDelivery = !!existing.deliveryAddress || existing.fulfillmentType === 'delivery';
           // out_for_delivery não existe pra retirada — sem isso, um pedido de
           // retirada arrastado até essa coluna manda "saiu pra entrega" pro
           // cliente segundos depois de "pronto pra retirada, pode vir buscar".

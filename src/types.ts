@@ -380,6 +380,12 @@ export interface Order {
   pickupDate: string; // YYYY-MM-DD
   pickupTime: string; // HH:MM
   deliveryAddress?: string; // Optional delivery address (presence implies delivery, not pickup)
+  deliveryFee?: number;
+  source?: string;
+  ifoodDisplayId?: string;
+  deliveryCode?: string;
+  deliveredBy?: string;
+  fulfillmentType?: 'pickup' | 'delivery' | string;
   driverId?: string; // Assigned motoboy
   paymentMethod?: string; // e.g. "Pix", "Dinheiro", "Cartão"
   observations?: string; // Free-form note from the customer (or operator) — "sem cebola", "ponto bem passado", etc.

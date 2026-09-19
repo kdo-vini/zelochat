@@ -14,6 +14,7 @@ import { STATUS_LABELS, STATUS_COLORS } from '../../constants';
 import { format, parseISO, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Modal, useModalTitleId } from '../Modal';
+import { IfoodChannelBadge } from '../IfoodChannelBadge';
 
 type View = 'dashboard' | 'chat' | 'kanban' | 'calendar' | 'ai-configs' | 'settings' | 'profile' | 'drivers' | 'catalog';
 type ProductionState = Pick<ZeloState, 'orders'>;
@@ -62,6 +63,7 @@ interface OrderFormData {
   pickupDate: string;
   pickupTime: string;
   deliveryAddress: string;
+  deliveryFee: string;
   paymentMethod: string;
   observations: string;
   items: { product: string; quantity: number; unitPrice: string }[];
@@ -94,6 +96,7 @@ const makeEmptyForm = (): OrderFormData => ({
   pickupDate: brasiliaDateISO(),
   pickupTime: brasiliaTimeHHMM(),
   deliveryAddress: '',
+  deliveryFee: '',
   paymentMethod: '',
   observations: '',
   items: [{ product: '', quantity: 1, unitPrice: '' }],
@@ -122,6 +125,9 @@ function OrderModal({
         pickupDate: editOrder.pickupDate,
         pickupTime: editOrder.pickupTime,
         deliveryAddress: editOrder.deliveryAddress ?? '',
+        deliveryFee: editOrder.deliveryFee != null && editOrder.deliveryFee > 0
+          ? String(editOrder.deliveryFee).replace('.', ',')
+          : '',
         paymentMethod: editOrder.paymentMethod ?? '',
         observations: editOrder.observations ?? '',
         items: editOrder.items.length > 0 ? editOrder.items.map((it) => ({
@@ -174,7 +180,10 @@ function OrderModal({
     }
 
     // Compute total from items (subtotal = sum of unitPrice * quantity)
-    const total = itemsWithPrice.reduce((acc, it) => acc + it.unitPrice * it.quantity, 0);
+    const fee = form.deliveryAddress.trim()
+      ? (parseFloat((form.deliveryFee || '0').replace(',', '.')) || 0)
+      : 0;
+    const total = itemsWithPrice.reduce((acc, it) => acc + it.unitPrice * it.quantity, 0) + fee;
 
     setSaving(true);
     try {
@@ -185,6 +194,7 @@ function OrderModal({
         pickupDate:      form.pickupDate,
         pickupTime:      form.pickupTime,
         deliveryAddress: form.deliveryAddress.trim() || undefined,
+        deliveryFee:     fee || undefined,
         paymentMethod:   form.paymentMethod.trim() || undefined,
         observations:    form.observations.trim() || undefined,
         status:          'pending',
@@ -385,6 +395,22 @@ function OrderModal({
               </div>
             </div>
 
+            {form.deliveryAddress.trim() ? (
+              <div>
+                <label className="block text-[12px] font-semibold text-[var(--color-ink-muted)] mb-1.5">
+                  Taxa de entrega (R$)
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.deliveryFee}
+                  onChange={(e) => setField('deliveryFee', e.target.value.replace(/[^\d,\.]/g, ''))}
+                  placeholder="Deixe vazio para usar o bairro cadastrado"
+                  className="w-full px-3 py-2 text-[13.5px] bg-[var(--color-surface-muted)] border border-[var(--color-line)] rounded-lg focus:outline-none focus:border-[var(--color-brand)]"
+                />
+              </div>
+            ) : null}
+
             {/* Payment method */}
             <div>
               <label className="block text-[12px] font-semibold text-[var(--color-ink-muted)] mb-1.5">
@@ -498,7 +524,7 @@ function OrderDrawer({
   setActiveView: (v: View) => void;
   onEdit: () => void;
   onDelete: (id: string) => Promise<void>;
-  onUpdateStatus: (id: string, status: Order['status']) => void;
+  onUpdateStatus: (id: string, status: Order['status'], extra?: { deliveryCode?: string }) => void;
   onReprint?: (order: Order) => Promise<void>;
   canPrint?: boolean;
 }) {
@@ -526,6 +552,7 @@ function OrderDrawer({
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar">
           <div className="flex items-center gap-2 flex-wrap">
+            {order.source === 'ifood' ? <IfoodChannelBadge displayId={order.ifoodDisplayId} /> : null}
             <div className={`inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full ${COLUMN_STYLE[order.status].header} bg-[var(--color-surface-muted)]`}>
               <span className={`w-1.5 h-1.5 rounded-full ${COLUMN_STYLE[order.status].dot}`} />
               {order.requiresAcceptance ? 'Aguardando aceite' : STATUS_LABELS[order.status]}
@@ -626,7 +653,7 @@ function OrderDrawer({
                 onClick={() => onUpdateStatus(order.id, 'pending')}
                 className="flex-1 bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
               >
-                Aceitar pedido
+                Aceitar pedido{order.source === 'ifood' ? ' no iFood' : ''}
               </button>
               <button
                 onClick={() => setConfirmDelete(true)}
@@ -671,7 +698,18 @@ function OrderDrawer({
           )}
           {order.status === 'out_for_delivery' && (
             <button
-              onClick={() => onUpdateStatus(order.id, 'delivered')}
+              onClick={() => {
+                if (order.source === 'ifood') {
+                  const typed = window.prompt(
+                    'Código de entrega do iFood (app do cliente ou localizador do comprovante):',
+                    order.deliveryCode || '',
+                  );
+                  if (typed == null) return;
+                  onUpdateStatus(order.id, 'delivered', { deliveryCode: typed.trim() });
+                  return;
+                }
+                onUpdateStatus(order.id, 'delivered');
+              }}
               className="w-full bg-[var(--color-brand)] text-white py-2.5 rounded-lg text-[13.5px] font-semibold hover:opacity-90 transition-opacity"
             >
               Marcar como entregue
@@ -788,6 +826,11 @@ function FeedCard({
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="min-w-0 flex-1">
           <p className="text-[13.5px] font-semibold leading-tight truncate">{order.customerName}</p>
+          {order.source === 'ifood' ? (
+            <div className="mt-1">
+              <IfoodChannelBadge displayId={order.ifoodDisplayId} />
+            </div>
+          ) : null}
           <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-[var(--color-ink-faint)]">
             {isDelivery ? <Truck className="w-3 h-3" strokeWidth={1.8} /> : <Store className="w-3 h-3" strokeWidth={1.8} />}
             <span>{isDelivery ? 'Delivery' : 'Retirada'}</span>
@@ -845,7 +888,7 @@ export const ProductionView = ({
   onAddOrder: (payload: Omit<Order, 'id' | 'createdAt'> & { idempotencyKey?: string }) => Promise<void>;
   onEditOrder: (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   onDeleteOrder: (id: string) => Promise<void>;
-  onUpdateStatus: (id: string, status: Order['status']) => void;
+  onUpdateStatus: (id: string, status: Order['status'], extra?: { deliveryCode?: string }) => void;
   onReprintOrder?: (order: Order) => Promise<void>;
   canPrint?: boolean;
   isAuthenticated: boolean;
@@ -1229,7 +1272,10 @@ export const ProductionView = ({
                                       : 'shadow-[var(--shadow-card)] hover:border-[var(--color-brand)]/30'
                                   }`}
                                 >
-                                  <p className="text-[13px] font-semibold mb-1.5">{order.customerName}</p>
+                                  <div className="mb-1.5 space-y-1">
+                                    <p className="text-[13px] font-semibold truncate">{order.customerName}</p>
+                                    {order.source === 'ifood' ? <IfoodChannelBadge displayId={order.ifoodDisplayId} /> : null}
+                                  </div>
                                   <div className="space-y-0.5 mb-2.5">
                                     {order.items.slice(0, 2).map((item, i) => (
                                       <p key={i} className="text-[11.5px] text-[var(--color-ink-muted)] flex items-center gap-1.5">

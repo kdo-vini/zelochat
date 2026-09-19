@@ -56,7 +56,7 @@ interface Props {
   handleAddOrder: (payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   handleEditOrder: (id: string, payload: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
   handleDeleteOrder: (id: string) => Promise<void>;
-  updateOrderStatus: (orderId: string, newStatus: Order['status']) => void;
+  updateOrderStatus: (orderId: string, newStatus: Order['status'], extra?: { deliveryCode?: string }) => void;
   reprintOrder: (order: Order) => Promise<void>;
   canPrint: boolean;
   pendingOrderFocus: { request: OrderFocusRequest; key: number } | null;

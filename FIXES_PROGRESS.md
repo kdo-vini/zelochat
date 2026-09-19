@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Canal iFood na Produção — 2026-09-19
+
+- ✅ ZCHAT-IFOOD-MARK-01 — card da fila, Kanban e drawer de pedido `source=ifood` mostram moldura circular com `/ifood-logo.png` + pill `iFood #displayId` (`IfoodChannelBadge`). `canonicalRowToOrder` passa `ifoodDisplayId` de `fulfillment.ifood.displayId`.
+
 ## Amplificação de Disk I/O no log de webhooks — 2026-09-18
 
 - ✅ ZCHAT-IO-001 — todo webhook autenticado era inserido no log bruto antes dos filtros, atualizado após o processamento e apagado por uma retenção sem índice; sincronizações de contatos produziram até 80,8% dos eventos dos dias de pico → o caminho feliz retém apenas mensagens replayáveis, usa fingerprint canônica exata e unicidade no banco para retries cross-replica, agrega métricas e captura retroativamente qualquer evento dispensado que falhar — `server/webhookLog.ts`, `server/router.ts`, `supabase/migrations/20260918044906_optimize_webhook_raw_io.sql`, `tests/webhookLog.test.ts`

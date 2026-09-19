@@ -1,5 +1,24 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-19 — iFood: moldura circular + pill
+
+Na Produção (fila, card do Kanban e drawer), pedido `source=ifood`
+mostra `IfoodChannelBadge`: círculo com `/ifood-logo.png` + pill
+`iFood #displayId`. O `displayId` vem de `fulfillment.ifood.displayId`.
+
+## Sessão 2026-09-19 — Bem Servido almoço (print / manual / iFood)
+
+- Auto-print ignora `source=ifood` (a via é PDV ou o Gestor iFood).
+- Pedido manual grava `fulfillment.deliveryAddress` (e `address` de
+  compat) + taxa: campo no form, senão bairro único da loja, senão
+  nome de bairro contido no endereço.
+- Aceite e “marcar entregue” em pedido iFood enfileiram comando no PDV
+  (`confirm` / `verify_delivery_code`) em vez de `transition_zelo_order`.
+- WhatsApp de “pronto” usa `deliveryAddress` **ou** `fulfillmentType`.
+
+IA descrevendo o prato no chat (sem o cardápio) continua o ponto frágil
+de produto — não alterado neste corte.
+
 ### Rastro da IA (`zelochat_ai_turn_traces`) estava mudo desde que subiu (2026-09-15)
 
 Achado no relatório diário da Bem Servido: a tabela criada em 09/09

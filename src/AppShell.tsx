@@ -678,19 +678,37 @@ export default function AppShell() {
   // chat) now ROLLS BACK the optimistic state on failure and surfaces a toast.
   // Previously the card stayed in the wrong column forever and the operator
   // didn't know the change hadn't actually persisted.
-  const updateOrderStatus = useCallback((orderId: string, newStatus: Order['status']) => {
+  const updateOrderStatus = useCallback((
+    orderId: string,
+    newStatus: Order['status'],
+    extra: { deliveryCode?: string } = {},
+  ) => {
     const prevOrders = state.orders;
+    const current = state.orders.find((o) => o.id === orderId);
+    if (current?.source === 'ifood') {
+      void updateOrderStatusInSupabase(orderId, newStatus, extra).then((result) => {
+        if (result?.order) {
+          setState((prev) => ({
+            ...prev,
+            orders: prev.orders.map((o) => o.id === orderId ? result.order! : o),
+          }));
+        }
+        if (result?.ifoodCommand) {
+          toast.info('Enviado ao iFood. O card só muda de coluna quando o iFood confirmar.');
+        }
+      }).catch((err) => {
+        console.error('[App] updateOrderStatus iFood failed:', err);
+        const detail = err instanceof Error && err.message.trim() ? err.message.trim() : '';
+        toast.error(detail || 'Não consegui enviar essa ação ao iFood.');
+      });
+      return;
+    }
     setState((prev) => ({
       ...prev,
       orders: prev.orders.map((o) => o.id === orderId
         ? {
             ...o,
             status: newStatus,
-            // Stamp closedAt on delivery so the Produção board's linger filter
-            // (filterProductionBoardOrders) keeps the card visible for the
-            // window instead of hiding it instantly — the server's real
-            // closed_at is within ~2s and the sync effect treats same-status
-            // rows as equal, so the optimistic timestamp is what sticks.
             ...(newStatus === 'delivered' && !o.closedAt ? { closedAt: new Date().toISOString() } : {}),
             ...((o.requiresAcceptance && (newStatus === 'pending' || newStatus === 'preparing'))
               ? { requiresAcceptance: false }
@@ -698,7 +716,7 @@ export default function AppShell() {
           }
         : o),
     }));
-    void updateOrderStatusInSupabase(orderId, newStatus).catch((err) => {
+    void updateOrderStatusInSupabase(orderId, newStatus, extra).catch((err) => {
       console.error('[App] updateOrderStatus Supabase failed:', err);
       setState((prev) => ({ ...prev, orders: prevOrders }));
       // Every error that reaches this catch is already operator-safe Portuguese:

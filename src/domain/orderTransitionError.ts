@@ -49,6 +49,15 @@ export function classifyOrderTransitionError(error: unknown): OrderTransitionErr
   if (contains(error, 'PRODUCT_STOCK_EXCEEDED')) {
     return { httpStatus: 409, code: 'PRODUCT_STOCK_EXCEEDED', userMessage: 'A quantidade de um item ultrapassa o estoque atual. Atualize o estoque para iniciar o preparo.' };
   }
+  if (contains(error, 'IFOOD_ORDER_REQUIRES_COMMAND') || (error instanceof Error && error.name === 'IFOOD_CHAT_COMMAND')) {
+    return {
+      httpStatus: 409,
+      code: 'INVALID_ORDER_TRANSITION',
+      userMessage: error instanceof Error && error.name === 'IFOOD_CHAT_COMMAND'
+        ? error.message
+        : 'Este pedido do iFood só avança pelo iFood. Aceite ou conclua no PDV ou no Gestor de Pedidos.',
+    };
+  }
   if (contains(error, 'INVALID_ORDER_TRANSITION')) {
     return { httpStatus: 409, code: 'INVALID_ORDER_TRANSITION', userMessage: 'O pedido não pode avançar a partir do estado atual. Atualize a tela e tente novamente.' };
   }

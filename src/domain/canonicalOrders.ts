@@ -12,6 +12,7 @@ export const CANONICAL_ORDER_SELECT = [
   'payment',
   'observations',
   'total',
+  'delivery_fee',
   'created_at',
   'closed_at',
   'pessoa_id',
@@ -95,16 +96,39 @@ export function canonicalRowToOrder(row: CanonicalOrderRow): Order {
       };
     });
 
+  const phone = customer.phone && typeof customer.phone === 'object'
+    ? customer.phone
+    : {};
+  const localizer = typeof phone.localizer === 'string' ? phone.localizer.trim() : '';
+  const ifood = fulfillment.ifood && typeof fulfillment.ifood === 'object' ? fulfillment.ifood as Record<string, unknown> : {};
+  const deliveryAddress = String(
+    fulfillment.deliveryAddress
+    ?? fulfillment.delivery_address
+    ?? fulfillment.address
+    ?? ''
+  ) || undefined;
+  const deliveryCode = String(ifood.deliveryCode ?? fulfillment.deliveryCode ?? localizer ?? '') || undefined;
+  const deliveredBy = String(fulfillment.deliveredBy ?? fulfillment.delivered_by ?? '') || undefined;
+  const fulfillmentType = String(fulfillment.type ?? '') || undefined;
+
   return {
     id: row.id,
     ...(typeof row.pessoa_id === 'string' ? { personId: row.pessoa_id } : {}),
     revision: Number(row.revision ?? 0),
+    source: String(row.source ?? '') || undefined,
+    ...(String(ifood.displayId ?? '') ? { ifoodDisplayId: String(ifood.displayId) } : {}),
     customerName: String(customer.name ?? 'Cliente'),
-    customerPhone: String(customer.phone ?? ''),
+    customerPhone: String(typeof customer.phone === 'string' ? customer.phone : phone.number ?? ''),
     items,
     pickupDate: String(fulfillment.pickupDate ?? fulfillment.pickup_date ?? ''),
     pickupTime: String(fulfillment.pickupTime ?? fulfillment.pickup_time ?? ''),
-    deliveryAddress: String(fulfillment.deliveryAddress ?? fulfillment.delivery_address ?? '') || undefined,
+    deliveryAddress,
+    ...(typeof row.delivery_fee === 'number' || typeof row.delivery_fee === 'string'
+      ? { deliveryFee: Number(row.delivery_fee) }
+      : {}),
+    deliveryCode,
+    deliveredBy,
+    fulfillmentType,
     driverId: String(fulfillment.driverId ?? fulfillment.driver_id ?? '') || undefined,
     paymentMethod: String(payment.declaredMethod ?? payment.method ?? '') || undefined,
     observations: typeof row.observations === 'string' ? row.observations : undefined,

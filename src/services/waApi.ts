@@ -609,13 +609,14 @@ export async function updateOrderStatusApi(
   orderId: string,
   status: string,
   expectedRevision: number,
-): Promise<void> {
+  extra: { deliveryCode?: string } = {},
+): Promise<{ order?: import('../types').Order; ifoodCommand?: { intent: string; status: string | null } }> {
   const response = await apiFetch(apiUrl(`/api/orders/${encodeURIComponent(orderId)}/status`), {
     method: 'PATCH',
     headers: authHeaders(token),
-    body: JSON.stringify({ status, expectedRevision }),
+    body: JSON.stringify({ status, expectedRevision, ...extra }),
   });
-  await parseResponse(response);
+  return parseResponse(response);
 }
 
 export async function cancelOrderApi(token: string, orderId: string, expectedRevision: number): Promise<void> {
@@ -632,6 +633,7 @@ export interface ManualOrderPayload {
   pickupDate: string;
   pickupTime: string;
   deliveryAddress?: string;
+  deliveryFee?: number;
   paymentMethod?: string;
   observations?: string;
   idempotencyKey?: string;

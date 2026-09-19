@@ -121,4 +121,15 @@ await runSuite('selectOrdersToAutoPrint', [
       assertEqual(result.length, 0, 'aceite nao duplica o bilhete');
     },
   },
+  {
+    name: 'pedido iFood novo nao e auto-impresso no Chat',
+    run: () => {
+      const incoming = [makeOrder({ id: 'ifood-1', source: 'ifood' })];
+      const result = selectOrdersToAutoPrint([], incoming, {
+        maxAgeMs: MS_15_MIN,
+        now: BASE_TIME,
+      });
+      assertEqual(result.length, 0, 'iFood never auto-prints in ZeloChat');
+    },
+  },
 ]);

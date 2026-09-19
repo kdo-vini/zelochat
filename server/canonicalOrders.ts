@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { quoteManualDelivery, manualFulfillmentSnapshot } from '../src/domain/manualOrderFulfillment.js';
 import { CANONICAL_ORDER_SELECT, canonicalRowToOrder, uiStatusToCanonicalAction, type CanonicalOrderRow } from '../src/domain/canonicalOrders.js';
 import { getOrderTransitionErrorMessage } from '../src/domain/orderTransitionError.js';
 import type { Order } from '../src/types.js';
@@ -7,6 +8,7 @@ import { resolveCustomerForOrder } from './customers/identity.js';
 import { createCanonicalOrderWithOptionalPerson } from './customers/orderContract.js';
 import { isMissingCustomerContractError } from './customers/contract.js';
 import { linkCustomerToSessionFamily } from './messageHandler.js';
+import { chatOrderFromDbRow, enqueueIfoodCommandFromChat } from './ifoodOrderCommands.js';
 
 export const LEGACY_CANONICAL_ORDER_SELECT = [
   'id', 'source', 'revision', 'status', 'total', 'observations', 'created_at',
@@ -30,18 +32,47 @@ export async function getCanonicalOrder(empresaId: string, orderId: string): Pro
   return data ? canonicalRowToOrder(data as unknown as CanonicalOrderRow) : null;
 }
 
+export type TransitionCanonicalOrderResult = {
+  order: Order;
+  ifoodCommand?: { intent: string; status: string | null };
+};
+
 export async function transitionCanonicalOrder(input: {
   empresaId: string;
   orderId: string;
   expectedRevision: number;
   status: Order['status'];
   actorId: string;
-}): Promise<Order> {
+  deliveryCode?: string | null;
+}): Promise<TransitionCanonicalOrderResult> {
   const supabase = getServiceSupabase();
   const { data: current, error: loadError } = await supabase.from('zelo_orders')
-    .select('status, revision').eq('empresa_id', input.empresaId).eq('id', input.orderId).maybeSingle();
+    .select('status, revision, source, fulfillment').eq('empresa_id', input.empresaId).eq('id', input.orderId).maybeSingle();
   if (loadError) throw loadError;
   if (!current) throw new Error('ORDER_NOT_FOUND');
+
+  if (current.source === 'ifood') {
+    const queued = await enqueueIfoodCommandFromChat({
+      empresaId: input.empresaId,
+      orderId: input.orderId,
+      expectedRevision: input.expectedRevision,
+      current: chatOrderFromDbRow(current),
+      requestedUiStatus: input.status,
+      deliveryCode: input.deliveryCode,
+    });
+    if (queued.kind === 'error') {
+      const error = new Error(queued.message);
+      error.name = 'IFOOD_CHAT_COMMAND';
+      throw error;
+    }
+    const order = await getCanonicalOrder(input.empresaId, input.orderId);
+    if (!order) throw new Error('ORDER_NOT_FOUND');
+    if (queued.kind === 'queued') {
+      return { order, ifoodCommand: { intent: queued.intent, status: queued.commandStatus } };
+    }
+    return { order };
+  }
+
   let revision = input.expectedRevision;
   if (input.status === 'preparing' && current.status === 'pending_review') {
     const { error: acceptError } = await supabase.rpc('transition_zelo_order', {
@@ -67,7 +98,7 @@ export async function transitionCanonicalOrder(input: {
   }
   const order = await getCanonicalOrder(input.empresaId, input.orderId);
   if (!order) throw new Error('ORDER_NOT_FOUND');
-  return order;
+  return { order };
 }
 
 export async function cancelCanonicalOrder(empresaId: string, orderId: string, expectedRevision: number, actorId: string): Promise<void> {
@@ -141,6 +172,7 @@ export interface ManualOrderInput {
   pickupDate: string;
   pickupTime: string;
   deliveryAddress?: string;
+  deliveryFee?: number;
   paymentMethod?: string;
   observations?: string;
   idempotencyKey?: string;
@@ -172,7 +204,25 @@ export async function createManualZeloOrder(input: ManualOrderInput): Promise<Or
   });
   const subtotal = Math.round(cartItems.reduce((sum, it) => sum + it.lineTotal, 0) * 100) / 100;
 
-  const fulfillmentType = input.deliveryAddress?.trim() ? 'delivery' : 'pickup';
+  const { data: neighborhoodRows } = await supabase
+    .from('zelomenu_delivery_neighborhoods')
+    .select('name, delivery_price, active')
+    .eq('company_id', input.empresaId)
+    .eq('active', true);
+  const neighborhoods = (neighborhoodRows ?? [])
+    .map((row) => {
+      const name = typeof row.name === 'string' ? row.name.trim() : '';
+      const fee = Number(row.delivery_price);
+      if (!name || !Number.isFinite(fee) || fee < 0) return null;
+      return { name, fee };
+    })
+    .filter((item): item is { name: string; fee: number } => item !== null);
+
+  const quote = quoteManualDelivery({
+    deliveryAddress: input.deliveryAddress,
+    deliveryFee: input.deliveryFee,
+    neighborhoods,
+  });
   let pessoaId: string | null = null;
   const ownerUserId = await getEmpresaUserId(input.empresaId);
   if (ownerUserId) {
@@ -195,15 +245,7 @@ export async function createManualZeloOrder(input: ManualOrderInput): Promise<Or
       name: input.customerName,
       phone: input.customerPhone,
     },
-    fulfillment: {
-      type: fulfillmentType,
-      pickupDate: input.pickupDate,
-      pickupTime: input.pickupTime,
-      ...(fulfillmentType === 'delivery' ? {
-        address: input.deliveryAddress!.trim(),
-        neighborhood: '',
-      } : {}),
-    },
+    fulfillment: manualFulfillmentSnapshot(quote, input.pickupDate, input.pickupTime),
     payment: {
       declaredMethod: input.paymentMethod || null,
     },
@@ -213,7 +255,7 @@ export async function createManualZeloOrder(input: ManualOrderInput): Promise<Or
     },
     pricing: {
       subtotal,
-      deliveryFee: 0,
+      deliveryFee: quote.deliveryFee,
       discount: 0,
     },
   };

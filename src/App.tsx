@@ -12,6 +12,7 @@ import OnboardingPage from './pages/OnboardingPage';
 import { UpdateAvailableBanner } from './components/shared/UpdateAvailableBanner';
 
 const AppShell = lazy(() => import('./AppShell'));
+const IfoodBadgePreviewPage = lazy(() => import('./pages/IfoodBadgePreviewPage'));
 
 export default function App() {
   return (
@@ -27,6 +28,13 @@ export default function App() {
             <Route path="/onboarding" element={
               <AuthGuard requireProfile={false}><OnboardingPage /></AuthGuard>
             } />
+            {import.meta.env.DEV ? (
+              <Route path="/preview/ifood" element={
+                <Suspense fallback={<div role="status" className="flex min-h-screen items-center justify-center">Carregando preview…</div>}>
+                  <IfoodBadgePreviewPage />
+                </Suspense>
+              } />
+            ) : null}
             <Route path="/app/*" element={
               <AuthGuard>
                 <Suspense fallback={<div role="status" className="flex min-h-screen items-center justify-center">Carregando atendimento…</div>}>

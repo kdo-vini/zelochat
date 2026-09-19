@@ -17,6 +17,35 @@ describe('pedidos canonicos', () => {
     assert.deepEqual(order.items, [{ product: 'A', quantity: 2 }, { product: 'B', quantity: 1 }]);
   });
 
+  it('le endereco gravado em fulfillment.address como entrega', () => {
+    const order = canonicalRowToOrder({
+      id: 'manual-1', status: 'preparing', revision: 1, source: 'manual',
+      customer: { name: 'Adriano', phone: '5514999' },
+      fulfillment: { type: 'delivery', address: 'Av. Júlio Prestes, 930', pickupDate: '2026-09-18', pickupTime: '19:00' },
+      payment: {}, total: 50.45, delivery_fee: 8, created_at: '2026-09-18T22:00:00Z',
+      zelo_order_items: [],
+    });
+    assert.equal(order.deliveryAddress, 'Av. Júlio Prestes, 930');
+    assert.equal(order.source, 'manual');
+    assert.equal(order.deliveryFee, 8);
+  });
+
+  it('traz o displayId do iFood para a pill da Produção', () => {
+    const order = canonicalRowToOrder({
+      id: 'ifood-1', status: 'accepted', revision: 1, source: 'ifood',
+      customer: { name: 'Rafa', phone: { number: '0800', localizer: '1234' } },
+      fulfillment: {
+        type: 'delivery',
+        deliveryAddress: 'Av. Júlio Prestes, 930',
+        ifood: { displayId: '7421', deliveryCode: '4321' },
+      },
+      payment: {}, total: 40, created_at: '2026-09-19T12:00:00Z',
+      zelo_order_items: [],
+    });
+    assert.equal(order.source, 'ifood');
+    assert.equal(order.ifoodDisplayId, '7421');
+  });
+
   it('inclui os modificadores selecionados no nome do item (bug: sumiam do Kanban)', () => {
     const order = canonicalRowToOrder({
       id: 'order-2', status: 'pending_review', revision: 1,

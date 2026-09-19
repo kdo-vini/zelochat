@@ -115,6 +115,9 @@ export function buildOrderText(order: Order, businessName = 'ZeloChat'): string 
 
   if (order.deliveryAddress) {
     rows.push('Entrega:', ...wrapText(order.deliveryAddress));
+    if (order.deliveryFee && order.deliveryFee > 0) {
+      rows.push(`Taxa: ${fmtMoney(order.deliveryFee)}`);
+    }
   } else {
     rows.push(`Retirada: ${order.pickupTime || '-'}`);
   }

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { assert, assertIncludes, runSuite } from './testHarness.js';
 
 const productionView = readFileSync(new URL('../src/components/views/ProductionView.tsx', import.meta.url), 'utf8');
+const ifoodBadge = readFileSync(new URL('../src/components/IfoodChannelBadge.tsx', import.meta.url), 'utf8');
 const appStyles = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 
 await runSuite('Layout responsivo da Produção', [
@@ -31,6 +32,15 @@ await runSuite('Layout responsivo da Produção', [
       assertIncludes(productionView, 'handleResizeKeyDown', 'alças aceitam teclado');
       assertIncludes(productionView, 'ArrowLeft', 'teclado reduz a largura');
       assertIncludes(productionView, 'ArrowRight', 'teclado aumenta a largura');
+    },
+  },
+  {
+    name: 'pedido iFood mostra moldura circular e pill de texto',
+    run() {
+      assertIncludes(productionView, 'IfoodChannelBadge', 'Produção importa o badge de canal iFood');
+      assertIncludes(ifoodBadge, 'rounded-full', 'logo fica numa moldura circular');
+      assertIncludes(ifoodBadge, '/ifood-logo.png', 'usa o ícone estático do iFood');
+      assertIncludes(ifoodBadge, 'iFood', 'mantém a pill de texto');
     },
   },
 ]);
