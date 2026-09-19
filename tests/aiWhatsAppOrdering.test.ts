@@ -24,6 +24,9 @@ import {
   buildStoreClosedPrefix,
   isDeliveryFeeQuestion,
   mentionsMenu,
+  isRequestingTheMenu,
+  conversationHasZeloMenuReceipt,
+  resolveNamedCatalogMatch,
   isOrderingSnapshotEditable,
   parseOrderingButton,
   renderCatalogReply,
@@ -385,6 +388,46 @@ assert.equal(isZeloMenuOrderReceipt('quero fazer um pedido'), false);
 assert.equal(isZeloMenuOrderReceipt('Pedido #D7957397'), false, 'sem a assinatura do rodape nao e o recibo');
 assert.equal(isZeloMenuOrderReceipt('Sistema Zelo Menu'), false, 'rodape sozinho tambem nao');
 
+// REGRESSION 2026-09-18 (Bem Servido / Silvia): after the receipt, "lá no
+// cardápio não mostra o acompanhamento" used to re-send the entry card because
+// mentionsMenu + empty search meant "they asked for the menu".
+{
+  const silviaSession = sessionWith('Lá no cardápio não mostra o acompanhamento');
+  silviaSession.messages = [
+    {
+      id: 'receipt', waMessageId: 'receipt', role: 'user', kind: 'text',
+      content: zeloMenuReceipt, preview: zeloMenuReceipt, timestamp: new Date(0).toISOString(),
+    },
+    {
+      id: 'thanks', waMessageId: 'thanks', role: 'assistant', kind: 'text',
+      content: 'Recebemos seu pedido, obrigado! 🙏', preview: 'Recebemos seu pedido, obrigado! 🙏',
+      timestamp: new Date(1).toISOString(),
+    },
+    {
+      id: 'sides', waMessageId: 'sides', role: 'user', kind: 'text',
+      content: 'Micheli esse pedido vem arroz, salada e batata?',
+      preview: 'Micheli esse pedido vem arroz, salada e batata?',
+      timestamp: new Date(2).toISOString(),
+    },
+    {
+      id: 'menu-q', waMessageId: 'menu-q', role: 'user', kind: 'text',
+      content: 'Lá no cardápio não mostra o acompanhamento',
+      preview: 'Lá no cardápio não mostra o acompanhamento',
+      timestamp: new Date(3).toISOString(),
+    },
+  ];
+  const silviaFollowUp = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    silviaSession,
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    { dryRun: true, client: emptyCatalogClient },
+  );
+  assert.equal(silviaFollowUp.handled, false, 'post-receipt question about sides falls through to the generic assistant');
+  assert.doesNotMatch(silviaFollowUp.response ?? '', /Veja o cardápio e faça seu pedido por aqui/);
+}
+
 // REGRESSION 2026-09-09: com a loja fechada a lista saia sem nenhuma mencao ao
 // horario, entao o cliente era convidado a escolher de uma loja que nao ia
 // atender. Um atendente diria que esta fechado, quando abre, e mostraria as
@@ -434,6 +477,62 @@ assert.equal(startButtonAsText.response, 'Pode escrever ou mandar um áudio com 
 assert.deepEqual(searchedQueries, [], 'the button label never reaches the catalog');
 assert.equal(isOrderingStartButtonText('pedir por aqui'), true, 'accent/case insensitive');
 assert.equal(isOrderingStartButtonText('quero pedir por aqui mesmo'), false, 'only a whole-message match is the button');
+
+// REGRESSION 2026-09-18 (Bem Servido / Anderson + reclamação da dona): after
+// "Pedir por aqui", the customer named "Marmita média bife a cavalo". Search
+// also returned "bife a pizzaolo", so the planner never ran and the customer
+// got "Qual você quer?" instead of a cart.
+{
+  const plannerTexts: string[] = [];
+  const twoBifesClient: OrderingClient = {
+    ...dryRunClient,
+    searchCatalog: async () => ({
+      total: 2,
+      ambiguous: true,
+      results: [
+        { productId: 101, publicName: 'Marmita média bife a cavalo', currentPrice: 30, matchReason: 'nome_publico', ambiguous: true },
+        { productId: 102, publicName: 'Marmita média de bife a pizzaolo', currentPrice: 35, matchReason: 'nome_publico', ambiguous: true },
+      ],
+    }),
+  };
+  const andersonSession = sessionWith('Marmita média bife a cavalo');
+  andersonSession.messages = [
+    {
+      id: 'start', waMessageId: 'start', role: 'user', kind: 'text',
+      content: 'Pedir por aqui', preview: 'Pedir por aqui', timestamp: new Date(0).toISOString(),
+    },
+    {
+      id: 'prompt', waMessageId: 'prompt', role: 'assistant', kind: 'text',
+      content: 'Pode escrever ou mandar um áudio com o que você quer pedir.',
+      preview: 'Pode escrever ou mandar um áudio com o que você quer pedir.',
+      timestamp: new Date(1).toISOString(),
+    },
+    {
+      id: 'dish', waMessageId: 'dish', role: 'user', kind: 'text',
+      content: 'Marmita média bife a cavalo', preview: 'Marmita média bife a cavalo',
+      timestamp: new Date(2).toISOString(),
+    },
+  ];
+  const namedDish = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    andersonSession,
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: true,
+      client: twoBifesClient,
+      draftPlanner: async (_session, text) => {
+        plannerTexts.push(text);
+        return { items: [{ productId: 101, quantity: 1 }], fulfillment: { type: 'pickup', asap: true } };
+      },
+    },
+  );
+  assert.deepEqual(plannerTexts, ['Marmita média bife a cavalo'], 'the named dish reaches the planner instead of a choice list');
+  assert.equal(namedDish.handled, true);
+  assert.doesNotMatch(namedDish.response ?? '', /Qual você quer\?/, 'does not throw the sibling dish as a choice');
+  assert.doesNotMatch(namedDish.response ?? '', /pizzaolo/);
+}
 
 // `mentionsMenu` is what makes the empty-search fallback vocabulary-proof: it
 // asks only whether the customer named the menu, never how they framed it.
@@ -564,6 +663,79 @@ assert.equal(repeatsLastAssistantReply([
   { role: 'assistant', content: 'Encontrei:\nPenne por R$ 22,00\nQual você quer?' },
 ], repeatedCatalogReply), false);
 assert.equal(repeatsLastAssistantReply([], repeatedCatalogReply), false);
+// REGRESSION 2026-09-18 (Bem Servido / Anderson): the generic model inserted
+// a confirmation BETWEEN two identical catalog lists, so looking only at the
+// last assistant message let the second list through.
+assert.equal(repeatsLastAssistantReply([
+  { role: 'assistant', content: repeatedCatalogReply },
+  { role: 'assistant', content: 'Acho que você quis dizer Marmita média bife a cavalo. Só pra confirmar.' },
+], repeatedCatalogReply), true, 'a different assistant message in between still counts as a repeat');
+
+const cavaloPizzaoloCatalog = {
+  total: 2,
+  ambiguous: true,
+  results: [
+    { productId: 101, publicName: 'Marmita média bife a cavalo', currentPrice: 30, matchReason: 'nome_publico', ambiguous: true },
+    { productId: 102, publicName: 'Marmita média de bife a pizzaolo', currentPrice: 35, matchReason: 'nome_publico', ambiguous: true },
+  ],
+};
+// The customer named one dish. The sibling "pizzaolo" hit is noise, not a
+// real choice — same symptom the owner reported: "ele joga outra opção".
+assert.equal(
+  resolveNamedCatalogMatch('Marmita média bife a cavalo', cavaloPizzaoloCatalog)?.productId,
+  101,
+);
+assert.equal(
+  resolveNamedCatalogMatch('bife a pizzaolo', cavaloPizzaoloCatalog)?.productId,
+  102,
+);
+assert.equal(
+  resolveNamedCatalogMatch('marmita média de bife', cavaloPizzaoloCatalog),
+  null,
+  'without a distinctive token both dishes remain a real choice',
+);
+assert.equal(
+  resolveNamedCatalogMatch('Macarrão,pene', {
+    total: 2,
+    ambiguous: true,
+    results: [
+      { productId: 1365, publicName: 'Macarrão com legumes 500 ml', currentPrice: 27.99, matchReason: 'nome_publico', ambiguous: true },
+      { productId: 1333, publicName: 'Marmita de costela de panela com macarrão', currentPrice: 26.99, matchReason: 'nome_publico', ambiguous: true },
+    ],
+  }),
+  null,
+  'two different pasta dishes stay ambiguous',
+);
+
+const afterBifeList = [
+  { role: 'user', content: 'Marmita média bife a cavalo' },
+  { role: 'assistant', content: 'Tem sim:\nMarmita média bife a cavalo por R$ 30,00\nMarmita média de bife a pizzaolo por R$ 35,00\nQual você quer?' },
+];
+assert.equal(isOrderingFollowUpAnswer(afterBifeList, 'cavalo'), true, 'picking the named dish is a follow-up');
+assert.equal(isOrderingFollowUpAnswer(afterBifeList, 'Adicional mandioca frita'), false, 'an extra is not a choice among the listed dishes');
+assert.equal(isOrderingFollowUpAnswer(afterBifeList, 'Coca Zero lata'), false, 'a drink is not a choice among the listed dishes');
+
+assert.equal(isRequestingTheMenu('Gostaria do cardápio por favorn'), true);
+assert.equal(isRequestingTheMenu('Depois me manda ó cardápio , fazendo favor'), true);
+assert.equal(isRequestingTheMenu('me manda o menu'), true);
+assert.equal(isRequestingTheMenu('tem sushi?'), false);
+assert.equal(
+  isRequestingTheMenu('Lá no cardápio não mostra o acompanhamento'),
+  false,
+  'asking what the menu includes is not a request to receive the menu',
+);
+assert.equal(
+  isRequestingTheMenu('Micheli esse pedido vem arroz, salada e batata? Lá no cardápio não mostra o acompanhamento'),
+  false,
+);
+
+const silviaReceiptMessages = [
+  { role: 'user' as const, content: zeloMenuReceipt },
+  { role: 'assistant' as const, content: 'Recebemos seu pedido, obrigado! 🙏' },
+  { role: 'user' as const, content: 'Lá no cardápio não mostra o acompanhamento' },
+];
+assert.equal(conversationHasZeloMenuReceipt(silviaReceiptMessages), true);
+assert.equal(conversationHasZeloMenuReceipt([{ role: 'user', content: 'oi' }]), false);
 
 // Concurrent retry dedupes only the exact provider message; Alterar remains distinct.
 const handledButtons = new Map<string, number>();
@@ -786,7 +958,7 @@ assert.match(accompanimentReply, /Acompanhamento 1/);
 assert.match(accompanimentReply, /Acompanhamento 12/);
 
 const orderingHandlerSource = readFileSync(new URL('../server/aiWhatsAppOrdering.ts', import.meta.url), 'utf8');
-assert.match(orderingHandlerSource, /isSingleProductCatalogAmbiguous\(catalog\)/, 'same-product ambiguous candidates reach cart planning');
+assert.match(orderingHandlerSource, /isSingleProductCatalogAmbiguous\(resolvedCatalog\)/, 'same-product ambiguous candidates reach cart planning');
 assert.doesNotMatch(orderingHandlerSource, /sendTextMessage|sendButtonMessage/, 'canonical ordering must use the durable outbound dispatcher');
 // C4 / FN I1: every "summary vs. next requirement" decision must route
 // through the presenter-aware gate — the naive `readyForConfirmation &&

@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-19',
+    category: 'hotfix',
+    title: 'Pedido escrito no WhatsApp monta certo',
+    description: 'Quando o cliente toca em “pedir por aqui” e escreve o prato, a IA passa a montar esse pedido em vez de devolver outra opção ou o cardápio de novo. Pergunta sobre o que já veio no pedido também deixa de ganhar o link do cardápio.',
+  },
+  {
     date: '2026-09-14',
     category: 'hotfix',
     title: 'Avisos de entrega voltaram a chegar',

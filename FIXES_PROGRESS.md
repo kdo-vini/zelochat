@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Pedido descrito no WhatsApp virava lista ou link — 2026-09-19
+
+- ✅ ZCHAT-AI-029 — Bem Servido: depois de "Pedir por aqui", "Marmita média bife a cavalo" recebia "Tem sim: … pizzaolo. Qual você quer?" (e a mesma lista de novo no adicional/Coca); depois do recibo, "lá no cardápio não mostra o acompanhamento" reabria o cartão de entrada. A dona teve que assumir. Causa: busca ambígua entre pratos parecidos bloqueava o planner; `mentionsMenu` + busca vazia tratava qualquer "cardápio" como pedido do menu; follow-up de 3 palavras reusava a query do prato. → token que aparece no nome de um único prato monta o pedido (`resolveNamedCatalogMatch`); falar *sobre* o cardápio não dispara o cartão (`isRequestingTheMenu`); adicional/bebida não é escolha de opção; corta-loop olha as 3 últimas respostas da IA — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`
+
 ## Canal iFood na Produção — 2026-09-19
 
 - ✅ ZCHAT-IFOOD-SOUND-01 — campainha `/sounds/ifood-arrival.mp3` em

@@ -1,5 +1,12 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-19 — pedido descrito no chat (Bem Servido)
+
+Depois de "Pedir por aqui", nomear o prato monta o pedido quando um token da
+frase identifica um único item (não joga o primo "pizzaolo" como escolha).
+Pergunta sobre o que o pedido inclui, depois do recibo, não reabre o cardápio.
+`resolveNamedCatalogMatch` + `isRequestingTheMenu`. Ver [[FIXES_PROGRESS]] ZCHAT-AI-029.
+
 ## Sessão 2026-09-19 — iFood: som de campainha
 
 Qualquer pedido novo na Produção toca `/sounds/ifood-arrival.mp3`

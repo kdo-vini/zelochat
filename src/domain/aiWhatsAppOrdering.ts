@@ -123,6 +123,21 @@ export function mentionsMenu(text: string): boolean {
   return catalogQueryWords(text).some((word) => MENU_WORDS.has(word));
 }
 
+/**
+ * FIX 2026-09-19 (Bem Servido / Silvia): `mentionsMenu` is the empty-search
+ * fallback that recognises "me manda o cardápio". It also fired on "lá no
+ * cardápio não mostra o acompanhamento" — a question about a placed order —
+ * and re-sent the entry card. Talking ABOUT the menu is not asking to receive
+ * it, unless the customer also said send/show.
+ */
+export function isRequestingTheMenu(text: string): boolean {
+  if (!mentionsMenu(text)) return false;
+  const normalized = normalize(text);
+  const talkingAboutContents = /\b(?:nao mostra|nao aparece|nao inclui|nao vem|vem com|esse pedido|meu pedido|acompanhament)\b/.test(normalized);
+  if (!talkingAboutContents) return true;
+  return /\b(?:me\s+)?(?:manda|envia|passa|encaminha)\b/.test(normalized);
+}
+
 export function buildOrderingEntryPayload(menuUrl: string): {
   kind: 'buttons';
   text: string;
@@ -156,6 +171,14 @@ export function isExplicitHumanRequest(text: string): boolean {
 export function isZeloMenuOrderReceipt(text: string): boolean {
   const normalized = normalize(text);
   return normalized.includes('sistema zelo menu') && /pedido\s*#\s*\S/.test(normalized);
+}
+
+/** True when this conversation already received a ZeloMenu checkout receipt. */
+export function conversationHasZeloMenuReceipt(messages: OrderingConversationMessage[]): boolean {
+  return messagesSinceConversationBreak(messages).some((message) => (
+    message.role === 'user'
+    && isZeloMenuOrderReceipt((message.audio_transcript || message.preview || message.content || '').trim())
+  ));
 }
 
 export const ZELOMENU_ORDER_RECEIPT_REPLY = 'Recebemos seu pedido, obrigado! 🙏';
@@ -306,8 +329,13 @@ export function repeatsLastAssistantReply(
 ): boolean {
   const candidate = response.trim();
   if (!candidate) return false;
-  const previousAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
-  return (previousAssistant?.content || previousAssistant?.preview || '').trim() === candidate;
+  // FIX 2026-09-19: looking only at the last assistant message let a second
+  // identical catalog list through when the generic model inserted a
+  // confirmation in between (Bem Servido / Anderson, 2026-09-18 19:09).
+  return [...messages].reverse()
+    .filter((message) => message.role === 'assistant')
+    .slice(0, 3)
+    .some((message) => (message.content || message.preview || '').trim() === candidate);
 }
 
 export interface CanonicalButtonHandling {
@@ -726,6 +754,45 @@ export interface CatalogReplyResult {
   }>;
 }
 
+const CATALOG_NAME_STOP = new Set(['a', 'o', 'as', 'os', 'de', 'da', 'do', 'das', 'dos', 'e', 'um', 'uma', 'com', 'para', 'pra', 'na', 'no', 'em']);
+
+function catalogNameTokens(text: string): string[] {
+  return catalogQueryWords(text).filter((word) => word.length > 1 && !CATALOG_NAME_STOP.has(word));
+}
+
+/**
+ * FIX 2026-09-19 (Bem Servido / Anderson): the customer wrote the exact dish
+ * name after "Pedir por aqui". Search also returned a sibling ("bife a
+ * pizzaolo"), `ambiguous` blocked the planner, and the reply was "Qual você
+ * quer?" — the owner had to take over. A query token that appears in exactly
+ * one product name is the dish they named; two real dishes still ask.
+ */
+export function resolveNamedCatalogMatch(
+  query: string,
+  catalog: Pick<CatalogReplyResult, 'results'>,
+): CatalogReplyResult['results'][number] | null {
+  const results = catalog.results ?? [];
+  if (results.length === 0) return null;
+  if (results.length === 1) return results[0];
+  const queryTokens = catalogNameTokens(query);
+  if (!queryTokens.length) return null;
+  const identified = new Set<number>();
+  for (const token of queryTokens) {
+    const hits = results.filter((item) => catalogNameTokens(item.publicName).includes(token));
+    if (hits.length === 1) identified.add(hits[0].productId);
+  }
+  if (identified.size !== 1) return null;
+  const productId = [...identified][0];
+  return results.find((item) => item.productId === productId) ?? null;
+}
+
+export function resolveCatalogForNamedOrder(query: string, catalog: CatalogReplyResult): CatalogReplyResult {
+  if (!catalog.ambiguous || catalog.results.length < 2) return catalog;
+  const named = resolveNamedCatalogMatch(query, catalog);
+  if (!named) return catalog;
+  return { ...catalog, ambiguous: false, total: 1, results: [{ ...named, ambiguous: false }] };
+}
+
 function requestedModifierGroup(query: string): RegExp | null {
   if (/acompanhamento/i.test(query)) return /acompanhamento/i;
   if (/\b(base|arroz|feij[aã]o)\b/i.test(query)) return /\bbase\b/i;
@@ -1023,6 +1090,10 @@ export function isOrderingFollowUpAnswer(
   // valendo dentro da mesma conversa.
   if (!isOrderingFollowUp(messagesSinceConversationBreak(messages))) return false;
   if (ORDER_LOGISTICS_TERMS.test(normalize(text))) return false;
+  // FIX 2026-09-19: "Adicional mandioca frita" and "Coca Zero lata" are three
+  // words, so they used to borrow the previous dish query and reprint the
+  // same "Qual você quer?" list. An add-on is not a choice among listed dishes.
+  if (/\b(?:adicional|extra|coca|refri|refrigerante|suco|guarana|fanta|lata)\b/.test(normalize(text))) return false;
   const words = catalogQueryWords(text);
   return words.length > 0 && words.length <= FOLLOW_UP_ANSWER_MAX_WORDS;
 }
