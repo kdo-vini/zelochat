@@ -1,5 +1,10 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-19 — iFood: som de campainha
+
+Qualquer pedido novo na Produção toca `/sounds/ifood-arrival.mp3`
+(mesmo asset do PDV), via `sound.play('arrival')` no refresh/realtime.
+
 ## Sessão 2026-09-19 — iFood: moldura circular + pill
 
 Na Produção (fila, card do Kanban e drawer), pedido `source=ifood`

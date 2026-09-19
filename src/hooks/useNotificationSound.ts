@@ -4,11 +4,12 @@ const UNLOCK_KEY = 'zelochat_sound_unlocked';
 const MUTE_KEY = 'zelochat_sound_muted';
 const ALERT_THROTTLE_MS = 3000;
 
-export type SoundKind = 'bubble' | 'alert';
+export type SoundKind = 'bubble' | 'alert' | 'arrival';
 
 const SOUND_PATHS: Record<SoundKind, string> = {
   bubble: '/sounds/bubble.mp3',
   alert: '/sounds/alert.mp3',
+  arrival: '/sounds/ifood-arrival.mp3',
 };
 
 function readBool(key: string, defaultValue: boolean): boolean {
@@ -41,6 +42,7 @@ export function useNotificationSound() {
   const [muted, setMutedState] = useState<boolean>(() => readBool(MUTE_KEY, false));
   const audioRefs = useRef<Partial<Record<SoundKind, HTMLAudioElement>>>({});
   const lastAlertAtRef = useRef<number>(0);
+  const lastIfoodAtRef = useRef<number>(0);
   // P1.39 — antes UM único play() falhando flipava unlocked=false e mostrava
   // o banner novamente. Falhas transitórias (ex: garbage collection do audio
   // element, throttling momentâneo) faziam o banner aparecer de novo
@@ -56,7 +58,7 @@ export function useNotificationSound() {
     if (!el) {
       el = new Audio(SOUND_PATHS[kind]);
       el.preload = 'auto';
-      el.volume = kind === 'alert' ? 0.9 : 0.6;
+      el.volume = kind === 'alert' || kind === 'arrival' ? 0.85 : 0.6;
       audioRefs.current[kind] = el;
     }
     return el;
@@ -101,6 +103,11 @@ export function useNotificationSound() {
         const now = Date.now();
         if (now - lastAlertAtRef.current < ALERT_THROTTLE_MS) return;
         lastAlertAtRef.current = now;
+      }
+      if (kind === 'arrival') {
+        const now = Date.now();
+        if (now - lastIfoodAtRef.current < ALERT_THROTTLE_MS) return;
+        lastIfoodAtRef.current = now;
       }
       const el = getAudio(kind);
       try {

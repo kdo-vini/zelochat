@@ -223,7 +223,10 @@ export default function AppShell() {
     updateOrderStatus: updateOrderStatusInSupabase,
     updateOrder: updateOrderInSupabase,
     deleteOrder: deleteOrderInSupabase,
-  } = useOrders(session, autoPrintOrder, { enabled: shouldLoadOrders });
+  } = useOrders(session, autoPrintOrder, {
+    enabled: shouldLoadOrders,
+    onOrderArrival: () => sound.play('arrival'),
+  });
   const {
     items: quickResponses,
     add: addQuickResponse,

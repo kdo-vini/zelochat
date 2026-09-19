@@ -2,6 +2,8 @@
 
 ## Canal iFood na Produção — 2026-09-19
 
+- ✅ ZCHAT-IFOOD-SOUND-01 — campainha `/sounds/ifood-arrival.mp3` em
+  **qualquer** pedido novo (refresh + realtime INSERT), não só iFood.
 - ✅ ZCHAT-IFOOD-MARK-01 — card da fila, Kanban e drawer de pedido `source=ifood` mostram moldura circular com `/ifood-logo.png` + pill `iFood #displayId` (`IfoodChannelBadge`). `canonicalRowToOrder` passa `ifoodDisplayId` de `fulfillment.ifood.displayId`.
 
 ## Amplificação de Disk I/O no log de webhooks — 2026-09-18

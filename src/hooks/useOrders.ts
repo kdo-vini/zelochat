@@ -7,6 +7,7 @@ import { cancelOrderApi, createManualOrderApi, updateOrderStatusApi } from '../s
 import type { Order } from '../types';
 import { CANONICAL_ORDER_SELECT, canonicalRowToOrder, type CanonicalOrderRow } from '../domain/canonicalOrders';
 import { selectOrdersToAutoPrint } from '../domain/orderAutoPrint';
+import { findNewArrivalOrders } from '../domain/ifoodArrivalSound';
 
 type NewOrder = Omit<Order, 'id' | 'createdAt'> & { idempotencyKey?: string };
 
@@ -34,7 +35,7 @@ const rowToOrder = (row: Record<string, unknown>): Order => canonicalRowToOrder(
 export function useOrders(
   session: Session | null,
   onNewOrder?: (order: Order) => void,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; onOrderArrival?: () => void } = {},
 ) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
@@ -44,7 +45,9 @@ export function useOrders(
   const empresaIdRef = useRef<string | null>(null);
   const lastUserIdRef = useRef<string | null>(null);
   const onNewOrderRef = useRef(onNewOrder);
+  const onOrderArrivalRef = useRef(options.onOrderArrival);
   useEffect(() => { onNewOrderRef.current = onNewOrder; }, [onNewOrder]);
+  useEffect(() => { onOrderArrivalRef.current = options.onOrderArrival; }, [options.onOrderArrival]);
 
   // Reconciliation safety net refs
   const ordersRef = useRef<Order[]>([]);
@@ -118,6 +121,9 @@ export function useOrders(
       // previously-known orders and auto-print anything new that wasn't caught
       // by the realtime INSERT event (which has no delivery guarantee).
       if (hasBaselineRef.current) {
+        if (findNewArrivalOrders(ordersRef.current, mapped).length > 0) {
+          onOrderArrivalRef.current?.();
+        }
         const newOrders = selectOrdersToAutoPrint(ordersRef.current, mapped, {
           maxAgeMs: 15 * 60 * 1000,
           now: Date.now(),
@@ -189,7 +195,10 @@ export function useOrders(
                     inserted = true;
                     return [order, ...prev];
                   });
-                  if (inserted) onNewOrderRef.current?.(order);
+                  if (inserted) {
+                    onNewOrderRef.current?.(order);
+                    if (findNewArrivalOrders([], [order]).length > 0) onOrderArrivalRef.current?.();
+                  }
                 });
             } else if (payload.eventType === 'UPDATE') {
               void refresh();
