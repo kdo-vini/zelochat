@@ -138,6 +138,22 @@ export function isRequestingTheMenu(text: string): boolean {
   return /\b(?:me\s+)?(?:manda|envia|passa|encaminha)\b/.test(normalized);
 }
 
+/**
+ * FIX 2026-09-20 (Bem Servido / Aline): `isRequestingTheMenu` is true for any
+ * mention of the menu, including "quero uma marmita do cardápio". The
+ * canonical handler used to keep going into catalog search after sending the
+ * entry card, and a false-positive catalog hit opened a draft then escalated
+ * ("Não consegui conferir o pedido… vou chamar um atendente") — the customer
+ * had only asked for the menu. A turn is menu-only when, with the menu words
+ * stripped, nothing left classifies as an order.
+ */
+export function isMenuOnlyRequest(text: string): boolean {
+  if (!isRequestingTheMenu(text)) return false;
+  const withoutMenu = normalize(text).replace(/\b(?:cardapio|menu|lista)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!withoutMenu) return true;
+  return classifyOrderingTurn(withoutMenu, false).kind === 'none';
+}
+
 export function buildOrderingEntryPayload(menuUrl: string): {
   kind: 'buttons';
   text: string;

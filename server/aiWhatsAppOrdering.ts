@@ -29,6 +29,7 @@ import {
   isOrderingStartButtonText,
   mentionsMenu,
   isRequestingTheMenu,
+  isMenuOnlyRequest,
   isTalkingAboutPlacedOrder,
   isExplicitHumanRequest,
   isOrderingQuestion,
@@ -989,6 +990,20 @@ export async function tryHandleAiWhatsAppOrdering(
     const response = buildDeliveryFeeReply(entry.menuUrl);
     await sendText(permit, response, 'delivery-fee', dryRun, isPermitCurrent);
     return { handled: true, response };
+  }
+  // FIX 2026-09-20 (Bem Servido / Aline): "Cardápio por favor" after a
+  // greeting used to send the entry card and then keep going into catalog
+  // search. A false-positive hit opened a draft; the next ZeloMenu call
+  // failed closed and escalated ("vou chamar um atendente") — she had only
+  // asked for the menu. Menu-only turns never reach search, draft, or
+  // transferOnFailure, even when the internal client is missing.
+  if (isMenuOnlyRequest(text)) {
+    try {
+      return await answerMenuRequest('menu_only_request');
+    } catch (error) {
+      if (error instanceof OrderingSuppressedError) return { handled: true };
+      throw error;
+    }
   }
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(priorState);
