@@ -16,6 +16,18 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-20',
+    category: 'hotfix',
+    title: 'Pedido de cardápio não chama mais o atendente à toa',
+    description: 'Quando o cliente pede só o cardápio, a IA manda o link e para por aí. Antes, às vezes ela tentava montar um pedido sozinha e acabava dizendo que ia chamar um atendente.',
+  },
+  {
+    date: '2026-09-20',
+    category: 'hotfix',
+    title: 'IA espera quando alguém da loja acabou de escrever',
+    description: 'Se você ou a equipe mandaram uma mensagem no WhatsApp agora há pouco, a IA fica quieta uns dois minutos em vez de responder por cima.',
+  },
+  {
     date: '2026-09-19',
     category: 'hotfix',
     title: 'Pedido escrito no WhatsApp monta certo',

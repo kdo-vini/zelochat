@@ -1,5 +1,21 @@
 # Incidentes e padrões conhecidos
 
+## Pedido de cardápio virava "vou chamar um atendente" (Bem Servido / Aline, 2026-09-19)
+
+**Sintoma:** cliente manda oi + "Cardápio por favor"; recebe o cartão do cardápio e, ~10s depois, "Não consegui conferir o pedido agora. Vou chamar um atendente para te ajudar." Escalação `repeated_ai_failure`.
+
+**Causa-raiz:** o atalho de 09/09 só tratava pedido de cardápio quando a busca **não achava nada**. "Cardápio por favor" depois de uma saudação não é greeting exato, então o fluxo seguia, um hit falso no catálogo abria rascunho (`ZELO_AI_ORDERING_STATE`) e a próxima chamada à autoridade falhava fechada. Não é regressão de 19/09 — a mesma falha segura aparece em `zelochat_escalation_events` desde ~01/09.
+
+**Fix:** `isMenuOnlyRequest` responde o cartão e encerra o turno antes de buscar, abrir rascunho ou escalar — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`. ZCHAT-AI-031.
+
+## IA respondia por cima de quem acabou de escrever no WhatsApp (Bem Servido / Simone e Paulinho, 2026-09-19)
+
+**Sintoma:** dona assume a conversa no WhatsApp da loja; segundos depois a IA ainda responde o cliente ("Valor", "Quanto sai?").
+
+**Causa-raiz:** (Simone) o takeover nativo pausou a IA e um resume explícito 19s depois (`explicit_resume`) devolveu `mode=ai` enquanto ela ainda digitava. (Paulinho) o fromMe do cartão de boas-vindas chegou ~34s depois do horário do telefone — o turno da IA já tinha começado sem ver a mensagem humana. Classe conhecida desde 09/09 (atraso de ~100s na thread do iFood).
+
+**Fix:** silêncio de 120s após a última mensagem humana da loja (`hasRecentHumanOutbound`), no começo do turno e na hora de enfileirar, mesmo com modo `ai`. O hold só vê a linha **depois** do fromMe persistir — atraso extremo do webhook continua sendo uma janela residual — `src/domain/outbound.ts`, `server/ai.ts`. ZCHAT-AI-032.
+
 ## Pedido escrito no WhatsApp virava lista ou link (Bem Servido, 2026-09-18)
 
 **Sintoma:** cliente toca "Pedir por aqui", escreve o prato ("Marmita média bife a cavalo") e a IA devolve outra opção ("pizzaolo") ou o cardápio de novo; depois do recibo, pergunta sobre acompanhamento ganha o cartão de entrada. A dona assume a conversa.
