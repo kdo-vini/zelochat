@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {
   policyForOrigin,
   validateOutboundPayload,
+  hasRecentHumanOutbound,
+  RECENT_HUMAN_OUTBOUND_HOLD_MS,
   type OutboundOrigin,
   type OutboundPayload,
   type PersistedOutboundPayload,
@@ -63,4 +65,44 @@ const malformedPayloads = [
 for (const malformed of malformedPayloads) {
   assert.doesNotThrow(() => validateOutboundPayload(malformed));
   assert.notEqual(validateOutboundPayload(malformed), null);
+}
+
+{
+  const now = Date.parse('2026-09-19T22:10:24.000Z');
+  const simone = [
+    { role: 'user', timestamp: '2026-09-19T22:08:45.000Z' },
+    { role: 'assistant', outboundOrigin: 'ai_auto' as const, timestamp: '2026-09-19T22:09:47.000Z' },
+    { role: 'assistant', outboundOrigin: 'human_native_whatsapp' as const, timestamp: '2026-09-19T22:09:59.000Z' },
+    { role: 'user', timestamp: '2026-09-19T22:10:23.000Z' },
+  ];
+  assert.equal(hasRecentHumanOutbound(simone, now), true, 'Simone: dona wrote 25s before "Valor"');
+  assert.equal(hasRecentHumanOutbound(simone, now + RECENT_HUMAN_OUTBOUND_HOLD_MS), false, 'hold expires');
+  assert.equal(hasRecentHumanOutbound(simone.filter((m) => m.outboundOrigin !== 'human_native_whatsapp'), now), false, 'AI outbound does not hold');
+}
+
+{
+  const now = Date.parse('2026-09-19T22:10:24.000Z');
+  const fromZelochat = [
+    { role: 'assistant', outboundOrigin: 'human_zelochat' as const, timestamp: '2026-09-19T22:09:59.000Z' },
+    { role: 'user', timestamp: '2026-09-19T22:10:23.000Z' },
+  ];
+  assert.equal(hasRecentHumanOutbound(fromZelochat, now), true, 'operator typing in ZeloChat also holds');
+}
+
+{
+  // Paulinho: the owner's native welcome existed on the phone at 19:42:41,
+  // but the fromMe webhook (and therefore the human_native_whatsapp row)
+  // only landed at 19:43:15 — after the AI had already sent. Without that
+  // row the hold cannot see the takeover; this documents the remaining race.
+  const now = Date.parse('2026-09-19T22:42:55.000Z');
+  const paulinhoBeforeFromMe = [
+    { role: 'user', timestamp: '2026-09-19T22:41:59.000Z' },
+    { role: 'assistant', outboundOrigin: 'ai_auto' as const, timestamp: '2026-09-19T22:42:10.000Z' },
+  ];
+  assert.equal(hasRecentHumanOutbound(paulinhoBeforeFromMe, now), false, 'Paulinho: no human row yet, hold cannot fire');
+  const paulinhoAfterFromMe = [
+    ...paulinhoBeforeFromMe,
+    { role: 'assistant', outboundOrigin: 'human_native_whatsapp' as const, timestamp: '2026-09-19T22:42:41.000Z' },
+  ];
+  assert.equal(hasRecentHumanOutbound(paulinhoAfterFromMe, now), true, 'once fromMe is persisted, the next enqueue is held');
 }

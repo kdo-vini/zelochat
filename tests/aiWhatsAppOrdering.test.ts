@@ -25,6 +25,7 @@ import {
   isDeliveryFeeQuestion,
   mentionsMenu,
   isRequestingTheMenu,
+  isMenuOnlyRequest,
   isTalkingAboutPlacedOrder,
   conversationHasZeloMenuReceipt,
   resolveNamedCatalogMatch,
@@ -337,7 +338,53 @@ assert.doesNotMatch(greetingPlusMenuTypo.response ?? '', /não temos|não encont
 const menuRequestWithUnknownFraming = await askOrdering('Depois me manda ó cardápio , fazendo favor');
 assert.equal(menuRequestWithUnknownFraming.handled, true);
 assert.match(menuRequestWithUnknownFraming.response ?? '', /Veja o cardápio e faça seu pedido por aqui/);
-assert.ok(searchedQueries.length > 0, 'this one only resolves AFTER the search comes back empty');
+assert.equal(searchedQueries.length, 0, 'a menu-only request never searches the catalog');
+
+// REGRESSION 2026-09-20 (Bem Servido / Aline): greeting + "Cardápio por favor"
+// used to send the entry card AND keep going into catalog search. A hit opened
+// a draft; the next authority call failed closed and escalated. Menu-only
+// turns stop after the card even when the catalog would have returned dishes.
+{
+  const catalogHits: string[] = [];
+  let draftsOpened = 0;
+  const hittingClient: OrderingClient = {
+    ...emptyCatalogClient,
+    searchCatalog: async ({ query }) => {
+      catalogHits.push(query);
+      return {
+        total: 2,
+        ambiguous: true,
+        results: [
+          { productId: 1, publicName: 'Marmita média bife a cavalo', currentPrice: 30, displayPrice: { kind: 'fixed', amount: 30 }, matchReason: 'nome_publico', ambiguous: true, modifierGroups: [] },
+          { productId: 2, publicName: 'Batata frita', currentPrice: 15, displayPrice: { kind: 'fixed', amount: 15 }, matchReason: 'descricao', ambiguous: true, modifierGroups: [] },
+        ],
+      };
+    },
+    updateDraft: async () => {
+      draftsOpened += 1;
+      throw new Error('menu-only request must not open a draft');
+    },
+  };
+  const aline = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    sessionWith('Olá boa noite tudo bem\nCardápio por favor'),
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: true,
+      client: hittingClient,
+      draftPlanner: async () => {
+        throw new Error('menu-only request must not plan a cart');
+      },
+    },
+  );
+  assert.equal(aline.handled, true);
+  assert.match(aline.response ?? '', /Veja o cardápio e faça seu pedido por aqui/);
+  assert.doesNotMatch(aline.response ?? '', /vou chamar um atendente|Não consegui conferir/i);
+  assert.equal(catalogHits.length, 0, 'Aline\'s menu request never searches');
+  assert.equal(draftsOpened, 0, 'Aline\'s menu request never opens a draft');
+}
 
 // Same message with the store closed: the entry copy claims "Estamos
 // atendendo", so the generic assistant takes the turn instead.
@@ -777,15 +824,16 @@ assert.equal(
   null,
   'without a distinctive token both dishes remain a real choice',
 );
+const macarraoPeneCatalog = {
+  total: 2,
+  ambiguous: true,
+  results: [
+    { productId: 1365, publicName: 'Macarrão com legumes 500 ml', currentPrice: 27.99, matchReason: 'nome_publico', ambiguous: true },
+    { productId: 1333, publicName: 'Marmita de costela de panela com macarrão', currentPrice: 26.99, matchReason: 'nome_publico', ambiguous: true },
+  ],
+};
 assert.equal(
-  resolveNamedCatalogMatch('Macarrão,pene', {
-    total: 2,
-    ambiguous: true,
-    results: [
-      { productId: 1365, publicName: 'Macarrão com legumes 500 ml', currentPrice: 27.99, matchReason: 'nome_publico', ambiguous: true },
-      { productId: 1333, publicName: 'Marmita de costela de panela com macarrão', currentPrice: 26.99, matchReason: 'nome_publico', ambiguous: true },
-    ],
-  }),
+  resolveNamedCatalogMatch('Macarrão,pene', macarraoPeneCatalog),
   null,
   'two different pasta dishes stay ambiguous',
 );
@@ -811,6 +859,14 @@ assert.equal(
   isRequestingTheMenu('Micheli esse pedido vem arroz, salada e batata? Lá no cardápio não mostra o acompanhamento'),
   false,
 );
+
+assert.equal(isMenuOnlyRequest('Cardápio por favor'), true);
+assert.equal(isMenuOnlyRequest('Olá boa noite tudo bem\nCardápio por favor'), true, 'Aline: greeting + menu request is still only the menu');
+assert.equal(isMenuOnlyRequest('Gostaria do cardápio por favorn'), true);
+assert.equal(isMenuOnlyRequest('Depois me manda ó cardápio , fazendo favor'), true);
+assert.equal(isMenuOnlyRequest('quero uma marmita do cardápio'), false, 'naming a dish plus the menu is an order');
+assert.equal(isMenuOnlyRequest('tem sushi no cardápio?'), false, 'asking if a dish is on the menu still searches');
+assert.equal(isMenuOnlyRequest('tem sushi?'), false);
 
 assert.equal(isTalkingAboutPlacedOrder('Micheli esse pedido vem arroz, salada e batata palha?'), true);
 assert.equal(isTalkingAboutPlacedOrder('esse pedido vem com salada?'), true);

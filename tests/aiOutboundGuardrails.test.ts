@@ -26,6 +26,8 @@ for (const forbidden of ['sendTextMessage', 'sendButtonMessage', 'sendMediaMessa
 assert.doesNotMatch(escalation, /\bsendTextMessage\s*\(/, 'escalation.ts não contorna o dispatcher');
 
 assert.match(ai, /dispatchConversationOutbound\s*\(/, 'AI usa o dispatcher único');
+assert.match(ai, /hasRecentHumanOutbound\s*\(/, 'IA silencia se a loja acabou de escrever no WhatsApp');
+assert.match(ai, /loadSession\s*\?\?\s*getSession/, 're-lê a sessão na hora de enfileirar, não só no começo do turno');
 assert.match(ai, /generateAndSendReply\s*\([\s\S]*?permit:\s*AiTurnPermit/, 'entrypoint exige AiTurnPermit');
 assert.match(index, /beginAiTurn\s*\(/, 'inbound cria permit somente depois de persistir');
 assert.match(index, /generateAndSendReply\s*\([^)]*scheduledPermit/, 'scheduler entrega permit ao modelo');

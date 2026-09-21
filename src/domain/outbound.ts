@@ -61,6 +61,32 @@ export const policyForOrigin = (origin: OutboundOrigin): TakeoverPolicy =>
     ? 'take_over'
     : 'preserve_ai';
 
+export const isHumanTakeoverOrigin = (origin: OutboundOrigin | null | undefined): boolean =>
+  origin === 'human_zelochat' || origin === 'human_native_whatsapp';
+
+/** How long the AI stays silent after the operator last wrote in the conversation. */
+export const RECENT_HUMAN_OUTBOUND_HOLD_MS = 120_000;
+
+/**
+ * FIX 2026-09-20 (Bem Servido / Simone): native WhatsApp takeover paused the
+ * IA, then an explicit resume 19s later let the model answer "Valor" while
+ * the operator was still typing the price. If the last store message is a
+ * human outbound inside this window, the next customer turn stays silent.
+ */
+export function hasRecentHumanOutbound(
+  messages: Array<{ role?: string | null; outboundOrigin?: OutboundOrigin | null; timestamp?: string | null }>,
+  nowMs: number,
+  windowMs: number = RECENT_HUMAN_OUTBOUND_HOLD_MS,
+): boolean {
+  const latest = [...messages].reverse().find((message) => (
+    message.role === 'assistant' && isHumanTakeoverOrigin(message.outboundOrigin)
+  ));
+  if (!latest?.timestamp) return false;
+  const sentAt = Date.parse(latest.timestamp);
+  if (!Number.isFinite(sentAt)) return false;
+  return nowMs - sentAt >= 0 && nowMs - sentAt < windowMs;
+}
+
 export function isRetryableOutboundFailure(status: string | null | undefined): boolean {
   return status === 'failed' || status === 'failed_before_dispatch';
 }

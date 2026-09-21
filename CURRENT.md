@@ -1,5 +1,20 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-20 — relatório Bem Servido (cardápio → atendente; IA por cima da loja)
+
+Três problemas da janela 19/09 09h–20/09 09h SP **não são regressão da véspera**
+(ZCHAT-AI-029/030). Aline pedindo só o cardápio já escalava desde ~01/09
+(`repeated_ai_failure`); Simone era resume explícito 19s depois do takeover
+nativo; Paulinho é fromMe atrasado (~34s), classe de 09/09.
+
+Corrigido neste corte:
+- `isMenuOnlyRequest` + early return: pedido só de cardápio nunca busca,
+  nunca abre rascunho, nunca chama `transferOnFailure` (ZCHAT-AI-031).
+- Hold de 120s após outbound humano, no começo do turno e na hora de
+  enfileirar, mesmo com modo `ai` de novo (ZCHAT-AI-032).
+
+Ver [[FIXES_PROGRESS]] e [[INCIDENTS]].
+
 ## Sessão 2026-09-19 — pedido descrito no chat (Bem Servido)
 
 Caminho canônico monta rascunho; modelo genérico conversa. Depois de
