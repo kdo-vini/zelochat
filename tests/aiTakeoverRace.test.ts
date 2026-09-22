@@ -167,6 +167,44 @@ for (const purpose of ['tool-followup', 'trigger-fallback', 'pix-helper', 'pendi
 }
 
 {
+  // REGRESSION 2026-09-22 (Bem Servido / Luciana): canonical "Tem sim:"
+  // sends through dispatchAiPayload, not enqueueAutomatedText, so the 120s
+  // hold never ran. Owner said "Ok"; 40s later the catalog list still went out.
+  let jobWrites = 0;
+  const result = await tryHandleAiWhatsAppOrdering(
+    permit.remoteJid,
+    permit.empresaId,
+    raceSession('tem penne?'),
+    permit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: false,
+      permitCheck: async () => true,
+      loadSession: async () => ({
+        messages: [
+          { role: 'assistant', outboundOrigin: 'human_native_whatsapp', timestamp: new Date(Date.now() - 25_000).toISOString() },
+          { role: 'user', timestamp: new Date().toISOString() },
+        ],
+      }),
+      client: {
+        searchCatalog: async () => ({
+          total: 1,
+          ambiguous: false,
+          results: [{ productId: 843, publicName: 'Monte sua massa', currentPrice: 23, matchReason: 'nome_publico', ambiguous: false }],
+        }),
+        updateDraft: async () => { throw new Error('must not mutate under human hold'); },
+        confirmDraft: async () => { throw new Error('unused'); },
+        cancelDraft: async () => { throw new Error('unused'); },
+        getOrdering: async () => { throw new Error('unused'); },
+      },
+    },
+  );
+  assert.equal(result.handled, true, 'Luciana: canonical send is suppressed as handled silence');
+  assert.equal(result.response, undefined, 'Luciana: no catalog list is returned after the owner wrote');
+  assert.equal(jobWrites, 0);
+}
+
+{
   let jobWrites = 0;
   const result = await enqueueAutomatedText({
     permit,

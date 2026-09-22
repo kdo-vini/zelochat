@@ -1,5 +1,13 @@
 # Incidentes e padrões conhecidos
 
+## Lista de pratos depois de "quando fica pronto" e "safada" (Bem Servido / Luciana e Alex, 2026-09-21)
+
+**Sintoma:** Luciana, depois do recibo, pergunta quando fica pronto e recebe "Tem sim: Arroz caipira / Omelete…". Alex manda "Te manda safada" (engano de número) e recebe lista de saladas. Nos dois a dona já tinha escrito e a IA ainda falou.
+
+**Causa-raiz:** o caminho canônico não gera rastro. `isTalkingAboutPlacedOrder` não cobria espera sem a palavra "pedido"; o probe com hit ambíguo pulava o fall-through `catalog_probe_no_draft` (só disparava se o planner tivesse rodado) e listava o que o ranking por typo devolveu. O hold de 120s não rodava no send canônico (`dispatchAiPayload`).
+
+**Fix:** espera/pronto cai no genérico; probe só lista se um token da frase aparece no nome do prato; hold de 120s também no send canônico — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`. ZCHAT-AI-033 / ZCHAT-AI-034.
+
 ## Pedido de cardápio virava "vou chamar um atendente" (Bem Servido / Aline, 2026-09-19)
 
 **Sintoma:** cliente manda oi + "Cardápio por favor"; recebe o cartão do cardápio e, ~10s depois, "Não consegui conferir o pedido agora. Vou chamar um atendente para te ajudar." Escalação `repeated_ai_failure`.

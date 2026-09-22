@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-22',
+    category: 'hotfix',
+    title: 'IA não manda prato aleatório nem fala por cima da loja',
+    description: 'Se o cliente só pergunta quando o pedido fica pronto, a IA responde na conversa em vez de mandar uma lista de pratos. E se a dona já assumiu o WhatsApp, a IA espera em silêncio em vez de mandar outra mensagem por cima.',
+  },
+  {
     date: '2026-09-19',
     category: 'hotfix',
     title: 'Pedido escrito no WhatsApp monta certo',

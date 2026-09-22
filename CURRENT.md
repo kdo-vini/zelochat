@@ -1,5 +1,20 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-22 — relatório Bem Servido (lista solta; hold canônico)
+
+Dois problemas da janela 21/09 09h–22/09 09h SP. Luciana perguntou quando o
+pedido ficava pronto e recebeu lista de arroz/omelete; Alex mandou um engano
+("safada") e recebeu saladas. O hold de 120s pegou a Adriana no mesmo almoço
+e falhou na Luciana porque o canônico não passa por `enqueueAutomatedText`.
+
+Corrigido neste corte:
+- `isTalkingAboutPlacedOrder` cobre espera/pronto ("Qdo ficar pronto").
+- Probe canônico sem token de nome no prato volta ao genérico
+  (`catalogQueryNamesAListedProduct`) — "Macarrão,pene" ainda pergunta qual.
+- Hold de 120s também em `dispatchAiPayload` (ZCHAT-AI-033 / 034).
+
+Ver [[FIXES_PROGRESS]] e [[INCIDENTS]].
+
 ## Sessão 2026-09-20 — relatório Bem Servido (cardápio → atendente; IA por cima da loja)
 
 Três problemas da janela 19/09 09h–20/09 09h SP **não são regressão da véspera**

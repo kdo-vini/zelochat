@@ -281,6 +281,15 @@ export function isTalkingAboutPlacedOrder(text: string): boolean {
     || /\b(?:troca|trocar|muda|mudar|tira|tirar|adiciona|adicionar|adicional|cancela|cancelar|prefiro)\b/.test(normalized)) {
     return false;
   }
+  // FIX 2026-09-22 (Bem Servido / Luciana): "Qdo ficar pronto ..ja vou
+  // esperar aqui" after a ZeloMenu receipt never said "esse pedido", so the
+  // canonical probe searched the phrase, fuzzy-hit random dishes, and listed
+  // "Tem sim: Arroz caipira / Omelete…". Status/wait talk is conversation.
+  const asksReadyOrWait = (/\b(?:qdo|qndo|quando)\b/.test(normalized) && /\bpronto\b/.test(normalized))
+    || /\b(?:ta|tah|esta|ficar|fica|ficou)\s+pronto\b/.test(normalized)
+    || /\bvou\s+esperar(?:\s+aqui)?\b/.test(normalized)
+    || /\bja\s+(?:saiu|esta\s+(?:a\s+caminho|pronto)|ta\s+pronto)\b/.test(normalized);
+  if (asksReadyOrWait) return true;
   const refersToOrder = /\b(?:esse|este|meu|nesse|neste)\s+pedido\b/.test(normalized)
     || /\bo\s+pedido\s+(?:vem|inclui|tem|ja)\b/.test(normalized);
   if (!refersToOrder) return false;
@@ -798,6 +807,23 @@ const CATALOG_NAME_STOP = new Set(['a', 'o', 'as', 'os', 'de', 'da', 'do', 'das'
 
 function catalogNameTokens(text: string): string[] {
   return catalogQueryWords(text).filter((word) => word.length > 1 && !CATALOG_NAME_STOP.has(word));
+}
+
+/**
+ * True when a query token appears verbatim in a returned product name.
+ * ZeloMenu may still return typo/trigram hits ("safada" → "Salada"); those
+ * must not become a "Tem sim:" list on a probe-only turn.
+ */
+export function catalogQueryNamesAListedProduct(
+  query: string,
+  catalog: Pick<CatalogReplyResult, 'results'>,
+): boolean {
+  const queryTokens = catalogNameTokens(query);
+  if (!queryTokens.length) return false;
+  return (catalog.results ?? []).some((item) => {
+    const nameTokens = catalogNameTokens(item.publicName);
+    return queryTokens.some((token) => nameTokens.includes(token));
+  });
 }
 
 /**

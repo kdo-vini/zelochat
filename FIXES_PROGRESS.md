@@ -1,5 +1,10 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Relatório Bem Servido 22/09 — lista solta e IA por cima da dona — 2026-09-22
+
+- ✅ ZCHAT-AI-033 — Luciana (`5514991208023`, 21/09 12:50): depois do recibo, "Qdo ficar pronto ..ja vou esperar aqui" recebeu "Tem sim: Arroz caipira / Omelete…". Causa: `isTalkingAboutPlacedOrder` exigia "esse pedido"; o probe canônico buscou a frase, hit ambíguo, e `catalog_probe_no_draft` só caía no genérico se o planner tivesse rodado. Alex (`558894538418`): "Te manda safada" listou saladas (typo safada→salada, `manda` ligava pedido). → espera/pronto cai no genérico; probe sem token de nome no prato não lista — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`, `tests/hybridOrderingScenarios.test.ts`
+- ✅ ZCHAT-AI-034 — mesma Luciana: a dona disse "Ok" 40s antes da lista e o hold de 120s (ZCHAT-AI-032) não pegou porque o canônico envia por `dispatchAiPayload`, não por `enqueueAutomatedText`. → recheck de `hasRecentHumanOutbound` no send canônico — `server/aiWhatsAppOrdering.ts`, `tests/aiTakeoverRace.test.ts`
+
 ## Relatório Bem Servido 20/09 — cardápio escalava; IA falava por cima da loja — 2026-09-20
 
 - ✅ ZCHAT-AI-031 — Aline (`5514991837342`, 19/09 20:03): "Cardápio por favor" depois do oi recebia o cartão certo e 10s depois "Não consegui conferir o pedido… vou chamar um atendente" (`repeated_ai_failure`). Não é regressão de 19/09: o atalho de 09/09 só respondia cardápio quando a **busca vinha vazia**; um hit no catálogo abria rascunho e a falha seguinte escalava. → `isMenuOnlyRequest` (nomeou o menu e, sem essas palavras, o classificador é `none`) devolve o cartão **antes** de buscar/abrir rascunho — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`

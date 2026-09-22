@@ -28,6 +28,7 @@ import {
   isMenuOnlyRequest,
   isTalkingAboutPlacedOrder,
   conversationHasZeloMenuReceipt,
+  catalogQueryNamesAListedProduct,
   resolveNamedCatalogMatch,
   isOrderingSnapshotEditable,
   parseOrderingButton,
@@ -533,6 +534,91 @@ assert.equal(isZeloMenuOrderReceipt('Sistema Zelo Menu'), false, 'rodape sozinho
   assert.doesNotMatch(questionWithHits.response ?? '', /Tem sim|Qual você quer|Veja o cardápio/);
 }
 
+// REGRESSION 2026-09-22 (Bem Servido / Luciana): after the ZeloMenu receipt,
+// "Qdo ficar pronto ..ja vou esperar aqui" never said "esse pedido", so the
+// probe searched the phrase, fuzzy-hit arroz/omelete, and listed "Tem sim:".
+{
+  const searched: string[] = [];
+  const luciana = sessionWith('Qdo ficar pronto ..ja vou esperar aqui');
+  luciana.messages = [
+    {
+      id: 'receipt', waMessageId: 'receipt', role: 'user', kind: 'text',
+      content: zeloMenuReceipt, preview: zeloMenuReceipt, timestamp: new Date(0).toISOString(),
+    },
+    {
+      id: 'thanks', waMessageId: 'thanks', role: 'assistant', kind: 'text',
+      content: 'Recebemos seu pedido, obrigado! 🙏', preview: 'Recebemos seu pedido, obrigado! 🙏',
+      timestamp: new Date(1).toISOString(),
+    },
+    {
+      id: 'wait', waMessageId: 'wait', role: 'user', kind: 'text',
+      content: 'Qdo ficar pronto ..ja vou esperar aqui',
+      preview: 'Qdo ficar pronto ..ja vou esperar aqui',
+      timestamp: new Date(2).toISOString(),
+    },
+  ];
+  const waitFollowUp = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    luciana,
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: true,
+      client: {
+        ...dryRunClient,
+        searchCatalog: async ({ query }) => {
+          searched.push(query);
+          return {
+            total: 4,
+            ambiguous: true,
+            results: [
+              { productId: 1, publicName: 'Arroz caipira', currentPrice: 29.9, matchReason: 'nome_publico', ambiguous: true },
+              { productId: 2, publicName: 'Arroz de forno', currentPrice: 33.99, matchReason: 'nome_publico', ambiguous: true },
+              { productId: 3, publicName: 'Omelete de bacon', currentPrice: 13.99, matchReason: 'nome_publico', ambiguous: true },
+              { productId: 4, publicName: 'Escondidinho de carne moída à bolonhesa 500 ml', currentPrice: 28.99, matchReason: 'nome_publico', ambiguous: true },
+            ],
+          };
+        },
+      },
+    },
+  );
+  assert.equal(waitFollowUp.handled, false, 'wait-time after a receipt is conversation, not a new catalog list');
+  assert.deepEqual(searched, [], 'does not search the catalog for "quando ficar pronto"');
+  assert.doesNotMatch(waitFollowUp.response ?? '', /Tem sim|Arroz caipira|Omelete/);
+}
+
+// REGRESSION 2026-09-22 (Bem Servido / Alex): "Te manda safada" (wrong-number
+// flirty text) fuzzy-matched Salada because `manda` is named-order intent and
+// the probe hit was ambiguous, so the customer got "Tem sim: X-Salada…".
+{
+  const alex = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid,
+    fakePermit.empresaId,
+    sessionWith('Te manda safada 😉😉😉'),
+    fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: true,
+      client: {
+        ...dryRunClient,
+        searchCatalog: async () => ({
+          total: 4,
+          ambiguous: true,
+          results: [
+            { productId: 10, publicName: 'Salada mista com atum e palmito 500 ml', currentPrice: 26.99, matchReason: 'nome_publico', ambiguous: true },
+            { productId: 11, publicName: 'X-Egg Salada', currentPrice: 22, matchReason: 'nome_publico', ambiguous: true },
+            { productId: 12, publicName: 'X-Salada', currentPrice: 19, matchReason: 'nome_publico', ambiguous: true },
+            { productId: 13, publicName: 'X-Salada Bacon', currentPrice: 24, matchReason: 'nome_publico', ambiguous: true },
+          ],
+        }),
+      },
+    },
+  );
+  assert.equal(alex.handled, false, 'a typo hit on "safada" must not list salads');
+  assert.doesNotMatch(alex.response ?? '', /Tem sim|Salada|Qual você quer/);
+}
+
 // REGRESSION 2026-09-09: com a loja fechada a lista saia sem nenhuma mencao ao
 // horario, entao o cliente era convidado a escolher de uma loja que nao ia
 // atender. Um atendente diria que esta fechado, quando abre, e mostraria as
@@ -871,9 +957,31 @@ assert.equal(isMenuOnlyRequest('tem sushi?'), false);
 assert.equal(isTalkingAboutPlacedOrder('Micheli esse pedido vem arroz, salada e batata palha?'), true);
 assert.equal(isTalkingAboutPlacedOrder('esse pedido vem com salada?'), true);
 assert.equal(isTalkingAboutPlacedOrder('meu pedido já saiu?'), true);
+assert.equal(isTalkingAboutPlacedOrder('Qdo ficar pronto ..ja vou esperar aqui'), true, 'Luciana: wait-time after the receipt is conversation');
+assert.equal(isTalkingAboutPlacedOrder('quando ficar pronto'), true);
 assert.equal(isTalkingAboutPlacedOrder('quero fazer um pedido'), false, 'starting a new order is not talking about a placed one');
 assert.equal(isTalkingAboutPlacedOrder('Adicional mandioca frita'), false, 'an extra on the open cart is an edit');
 assert.equal(isTalkingAboutPlacedOrder('marmita média bife a cavalo'), false);
+assert.equal(
+  catalogQueryNamesAListedProduct('Te manda safada', {
+    results: [
+      { productId: 1, publicName: 'Salada mista com atum e palmito 500 ml', currentPrice: 26.99, matchReason: 'nome_publico', ambiguous: true },
+      { productId: 2, publicName: 'X-Salada', currentPrice: 19, matchReason: 'nome_publico', ambiguous: true },
+    ],
+  }),
+  false,
+  'Alex: typo safada→salada is not a named dish',
+);
+assert.equal(
+  catalogQueryNamesAListedProduct('Macarrão,pene', {
+    results: [
+      { productId: 1365, publicName: 'Macarrão com legumes 500 ml', currentPrice: 27.99, matchReason: 'nome_publico', ambiguous: true },
+      { productId: 1333, publicName: 'Marmita de costela de panela com macarrão', currentPrice: 26.99, matchReason: 'nome_publico', ambiguous: true },
+    ],
+  }),
+  true,
+  'Macarrão,pene still names the pasta dishes',
+);
 
 const silviaReceiptMessages = [
   { role: 'user' as const, content: zeloMenuReceipt },

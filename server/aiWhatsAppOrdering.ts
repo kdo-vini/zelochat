@@ -34,6 +34,7 @@ import {
   isExplicitHumanRequest,
   isOrderingQuestion,
   isSingleProductCatalogAmbiguous,
+  catalogQueryNamesAListedProduct,
   resolveCatalogForNamedOrder,
   AI_ORDER_START_REPLY,
   parseOrderingButton,
@@ -53,7 +54,8 @@ import {
 import { presentOrderingRequirements, hasPendingOrderingRequirements, type OrderingReplyPayload } from '../src/domain/orderingRequirementPresenter.js';
 import { applyConversationOrderPatch, buildOrderingPatchTool, validateConversationOrderPatch, type ConversationOrderPatch } from './orderingPatchPlanner.js';
 import { composeOrderingTurn, type OrderingTurnComposition } from './orderingTurnComposer.js';
-import type { OutboundPayload } from '../src/domain/outbound.js';
+import type { OutboundOrigin, OutboundPayload } from '../src/domain/outbound.js';
+import { hasRecentHumanOutbound } from '../src/domain/outbound.js';
 import {
   ZeloMenuInternalClient,
   ZeloMenuInternalError,
@@ -79,7 +81,12 @@ const MAX_AUTO_SELECT_DEPTH = 3;
  * of asking the customer to try again (PR I-5's "no circuit breaker").
  */
 const MAX_RETRY_LATER_ATTEMPTS = 2;
-class OrderingSuppressedError extends Error {}
+class OrderingSuppressedError extends Error {
+  constructor(readonly reason: 'permit' | 'recent_human_outbound' = 'permit') {
+    super('ORDERING_SUPPRESSED');
+    this.name = 'OrderingSuppressedError';
+  }
+}
 const declinesOptionalExtras = (value: string) => /^(?:sem extras|so isso|só isso|nao quero extras|não quero extras)$/i.test(value.trim());
 
 /**
@@ -200,6 +207,18 @@ export interface AiOrderingHandlerOptions {
    * a real Supabase connection.
    */
   permitCheck?: PermitCheck;
+  /**
+   * Injectable live-session read for the send-time human-hold recheck.
+   * Production defaults to `getSession`. Tests override so a native WhatsApp
+   * message that arrived while the canonical turn was in flight can suppress
+   * the outbound without a real Supabase connection.
+   */
+  loadSession?: (
+    jid: string,
+    empresaId: string,
+  ) => Promise<{
+    messages: Array<{ role?: string | null; outboundOrigin?: OutboundOrigin | null; timestamp?: string | null }>;
+  } | null>;
 }
 
 /**
@@ -286,6 +305,9 @@ function markEntryDispatched(empresaId: string, jid: string): void {
   lastEntryDispatchAt.set(entryDispatchKey(empresaId, jid), Date.now());
 }
 
+type SessionLoader = NonNullable<AiOrderingHandlerOptions['loadSession']>;
+let canonicalOutboundSessionLoader: SessionLoader = getSession;
+
 async function dispatchAiPayload(
   permit: AiTurnPermit,
   payload: OutboundPayload,
@@ -300,6 +322,22 @@ async function dispatchAiPayload(
   // rejects a stale one as `suppressed`), so this is defense-in-depth that
   // skips the round trip entirely for an already-known-stale permit.
   await assertPermitCurrent(permit, isPermitCurrent);
+  // FIX 2026-09-22 (Bem Servido / Luciana): canonical catalog/entry/summary
+  // sends go through this helper, not `enqueueAutomatedText`, so the 120s
+  // human-hold recheck never ran. The owner said "Ok" 40s before "Tem sim:"
+  // listed omelettes. Same seam as ZCHAT-AI-032, for this outbound path.
+  try {
+    const live = await canonicalOutboundSessionLoader(permit.remoteJid, permit.empresaId);
+    if (live && hasRecentHumanOutbound(live.messages, Date.now())) {
+      throw new OrderingSuppressedError('recent_human_outbound');
+    }
+  } catch (error) {
+    if (error instanceof OrderingSuppressedError) throw error;
+    console.warn(
+      `[AiOrdering] recent_human_outbound recheck failed empresa=${permit.empresaId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
   const result = await dispatchConversationOutbound({
     empresaId: permit.empresaId,
     remoteJid: permit.remoteJid,
@@ -842,6 +880,9 @@ export async function tryHandleAiWhatsAppOrdering(
   // mutation/persist/outbound in this turn re-checks. Defaults to the real
   // one; only tests override it.
   const isPermitCurrent = options.permitCheck ?? isAiPermitCurrent;
+  const previousSessionLoader = canonicalOutboundSessionLoader;
+  canonicalOutboundSessionLoader = options.loadSession ?? getSession;
+  try {
   // Computed once per turn (FN C3 / PR C-6): every terminal exit below must
   // route its cursor write through `persistOrderingState`/`nextOrderingStatePatch`
   // using THIS composition's `consumedMessageIds`, never a stale re-read.
@@ -1201,10 +1242,13 @@ export async function tryHandleAiWhatsAppOrdering(
       draft = await (options.draftPlanner ?? planDraft)(session, text, resolvedCatalog, current);
     }
     if (!draft) {
-      // Only the catalog let this turn in, and the planner, reading the whole
-      // conversation, found nothing to put in the cart. A product list would
-      // answer something the customer never asked.
-      if (enteredViaCatalogProbe && plannerConsulted) {
+      // Only the catalog let this turn in, and there is no cart. A product
+      // list is the answer when the customer named a dish that matched more
+      // than one item ("Macarrão,pene"). Typo/trigram hits ("safada"→salada)
+      // and wait-time probes must not become "Tem sim:".
+      // FIX 2026-09-22 (Bem Servido / Alex): `plannerConsulted` was required,
+      // so an ambiguous probe skipped this fall-through and listed salads.
+      if (enteredViaCatalogProbe && (plannerConsulted || !catalogQueryNamesAListedProduct(query, resolvedCatalog))) {
         metric({ ...metricBase, stage: 'plan', outcome: 'catalog_probe_no_draft', orderingId: current?.orderingId, revision: current?.revision });
         return { handled: entryDispatched };
       }
@@ -1272,7 +1316,13 @@ export async function tryHandleAiWhatsAppOrdering(
     // carries — never any other error detail (no message, no stack).
     const errorCode = error instanceof ZeloMenuInternalError ? error.code : null;
     if (error instanceof OrderingSuppressedError) {
-      metric({ ...metricBase, stage: 'suppress', outcome: 'permit_stale', orderingId: current?.orderingId, revision: current?.revision });
+      metric({
+        ...metricBase,
+        stage: 'suppress',
+        outcome: error.reason === 'recent_human_outbound' ? 'recent_human_outbound' : 'permit_stale',
+        orderingId: current?.orderingId,
+        revision: current?.revision,
+      });
       return { handled: true };
     }
     // FIX 2026-09-04 (B3 — explicit error-code mapping): every ZeloMenu
@@ -1359,6 +1409,9 @@ export async function tryHandleAiWhatsAppOrdering(
     }
     const response = await transferOnFailure(permit, dryRun);
     return { handled: true, response };
+  }
+  } finally {
+    canonicalOutboundSessionLoader = previousSessionLoader;
   }
 }
 
