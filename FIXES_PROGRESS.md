@@ -1,5 +1,14 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Revisão de código e produto — 2026-09-24 (local)
+
+- ✅ ZCHAT-ORD-REVIEW-05 — execução real expôs oferta comercial mal classificada e compra com pergunta operacional tratada como dúvida → prioridades do prompt corrigidas e gate bloqueia confusão compra/dúvida; duas rodadas finais com 75/75 e 26/26 decisões, sem falhas; latência do roteador p50 737–772 ms e p95 1.008–1.255 ms — `server/orderingTurnRouter.ts:40`, `scripts/evalOrderingRouter.ts:82`
+
+- ✅ ZCHAT-ORD-REVIEW-01 — saudações/respostas curtas e ponteiro encerrado escapavam da classificação → roteamento com histórico e consulta de estado, preservando controles — `server/aiWhatsAppOrdering.ts:908`
+- ✅ ZCHAT-ORD-REVIEW-02 — dúvida podia virar compra e pedido sem itens cair no genérico → intenção prevalece sobre palavras, esclarecimento e fatos do cardápio sem afirmar composição desconhecida — `server/aiWhatsAppOrdering.ts:1250`, `src/domain/aiWhatsAppOrdering.ts:794`
+- ✅ ZCHAT-ORD-REVIEW-03 — consulta composta perdia produtos pelo ranking de cobertura → consultas individuais complementares com concorrência limitada; reprodução sobre fixture real da Bem Servido — `server/orderingCatalogSearch.ts:1`
+- ✅ ZCHAT-ORD-REVIEW-04 — avaliação creditava falha como conversa correta → falha bloqueia gate, 26 casos novos com histórico, exemplos do gabarito removidos do prompt — `scripts/evalOrderingRouter.ts:52`, `server/orderingTurnRouter.ts:33`
+
 ## Roteamento de texto livre do pedido conversacional — 2026-09-24
 
 - ✅ ZCHAT-ORD-ROUTE-01 — mensagens sem pedido em andamento eram decididas por palavras-chave, fazendo pesquisas/handoffs e enviando cardápio para conversas comuns → roteador LLM decide `pedido`/`pedir_cardapio`/genérico; falha ou desligamento preserva o caminho anterior, sem tocar ponteiros, confirmações ou botões; avaliação de referência: decisão 100% (palavra-chave 70,7%), 0 pedidos falsos, 0 pedidos perdidos, p50 ~0,75 s; ajuste final do prompt em `bc9e7e5` — `server/aiWhatsAppOrdering.ts`, `server/aiSimulator.ts`, `server/orderingTurnRouter.ts`, `tests/aiWhatsAppOrdering.test.ts`

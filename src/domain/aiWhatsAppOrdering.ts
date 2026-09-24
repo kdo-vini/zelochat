@@ -796,9 +796,10 @@ export function renderCatalogReply(
   query: string,
   menuUrl?: string | null,
   storeClosedPrefix?: string | null,
+  answeringQuestion = false,
 ): string {
   const finish = (text: string): string => menuUrl
-    ? `${text}\n\nCardápio digital: ${menuUrl}\nSe preferir, pode fazer o pedido por escrito aqui comigo.`
+    ? `${text}\n\nCardápio digital: ${menuUrl}${answeringQuestion ? '' : '\nSe preferir, pode fazer o pedido por escrito aqui comigo.'}`
     : text;
   const requestedGroup = requestedModifierGroup(query);
   const productsById = new Map<number, CatalogReplyResult['results'][number]>();
@@ -834,7 +835,7 @@ export function renderCatalogReply(
   if (!requestedGroup && uniqueProducts.length >= 12) return finish(narrowReply);
   if (result.ambiguous && !requestedGroup && uniqueProducts.length < 2) return finish(ambiguousReply);
   const choices = uniqueProducts.map((item) => {
-    const groups = requestedGroup ? (item.modifierGroups ?? []).filter((candidate) => requestedGroup.test(candidate.name)) : [];
+    const groups = requestedGroup ? (item.modifierGroups ?? []).filter((candidate) => requestedGroup.test(candidate.name)) : answeringQuestion ? (item.modifierGroups ?? []) : [];
     const groupChoices = groups.flatMap((group) => {
       const options = group.options.filter((option) => option.available !== false).map((option) => {
         if (option.displayPrice) return `${customerText(option.name)} (${option.displayPrice})`;
@@ -843,7 +844,7 @@ export function renderCatalogReply(
       const rule = selectionRule(group);
       return options ? [`*${customerText(group.name)}*${rule ? ` (${rule})` : ''}: ${options}`] : [];
     });
-    if (groupChoices.length) return `${customerText(item.publicName)}:\n${groupChoices.join('\n')}`;
+    if (groupChoices.length && !answeringQuestion) return `${customerText(item.publicName)}:\n${groupChoices.join('\n')}`;
     // FIX 2026-09-04 (CT Important 6): `currentPrice` alone is only the
     // cheapest path through a required modifier group when `displayPrice`
     // says so — quoting it as a firm price misstates what the customer will
@@ -851,15 +852,22 @@ export function renderCatalogReply(
     const price = item.displayPrice?.kind === 'from'
       ? `a partir de ${money(item.displayPrice.amount)}`
       : money(item.currentPrice);
-    return `${customerText(item.publicName)} por ${price}`;
+    return `${customerText(item.publicName)} por ${price}${groupChoices.length ? `\n${groupChoices.join('\n')}` : ''}`;
   }).join('\n');
   // Com a loja fechada o cabeçalho vira a frase do horário: dizer "Tem sim:" e
   // convidar a escolher, sem avisar que ninguém vai atender, é o que fazia a
   // resposta soar de robô.
   const heading = storeClosedPrefix?.trim()
     ? storeClosedPrefix.trim()
-    : `${requestedGroup ? 'As opções são' : 'Tem sim'}:`;
-  return finish(`${heading}\n${choices}\nQual você quer?`);
+    : `${answeringQuestion ? 'No cardápio' : requestedGroup ? 'As opções são' : 'Tem sim'}:`;
+  // FIX 2026-09-24: a pergunta sobre composição recebia "Tem sim" e um
+  // convite para comprar, afirmando implicitamente um ingrediente não
+  // comprovado. Opções vendáveis não são uma ficha completa de ingredientes.
+  const compositionQuestion = answeringQuestion && /\b(ingrediente\w*|contem|leva|vem com|acompanha|feito|preparo|gluten|lactose|alerg\w*)\b/.test(normalize(query));
+  const ending = answeringQuestion
+    ? compositionQuestion ? '\nNão tenho a composição completa para confirmar esse detalhe. Posso chamar alguém da loja para conferir?' : ''
+    : '\nQual você quer?';
+  return finish(`${heading}\n${choices}${ending}`);
 }
 
 export function renderOrderingDraftPreview(draft: OrderingDraft, result: CatalogReplyResult): string {

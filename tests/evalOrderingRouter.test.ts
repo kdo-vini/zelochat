@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import {
   computeGate,
+  evaluatedDecision,
+  isFalseOrderingEntry,
+  isMissedOrderingEntry,
+  loadFixture,
   expectedDecision,
   keywordDecision,
   percentile,
@@ -22,6 +27,8 @@ assert.equal(percentile([10, 20, 30], -1), 10);
 assert.equal(percentile([10, 20, 30], 2), 30);
 
 const passingMetrics = {
+  routerPurchaseQuestionConflicts: 0,
+  routerFailed: 0,
   routerMissedOrders: 1,
   keywordMissedOrders: 2,
   routerAccuracy: 0.9,
@@ -29,8 +36,24 @@ const passingMetrics = {
   routerFalseOrdersInSafetyRows: 0,
 };
 assert.equal(computeGate(passingMetrics), true);
+assert.equal(computeGate({ ...passingMetrics, routerPurchaseQuestionConflicts: 1 }), false);
 assert.equal(computeGate({ ...passingMetrics, routerFalseOrdersInSafetyRows: 1 }), false);
 assert.equal(computeGate({ ...passingMetrics, routerMissedOrders: 3 }), false);
 assert.equal(computeGate({ ...passingMetrics, routerAccuracy: 0.7 }), false);
+
+assert.equal(computeGate({ ...passingMetrics, routerFailed: 1 }), false);
+assert.equal(evaluatedDecision(null), 'fallback_unknown');
+assert.equal(isFalseOrderingEntry('generic', 'menu_request'), true);
+assert.equal(isFalseOrderingEntry('generic', 'order'), true);
+assert.equal(isFalseOrderingEntry('generic', 'fallback_unknown'), false);
+assert.equal(isMissedOrderingEntry('order', 'menu_request'), true);
+assert.equal(isMissedOrderingEntry('menu_request', 'generic'), true);
+assert.equal(isMissedOrderingEntry('order', 'fallback_unknown'), true);
+assert.equal(isMissedOrderingEntry('order', 'order'), false);
+assert.equal(loadFixture().length, 75);
+const challenge = loadFixture(fileURLToPath(new URL('./fixtures/ordering-router-eval/challenge-v1.jsonl', import.meta.url)));
+assert.equal(challenge.length, 26);
+assert.equal(challenge.filter((row) => row.history?.length).length, 6);
+assert.ok(challenge[0].text.startsWith('Não'));
 
 console.log('evalOrderingRouter tests passed');

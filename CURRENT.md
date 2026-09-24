@@ -1,11 +1,18 @@
 # ZeloChat — Foco atual
 
+## Revisão local do fluxo de respostas — 2026-09-24
+
+Correções de continuidade, dúvida versus compra e busca de vários itens no branch
+`fix/ordering-intent-router`. Avaliação real do prompt final passou duas vezes: 75/75 e 26/26 decisões,
+sem falhas nem confusão compra/dúvida. Latência ponta a ponta ainda não medida. Evidências em
+`docs/audits/2026-09-24-ordering-router-review.md`.
+
 ## Sessão 2026-09-24 — roteamento de texto livre no pedido conversacional
 
-Mensagens sem ponteiro de pedido agora passam pelo roteador LLM quando elegíveis:
+Mensagens sem pedido editável agora passam pelo roteador LLM quando elegíveis:
 conversas comuns seguem para a IA genérica, pedidos de cardápio recebem o card
-de entrada e pedidos seguem para catálogo/planner. Falha, desligamento, ponteiro,
-confirmação, alteração, cancelamento e botões preservam os caminhos anteriores.
+de entrada e pedidos seguem para catálogo/planner. Falha e desligamento retomam
+o legado; pedido editável, confirmação, cancelamento e botões preservam seus caminhos.
 
 ## Sessão 2026-09-19 — iFood: som de campainha
 

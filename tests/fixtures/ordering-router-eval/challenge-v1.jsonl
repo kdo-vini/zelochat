@@ -1,0 +1,26 @@
+{"text": "Não quero pedir nada hoje, só saber o horário de amanhã.", "expected": "conversa", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Não me manda cardápio, preciso falar com alguém da loja.", "expected": "atendente", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Quero duas esfihas, mas antes me diz se aceitam dinheiro.", "expected": "pedido", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Boa tarde, manda o cardápio e o endereço por favor.", "expected": "pedir_cardapio", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Sou fornecedor de queijo. Vocês querem receber nossa tabela?", "expected": "outro", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Tenho coxinha congelada a R$ 1,20 para revenda, quantas caixas vocês querem?", "expected": "outro", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "O pedido de ontem veio sem a coca que eu paguei.", "expected": "conversa", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Não é para fazer pedido: estou comparando preços. Quanto custa a lasanha?", "expected": "duvida_cardapio", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "O hambúrguer leva amendoim? Tenho alergia.", "expected": "duvida_cardapio", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Vocês entregam no Jardim das Flores?", "expected": "conversa", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Posso pagar a marmita com vale refeição?", "expected": "conversa", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Quais tamanhos de açaí vocês vendem?", "expected": "duvida_cardapio", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Quero ver as opções do cardápio, ainda não escolhi nada.", "expected": "pedir_cardapio", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Um pastel de queijo sem orégano, por gentileza.", "expected": "pedido", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Obrigada pela marmita, estava ótima!", "expected": "conversa", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Vocês compram embalagens para marmita? Sou da distribuidora.", "expected": "outro", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Qual a taxa para entregar duas pizzas no Centro?", "expected": "conversa", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Me passa para uma pessoa, quero reclamar do lanche.", "expected": "atendente", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "2 x salada e 1 suco de laranja", "expected": "pedido", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "Ainda tem feijoada hoje ou já acabou?", "expected": "duvida_cardapio", "source": "challenge-authored-before-run-2026-09-24"}
+{"text": "A de frango vem com catupiry?", "expected": "duvida_cardapio", "source": "challenge-authored-before-run-2026-09-24", "history": [{"role": "user", "content": "Vocês têm esfiha?"}, {"role": "assistant", "content": "Temos esfiha de carne e de frango."}]}
+{"text": "Hoje só queria agradecer mesmo, não vou pedir.", "expected": "conversa", "source": "challenge-authored-before-run-2026-09-24", "history": [{"role": "user", "content": "Quero uma pizza"}, {"role": "assistant", "content": "Pode me dizer o sabor?"}]}
+{"text": "Manda ele aqui por favor", "expected": "pedir_cardapio", "source": "challenge-authored-before-run-2026-09-24", "history": [{"role": "assistant", "content": "Você gostaria de receber nosso cardápio?"}]}
+{"text": "Pode mandar duas dessas.", "expected": "pedido", "source": "challenge-authored-before-run-2026-09-24", "history": [{"role": "user", "content": "Tem coxinha de frango?"}, {"role": "assistant", "content": "Temos coxinha de frango disponível."}]}
+{"text": "Não, eu estou oferecendo para vocês revenderem.", "expected": "outro", "source": "challenge-authored-before-run-2026-09-24", "history": [{"role": "user", "content": "Coxinhas congeladas"}, {"role": "assistant", "content": "Você quer fazer um pedido?"}]}
+{"text": "Preciso falar com ela", "expected": "atendente", "source": "challenge-authored-before-run-2026-09-24", "history": [{"role": "user", "content": "A responsável está na loja?"}, {"role": "assistant", "content": "Está sim, em que posso ajudar?"}]}

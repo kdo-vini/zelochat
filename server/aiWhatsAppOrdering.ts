@@ -51,6 +51,7 @@ import { presentOrderingRequirements, hasPendingOrderingRequirements, type Order
 import { applyConversationOrderPatch, buildOrderingPatchTool, validateConversationOrderPatch, type ConversationOrderPatch } from './orderingPatchPlanner.js';
 import { composeOrderingTurn, type OrderingTurnComposition } from './orderingTurnComposer.js';
 import { messagesSinceConversationBreak } from '../src/domain/conversationContinuity.js';
+import { searchOrderingCatalog } from './orderingCatalogSearch.js';
 import { decideOrderingEntry, routeCatalogQuery } from '../src/domain/orderingTurnRoute.js';
 import {
   isOrderingRouterEnabled,
@@ -905,12 +906,27 @@ export async function tryHandleAiWhatsAppOrdering(
   // in progress, the router now decides that boundary; confirmations and
   // buttons remain deterministic, and a router failure falls back to the
   // previous behavior and never causes a handoff.
-  const routerEligible = !priorState
+  const client = options.client ?? ZeloMenuInternalClient.fromEnv();
+  let cachedCanonical: OrderingSnapshot | null | undefined;
+  let canonicalReadFailure: { error: unknown } | undefined;
+  const pointerTurn = classifyOrderingTurn(text, Boolean(priorState));
+  const deterministicControl = ['confirm', 'ask_change', 'cancel'].includes(pointerTurn.kind);
+  // FIX 2026-09-24: a persisted pointer can reference a completed order.
+  // Confirm its status before routing new conversation; an unreadable order
+  // retains the existing recovery path and is never assumed closed.
+  if (priorState && client && !deterministicControl && isOrderingRouterEnabled() && turnRouter) {
+    try {
+      cachedCanonical = await loadCanonicalSnapshot(session, empresaId, jid, client);
+    } catch (error) {
+      // The guarded canonical path below owns recovery and its metrics.
+      canonicalReadFailure = { error };
+    }
+  }
+  const closedPointer = cachedCanonical != null && !isOrderingSnapshotEditable(cachedCanonical);
+  const routerEligible = (!priorState || closedPointer) && !deterministicControl
     && !isOrderingStartButtonText(text)
-    && !isOrderingGreeting(text)
     && !isExplicitHumanRequest(text)
-    && !(entry.menuUrl && isDeliveryFeeQuestion(text))
-    && !isOrderingFollowUpAnswer(session.messages, text);
+    && !(entry.menuUrl && isDeliveryFeeQuestion(text));
   let route: Awaited<ReturnType<OrderingTurnRouter>> = null;
   if (routerEligible) {
     if (!isOrderingRouterEnabled()) {
@@ -936,6 +952,14 @@ export async function tryHandleAiWhatsAppOrdering(
   }
   const routeDecision = route ? decideOrderingEntry(route) : null;
   if (routeDecision === 'generic') {
+    if (closedPointer) {
+      try {
+        await persistOrderingState(permit, cachedCanonical!, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
+      } catch (error) {
+        if (error instanceof OrderingSuppressedError) return { handled: true };
+        throw error;
+      }
+    }
     metric({ ...metricBase, stage: 'plan', outcome: 'routed_generic' });
     return { handled: false };
   }
@@ -1033,7 +1057,6 @@ export async function tryHandleAiWhatsAppOrdering(
   const hasPointer = Boolean(priorState);
   const initialTurn = classifyOrderingTurn(text, hasPointer);
   const followUp = !hasPointer && isOrderingFollowUpAnswer(session.messages, text);
-  const client = options.client ?? ZeloMenuInternalClient.fromEnv();
   // FIX 2026-09-14: entry used to require a word from `classifyOrderingTurn`'s
   // closed list, so "Macarrão, pene" and an audio listing penne, molho and
   // azeitona never reached this flow — the generic model, which has no order
@@ -1080,7 +1103,8 @@ export async function tryHandleAiWhatsAppOrdering(
     return { handled: true, response };
   }
   try {
-    const canonical = await loadCanonicalSnapshot(session, empresaId, jid, client);
+    if (canonicalReadFailure) throw canonicalReadFailure.error;
+    const canonical = cachedCanonical === undefined ? await loadCanonicalSnapshot(session, empresaId, jid, client) : cachedCanonical;
     current = canonical && isOrderingSnapshotEditable(canonical) ? canonical : null;
     const turn = classifyOrderingTurn(text, Boolean(current) || hasPointer);
     if (current && declinesOptionalExtras(text)) {
@@ -1182,8 +1206,16 @@ export async function tryHandleAiWhatsAppOrdering(
       metric({ ...metricBase, stage: 'plan', outcome: 'no_catalog_query' });
       return { handled: entryDispatched };
     }
-    if (/\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
-    const catalog = probedCatalog ?? await client.searchCatalog({ empresaId, query, limit: 12 });
+    if (route?.intent !== 'duvida_cardapio' && /\bo de sempre\b/i.test(text)) draft = lastOrderDraft(context);
+    const catalog = probedCatalog ?? (routedIntoOrdering && route?.intent === 'pedido'
+      ? await searchOrderingCatalog({ client, empresaId, route, fallbackQuery: query })
+      : await client.searchCatalog({ empresaId, query, limit: 12 }));
+    if (!draft && !catalog.total && routedIntoOrdering && route?.intent === 'pedido' && route.items.length === 0) {
+      const response = 'O que você gostaria de pedir?';
+      await sendText(permit, response, 'ordering-clarification', dryRun, isPermitCurrent);
+      metric({ ...metricBase, stage: 'plan', outcome: 'order_needs_items' });
+      return { handled: true, response };
+    }
     // FIX 2026-09-09: the customer named the menu and nothing they said
     // matches a product, so the menu is the answer. This used to be decided
     // BEFORE the search, from a closed list of framing words — a list natural
@@ -1191,7 +1223,7 @@ export async function tryHandleAiWhatsAppOrdering(
     // "Depois me manda ó cardápio, fazendo favor" both walked past it. The
     // catalog itself is the reliable judge. A message that does NOT name the
     // menu keeps the plain "hoje não temos isso".
-    if (!catalog.total && mentionsMenu(text)) {
+    if (!catalog.total && mentionsMenu(text) && !(routedIntoOrdering && route && route.items.length > 0)) {
       try {
         return await answerMenuRequest('menu_request_no_match');
       } catch (error) {
@@ -1213,8 +1245,10 @@ export async function tryHandleAiWhatsAppOrdering(
     }
     // A customer who names what the store sells without asking about it is
     // ordering, keyword or not ("macarrão penne, molho vermelho, azeitona").
-    const wantsOrder = Boolean(current) || (routedIntoOrdering && route?.intent === 'pedido') || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp
-      || (catalog.total > 0 && !isOrderingQuestion(text));
+    const wantsOrder = Boolean(current) || (routedIntoOrdering && route
+      ? route.intent === 'pedido'
+      : /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp
+        || (catalog.total > 0 && !isOrderingQuestion(text)));
     // Candidate ambiguity is resolved in the conversation, never delegated to
     // the model: a valid ID is not enough to prove which sellable item the
     // customer meant. Several options of ONE product are a specification, not
@@ -1234,9 +1268,10 @@ export async function tryHandleAiWhatsAppOrdering(
       }
       const response = renderCatalogReply(
         catalog,
-        query,
+        route?.intent === 'duvida_cardapio' ? text : query,
         entry.menuUrl,
         entry.storeOpen === true ? null : buildStoreClosedPrefix(entry.nextOpenLabel),
+        routedIntoOrdering && route?.intent === 'duvida_cardapio',
       );
       // FIX 2026-09-09: restating the previous reply word for word tells the
       // customer nothing and keeps `isOrderingFollowUp` true, so the next

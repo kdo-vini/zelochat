@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-24',
+    category: 'medium',
+    title: 'Conversas e pedidos mais naturais',
+    description: 'A IA distingue melhor uma conversa de um pedido, esclarece quando falta escolher os itens e consulta separadamente os produtos citados juntos. Perguntas sobre preços e opções recebem informações do cardápio sem iniciar uma compra.',
+  },
+  {
     date: '2026-09-14',
     category: 'hotfix',
     title: 'Avisos de entrega voltaram a chegar',

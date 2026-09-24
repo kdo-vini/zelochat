@@ -480,7 +480,7 @@ const routedOrder = await tryHandleAiWhatsAppOrdering(
 );
 assert.equal(routedOrder.handled, true, 'routed order reaches the dry-run draft preview');
 assert.match(routedOrder.response ?? '', /Caldo verde/);
-assert.deepEqual(routedQueries, ['Macarrão, pene'], 'router item names become the catalog query');
+assert.deepEqual(routedQueries, ['Macarrão, pene', 'Macarrão', 'pene'], 'router item names are also searched individually');
 
 const routedUnknown = await tryHandleAiWhatsAppOrdering(
   fakePermit.remoteJid,
@@ -536,12 +536,63 @@ const pureGreeting = await tryHandleAiWhatsAppOrdering(
   {
     dryRun: true,
     client: emptyCatalogClient,
-    turnRouter: async ({ text }) => { greetingRouterCalls.push(text); return null; },
+    turnRouter: async ({ text }) => { greetingRouterCalls.push(text); return { intent: 'conversa', confidence: 0.99, items: [] }; },
   },
 );
-assert.equal(pureGreeting.handled, true);
-assert.match(pureGreeting.response ?? '', /Veja o cardápio/);
-assert.deepEqual(greetingRouterCalls, [], 'pure greetings stay on the deterministic entry path');
+assert.equal(pureGreeting.handled, false);
+assert.equal(pureGreeting.response, undefined, 'a greeting does not send an unsolicited menu');
+assert.deepEqual(greetingRouterCalls, ['Bom dia'], 'greetings use the router when enabled');
+
+for (const text of ['obrigado', 'não quero', 'me manda cardápio', 'o pequeno']) {
+  const conversation = sessionWith(text);
+  conversation.messages.unshift({ ...conversation.messages[0], id: 'prior-question', waMessageId: 'prior-question', role: 'assistant', content: 'Tem marmita pequena e grande. Qual você quer?', preview: null });
+  let consulted = false;
+  const outcome = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid, fakePermit.empresaId, conversation, fakePermit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: true, client: oneResultClient, draftPlanner: routedDraftPlanner,
+      turnRouter: async ({ history }) => {
+        consulted = true;
+        assert.ok(history.some((message) => message.role === 'assistant' && message.content.includes('Qual você quer?')), 'short replies retain the preceding question');
+        return text === 'me manda cardápio'
+          ? { intent: 'pedir_cardapio', confidence: 0.99, items: [] }
+          : text === 'o pequeno'
+            ? { intent: 'pedido', confidence: 0.99, items: [] }
+            : { intent: 'conversa', confidence: 0.99, items: [] };
+      },
+    },
+  );
+  assert.equal(consulted, true, `${text}: a previous question does not bypass routing`);
+  if (text === 'me manda cardápio') assert.match(outcome.response ?? '', /Veja o cardápio/);
+  else if (text === 'o pequeno') assert.match(outcome.response ?? '', /Resumo:/);
+  else assert.deepEqual(outcome, { handled: false }, 'declining or thanking must not restart ordering');
+}
+
+for (const text of ['quero saber quanto custa o caldo verde', 'o caldo verde vem com pão?']) {
+  const outcome = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid, fakePermit.empresaId, sessionWith(text), fakePermit,
+    { menuUrl: null, storeOpen: true },
+    {
+      dryRun: true, client: oneResultClient,
+      turnRouter: async () => ({ intent: 'duvida_cardapio', confidence: 0.99, items: ['caldo verde'] }),
+      draftPlanner: async () => { assert.fail('a catalog question must never create a draft'); },
+    },
+  );
+  assert.equal(outcome.handled, true);
+  assert.match(outcome.response ?? '', /Caldo verde/);
+  assert.doesNotMatch(outcome.response ?? '', /Resumo:|entrega ou retirada/);
+}
+
+const unknownNamedInMenu = await askOrdering('não vi sushi no cardápio, tem?', true,
+  async () => ({ intent: 'duvida_cardapio', confidence: 0.99, items: ['sushi'] }));
+assert.equal(unknownNamedInMenu.handled, true);
+assert.doesNotMatch(unknownNamedInMenu.response ?? '', /Veja o cardápio/, 'a missing named item must not be mistaken for a menu request');
+assert.deepEqual(searchedQueries, ['sushi']);
+
+const unspecifiedOrder = await askOrdering('quero fazer um pedido', true,
+  async () => ({ intent: 'pedido', confidence: 0.99, items: [] }));
+assert.deepEqual(unspecifiedOrder, { handled: true, response: 'O que você gostaria de pedir?' });
 
 const closedCatalogAnswer = await tryHandleAiWhatsAppOrdering(
   fakePermit.remoteJid,
@@ -602,6 +653,33 @@ const sessionWithPointer = (text: string): StoredSession => {
   return session;
 };
 const pointerRouterCalls: string[] = [];
+for (const state of ['accepted', 'cancelled', 'cart_open'] as const) {
+  let reads = 0;
+  let routes = 0;
+  const result = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid, fakePermit.empresaId, sessionWithPointer('obrigado'), fakePermit,
+    { menuUrl: null, storeOpen: true },
+    { dryRun: true, client: { ...openDryRunClient, getOrdering: async () => { reads++; return snapshot({ state }); } },
+      turnRouter: async () => { routes++; return { intent: 'conversa', confidence: 1, items: [] }; },
+      draftPlanner: async () => null,
+    },
+  );
+  assert.equal(reads, 1, 'snapshot is reused after eligibility check');
+  assert.equal(routes, state === 'cart_open' ? 0 : 1, 'closed pointers permit new conversation routing');
+  if (state !== 'cart_open') assert.equal(result.handled, false);
+}
+{
+  let routes = 0;
+  const result = await tryHandleAiWhatsAppOrdering(
+    fakePermit.remoteJid, fakePermit.empresaId, sessionWithPointer('sim'), fakePermit,
+    { menuUrl: null, storeOpen: true },
+    { dryRun: true, client: { ...openDryRunClient, getOrdering: async () => snapshot({ state: 'accepted' }) },
+      turnRouter: async () => { routes++; return { intent: 'pedido', confidence: 1, items: [] }; },
+    },
+  );
+  assert.equal(routes, 0);
+  assert.match(result.response ?? '', /já foi confirmado/);
+}
 const pointerTurn = await tryHandleAiWhatsAppOrdering(
   fakePermit.remoteJid,
   fakePermit.empresaId,

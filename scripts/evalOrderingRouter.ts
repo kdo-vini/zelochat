@@ -16,6 +16,7 @@ export interface OrderingEvalRow {
   text: string;
   expected: OrderingIntent;
   source: string;
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 export interface RouterEvalResult {
@@ -29,6 +30,8 @@ export interface OrderingGateMetrics {
   routerAccuracy: number;
   keywordAccuracy: number;
   routerFalseOrdersInSafetyRows: number;
+  routerFailed: number;
+  routerPurchaseQuestionConflicts: number;
 }
 
 export function expectedDecision(intent: OrderingIntent): OrderingEntryDecision {
@@ -50,6 +53,20 @@ export function keywordDecision(text: string): OrderingEntryDecision {
   return mentionsMenu(text) ? 'menu_request' : 'order';
 }
 
+export type EvaluatedDecision = OrderingEntryDecision | 'fallback_unknown';
+
+export function evaluatedDecision(route: OrderingRoute | null): EvaluatedDecision {
+  return route ? decideOrderingEntry(route) : 'fallback_unknown';
+}
+
+export function isFalseOrderingEntry(expected: OrderingEntryDecision, actual: EvaluatedDecision): boolean {
+  return expected === 'generic' && (actual === 'order' || actual === 'menu_request');
+}
+
+export function isMissedOrderingEntry(expected: OrderingEntryDecision, actual: EvaluatedDecision): boolean {
+  return expected !== 'generic' && actual !== expected;
+}
+
 export function percentile(values: readonly number[], percentileRank: number): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -62,7 +79,9 @@ export function percentile(values: readonly number[], percentileRank: number): n
 }
 
 export function computeGate(metrics: OrderingGateMetrics): boolean {
-  return metrics.routerMissedOrders <= metrics.keywordMissedOrders
+  return metrics.routerFailed === 0
+    && metrics.routerPurchaseQuestionConflicts === 0
+    && metrics.routerMissedOrders <= metrics.keywordMissedOrders
     && metrics.routerFalseOrdersInSafetyRows === 0
     && metrics.routerAccuracy >= metrics.keywordAccuracy;
 }
@@ -75,8 +94,7 @@ function pct(value: number, total: number): string {
   return `${(total === 0 ? 0 : (value / total) * 100).toFixed(1)}%`;
 }
 
-function loadFixture(): OrderingEvalRow[] {
-  const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures/ordering-router-eval/v1.jsonl');
+export function loadFixture(fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), '../tests/fixtures/ordering-router-eval/v1.jsonl')): OrderingEvalRow[] {
   return readFileSync(fixturePath, 'utf8')
     .split(/\r?\n/)
     .filter(Boolean)
@@ -87,6 +105,10 @@ function loadFixture(): OrderingEvalRow[] {
       }
       if (!(ORDERING_INTENTS as readonly string[]).includes(row.expected)) {
         throw new Error(`Invalid expected intent on fixture row ${index + 1}: ${row.expected}`);
+      }
+      if (row.history !== undefined && (!Array.isArray(row.history) || row.history.some((message) =>
+        !message || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string'))) {
+        throw new Error(`Invalid history on fixture row ${index + 1}`);
       }
       return row as OrderingEvalRow;
     });
@@ -116,16 +138,17 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const rows = loadFixture();
+  const rows = loadFixture(process.argv[2] ? resolve(process.argv[2]) : undefined);
+  if (rows.length === 0) throw new Error('Evaluation fixture must not be empty');
   const keywordDecisions = rows.map((row) => keywordDecision(row.text));
   const results = await mapWithConcurrency(rows, 5, async (row) => {
     const started = performance.now();
-    const route = await routeOrderingTurn({ text: row.text, history: [], storeName: null });
+    const route = await routeOrderingTurn({ text: row.text, history: row.history ?? [], storeName: null });
     return { route, latencyMs: performance.now() - started } satisfies RouterEvalResult;
   });
 
   const expectedDecisions = rows.map((row) => expectedDecision(row.expected));
-  const routerDecisions = results.map(({ route }) => route ? decideOrderingEntry(route) : 'generic');
+  const routerDecisions = results.map(({ route }) => evaluatedDecision(route));
   const keywordCorrect = keywordDecisions.filter((decision, index) => decision === expectedDecisions[index]).length;
   const routerCorrect = routerDecisions.filter((decision, index) => decision === expectedDecisions[index]).length;
   const perDecision = (decision: OrderingEntryDecision) => {
@@ -133,22 +156,30 @@ async function main(): Promise<number> {
     return `${decision}: keyword ${pct(indexes.filter((index) => keywordDecisions[index] === decision).length, indexes.length)}, router ${pct(indexes.filter((index) => routerDecisions[index] === decision).length, indexes.length)} (n=${indexes.length})`;
   };
 
-  const falseOrders = (decisions: readonly OrderingEntryDecision[]) => decisions.filter((decision, index) => expectedDecisions[index] === 'generic' && decision === 'order').length;
-  const missedOrders = (decisions: readonly OrderingEntryDecision[]) => decisions.filter((decision, index) => expectedDecisions[index] === 'order' && decision === 'generic').length;
+  const falseOrders = (decisions: readonly EvaluatedDecision[]) => decisions.filter((decision, index) => isFalseOrderingEntry(expectedDecisions[index], decision)).length;
+  const missedOrders = (decisions: readonly EvaluatedDecision[]) => decisions.filter((decision, index) => isMissedOrderingEntry(expectedDecisions[index], decision)).length;
   const routerFailed = results.filter(({ route }) => route === null).length;
   const intentCorrect = results.filter(({ route }, index) => route?.intent === rows[index].expected).length;
+  const purchaseQuestionConflict = (index: number) => {
+    const actual = results[index].route?.intent;
+    const expected = rows[index].expected;
+    return (expected === 'pedido' && actual === 'duvida_cardapio')
+      || (expected === 'duvida_cardapio' && actual === 'pedido');
+  };
   const matrix = new Map<string, number>();
   for (const expected of ORDERING_INTENTS) for (const actual of ORDERING_INTENTS) matrix.set(`${expected}:${actual}`, 0);
   results.forEach(({ route }, index) => {
     if (route) matrix.set(`${rows[index].expected}:${route.intent}`, (matrix.get(`${rows[index].expected}:${route.intent}`) ?? 0) + 1);
   });
-  const safetyFalseOrders = rows.filter((row, index) => (row.source === 'incident-2026-09-24' || row.expected === 'outro') && routerDecisions[index] === 'order').length;
+  const safetyFalseOrders = falseOrders(routerDecisions);
   const gateMetrics: OrderingGateMetrics = {
     routerMissedOrders: missedOrders(routerDecisions),
     keywordMissedOrders: missedOrders(keywordDecisions),
     routerAccuracy: routerCorrect / rows.length,
     keywordAccuracy: keywordCorrect / rows.length,
     routerFalseOrdersInSafetyRows: safetyFalseOrders,
+    routerFailed,
+    routerPurchaseQuestionConflicts: rows.filter((_, index) => purchaseQuestionConflict(index)).length,
   };
   const latencies = results.map(({ latencyMs }) => latencyMs);
   const correctConfidences = results.flatMap(({ route }, index) => route && routerDecisions[index] === expectedDecisions[index] ? [route.confidence] : []);
@@ -156,17 +187,18 @@ async function main(): Promise<number> {
 
   console.log(`Decision accuracy: keyword ${pct(keywordCorrect, rows.length)} (${keywordCorrect}/${rows.length}), router ${pct(routerCorrect, rows.length)} (${routerCorrect}/${rows.length})`);
   console.log(`Per expected decision: ${perDecision('order')}; ${perDecision('menu_request')}; ${perDecision('generic')}`);
-  console.log(`Keyword baseline note: the real baseline also had a catalog probe; this offline script cannot reproduce it.`);
+  console.log(`Keyword baseline is a proxy: runtime also probes the catalog. Null router results are unknown fallback, counted incorrect and block the gate; this script does not measure final replies, mutations or fallback behavior.`);
   console.log(`Router intent accuracy: ${pct(intentCorrect, rows.length)} (${intentCorrect}/${rows.length})`);
+  console.log(`Purchase/question conflicts: ${gateMetrics.routerPurchaseQuestionConflicts}`);
   console.log('Intent confusion matrix (rows=expected, columns=router):');
   console.log(`expected\\router\t${ORDERING_INTENTS.join('\t')}`);
   for (const expected of ORDERING_INTENTS) console.log(`${expected}\t${ORDERING_INTENTS.map((actual) => matrix.get(`${expected}:${actual}`) ?? 0).join('\t')}`);
-  console.log(`False orders: keyword ${falseOrders(keywordDecisions)}, router ${falseOrders(routerDecisions)}; missed orders: keyword ${missedOrders(keywordDecisions)}, router ${missedOrders(routerDecisions)}`);
+  console.log(`False ordering entries (includes unwanted menu): keyword ${falseOrders(keywordDecisions)}, router ${falseOrders(routerDecisions)}; missed ordering entries (includes wrong menu/order path): keyword ${missedOrders(keywordDecisions)}, router ${missedOrders(routerDecisions)}`);
   console.log(`Router latency ms: p50=${percentile(latencies, 0.5).toFixed(1)}, p95=${percentile(latencies, 0.95).toFixed(1)}, max=${Math.max(...latencies).toFixed(1)}; router_failed=${routerFailed}`);
   console.log(`Mean confidence: correct decisions ${mean(correctConfidences).toFixed(3)} (n=${correctConfidences.length}), incorrect decisions ${mean(incorrectConfidences).toFixed(3)} (n=${incorrectConfidences.length})`);
   console.log('Wrong router decisions:');
   rows.forEach((row, index) => {
-    if (routerDecisions[index] === expectedDecisions[index]) return;
+    if (routerDecisions[index] === expectedDecisions[index] && !purchaseQuestionConflict(index)) return;
     const route = results[index].route;
     const text = row.text.replace(/\s+/g, ' ').slice(0, 120);
     console.log(`- expected=${row.expected} router=${route?.intent ?? 'null'} confidence=${route?.confidence.toFixed(3) ?? '-'} items=${formatItems(route?.items ?? null)} text=${text}`);
