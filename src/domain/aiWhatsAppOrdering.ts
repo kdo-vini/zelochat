@@ -194,6 +194,32 @@ const BARE_CONFIRM = /^(?:sim|s|ok|confirmo|pode confirmar|confirmar|fechado|cer
  */
 const CONFIRM_LEAD_WITH_MORE = /^(?:sim|nao|ok|certo|certinho|fechado|fechou|confirmar|pode confirmar|com certeza)\b.+/;
 
+/** "tem sushi?", "vocês vendem açaí" — asks whether the store sells something. */
+const AVAILABILITY_QUESTION = /^(?:voces?\s+)?(?:tem|temos|vende|vendem)\s+\S+/;
+
+export function isAvailabilityQuestion(text: string): boolean {
+  return AVAILABILITY_QUESTION.test(normalize(text));
+}
+
+/**
+ * ZeloMenu rejects a catalog query longer than this with CONSULTA_INVALIDA
+ * (`parseInternalCatalogSearchRequest` in the ZeloMenu repo). Keep in lockstep.
+ */
+export const CATALOG_QUERY_MAX_LENGTH = 240;
+
+/**
+ * FIX 2026-09-24: a ~700-char message went to the search as written, ZeloMenu
+ * answered 400 and the turn escalated to a human. Bound it here, at a word
+ * boundary — the start of a long message is where an order is named.
+ */
+export function clampCatalogQuery(query: string): string {
+  const trimmed = query.trim();
+  if (trimmed.length <= CATALOG_QUERY_MAX_LENGTH) return trimmed;
+  const cut = trimmed.slice(0, CATALOG_QUERY_MAX_LENGTH + 1);
+  const lastSpace = cut.search(/\s\S*$/);
+  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut.slice(0, CATALOG_QUERY_MAX_LENGTH)).trim();
+}
+
 export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): OrderingTurn {
   const normalized = normalize(text);
   if (isExplicitHumanRequest(text)) return { kind: 'none' };
@@ -206,7 +232,7 @@ export function classifyOrderingTurn(text: string, hasOpenOrdering: boolean): Or
     }
   }
   if (/\b(cardapio|menu|mistura|marmita|lanche|pedido|pedir|quero|tem hoje|o de sempre|arroz|feijao|acompanhament\w*|farofa|batata palha|tamanho|base)\b/.test(normalized)
-    || /^(?:voces?\s+)?(?:tem|temos|vende|vendem)\s+\S+/.test(normalized)) {
+    || AVAILABILITY_QUESTION.test(normalized)) {
     return { kind: 'catalog_or_order', query: text.trim() };
   }
   return { kind: 'none' };
@@ -285,6 +311,10 @@ function catalogQueryWords(text: string): string[] {
  * decides.
  */
 export function buildCatalogSearchQuery(messages: OrderingConversationMessage[], text: string): string {
+  return clampCatalogQuery(rawCatalogSearchQuery(messages, text));
+}
+
+function rawCatalogSearchQuery(messages: OrderingConversationMessage[], text: string): string {
   const current = text.trim();
   if (!current) return findPriorOrderingQuery(messages, current);
   if (classifyOrderingTurn(current, false).kind === 'catalog_or_order') return current;

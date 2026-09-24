@@ -33,6 +33,8 @@ import {
   sanitizeFulfillmentForWire,
   serializeOrderingState,
   type OrderingSnapshot,
+  CATALOG_QUERY_MAX_LENGTH,
+  clampCatalogQuery,
 } from '../src/domain/aiWhatsAppOrdering.js';
 import {
   resolveZeloMenuInternalBaseUrl,
@@ -344,6 +346,46 @@ for (const storeOpen of [false, null]) {
 const unknownItem = await askOrdering('tem sushi?');
 assert.equal(unknownItem.handled, true);
 assert.match(unknownItem.response ?? '', /hoje não temos isso/i);
+
+// REGRESSION 2026-09-24 (prod, empresa 2b862442): a satisfaction survey sent to
+// a store's number ("Queria te pedir uma ajuda rápida ... fechamento do caixa,
+// fiado, saber o lucro ... com lanchonete") got "Não consegui conferir o pedido
+// com segurança agora; vou chamar um atendente". "pedir" put it on the keyword
+// path, the whole ~700-char text went to the catalog search, ZeloMenu rejected
+// it (CONSULTA_INVALIDA, limit 240) and the failure escalated. Even with a
+// valid query the catalog finds nothing — so no product was named and the
+// generic assistant answers the message like a person would.
+const surveyText = [
+  'Bom dia! Tudo bem? Aqui é o Vinicius, do Zelo PDV.',
+  '',
+  'Queria te pedir uma ajuda rápida: estou conversando com alguns clientes pra entender como o Zelo tem funcionado no dia a dia. Sua opinião ajuda muito a melhorar o sistema.',
+  '',
+  'São 5 perguntinhas, pode responder por texto ou por áudio, do jeito que for mais fácil:',
+  '',
+  '1. Como era o controle da empresa antes do Zelo (caderno, planilha, outro sistema)?',
+  '2. O que mudou na sua rotina depois que começou a usar? (ex.: fechamento do caixa, fiado, saber o lucro)',
+  '3. Qual função você mais usa e qual te fez mais diferença?',
+  '4. Tem algo que te incomoda ou que você sente falta no sistema?',
+  '5. Se um amigo com lanchonete te perguntasse, o que você falaria do Zelo?',
+  '',
+  'Sem pressa, responde quando puder. Muito obrigado! 🙏',
+].join('\n');
+// (Store open: "Bom dia!" sends the entry card first — a separate path.)
+for (const storeOpen of [false, null] as const) {
+  const survey = await askOrdering(surveyText, storeOpen);
+  assert.equal(survey.handled, false, `storeOpen=${storeOpen}: a message naming no product goes to the generic assistant`);
+  assert.ok(searchedQueries.every((query) => query.length <= CATALOG_QUERY_MAX_LENGTH), 'the query never exceeds what ZeloMenu accepts');
+}
+// Same for short keyword turns that name nothing on the menu.
+for (const text of ['queria te pedir um favor', 'quero falar sobre o pedido de ontem']) {
+  assert.equal((await askOrdering(text)).handled, false, `"${text}" is not an order`);
+}
+
+// The catalog query is bounded to ZeloMenu's own limit, cut at a word.
+assert.equal(clampCatalogQuery('  mistura  '), 'mistura');
+const clamped = clampCatalogQuery(`${'macarrão penne '.repeat(40)}fim`);
+assert.ok(clamped.length <= CATALOG_QUERY_MAX_LENGTH);
+assert.match(clamped, /penne$/, 'never cuts a word in half');
 
 // REGRESSION 2026-09-09: o recibo do checkout do ZeloMenu chega como mensagem
 // do cliente. Contem "cardapio digital" e "Entrega - o quanto antes", entao

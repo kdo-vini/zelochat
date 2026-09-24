@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Mensagem comum virava "vou chamar um atendente" — 2026-09-24
+
+- ✅ ZCHAT-ORD-KEYWORD-01 — pesquisa de satisfação enviada a uma loja ("Queria te **pedir** uma ajuda rápida…", ~700 caracteres) caiu no fluxo de pedido pela palavra "pedir", a frase inteira foi para a busca do cardápio, o ZeloMenu recusou (`CONSULTA_INVALIDA`, limite 240) e o turno escalou com "Não consegui conferir o pedido com segurança agora" → (1) a busca é limitada a 240 caracteres num limite de palavra (`clampCatalogQuery`, no domínio e no client); (2) sem pedido em andamento, turno que entrou só pela palavra-chave e cujo catálogo volta vazio vai para a IA genérica — "tem sushi?" continua recebendo "hoje não temos isso" — `server/aiWhatsAppOrdering.ts` (após `menu_request_no_match`), `src/domain/aiWhatsAppOrdering.ts` (`clampCatalogQuery`, `isAvailabilityQuestion`), `server/zeloMenuInternalClient.ts:220`, teste com o texto real em `tests/aiWhatsAppOrdering.test.ts`. Pendente: com a loja **aberta**, qualquer mensagem começando por "Bom dia" ainda recebe o cartão do cardápio e a IA genérica fica calada (`isOrderingEntryTurn`).
+
 ## Canal iFood na Produção — 2026-09-19
 
 - ✅ ZCHAT-IFOOD-SOUND-01 — campainha `/sounds/ifood-arrival.mp3` em

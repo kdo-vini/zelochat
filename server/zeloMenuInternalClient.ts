@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  CatalogReplyResult,
-  OrderingDraft,
-  OrderingSnapshot,
+import {
+  clampCatalogQuery,
+  type CatalogReplyResult,
+  type OrderingDraft,
+  type OrderingSnapshot,
 } from '../src/domain/aiWhatsAppOrdering.js';
 import { OrderingWireUnsupportedError, parseOrderingSnapshotWire } from './zeloMenuOrderingWire.js';
 import { orderingCircuitBreaker, type OrderingCircuitBreaker } from './orderingCircuitBreaker.js';
@@ -218,7 +219,7 @@ export class ZeloMenuInternalClient {
 
   async searchCatalog(input: { empresaId: string; query: string; limit?: number }): Promise<CatalogReplyResult> {
     return this.request('/internal/catalog/search', {
-      method: 'POST', body: JSON.stringify({ ...input, limit: Math.min(12, input.limit ?? 12) }),
+      method: 'POST', body: JSON.stringify({ ...input, query: clampCatalogQuery(input.query), limit: Math.min(12, input.limit ?? 12) }),
     }, input.empresaId);
   }
 

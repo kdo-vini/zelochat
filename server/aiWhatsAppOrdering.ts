@@ -30,6 +30,7 @@ import {
   mentionsMenu,
   isExplicitHumanRequest,
   isOrderingQuestion,
+  isAvailabilityQuestion,
   isSingleProductCatalogAmbiguous,
   AI_ORDER_START_REPLY,
   parseOrderingButton,
@@ -1135,6 +1136,17 @@ export async function tryHandleAiWhatsAppOrdering(
         if (error instanceof OrderingSuppressedError) return { handled: true };
         throw error;
       }
+    }
+    // FIX 2026-09-24: "pedir"/"pedido"/"quero" are ordinary Portuguese — a
+    // survey sent to the store ("Queria te pedir uma ajuda rápida…") entered
+    // here on the keyword alone and ended in a handoff. With no order in
+    // progress, the keyword only gets the turn to the catalog; the catalog
+    // finding nothing means no product was named, so the generic assistant
+    // answers what was actually said. "tem sushi?" still gets the plain
+    // "hoje não temos isso" — that one really asked about the menu.
+    if (!catalog.total && !current && !hasPointer && !followUp && !isAvailabilityQuestion(text)) {
+      metric({ ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'keyword_no_catalog_match' });
+      return { handled: entryDispatched };
     }
     // A customer who names what the store sells without asking about it is
     // ordering, keyword or not ("macarrão penne, molho vermelho, azeitona").
