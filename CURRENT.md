@@ -1,10 +1,12 @@
 # ZeloChat — Foco atual
 
-## Revisão local do fluxo de respostas — 2026-09-24
+## Roteador de respostas publicado — 2026-09-24
 
-Correções de continuidade, dúvida versus compra e busca de vários itens no branch
-`fix/ordering-intent-router`. Avaliação real do prompt final passou duas vezes: 75/75 e 26/26 decisões,
-sem falhas nem confusão compra/dúvida. Latência ponta a ponta ainda não medida. Evidências em
+Correções de continuidade, dúvida versus compra e busca de vários itens foram publicadas na `main`
+no release de código `3b01a4f`. Backend e frontend concluíram o auto-deploy no Dokploy; a CI passou
+por lint, testes, build das duas imagens, integração PostgreSQL e verificação do SHA servido pelos dois
+serviços. O prompt final passou duas vezes nos conjuntos de regressão de 75 e 26 decisões, sem falhas
+nem confusão compra/dúvida. Latência ponta a ponta ainda não medida. Evidências em
 `docs/audits/2026-09-24-ordering-router-review.md`.
 
 ## Sessão 2026-09-24 — roteamento de texto livre no pedido conversacional

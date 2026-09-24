@@ -1,10 +1,10 @@
 # ZeloChat Memory
 
-### Revisão local do roteador — 2026-09-24
+### Revisão e publicação do roteador — 2026-09-24
 
 - A busca canônica pontua cobertura por consulta: juntar nomes de pratos pode perder todos os candidatos. `server/orderingCatalogSearch.ts` complementa consultas por item; validado com matcher e fixture real versionada da Bem Servido. Não inferir intenção nem completude do carrinho pelo total da busca composta.
 - Classificação correta isoladamente não garante resposta correta: handler agora respeita dúvida versus compra, classifica respostas curtas com histórico e verifica se um ponteiro ainda é editável antes de pular o roteador. Controles de confirmação permanecem determinísticos.
-- Alterações locais, sem deploy. Prompt final avaliado duas vezes: 75/75 e 26/26 decisões, sem falhas ou confusão compra/dúvida; conjuntos usados no ajuste são regressão, não validação independente. Latência ponta a ponta ainda não medida. Evidências: `docs/audits/2026-09-24-ordering-router-review.md`.
+- Publicado na `main` no release de código `3b01a4f`; backend e frontend concluíram o auto-deploy e a CI confirmou o mesmo SHA em produção. Prompt final avaliado duas vezes: 75/75 e 26/26 decisões, sem falhas ou confusão compra/dúvida; conjuntos usados no ajuste são regressão, não validação independente. Latência ponta a ponta ainda não medida. Evidências: `docs/audits/2026-09-24-ordering-router-review.md`.
 
 ### Webhook raw e Disk I/O — 2026-09-18
 

@@ -1,6 +1,8 @@
 # ZeloChat — Fixes Progress Tracker
 
-## Revisão de código e produto — 2026-09-24 (local)
+## Revisão de código e produto — 2026-09-24 (produção)
+
+- ✅ ZCHAT-ORD-DEPLOY-01 — revisão integrada à `main` no release de código `3b01a4f`; backend e frontend concluíram o auto-deploy e serviram o SHA esperado; CI verde em lint, suíte completa, build, imagens, integração PostgreSQL e verificação de produção — `docs/audits/2026-09-24-ordering-router-review.md`
 
 - ✅ ZCHAT-ORD-MERGE-01 — integração com a main preserva hold humano de 120s, conversa sobre pedido anterior e resolução de prato nomeado; atalho legado de cardápio só roda sem decisão do roteador — `server/aiWhatsAppOrdering.ts:1121`
 - ✅ ZCHAT-TEST-DATE-01 — compra fixa em agosto deixava o teste de cliente ativo inválido após 30 dias → fixture usa compra de ontem — `tests/customerReadApi.test.ts:6`

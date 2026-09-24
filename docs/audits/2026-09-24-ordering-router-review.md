@@ -4,14 +4,15 @@
 
 Integrada a main `dc6672c`, preservando hold humano de 120s e resolução de prato
 nomeado. Corrigida a precedência do roteador sobre o atalho legado de cardápio.
-Build e ambos os type-checks passaram. A suíte de 143 arquivos teve duas falhas:
-colisão de merge no atalho e fixture de compra antiga em customerReadApi; ambas
-foram corrigidas e os dois arquivos passaram em nova execução isolada. Os outros
-141 arquivos passaram na execução completa. A integração PostgreSQL é validada
-separadamente na CI. A correção de tipagem de canonicalOrders veio da main.
+Durante a integração, a suíte de 143 arquivos expôs duas falhas: colisão de merge
+no atalho e fixture de compra antiga em customerReadApi. Ambas foram corrigidas.
+A CI final passou pela suíte completa, ambos os type-checks, build das duas imagens,
+integração PostgreSQL e verificação do SHA realmente servido em produção.
+A correção de tipagem de canonicalOrders veio da main.
 
-Base: sete commits de `main...fix/ordering-intent-router`, até `89d8778`.
-Correções desta revisão estão locais, sem merge, push ou deploy.
+Base revisada: sete commits de `main...fix/ordering-intent-router`, até `89d8778`.
+As correções foram consolidadas em `87a9b11`, integradas e publicadas pelo release
+de código `3b01a4f`.
 
 ## Padrões
 
@@ -49,11 +50,10 @@ por item continuam levando a esclarecimento, sem escolher alternativas sozinho.
 
 ## Avaliação e publicação
 
-Validação local final: `npm test` executou 143 arquivos, com 142 aprovados e
-única falha em `tests/customerReadApi.test.ts`; uma integração PostgreSQL fica
-excluída pelo runner. `npm run build` passou. `npm run lint` e `npm run lint:server`
-reportaram somente os três erros de propriedade em `src/domain/canonicalOrders.ts`
-(linhas 102 e 121). Esse arquivo e o teste que falha não diferem da `main`.
+Validação final: `npm test`, `npm run build`, `npm run lint` e `npm run lint:server`
+passaram na CI. A integração PostgreSQL, excluída do runner local, passou no job
+dedicado. A mesma execução construiu as duas imagens, verificou o SHA embutido e
+confirmou o release de código `3b01a4f` nos endpoints reais de backend e frontend.
 Regressões de handler, busca, perguntas, avaliação, botões e confirmação passaram.
 
 O conjunto histórico de 75 casos foi usado no ajuste do prompt. Os 100% citados
@@ -77,9 +77,9 @@ histórica de 0,75 s mede só o roteador e não representa o fluxo completo revi
 Falha do roteador retoma o legado; falhas posteriores de catálogo/pedido ainda
 podem usar os caminhos existentes de recuperação e transferência.
 
-Nenhuma mensagem foi enviada a cliente, nenhum pedido real foi criado e nenhuma
-configuração de produção foi alterada. O gate do prompt final está aprovado nos conjuntos de regressão. A latência
-do fluxo completo (catálogo, planner e envio) ainda precisa ser medida.
+Nenhuma mensagem de teste foi enviada a cliente e nenhum pedido real foi criado.
+O gate do prompt final está aprovado nos conjuntos de regressão. A latência do
+fluxo completo (catálogo, planner e envio) ainda precisa ser medida.
 
 
 ### Execução real e correções posteriores
@@ -107,4 +107,8 @@ permanecer na referência; são agrupadas no mesmo caminho genérico. Testes de
 `orderingTurnRouter` e `evalOrderingRouter` passaram novamente após o ajuste.
 A latência acima é da chamada do roteador; não inclui catálogo/planner/envio.
 A chave foi movida de `.env.example` versionado para `.env` ignorado pelo Git,
-sem impressão do valor. Não houve commit, merge, push ou deploy.
+sem impressão do valor. O merge `3b01a4f` foi enviado à `main`; o auto-deploy de
+backend e frontend terminou com status `done`. A variável `ZELOCHAT_ORDERING_ROUTER`
+não está definida no ambiente e, conforme o contrato testado, isso mantém o roteador
+ligado; apenas `0`, `false`, `no` ou `off` o desativam. Na primeira inspeção após o
+deploy ainda não havia evento `[AiOrderingMetric] stage=route` para avaliar tráfego real.
