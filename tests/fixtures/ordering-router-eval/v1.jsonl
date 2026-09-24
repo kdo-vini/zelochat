@@ -1,0 +1,75 @@
+{"text":"E e 2 panqueca com porção de arroz","expected":"pedido","source":"prod"}
+{"text":"se puder mandar as duas batata palha pfvor 🫶🏻 \na de hoje e daquele outro dia","expected":"pedido","source":"prod"}
+{"text":"Macarrão, pene","expected":"pedido","source":"incident-2026-09-14"}
+{"text":"Penne, molho branco, bacon, calabresa, mussarela, parmesao","expected":"pedido","source":"incident-2026-09-09"}
+{"text":"macarrão penne, molho vermelho, azeitona","expected":"pedido","source":"incident-2026-09-14"}
+{"text":"o de sempre","expected":"pedido","source":"claude-md"}
+{"text":"quero uma coxinha e uma coca","expected":"pedido","source":"synthetic"}
+{"text":"oi, quero uma coxinha","expected":"pedido","source":"claude-md"}
+{"text":"2 marmitas P pra entrega","expected":"pedido","source":"synthetic"}
+{"text":"vou querer um x-salada sem cebola","expected":"pedido","source":"synthetic"}
+{"text":"me vê 3 pastel de carne","expected":"pedido","source":"synthetic"}
+{"text":"Boa noite, queria 1 marmita grande de frango","expected":"pedido","source":"synthetic"}
+{"text":"Bom dia! Pode separar 10 salgados sortidos pra retirar às 11h?","expected":"pedido","source":"synthetic"}
+{"text":"uma pizza meia calabresa meia frango com catupiry","expected":"pedido","source":"synthetic"}
+{"text":"Vc tem cigarro","expected":"duvida_cardapio","source":"prod"}
+{"text":"amg quanto que é o inhoque que a [cliente] pede geralmente?","expected":"duvida_cardapio","source":"prod"}
+{"text":"Uma coisa que nao vi no cardapio  os adicionais","expected":"duvida_cardapio","source":"prod"}
+{"text":"Lá no cardápio não mostra o acompanhamento","expected":"duvida_cardapio","source":"prod"}
+{"text":"tem sushi?","expected":"duvida_cardapio","source":"tests"}
+{"text":"tem caldos hj?","expected":"duvida_cardapio","source":"tests"}
+{"text":"quanto é a marmita grande?","expected":"duvida_cardapio","source":"synthetic"}
+{"text":"vocês vendem açaí?","expected":"duvida_cardapio","source":"synthetic"}
+{"text":"tem opção vegetariana?","expected":"duvida_cardapio","source":"synthetic"}
+{"text":"Me manda o cardápio","expected":"pedir_cardapio","source":"prod"}
+{"text":"Cardápio por favor","expected":"pedir_cardapio","source":"prod"}
+{"text":"Carda","expected":"pedir_cardapio","source":"prod"}
+{"text":"vc pode mandar o cardapio?","expected":"pedir_cardapio","source":"incident-2026-09-09"}
+{"text":"Boa noite\nGostaria do cardápio por favorn","expected":"pedir_cardapio","source":"incident-2026-09-09"}
+{"text":"Depois me manda ó cardápio , fazendo favor","expected":"pedir_cardapio","source":"incident-2026-09-09"}
+{"text":"quero falar com um atendente","expected":"atendente","source":"synthetic"}
+{"text":"chama alguém de verdade por favor","expected":"atendente","source":"synthetic"}
+{"text":"Estao atendendo hoje?","expected":"conversa","source":"prod"}
+{"text":"Qual a forma de pagamento?","expected":"conversa","source":"prod"}
+{"text":"Hj entrega?","expected":"conversa","source":"prod"}
+{"text":"ok passa endereço por favor","expected":"conversa","source":"prod"}
+{"text":"Vou fazer pix","expected":"conversa","source":"prod"}
+{"text":"Já saiu pra entrega","expected":"conversa","source":"prod"}
+{"text":"Mas eu ia pedir no ifood","expected":"conversa","source":"prod"}
+{"text":"queria te pedir um favor","expected":"conversa","source":"incident-2026-09-24"}
+{"text":"quero falar sobre o pedido de ontem","expected":"conversa","source":"incident-2026-09-24"}
+{"text":"Quando tiver um tempo quero falar contigo","expected":"conversa","source":"prod"}
+{"text":"Fica em paz pode me mandar semana  q vem","expected":"conversa","source":"prod"}
+{"text":"Mas parece que deu certo agora","expected":"conversa","source":"prod"}
+{"text":"Obrigada deus abençoe","expected":"conversa","source":"prod"}
+{"text":"Muito obg nega 😭😭","expected":"conversa","source":"prod"}
+{"text":"Bom dia\nTD bem","expected":"conversa","source":"prod"}
+{"text":"Tudo bem?","expected":"conversa","source":"prod"}
+{"text":"Vc não vai querer sair hj com a [pessoa] não né","expected":"conversa","source":"prod"}
+{"text":"Qual o carro dele","expected":"conversa","source":"prod"}
+{"text":"Me passa a placa","expected":"conversa","source":"prod"}
+{"text":"Tô com frio","expected":"conversa","source":"prod"}
+{"text":"Kkkk","expected":"conversa","source":"prod"}
+{"text":"Deus abençoe","expected":"conversa","source":"prod"}
+{"text":"Tô indo","expected":"conversa","source":"prod"}
+{"text":"Obrigado","expected":"conversa","source":"prod"}
+{"text":"me manda o endereço","expected":"conversa","source":"claude-md"}
+{"text":"obrigada","expected":"conversa","source":"claude-md"}
+{"text":"Bom dia, vocês fazem bolo de aniversário por encomenda? Queria ver pra semana que vem","expected":"duvida_cardapio","source":"synthetic"}
+{"text":"Ola bom dia tenha uma ótima quinta feira 🙏 temos pedido para amanha? Lembrando que temos muitas ofertas qualquer dúvida estou a disposição 🙏","expected":"outro","source":"prod"}
+{"text":"*Kit Sopa 300gr 5,99*\n* Batata doce \n* Batata inglesa \n* Cenoura \n* Mandioca \n* Chuchu \n* Abobora Cabotian\n* Abobora Paulista \n\n*Escolha 2 ou 3 legumes diferentes e monte seu kit*","expected":"outro","source":"prod"}
+{"text":"4 cadeiras *R$35,00*\n6 cadeiras *R$46,00*\n8 cadeiras *R$53,00*","expected":"outro","source":"prod"}
+{"text":"💊 [Farmácia] agradece seu contato. \n\n📌 Para agilizar, informe seu pedido ou como nós podemos ajudar!\n\n🚨 Aguarde um momento que iniciaremos o seu atendimento.","expected":"outro","source":"prod"}
+{"text":"> 🚗 - *Transferência*\n* Serviço Documentalista\n* Taxa de Transferência\n* Taxa de Vistoria Veicular\n* ipva 2026 \n💰 Valor total: *R$ 750,00 à vista (Dinheiro ou PIX)*.","expected":"outro","source":"prod"}
+{"text":"https://www.facebook.com/share/r/XXXXXXXXXX/","expected":"outro","source":"prod"}
+{"text":"Nada que o governo fizer no seu CNPJ vai te mandar SMS","expected":"outro","source":"prod"}
+{"text":"Como faço para cadastrar um novo produto com categoria e subcategoria ?","expected":"outro","source":"prod"}
+{"text":"Tbm não estou conseguindo imprimir... Está aparecendo essa msg abaixo da tela 🤷🏻‍♀️","expected":"outro","source":"prod"}
+{"text":"Meus site está com inconsistência","expected":"outro","source":"prod"}
+{"text":"Por favor, poderia me passar a base de funcionamento do aplicativo","expected":"outro","source":"prod"}
+{"text":"Gostaria de saber qual o valor após os 15 dias, achei bem intuitivo, se precisar eu te aviso.\nObrigado","expected":"outro","source":"prod"}
+{"text":"queria algo mais simples para o funcionario ir clicando tipo vendeu um salgado ele vai e coloca la","expected":"outro","source":"prod"}
+{"text":"Boa noite \n[Nome] lá do Ifood","expected":"outro","source":"prod"}
+{"text":"Parou a net conseguimos lançar mesas e pedidos manuais","expected":"outro","source":"prod"}
+{"text":"a IA responde sim, vou ligar a IA pra você e fazer teste aqui pelo meu contato","expected":"outro","source":"prod"}
+{"text":"Bom dia! Tudo bem? Aqui é o [Nome], do Zelo PDV.\n\nQueria te pedir uma ajuda rápida: estou conversando com alguns clientes pra entender como o Zelo tem funcionado no dia a dia. Sua opinião ajuda muito a melhorar o sistema.\n\nSão 5 perguntinhas, pode responder por texto ou por áudio, do jeito que for mais fácil:\n\n1. Como era o controle da empresa antes do Zelo (caderno, planilha, outro sistema)?\n2. O que mudou na sua rotina depois que começou a usar? (ex.: fechamento do caixa, fiado, saber o lucro)\n3. Qual função você mais usa e qual te fez mais diferença?\n4. Tem algo que te incomoda ou que você sente falta no sistema?\n5. Se um amigo com lanchonete te perguntasse, o que você falaria do Zelo?\n\nSem pressa, responde quando puder. Muito obrigado! 🙏","expected":"outro","source":"incident-2026-09-24"}
