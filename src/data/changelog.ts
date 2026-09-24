@@ -22,6 +22,18 @@ export const CHANGELOG: ChangelogEntry[] = [
     description: 'A IA distingue melhor uma conversa de um pedido, esclarece quando falta escolher os itens e consulta separadamente os produtos citados juntos. Perguntas sobre preços e opções recebem informações do cardápio sem iniciar uma compra.',
   },
   {
+    date: '2026-09-22',
+    category: 'hotfix',
+    title: 'IA não manda prato aleatório nem fala por cima da loja',
+    description: 'Se o cliente só pergunta quando o pedido fica pronto, a IA responde na conversa em vez de mandar uma lista de pratos. E se a dona já assumiu o WhatsApp, a IA espera em silêncio em vez de mandar outra mensagem por cima.',
+  },
+  {
+    date: '2026-09-19',
+    category: 'hotfix',
+    title: 'Pedido escrito no WhatsApp monta certo',
+    description: 'Quando o cliente toca em “pedir por aqui” e escreve o prato, a IA passa a montar esse pedido em vez de devolver outra opção ou o cardápio de novo. Pergunta sobre o que já veio no pedido (se vem arroz, se o cardápio mostra o acompanhamento) a IA responde na conversa, em vez de mandar o link de novo.',
+  },
+  {
     date: '2026-09-14',
     category: 'hotfix',
     title: 'Avisos de entrega voltaram a chegar',

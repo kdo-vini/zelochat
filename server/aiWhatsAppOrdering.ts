@@ -28,10 +28,15 @@ import {
   ZELOMENU_ORDER_RECEIPT_REPLY,
   isOrderingStartButtonText,
   mentionsMenu,
+  isRequestingTheMenu,
+  isMenuOnlyRequest,
+  isTalkingAboutPlacedOrder,
   isExplicitHumanRequest,
   isOrderingQuestion,
   isAvailabilityQuestion,
   isSingleProductCatalogAmbiguous,
+  catalogQueryNamesAListedProduct,
+  resolveCatalogForNamedOrder,
   AI_ORDER_START_REPLY,
   parseOrderingButton,
   renderCatalogReply,
@@ -58,7 +63,8 @@ import {
   routeOrderingTurn,
   type OrderingTurnRouter,
 } from './orderingTurnRouter.js';
-import type { OutboundPayload } from '../src/domain/outbound.js';
+import type { OutboundOrigin, OutboundPayload } from '../src/domain/outbound.js';
+import { hasRecentHumanOutbound } from '../src/domain/outbound.js';
 import {
   ZeloMenuInternalClient,
   ZeloMenuInternalError,
@@ -84,7 +90,12 @@ const MAX_AUTO_SELECT_DEPTH = 3;
  * of asking the customer to try again (PR I-5's "no circuit breaker").
  */
 const MAX_RETRY_LATER_ATTEMPTS = 2;
-class OrderingSuppressedError extends Error {}
+class OrderingSuppressedError extends Error {
+  constructor(readonly reason: 'permit' | 'recent_human_outbound' = 'permit') {
+    super('ORDERING_SUPPRESSED');
+    this.name = 'OrderingSuppressedError';
+  }
+}
 const declinesOptionalExtras = (value: string) => /^(?:sem extras|so isso|só isso|nao quero extras|não quero extras)$/i.test(value.trim());
 
 /**
@@ -207,6 +218,18 @@ export interface AiOrderingHandlerOptions {
    * a real Supabase connection.
    */
   permitCheck?: PermitCheck;
+  /**
+   * Injectable live-session read for the send-time human-hold recheck.
+   * Production defaults to `getSession`. Tests override so a native WhatsApp
+   * message that arrived while the canonical turn was in flight can suppress
+   * the outbound without a real Supabase connection.
+   */
+  loadSession?: (
+    jid: string,
+    empresaId: string,
+  ) => Promise<{
+    messages: Array<{ role?: string | null; outboundOrigin?: OutboundOrigin | null; timestamp?: string | null }>;
+  } | null>;
 }
 
 /**
@@ -294,6 +317,9 @@ function markEntryDispatched(empresaId: string, jid: string): void {
   lastEntryDispatchAt.set(entryDispatchKey(empresaId, jid), Date.now());
 }
 
+type SessionLoader = NonNullable<AiOrderingHandlerOptions['loadSession']>;
+let canonicalOutboundSessionLoader: SessionLoader = getSession;
+
 async function dispatchAiPayload(
   permit: AiTurnPermit,
   payload: OutboundPayload,
@@ -308,6 +334,22 @@ async function dispatchAiPayload(
   // rejects a stale one as `suppressed`), so this is defense-in-depth that
   // skips the round trip entirely for an already-known-stale permit.
   await assertPermitCurrent(permit, isPermitCurrent);
+  // FIX 2026-09-22 (Bem Servido / Luciana): canonical catalog/entry/summary
+  // sends go through this helper, not `enqueueAutomatedText`, so the 120s
+  // human-hold recheck never ran. The owner said "Ok" 40s before "Tem sim:"
+  // listed omelettes. Same seam as ZCHAT-AI-032, for this outbound path.
+  try {
+    const live = await canonicalOutboundSessionLoader(permit.remoteJid, permit.empresaId);
+    if (live && hasRecentHumanOutbound(live.messages, Date.now())) {
+      throw new OrderingSuppressedError('recent_human_outbound');
+    }
+  } catch (error) {
+    if (error instanceof OrderingSuppressedError) throw error;
+    console.warn(
+      `[AiOrdering] recent_human_outbound recheck failed empresa=${permit.empresaId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
   const result = await dispatchConversationOutbound({
     empresaId: permit.empresaId,
     remoteJid: permit.remoteJid,
@@ -851,6 +893,9 @@ export async function tryHandleAiWhatsAppOrdering(
   // mutation/persist/outbound in this turn re-checks. Defaults to the real
   // one; only tests override it.
   const isPermitCurrent = options.permitCheck ?? isAiPermitCurrent;
+  const previousSessionLoader = canonicalOutboundSessionLoader;
+  canonicalOutboundSessionLoader = options.loadSession ?? getSession;
+  try {
   // Computed once per turn (FN C3 / PR C-6): every terminal exit below must
   // route its cursor write through `persistOrderingState`/`nextOrderingStatePatch`
   // using THIS composition's `consumedMessageIds`, never a stale re-read.
@@ -963,6 +1008,20 @@ export async function tryHandleAiWhatsAppOrdering(
     metric({ ...metricBase, stage: 'plan', outcome: 'routed_generic' });
     return { handled: false };
   }
+  // Successful router decisions own the free-text boundary. Preserve the
+  // placed-order conversation guard for active drafts and router fallback.
+  if (!route && (isTalkingAboutPlacedOrder(text) || (mentionsMenu(text) && !isRequestingTheMenu(text)))) {
+    if (priorState) {
+      try {
+        await persistOrderingState(permit, priorState, dryRun, priorState, composition.consumedMessageIds, {}, isPermitCurrent);
+      } catch (persistError) {
+        if (persistError instanceof OrderingSuppressedError) return { handled: true };
+        console.warn('[AiOrdering] best-effort cursor persist on placed_order_talk threw:', persistError);
+      }
+    }
+    metric({ ...metricBase, stage: 'plan', outcome: 'placed_order_talk' });
+    return { handled: false };
+  }
   let entryDispatched = false;
   let entryResponseText: string | undefined;
   if (entry.storeOpen === true && entry.menuUrl && isOrderingEntryTurn(text)) {
@@ -1052,6 +1111,20 @@ export async function tryHandleAiWhatsAppOrdering(
     const response = buildDeliveryFeeReply(entry.menuUrl);
     await sendText(permit, response, 'delivery-fee', dryRun, isPermitCurrent);
     return { handled: true, response };
+  }
+  // FIX 2026-09-20 (Bem Servido / Aline): "Cardápio por favor" after a
+  // greeting used to send the entry card and then keep going into catalog
+  // search. A false-positive hit opened a draft; the next ZeloMenu call
+  // failed closed and escalated ("vou chamar um atendente") — she had only
+  // asked for the menu. Menu-only turns never reach search, draft, or
+  // transferOnFailure, even when the internal client is missing.
+  if (!route && isMenuOnlyRequest(text)) {
+    try {
+      return await answerMenuRequest('menu_only_request');
+    } catch (error) {
+      if (error instanceof OrderingSuppressedError) return { handled: true };
+      throw error;
+    }
   }
   const messageId = lastUserMessageId(session);
   const hasPointer = Boolean(priorState);
@@ -1224,6 +1297,10 @@ export async function tryHandleAiWhatsAppOrdering(
     // catalog itself is the reliable judge. A message that does NOT name the
     // menu keeps the plain "hoje não temos isso".
     if (!catalog.total && mentionsMenu(text) && !(routedIntoOrdering && route && route.items.length > 0)) {
+      if (!route && !isRequestingTheMenu(text)) {
+        metric({ ...metricBase, stage: 'plan', outcome: 'menu_mention_not_request', orderingId: current?.orderingId, revision: current?.revision });
+        return { handled: entryDispatched };
+      }
       try {
         return await answerMenuRequest('menu_request_no_match');
       } catch (error) {
@@ -1245,29 +1322,38 @@ export async function tryHandleAiWhatsAppOrdering(
     }
     // A customer who names what the store sells without asking about it is
     // ordering, keyword or not ("macarrão penne, molho vermelho, azeitona").
-    const wantsOrder = Boolean(current) || (routedIntoOrdering && route
+    const namedOrderIntent = /\b(quero|vou querer|manda|coloca|adiciona|pedir|o de sempre)\b/i.test(text)
+      || (/\bpedido\b/i.test(text) && !isOrderingQuestion(text) && !isTalkingAboutPlacedOrder(text));
+    const wantsOrder = routedIntoOrdering && route
       ? route.intent === 'pedido'
-      : /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp
-        || (catalog.total > 0 && !isOrderingQuestion(text)));
+      : (Boolean(current) && !isOrderingQuestion(text) && !isTalkingAboutPlacedOrder(text))
+        || namedOrderIntent || followUp || (catalog.total > 0 && !isOrderingQuestion(text));
+    // A shopping list must retain every item's candidates. The single-dish
+    // resolver can otherwise collapse the union to one uniquely named dish.
+    const resolvedCatalog = routedIntoOrdering && route && route.items.length > 1
+      ? catalog : resolveCatalogForNamedOrder(query, catalog);
     // Candidate ambiguity is resolved in the conversation, never delegated to
     // the model: a valid ID is not enough to prove which sellable item the
     // customer meant. Several options of ONE product are a specification, not
     // an ambiguity — the planner still has only that product to choose.
-    const plannerConsulted = !draft && wantsOrder && (!catalog.ambiguous || isSingleProductCatalogAmbiguous(catalog))
-      && !(routedIntoOrdering && route?.items.length > 0 && !catalog.total);
+    const plannerConsulted = !draft && wantsOrder && (!resolvedCatalog.ambiguous || isSingleProductCatalogAmbiguous(resolvedCatalog))
+      && !(routedIntoOrdering && route?.items.length > 0 && !resolvedCatalog.total);
     if (plannerConsulted) {
-      draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
+      draft = await (options.draftPlanner ?? planDraft)(session, text, resolvedCatalog, current);
     }
     if (!draft) {
-      // Only the catalog let this turn in, and the planner, reading the whole
-      // conversation, found nothing to put in the cart. A product list would
-      // answer something the customer never asked.
-      if (enteredViaCatalogProbe && plannerConsulted) {
+      // Only the catalog let this turn in, and there is no cart. A product
+      // list is the answer when the customer named a dish that matched more
+      // than one item ("Macarrão,pene"). Typo/trigram hits ("safada"→salada)
+      // and wait-time probes must not become "Tem sim:".
+      // FIX 2026-09-22 (Bem Servido / Alex): `plannerConsulted` was required,
+      // so an ambiguous probe skipped this fall-through and listed salads.
+      if (enteredViaCatalogProbe && (plannerConsulted || !catalogQueryNamesAListedProduct(query, resolvedCatalog))) {
         metric({ ...metricBase, stage: 'plan', outcome: 'catalog_probe_no_draft', orderingId: current?.orderingId, revision: current?.revision });
         return { handled: entryDispatched };
       }
       const response = renderCatalogReply(
-        catalog,
+        resolvedCatalog,
         route?.intent === 'duvida_cardapio' ? text : query,
         entry.menuUrl,
         entry.storeOpen === true ? null : buildStoreClosedPrefix(entry.nextOpenLabel),
@@ -1294,7 +1380,7 @@ export async function tryHandleAiWhatsAppOrdering(
       return { handled: true, response };
     }
     if (dryRun) {
-      const response = renderOrderingDraftPreview(draft, catalog);
+      const response = renderOrderingDraftPreview(draft, resolvedCatalog);
       metric({ ...metricBase, stage: 'update', outcome: 'dry_run_preview', orderingId: current?.orderingId, revision: current?.revision });
       return { handled: true, response };
     }
@@ -1331,7 +1417,13 @@ export async function tryHandleAiWhatsAppOrdering(
     // carries — never any other error detail (no message, no stack).
     const errorCode = error instanceof ZeloMenuInternalError ? error.code : null;
     if (error instanceof OrderingSuppressedError) {
-      metric({ ...metricBase, stage: 'suppress', outcome: 'permit_stale', orderingId: current?.orderingId, revision: current?.revision });
+      metric({
+        ...metricBase,
+        stage: 'suppress',
+        outcome: error.reason === 'recent_human_outbound' ? 'recent_human_outbound' : 'permit_stale',
+        orderingId: current?.orderingId,
+        revision: current?.revision,
+      });
       return { handled: true };
     }
     // FIX 2026-09-04 (B3 — explicit error-code mapping): every ZeloMenu
@@ -1418,6 +1510,9 @@ export async function tryHandleAiWhatsAppOrdering(
     }
     const response = await transferOnFailure(permit, dryRun);
     return { handled: true, response };
+  }
+  } finally {
+    canonicalOutboundSessionLoader = previousSessionLoader;
   }
 }
 

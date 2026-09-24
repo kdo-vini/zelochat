@@ -1357,6 +1357,26 @@ console.log('===== Scenario 11: catalog-decided entry for orders without keyword
     assert.equal(result.response, undefined, 'no catalog list is sent');
   }
 
+  // REGRESSION 2026-09-22 (Bem Servido / Alex): probe-only + ambiguous
+  // typo hits used to skip catalog_probe_no_draft (planner never ran) and
+  // list "Tem sim: Salada…".
+  {
+    const saladCatalog: CatalogReplyResult = {
+      total: 4,
+      ambiguous: true,
+      results: [
+        { ...product(10, 'Salada mista com atum e palmito 500 ml'), ambiguous: true },
+        { ...product(11, 'X-Egg Salada'), ambiguous: true },
+        { ...product(12, 'X-Salada'), ambiguous: true },
+        { ...product(13, 'X-Salada Bacon'), ambiguous: true },
+      ],
+    };
+    const { result, plannerTexts } = await run(textTurn('Te manda safada 😉😉😉'), async () => saladCatalog, null);
+    assert.equal(plannerTexts.length, 0, 'ambiguous typo hits never reach the planner');
+    assert.equal(result.handled, false, 'Alex: "safada" does not become a salad list');
+    assert.doesNotMatch(result.response ?? '', /Tem sim|Salada/);
+  }
+
   // Nothing the store sells: unchanged fall-through.
   {
     const { result, plannerTexts } = await run(textTurn('Me manda o endereço'), async () => emptyCatalog, massaDraft);

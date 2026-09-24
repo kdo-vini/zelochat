@@ -8,6 +8,38 @@
 
 **Fix:** roteador de intenção com fallback exato para o comportamento anterior em falha, timeout ou desligamento, separando conversa genérica de pedido e passando ao catálogo apenas os `items` citados — `server/orderingTurnRouter.ts`, `src/domain/orderingTurnRoute.ts`, `server/aiWhatsAppOrdering.ts`, `scripts/evalOrderingRouter.ts`.
 
+## Lista de pratos depois de "quando fica pronto" e "safada" (Bem Servido / Luciana e Alex, 2026-09-21)
+
+**Sintoma:** Luciana, depois do recibo, pergunta quando fica pronto e recebe "Tem sim: Arroz caipira / Omelete…". Alex manda "Te manda safada" (engano de número) e recebe lista de saladas. Nos dois a dona já tinha escrito e a IA ainda falou.
+
+**Causa-raiz:** o caminho canônico não gera rastro. `isTalkingAboutPlacedOrder` não cobria espera sem a palavra "pedido"; o probe com hit ambíguo pulava o fall-through `catalog_probe_no_draft` (só disparava se o planner tivesse rodado) e listava o que o ranking por typo devolveu. O hold de 120s não rodava no send canônico (`dispatchAiPayload`).
+
+**Fix:** espera/pronto cai no genérico; probe só lista se um token da frase aparece no nome do prato; hold de 120s também no send canônico — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`. ZCHAT-AI-033 / ZCHAT-AI-034.
+
+## Pedido de cardápio virava "vou chamar um atendente" (Bem Servido / Aline, 2026-09-19)
+
+**Sintoma:** cliente manda oi + "Cardápio por favor"; recebe o cartão do cardápio e, ~10s depois, "Não consegui conferir o pedido agora. Vou chamar um atendente para te ajudar." Escalação `repeated_ai_failure`.
+
+**Causa-raiz:** o atalho de 09/09 só tratava pedido de cardápio quando a busca **não achava nada**. "Cardápio por favor" depois de uma saudação não é greeting exato, então o fluxo seguia, um hit falso no catálogo abria rascunho (`ZELO_AI_ORDERING_STATE`) e a próxima chamada à autoridade falhava fechada. Não é regressão de 19/09 — a mesma falha segura aparece em `zelochat_escalation_events` desde ~01/09.
+
+**Fix:** `isMenuOnlyRequest` responde o cartão e encerra o turno antes de buscar, abrir rascunho ou escalar — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`. ZCHAT-AI-031.
+
+## IA respondia por cima de quem acabou de escrever no WhatsApp (Bem Servido / Simone e Paulinho, 2026-09-19)
+
+**Sintoma:** dona assume a conversa no WhatsApp da loja; segundos depois a IA ainda responde o cliente ("Valor", "Quanto sai?").
+
+**Causa-raiz:** (Simone) o takeover nativo pausou a IA e um resume explícito 19s depois (`explicit_resume`) devolveu `mode=ai` enquanto ela ainda digitava. (Paulinho) o fromMe do cartão de boas-vindas chegou ~34s depois do horário do telefone — o turno da IA já tinha começado sem ver a mensagem humana. Classe conhecida desde 09/09 (atraso de ~100s na thread do iFood).
+
+**Fix:** silêncio de 120s após a última mensagem humana da loja (`hasRecentHumanOutbound`), no começo do turno e na hora de enfileirar, mesmo com modo `ai`. O hold só vê a linha **depois** do fromMe persistir — atraso extremo do webhook continua sendo uma janela residual — `src/domain/outbound.ts`, `server/ai.ts`. ZCHAT-AI-032.
+
+## Pedido escrito no WhatsApp virava lista ou link (Bem Servido, 2026-09-18)
+
+**Sintoma:** cliente toca "Pedir por aqui", escreve o prato ("Marmita média bife a cavalo") e a IA devolve outra opção ("pizzaolo") ou o cardápio de novo; depois do recibo, pergunta sobre acompanhamento ganha o cartão de entrada. A dona assume a conversa.
+
+**Causa-raiz:** busca ambígua entre pratos parecidos bloqueava o planner; a palavra "cardápio" numa pergunta sobre o pedido reabria o atalho do menu; extra/bebida de 3 palavras reusava a query do prato; `pedido` em pergunta ligava o assembler mesmo com hit no catálogo.
+
+**Fix:** token que identifica um único prato monta o pedido; falar sobre o cardápio não pede o menu; adicional/bebida não é escolha de opção; pergunta sobre o pedido já feito (`isTalkingAboutPlacedOrder`) cai no modelo genérico; `adicional` no carrinho aberto é alteração — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`. ZCHAT-AI-029 / ZCHAT-AI-030.
+
 ## Log bruto de webhooks monopolizava Disk I/O no Supabase Free (2026-09-18)
 
 **Sintoma:** o projeto compartilhado acumulou 401.783 inserts, 402.604 updates e

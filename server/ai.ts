@@ -28,6 +28,7 @@ import {
 } from './configStore.js';
 import { getServiceSupabase, getEmpresaUserId } from './supabase.js';
 import { buildContentForModel, buildImageContentForModel, normalizePhoneNumber } from '../src/domain/chat.js';
+import { hasRecentHumanOutbound, RECENT_HUMAN_OUTBOUND_HOLD_MS, type OutboundOrigin } from '../src/domain/outbound.js';
 import {
   isPixPaymentMethod,
   isPixReceiptConfigActive,
@@ -199,10 +200,35 @@ export async function enqueueAutomatedText(
   dependencies: {
     isPermitCurrent?: PermitChecker;
     dispatch?: AiOutboundDispatch;
+    loadSession?: (jid: string, empresaId: string) => Promise<{
+      messages: Array<{ role?: string | null; outboundOrigin?: OutboundOrigin | null; timestamp?: string | null }>;
+    } | null>;
   } = {},
 ): Promise<DispatchResult | null> {
   const checkPermit = dependencies.isPermitCurrent ?? isAiPermitCurrent;
   if (!(await checkPermit(params.permit))) return null;
+  // FIX 2026-09-20: fromMe can land while the model is still thinking.
+  // Re-read the session at send time so a native WhatsApp message that
+  // arrived after generateAndSendReply loaded the conversation still holds
+  // the AI (Bem Servido / Paulinho: webhook ~34s after the phone timestamp).
+  const loadSession = dependencies.loadSession ?? getSession;
+  try {
+    const live = await loadSession(params.permit.remoteJid, params.permit.empresaId);
+    if (live && hasRecentHumanOutbound(live.messages, Date.now())) {
+      logAiTurnDecision({
+        empresaId: params.permit.empresaId,
+        jid: params.permit.remoteJid,
+        path: 'guard_recent_human_outbound',
+        detail: { at: 'enqueue', holdMs: RECENT_HUMAN_OUTBOUND_HOLD_MS },
+      });
+      return null;
+    }
+  } catch (error) {
+    console.warn(
+      `[AiTrace] recent_human_outbound recheck failed empresa=${params.permit.empresaId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
   const dispatch = dependencies.dispatch ?? dispatchConversationOutbound;
   const purpose = params.purpose.replace(/[^a-zA-Z0-9:_-]/g, '-').slice(0, 100) || 'reply';
   const result = await dispatch({
@@ -3629,6 +3655,21 @@ export async function generateAndSendReply(
     return null;
   }
   console.log(`[AiTrace] session_loaded empresa=${resolvedEmpresaId} jid=${redactJid(jid)} messages=${session.messages.length} status=${session.status} autoReply=${session.autoReply} elapsedMs=${Date.now() - startedAt}`);
+  // FIX 2026-09-20 (Bem Servido / Simone): takeover nativo pausou a IA e um
+  // resume explícito 19s depois deixou o modelo responder "Valor" enquanto a
+  // dona ainda digitava o preço no WhatsApp. Se a última mensagem da loja
+  // foi humana dentro da janela, este turno fica em silêncio.
+  if (hasRecentHumanOutbound(session.messages, Date.now())) {
+    logAiTurnDecision({
+      empresaId: resolvedEmpresaId,
+      jid,
+      path: 'guard_recent_human_outbound',
+      detail: { at: 'turn_start', holdMs: RECENT_HUMAN_OUTBOUND_HOLD_MS },
+      inboundText: session.messages.filter((message) => message.role === 'user').at(-1)?.content,
+    });
+    console.log(`[AiTrace] skip empresa=${resolvedEmpresaId} jid=${redactJid(jid)} reason=recent_human_outbound`);
+    return null;
+  }
   const aiConfig = getConfig(resolvedEmpresaId);
   const isGeneralMode = aiConfig.zelochatMode === 'general';
   let pendingEditInstruction: string | null = null;

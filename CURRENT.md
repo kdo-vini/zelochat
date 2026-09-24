@@ -14,6 +14,46 @@ conversas comuns seguem para a IA genérica, pedidos de cardápio recebem o card
 de entrada e pedidos seguem para catálogo/planner. Falha e desligamento retomam
 o legado; pedido editável, confirmação, cancelamento e botões preservam seus caminhos.
 
+## Sessão 2026-09-22 — relatório Bem Servido (lista solta; hold canônico)
+
+Dois problemas da janela 21/09 09h–22/09 09h SP. Luciana perguntou quando o
+pedido ficava pronto e recebeu lista de arroz/omelete; Alex mandou um engano
+("safada") e recebeu saladas. O hold de 120s pegou a Adriana no mesmo almoço
+e falhou na Luciana porque o canônico não passa por `enqueueAutomatedText`.
+
+Corrigido neste corte:
+- `isTalkingAboutPlacedOrder` cobre espera/pronto ("Qdo ficar pronto").
+- Probe canônico sem token de nome no prato volta ao genérico
+  (`catalogQueryNamesAListedProduct`) — "Macarrão,pene" ainda pergunta qual.
+- Hold de 120s também em `dispatchAiPayload` (ZCHAT-AI-033 / 034).
+
+Ver [[FIXES_PROGRESS]] e [[INCIDENTS]].
+
+## Sessão 2026-09-20 — relatório Bem Servido (cardápio → atendente; IA por cima da loja)
+
+Três problemas da janela 19/09 09h–20/09 09h SP **não são regressão da véspera**
+(ZCHAT-AI-029/030). Aline pedindo só o cardápio já escalava desde ~01/09
+(`repeated_ai_failure`); Simone era resume explícito 19s depois do takeover
+nativo; Paulinho é fromMe atrasado (~34s), classe de 09/09.
+
+Corrigido neste corte:
+- `isMenuOnlyRequest` + early return: pedido só de cardápio nunca busca,
+  nunca abre rascunho, nunca chama `transferOnFailure` (ZCHAT-AI-031).
+- Hold de 120s após outbound humano, no começo do turno e na hora de
+  enfileirar, mesmo com modo `ai` de novo (ZCHAT-AI-032).
+
+Ver [[FIXES_PROGRESS]] e [[INCIDENTS]].
+
+## Sessão 2026-09-19 — pedido descrito no chat (Bem Servido)
+
+Caminho canônico monta rascunho; modelo genérico conversa. Depois de
+"Pedir por aqui", nomear o prato monta o pedido quando um token identifica
+um único item (`resolveNamedCatalogMatch`). Pergunta sobre o que o pedido
+já inclui ("esse pedido vem arroz?", "lá no cardápio não mostra") cai no
+genérico (`isTalkingAboutPlacedOrder` / `isRequestingTheMenu`) em vez de
+abrir lista ou carrinho novo. Extra em carrinho aberto (`adicional`) é
+alteração. Ver [[FIXES_PROGRESS]] ZCHAT-AI-029 / ZCHAT-AI-030.
+
 ## Sessão 2026-09-19 — iFood: som de campainha
 
 Qualquer pedido novo na Produção toca `/sounds/ifood-arrival.mp3`

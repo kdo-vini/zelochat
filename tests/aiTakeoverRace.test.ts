@@ -139,6 +139,94 @@ for (const purpose of ['tool-followup', 'trigger-fallback', 'pix-helper', 'pendi
   assert.equal(jobWrites, 0, `${purpose}: zero write automático e zero job AI`);
 }
 
+{
+  // REGRESSION 2026-09-20 (Bem Servido / Simone): permit still current after
+  // explicit_resume, but the owner wrote on WhatsApp 25s ago. Send-time
+  // re-read must suppress even though the turn started with mode=ai.
+  let jobWrites = 0;
+  const result = await enqueueAutomatedText({
+    permit,
+    text: 'Os preços estão no cardápio online',
+    origin: 'ai_auto',
+    purpose: 'simone-hold',
+  }, {
+    isPermitCurrent: async () => true,
+    loadSession: async () => ({
+      messages: [
+        { role: 'assistant', outboundOrigin: 'human_native_whatsapp', timestamp: new Date(Date.now() - 25_000).toISOString() },
+        { role: 'user', timestamp: new Date().toISOString() },
+      ],
+    }),
+    dispatch: async () => {
+      jobWrites += 1;
+      return { state: 'queued', jobId: 'job-1', messageId: 'message-1' };
+    },
+  });
+  assert.equal(result, null, 'Simone: enqueue holds after recent native WhatsApp');
+  assert.equal(jobWrites, 0, 'Simone: zero AI job while the owner is still in the thread');
+}
+
+{
+  // REGRESSION 2026-09-22 (Bem Servido / Luciana): canonical "Tem sim:"
+  // sends through dispatchAiPayload, not enqueueAutomatedText, so the 120s
+  // hold never ran. Owner said "Ok"; 40s later the catalog list still went out.
+  let jobWrites = 0;
+  const result = await tryHandleAiWhatsAppOrdering(
+    permit.remoteJid,
+    permit.empresaId,
+    raceSession('tem penne?'),
+    permit,
+    { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+    {
+      dryRun: false,
+      permitCheck: async () => true,
+      loadSession: async () => ({
+        messages: [
+          { role: 'assistant', outboundOrigin: 'human_native_whatsapp', timestamp: new Date(Date.now() - 25_000).toISOString() },
+          { role: 'user', timestamp: new Date().toISOString() },
+        ],
+      }),
+      client: {
+        searchCatalog: async () => ({
+          total: 1,
+          ambiguous: false,
+          results: [{ productId: 843, publicName: 'Monte sua massa', currentPrice: 23, matchReason: 'nome_publico', ambiguous: false }],
+        }),
+        updateDraft: async () => { throw new Error('must not mutate under human hold'); },
+        confirmDraft: async () => { throw new Error('unused'); },
+        cancelDraft: async () => { throw new Error('unused'); },
+        getOrdering: async () => { throw new Error('unused'); },
+      },
+    },
+  );
+  assert.equal(result.handled, true, 'Luciana: canonical send is suppressed as handled silence');
+  assert.equal(result.response, undefined, 'Luciana: no catalog list is returned after the owner wrote');
+  assert.equal(jobWrites, 0);
+}
+
+{
+  let jobWrites = 0;
+  const result = await enqueueAutomatedText({
+    permit,
+    text: 'Olá! Estamos atendendo.',
+    origin: 'ai_auto',
+    purpose: 'no-human-hold',
+  }, {
+    isPermitCurrent: async () => true,
+    loadSession: async () => ({
+      messages: [
+        { role: 'user', timestamp: new Date().toISOString() },
+      ],
+    }),
+    dispatch: async () => {
+      jobWrites += 1;
+      return { state: 'queued', jobId: 'job-1', messageId: 'message-1' };
+    },
+  });
+  assert.equal(result?.state, 'queued', 'without a recent human outbound the enqueue proceeds');
+  assert.equal(jobWrites, 1);
+}
+
 for (const context of ['pending-pix-validator', 'active-order-pix-validator']) {
   let current = true;
   let mutations = 0;

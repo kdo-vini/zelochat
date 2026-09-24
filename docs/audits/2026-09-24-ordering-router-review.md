@@ -1,5 +1,15 @@
 # Revisão do fluxo de respostas — 24/09/2026
 
+## Integração para publicação
+
+Integrada a main `dc6672c`, preservando hold humano de 120s e resolução de prato
+nomeado. Corrigida a precedência do roteador sobre o atalho legado de cardápio.
+Build e ambos os type-checks passaram. A suíte de 143 arquivos teve duas falhas:
+colisão de merge no atalho e fixture de compra antiga em customerReadApi; ambas
+foram corrigidas e os dois arquivos passaram em nova execução isolada. Os outros
+141 arquivos passaram na execução completa. A integração PostgreSQL é validada
+separadamente na CI. A correção de tipagem de canonicalOrders veio da main.
+
 Base: sete commits de `main...fix/ordering-intent-router`, até `89d8778`.
 Correções desta revisão estão locais, sem merge, push ou deploy.
 

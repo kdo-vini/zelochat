@@ -2,6 +2,9 @@
 
 ## Revisão de código e produto — 2026-09-24 (local)
 
+- ✅ ZCHAT-ORD-MERGE-01 — integração com a main preserva hold humano de 120s, conversa sobre pedido anterior e resolução de prato nomeado; atalho legado de cardápio só roda sem decisão do roteador — `server/aiWhatsAppOrdering.ts:1121`
+- ✅ ZCHAT-TEST-DATE-01 — compra fixa em agosto deixava o teste de cliente ativo inválido após 30 dias → fixture usa compra de ontem — `tests/customerReadApi.test.ts:6`
+
 - ✅ ZCHAT-ORD-REVIEW-05 — execução real expôs oferta comercial mal classificada e compra com pergunta operacional tratada como dúvida → prioridades do prompt corrigidas e gate bloqueia confusão compra/dúvida; duas rodadas finais com 75/75 e 26/26 decisões, sem falhas; latência do roteador p50 737–772 ms e p95 1.008–1.255 ms — `server/orderingTurnRouter.ts:40`, `scripts/evalOrderingRouter.ts:82`
 
 - ✅ ZCHAT-ORD-REVIEW-01 — saudações/respostas curtas e ponteiro encerrado escapavam da classificação → roteamento com histórico e consulta de estado, preservando controles — `server/aiWhatsAppOrdering.ts:908`
@@ -17,8 +20,24 @@
 
 - ✅ ZCHAT-ORD-KEYWORD-01 — pesquisa de satisfação enviada a uma loja ("Queria te **pedir** uma ajuda rápida…", ~700 caracteres) caiu no fluxo de pedido pela palavra "pedir", a frase inteira foi para a busca do cardápio, o ZeloMenu recusou (`CONSULTA_INVALIDA`, limite 240) e o turno escalou com "Não consegui conferir o pedido com segurança agora" → (1) a busca é limitada a 240 caracteres num limite de palavra (`clampCatalogQuery`, no domínio e no client); (2) sem pedido em andamento, turno que entrou só pela palavra-chave e cujo catálogo volta vazio vai para a IA genérica — "tem sushi?" continua recebendo "hoje não temos isso" — `server/aiWhatsAppOrdering.ts` (após `menu_request_no_match`), `src/domain/aiWhatsAppOrdering.ts` (`clampCatalogQuery`, `isAvailabilityQuestion`), `server/zeloMenuInternalClient.ts:220`, teste com o texto real em `tests/aiWhatsAppOrdering.test.ts`. O caso complementar de mensagens comuns com a loja aberta foi fechado por `ZCHAT-ORD-ROUTE-01`.
 
+## Relatório Bem Servido 22/09 — lista solta e IA por cima da dona — 2026-09-22
+
+- ✅ ZCHAT-AI-033 — Luciana (`5514991208023`, 21/09 12:50): depois do recibo, "Qdo ficar pronto ..ja vou esperar aqui" recebeu "Tem sim: Arroz caipira / Omelete…". Causa: `isTalkingAboutPlacedOrder` exigia "esse pedido"; o probe canônico buscou a frase, hit ambíguo, e `catalog_probe_no_draft` só caía no genérico se o planner tivesse rodado. Alex (`558894538418`): "Te manda safada" listou saladas (typo safada→salada, `manda` ligava pedido). → espera/pronto cai no genérico; probe sem token de nome no prato não lista — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`, `tests/hybridOrderingScenarios.test.ts`
+- ✅ ZCHAT-AI-034 — mesma Luciana: a dona disse "Ok" 40s antes da lista e o hold de 120s (ZCHAT-AI-032) não pegou porque o canônico envia por `dispatchAiPayload`, não por `enqueueAutomatedText`. → recheck de `hasRecentHumanOutbound` no send canônico — `server/aiWhatsAppOrdering.ts`, `tests/aiTakeoverRace.test.ts`
+
+## Relatório Bem Servido 20/09 — cardápio escalava; IA falava por cima da loja — 2026-09-20
+
+- ✅ ZCHAT-AI-031 — Aline (`5514991837342`, 19/09 20:03): "Cardápio por favor" depois do oi recebia o cartão certo e 10s depois "Não consegui conferir o pedido… vou chamar um atendente" (`repeated_ai_failure`). Não é regressão de 19/09: o atalho de 09/09 só respondia cardápio quando a **busca vinha vazia**; um hit no catálogo abria rascunho e a falha seguinte escalava. → `isMenuOnlyRequest` (nomeou o menu e, sem essas palavras, o classificador é `none`) devolve o cartão **antes** de buscar/abrir rascunho — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`
+- ✅ ZCHAT-AI-032 — Simone (`5514991387113`, 19/09 19:10): dona escreveu no WhatsApp, takeover pausou a IA, resume explícito 19s depois (`POST /api/sessions/:jid/auto-reply`) deixou o modelo responder "Valor" enquanto ela ainda digitava o preço. Paulinho (`5514991100631`) é a mesma classe com fromMe ~34s atrasado. → hold de 120s após `human_native_whatsapp`/`human_zelochat` no começo do turno e de novo ao enfileirar, mesmo com modo `ai` — `src/domain/outbound.ts`, `server/ai.ts`, `tests/outboundContract.test.ts`, `tests/aiTakeoverRace.test.ts`
+
+## Pedido descrito no WhatsApp virava lista ou link — 2026-09-19
+
+- ✅ ZCHAT-AI-029 — Bem Servido: depois de "Pedir por aqui", "Marmita média bife a cavalo" recebia "Tem sim: … pizzaolo. Qual você quer?" (e a mesma lista de novo no adicional/Coca); depois do recibo, "lá no cardápio não mostra o acompanhamento" reabria o cartão de entrada. A dona teve que assumir. Causa: busca ambígua entre pratos parecidos bloqueava o planner; `mentionsMenu` + busca vazia tratava qualquer "cardápio" como pedido do menu; follow-up de 3 palavras reusava a query do prato. → token que aparece no nome de um único prato monta o pedido (`resolveNamedCatalogMatch`); falar *sobre* o cardápio não dispara o cartão (`isRequestingTheMenu`); adicional/bebida não é escolha de opção; corta-loop olha as 3 últimas respostas da IA — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`
+- ✅ ZCHAT-AI-030 — mesma conversa: "esse pedido vem arroz?" com hit no catálogo ainda virava lista/carrinho porque `pedido` no classificador ligava `wantsOrder` mesmo em pergunta; `adicional` no carrinho aberto não era `alter` (`adiciona` não casa `adicional`). Fraqueza: o assembler canônico estava respondendo turno de conversa. → `isTalkingAboutPlacedOrder` devolve pergunta sobre pedido já feito ao genérico (antes do cartão de entrada e da busca); `wantsOrder` não trata `pedido` em pergunta como pedido novo; `adicional` no carrinho aberto é edição — `src/domain/aiWhatsAppOrdering.ts`, `server/aiWhatsAppOrdering.ts`, `tests/aiWhatsAppOrdering.test.ts`
+
 ## Canal iFood na Produção — 2026-09-19
 
+- ✅ ZCHAT-TS-PHONE-01 — `tsc` quebrava o deploy: `phone` tipado como `object` sem `localizer`/`number`. `canonicalRowToOrder` agora usa `objectValue()` (já existente) para `customer.phone` e `fulfillment.ifood` — `src/domain/canonicalOrders.ts:99`, `tests/canonicalOrders.test.ts`.
 - ✅ ZCHAT-IFOOD-SOUND-01 — campainha `/sounds/ifood-arrival.mp3` em
   **qualquer** pedido novo (refresh + realtime INSERT), não só iFood.
 - ✅ ZCHAT-IFOOD-MARK-01 — card da fila, Kanban e drawer de pedido `source=ifood` mostram moldura circular com `/ifood-logo.png` + pill `iFood #displayId` (`IfoodChannelBadge`). `canonicalRowToOrder` passa `ifoodDisplayId` de `fulfillment.ifood.displayId`.

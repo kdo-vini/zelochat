@@ -96,11 +96,10 @@ export function canonicalRowToOrder(row: CanonicalOrderRow): Order {
       };
     });
 
-  const phone = customer.phone && typeof customer.phone === 'object'
-    ? customer.phone
-    : {};
+  // phone pode ser string (legado) ou { number, localizer } (iFood / PDV).
+  const phone = objectValue(customer.phone);
   const localizer = typeof phone.localizer === 'string' ? phone.localizer.trim() : '';
-  const ifood = fulfillment.ifood && typeof fulfillment.ifood === 'object' ? fulfillment.ifood as Record<string, unknown> : {};
+  const ifood = objectValue(fulfillment.ifood);
   const deliveryAddress = String(
     fulfillment.deliveryAddress
     ?? fulfillment.delivery_address
