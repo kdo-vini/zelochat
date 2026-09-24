@@ -2,7 +2,7 @@
 
 ## Roteamento de texto livre do pedido conversacional — 2026-09-24
 
-- ✅ ZCHAT-ORD-ROUTE-01 — mensagens sem pedido em andamento eram decididas por palavras-chave, fazendo pesquisas/handoffs e enviando cardápio para conversas comuns → roteador LLM decide `pedido`/`pedir_cardapio`/genérico; falha ou desligamento preserva o caminho anterior, sem tocar ponteiros, confirmações ou botões — `server/aiWhatsAppOrdering.ts`, `server/aiSimulator.ts`, `server/orderingTurnRouter.ts`, `tests/aiWhatsAppOrdering.test.ts`
+- ✅ ZCHAT-ORD-ROUTE-01 — mensagens sem pedido em andamento eram decididas por palavras-chave, fazendo pesquisas/handoffs e enviando cardápio para conversas comuns → roteador LLM decide `pedido`/`pedir_cardapio`/genérico; falha ou desligamento preserva o caminho anterior, sem tocar ponteiros, confirmações ou botões; avaliação de referência: decisão 100% (palavra-chave 70,7%), 0 pedidos falsos, 0 pedidos perdidos, p50 ~0,75 s; ajuste final do prompt em `bc9e7e5` — `server/aiWhatsAppOrdering.ts`, `server/aiSimulator.ts`, `server/orderingTurnRouter.ts`, `tests/aiWhatsAppOrdering.test.ts`
 
 ## Mensagem comum virava "vou chamar um atendente" — 2026-09-24
 

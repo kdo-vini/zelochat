@@ -1,5 +1,13 @@
 # Incidentes e padrões conhecidos
 
+## Pesquisa de satisfação virou transferência por conter "pedir" (2026-09-24)
+
+**Sintoma:** uma pesquisa de satisfação com "Queria te pedir uma ajuda" recebeu "Não consegui conferir o pedido com segurança agora; vou chamar um atendente".
+
+**Causa-raiz:** sem pedido em andamento, a lista de palavras classificou `pedir` como entrada de pedido, e a frase de ~700 caracteres foi rejeitada pela busca do ZeloMenu (limite 240), levando ao caminho de transferência.
+
+**Fix:** roteador de intenção com fallback exato para o comportamento anterior em falha, timeout ou desligamento, separando conversa genérica de pedido e passando ao catálogo apenas os `items` citados — `server/orderingTurnRouter.ts`, `src/domain/orderingTurnRoute.ts`, `server/aiWhatsAppOrdering.ts`, `scripts/evalOrderingRouter.ts`.
+
 ## Log bruto de webhooks monopolizava Disk I/O no Supabase Free (2026-09-18)
 
 **Sintoma:** o projeto compartilhado acumulou 401.783 inserts, 402.604 updates e
