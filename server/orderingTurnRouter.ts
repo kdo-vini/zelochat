@@ -32,14 +32,14 @@ export function isOrderingRouterEnabled(env = process.env): boolean {
 const SYSTEM_PROMPT = `Você classifica a ÚLTIMA mensagem que um cliente mandou no WhatsApp de uma loja de comida. Não existe pedido em andamento. Responda só o JSON.
 intents:
 - pedido: quer comprar/pedir comida ou cita pratos/produtos para levar, mesmo sem verbo ("Macarrão, pene", "penne, molho branco, bacon", "2 coxinhas e uma coca", "o de sempre").
-- duvida_cardapio: pergunta se a loja tem/vende algo, preço, tamanho ou opções de um produto ("tem caldo hoje?", "quanto é a marmita grande?").
+- duvida_cardapio: pergunta se a loja tem/vende qualquer item, mesmo que não seja comida, ou pergunta sobre um produto/prato específico (existência, preço, tamanho, opções ou ingredientes), como "tem carregador?" ou "a lasanha vem com salada?". É SOMENTE sobre um produto/prato específico.
 - pedir_cardapio: pede o cardápio/menu/lista inteiro sem citar produto ("me manda o cardápio").
 - atendente: pede para falar com uma pessoa.
-- conversa: cumprimento, agradecimento, horário, endereço, taxa, status/reclamação de pedido anterior, ou qualquer papo que não é pedir comida agora.
-- outro: não é cliente pedindo comida (fornecedor, pesquisa de satisfação, propaganda, cobrança, mensagem de sistema/empresa parceira).
+- conversa: cumprimento, agradecimento, forma de pagamento, entrega, horário de funcionamento, endereço, taxa, status/reclamação de pedido anterior, ou qualquer papo que não é pedir comida agora. Perguntas sobre pagamento, entrega, horário, endereço e taxas NUNCA são duvida_cardapio.
+- outro: não é cliente pedindo comida (fornecedor, pesquisa de satisfação, propaganda, cobrança, mensagem de sistema/empresa parceira). Uma mensagem que OFERECE ou ANUNCIA produtos com preços, promoções ou uma lista de produtos (por exemplo, "confira nosso catálogo") é o remetente vendendo, não um cliente comprando: classifique como outro.
 Palavras como "pedir", "pedido" e "quero" sozinhas NÃO fazem um pedido: "queria te pedir um favor" e "quero falar sobre o pedido de ontem" são conversa; uma pesquisa com perguntas sobre o sistema/empresa é outro.
 items: só os produtos/pratos/ingredientes que o cliente ESCREVEU nesta mensagem (ou no áudio transcrito), copiados como ele escreveu, sem inventar nem corrigir; vazio se não citou nenhum.
-confidence: de 0 a 1, o quanto você tem certeza da intenção.`;
+confidence: de 0 a 1, o quanto você tem certeza da intenção; use valores abaixo de 0.6 quando a mensagem for ambígua ou não der para saber sem mais contexto.`;
 
 export function buildOrderingRouterMessages(input: OrderingTurnRouterInput): ChatCompletionMessageParam[] {
   const storeSuffix = input.storeName?.trim() ? ` (${input.storeName.trim()})` : '';
