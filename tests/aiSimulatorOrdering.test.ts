@@ -75,7 +75,7 @@ await runSuite('AI simulator canonical ordering parity', [
     run: async () => {
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'boa tarde, estão atendendo?',
-      }, { orderingClient: catalogClient });
+      }, { orderingClient: catalogClient, orderingTurnRouter: null });
       assertIncludes(result.reply, 'https://menu.zelopdv.com.br/bemservido', 'entry reply contains the store URL');
       assertIncludes(result.reply, 'pedido por escrito', 'entry reply offers written ordering');
       assertEqual(result.toolCallsMade.length, 0, 'entry does not invoke tools');
@@ -88,7 +88,7 @@ await runSuite('AI simulator canonical ordering parity', [
     run: async () => {
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'oq tem de mistura hoje?',
-      }, { orderingClient: catalogClient });
+      }, { orderingClient: catalogClient, orderingTurnRouter: null });
       assertIncludes(result.reply, 'Carne de panela', 'catalog reply includes the first mixture');
       assertIncludes(result.reply, 'Bisteca de porco', 'catalog reply includes the last mixture');
       assertIncludes(result.simulationNote, 'fluxo canônico', 'catalog reports canonical simulation');
@@ -99,7 +99,7 @@ await runSuite('AI simulator canonical ordering parity', [
     run: async () => {
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'posso escolher arroz e feijão juntos ou tenho que escolher um?',
-      }, { orderingClient: catalogClient });
+      }, { orderingClient: catalogClient, orderingTurnRouter: null });
       assertIncludes(result.reply, 'opcional', 'base reply identifies optional selection');
       assertIncludes(result.reply, 'até 2', 'base reply exposes the maximum cardinality');
       assertIncludes(result.reply, 'Arroz branco', 'base reply includes rice');
@@ -129,7 +129,7 @@ await runSuite('AI simulator canonical ordering parity', [
       });
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'quero uma marmita P de bisteca com arroz, feijão, farofa e purê',
-      }, { orderingClient: catalogClient, orderingDraftPlanner: draftPlanner });
+      }, { orderingClient: catalogClient, orderingDraftPlanner: draftPlanner, orderingTurnRouter: null });
       assertIncludes(result.reply, 'entrega ou retirada', 'complete item selection asks fulfillment next');
       assert(!/quer.*feijão|quer.*farofa/i.test(result.reply), 'complete item selection is not asked again');
       assertEqual(result.wouldCreateOrder, false, 'dry-run does not create an order');
@@ -152,7 +152,7 @@ await runSuite('AI simulator canonical ordering parity', [
       });
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'quero a bisteca para retirar e pagar no Pix',
-      }, { orderingClient: catalogClient, orderingDraftPlanner: draftPlanner });
+      }, { orderingClient: catalogClient, orderingDraftPlanner: draftPlanner, orderingTurnRouter: null });
       assertIncludes(result.reply, 'Marmita do dia', 'complete draft preview names the canonical product');
       assertIncludes(result.reply, 'retirada', 'complete draft preview includes fulfillment');
       assertIncludes(result.reply, 'Posso confirmar?', 'complete draft preview asks for confirmation');
@@ -164,7 +164,7 @@ await runSuite('AI simulator canonical ordering parity', [
     run: async () => {
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'quero falar com um atendente humano',
-      }, { orderingClient: catalogClient });
+      }, { orderingClient: catalogClient, orderingTurnRouter: null });
       assertIncludes(result.reply, 'atendente humano', 'handoff preview speaks to the customer');
       assertEqual(result.toolCallsMade[0], 'dispatch_trigger', 'handoff preview identifies the trigger tool');
       assertEqual(result.wouldCreateOrder, false, 'handoff preview never creates an order');
@@ -175,7 +175,7 @@ await runSuite('AI simulator canonical ordering parity', [
     run: async () => {
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'meu pedido veio errado e estou chateado',
-      }, { orderingClient: catalogClient });
+      }, { orderingClient: catalogClient, orderingTurnRouter: null });
       assertIncludes(result.reply, 'gerência', 'complaint preview acknowledges management handoff');
       assertEqual(result.toolCallsMade[0], 'dispatch_trigger', 'complaint preview identifies the trigger tool');
     },
@@ -185,7 +185,7 @@ await runSuite('AI simulator canonical ordering parity', [
     run: async () => {
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'tem salmão hoje?',
-      }, { orderingClient: emptyCatalogClient });
+      }, { orderingClient: emptyCatalogClient, orderingTurnRouter: null });
       // 2026-09-09: the copy says "Hoje não temos isso" instead of the old
       // "Não encontrei uma opção disponível com esse nome" — same meaning,
       // answered from the customer's side rather than the search's.
@@ -198,7 +198,7 @@ await runSuite('AI simulator canonical ordering parity', [
     run: async () => {
       const result = await simulateAtendimento(empresaId, {
         customerMessage: 'quero entrega, quanto fica a taxa?',
-      }, { orderingClient: catalogClient, orderingDraftPlanner: async () => null });
+      }, { orderingClient: catalogClient, orderingDraftPlanner: async () => null, orderingTurnRouter: null });
       assertIncludes(result.reply, 'cardápio', 'delivery reply points to the online menu');
       assertIncludes(result.reply, 'endereço', 'delivery reply explains when the fee is calculated');
       assert(!/R\$\s*\d/i.test(result.reply), 'delivery reply does not invent a fee');

@@ -1,8 +1,12 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Roteamento de texto livre do pedido conversacional — 2026-09-24
+
+- ✅ ZCHAT-ORD-ROUTE-01 — mensagens sem pedido em andamento eram decididas por palavras-chave, fazendo pesquisas/handoffs e enviando cardápio para conversas comuns → roteador LLM decide `pedido`/`pedir_cardapio`/genérico; falha ou desligamento preserva o caminho anterior, sem tocar ponteiros, confirmações ou botões — `server/aiWhatsAppOrdering.ts`, `server/aiSimulator.ts`, `server/orderingTurnRouter.ts`, `tests/aiWhatsAppOrdering.test.ts`
+
 ## Mensagem comum virava "vou chamar um atendente" — 2026-09-24
 
-- ✅ ZCHAT-ORD-KEYWORD-01 — pesquisa de satisfação enviada a uma loja ("Queria te **pedir** uma ajuda rápida…", ~700 caracteres) caiu no fluxo de pedido pela palavra "pedir", a frase inteira foi para a busca do cardápio, o ZeloMenu recusou (`CONSULTA_INVALIDA`, limite 240) e o turno escalou com "Não consegui conferir o pedido com segurança agora" → (1) a busca é limitada a 240 caracteres num limite de palavra (`clampCatalogQuery`, no domínio e no client); (2) sem pedido em andamento, turno que entrou só pela palavra-chave e cujo catálogo volta vazio vai para a IA genérica — "tem sushi?" continua recebendo "hoje não temos isso" — `server/aiWhatsAppOrdering.ts` (após `menu_request_no_match`), `src/domain/aiWhatsAppOrdering.ts` (`clampCatalogQuery`, `isAvailabilityQuestion`), `server/zeloMenuInternalClient.ts:220`, teste com o texto real em `tests/aiWhatsAppOrdering.test.ts`. Pendente: com a loja **aberta**, qualquer mensagem começando por "Bom dia" ainda recebe o cartão do cardápio e a IA genérica fica calada (`isOrderingEntryTurn`).
+- ✅ ZCHAT-ORD-KEYWORD-01 — pesquisa de satisfação enviada a uma loja ("Queria te **pedir** uma ajuda rápida…", ~700 caracteres) caiu no fluxo de pedido pela palavra "pedir", a frase inteira foi para a busca do cardápio, o ZeloMenu recusou (`CONSULTA_INVALIDA`, limite 240) e o turno escalou com "Não consegui conferir o pedido com segurança agora" → (1) a busca é limitada a 240 caracteres num limite de palavra (`clampCatalogQuery`, no domínio e no client); (2) sem pedido em andamento, turno que entrou só pela palavra-chave e cujo catálogo volta vazio vai para a IA genérica — "tem sushi?" continua recebendo "hoje não temos isso" — `server/aiWhatsAppOrdering.ts` (após `menu_request_no_match`), `src/domain/aiWhatsAppOrdering.ts` (`clampCatalogQuery`, `isAvailabilityQuestion`), `server/zeloMenuInternalClient.ts:220`, teste com o texto real em `tests/aiWhatsAppOrdering.test.ts`. O caso complementar de mensagens comuns com a loja aberta foi fechado por `ZCHAT-ORD-ROUTE-01`.
 
 ## Canal iFood na Produção — 2026-09-19
 

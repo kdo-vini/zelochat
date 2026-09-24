@@ -50,6 +50,13 @@ import {
 import { presentOrderingRequirements, hasPendingOrderingRequirements, type OrderingReplyPayload } from '../src/domain/orderingRequirementPresenter.js';
 import { applyConversationOrderPatch, buildOrderingPatchTool, validateConversationOrderPatch, type ConversationOrderPatch } from './orderingPatchPlanner.js';
 import { composeOrderingTurn, type OrderingTurnComposition } from './orderingTurnComposer.js';
+import { messagesSinceConversationBreak } from '../src/domain/conversationContinuity.js';
+import { decideOrderingEntry, routeCatalogQuery } from '../src/domain/orderingTurnRoute.js';
+import {
+  isOrderingRouterEnabled,
+  routeOrderingTurn,
+  type OrderingTurnRouter,
+} from './orderingTurnRouter.js';
 import type { OutboundPayload } from '../src/domain/outbound.js';
 import {
   ZeloMenuInternalClient,
@@ -189,6 +196,8 @@ export interface AiOrderingHandlerOptions {
   client?: OrderingClient;
   /** Injectable planner for deterministic simulator tests. */
   draftPlanner?: OrderingDraftPlanner;
+  /** Injectable free-text ordering router; dry-run callers default to no network call. */
+  turnRouter?: OrderingTurnRouter | null;
   /**
    * Injectable live-permit check (C5 / PR I-2, I-16, 1.22-1.24), used by
    * every canonical mutation/persist/outbound in this turn. Defaults to the
@@ -208,10 +217,11 @@ export interface AiOrderingHandlerOptions {
  * "fell through to the generic AI model" — the canonical-vs-generic split
  * PR 1.31 asks for); `update`/`requirement`/`summary`/`confirm`/`cancel`
  * mirror the ZeloMenu mutation/presentation steps; `escalate`/`suppress` are
- * the two terminal failure/no-op paths.
+ * the two terminal failure/no-op paths. `route` records the optional
+ * free-text intent decision made before catalog planning.
  */
 export const ORDERING_METRIC_STAGES = [
-  'entry', 'compose', 'plan', 'update', 'requirement', 'summary', 'confirm', 'cancel', 'escalate', 'suppress',
+  'entry', 'compose', 'route', 'plan', 'update', 'requirement', 'summary', 'confirm', 'cancel', 'escalate', 'suppress',
 ] as const;
 export type OrderingMetricStage = typeof ORDERING_METRIC_STAGES[number];
 
@@ -835,6 +845,7 @@ export async function tryHandleAiWhatsAppOrdering(
 ): Promise<AiOrderingHandleResult> {
   const startedAt = Date.now();
   const dryRun = options.dryRun === true;
+  const turnRouter = options.turnRouter !== undefined ? options.turnRouter : (dryRun ? null : routeOrderingTurn);
   // C5 / PR I-2, I-16, 1.22-1.24: the live-permit check every canonical
   // mutation/persist/outbound in this turn re-checks. Defaults to the real
   // one; only tests override it.
@@ -887,6 +898,46 @@ export async function tryHandleAiWhatsAppOrdering(
     await sendText(permit, ZELOMENU_ORDER_RECEIPT_REPLY, 'order-receipt', dryRun, isPermitCurrent);
     metric({ ...metricBase, stage: 'entry', outcome: 'order_receipt' });
     return { handled: true, response: ZELOMENU_ORDER_RECEIPT_REPLY };
+  }
+  // FIX 2026-09-24: a keyword list was deciding whether arbitrary free text
+  // was an order, so ordinary messages containing "pedir"/"quero" could enter
+  // the ordering path and either hand off or send an entry card. With no order
+  // in progress, the router now decides that boundary; confirmations and
+  // buttons remain deterministic, and a router failure falls back to the
+  // previous behavior and never causes a handoff.
+  const routerEligible = !priorState
+    && !isOrderingStartButtonText(text)
+    && !isOrderingGreeting(text)
+    && !isExplicitHumanRequest(text)
+    && !(entry.menuUrl && isDeliveryFeeQuestion(text))
+    && !isOrderingFollowUpAnswer(session.messages, text);
+  let route: Awaited<ReturnType<OrderingTurnRouter>> = null;
+  if (routerEligible) {
+    if (!isOrderingRouterEnabled()) {
+      metric({ ...metricBase, stage: 'route', outcome: 'router_disabled' });
+    } else if (turnRouter) {
+      try {
+        const plannerHistory = buildPlannerHistory({
+          messages: messagesSinceConversationBreak(session.messages)
+            .filter((message) => !composition.consumedMessageIds.includes(message.id)),
+        });
+        const history = plannerHistory.flatMap((message) => (
+          (message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string'
+            ? [{ role: message.role, content: message.content }]
+            : []
+        ));
+        route = await turnRouter({ text, history, storeName: null });
+        metric({ ...metricBase, stage: 'route', outcome: route ? route.intent : 'router_failed' });
+      } catch {
+        route = null;
+        metric({ ...metricBase, stage: 'route', outcome: 'router_failed' });
+      }
+    }
+  }
+  const routeDecision = route ? decideOrderingEntry(route) : null;
+  if (routeDecision === 'generic') {
+    metric({ ...metricBase, stage: 'plan', outcome: 'routed_generic' });
+    return { handled: false };
   }
   let entryDispatched = false;
   let entryResponseText: string | undefined;
@@ -965,6 +1016,14 @@ export async function tryHandleAiWhatsAppOrdering(
     metric({ ...metricBase, stage: 'entry', outcome });
     return { handled: true, response: response.text };
   };
+  if (routeDecision === 'menu_request') {
+    try {
+      return await answerMenuRequest('routed_menu_request');
+    } catch (error) {
+      if (error instanceof OrderingSuppressedError) return { handled: true };
+      throw error;
+    }
+  }
   if (entry.menuUrl && isDeliveryFeeQuestion(text)) {
     const response = buildDeliveryFeeReply(entry.menuUrl);
     await sendText(permit, response, 'delivery-fee', dryRun, isPermitCurrent);
@@ -983,7 +1042,8 @@ export async function tryHandleAiWhatsAppOrdering(
   // drops every token the store doesn't sell, so a hit means the customer
   // named something on the menu.
   let probedCatalog: CatalogReplyResult | null = null;
-  if (initialTurn.kind === 'none' && !followUp) {
+  const routedIntoOrdering = routeDecision === 'order';
+  if (initialTurn.kind === 'none' && !followUp && !routedIntoOrdering) {
     const probeQuery = client && !isExplicitHumanRequest(text) && !isOrderingGreeting(text)
       ? buildCatalogSearchQuery(session.messages, text)
       : '';
@@ -1045,7 +1105,7 @@ export async function tryHandleAiWhatsAppOrdering(
       });
       return { handled: true, response };
     }
-    if (turn.kind === 'none' && !followUp && !enteredViaCatalogProbe) {
+    if (turn.kind === 'none' && !followUp && !enteredViaCatalogProbe && !routedIntoOrdering) {
       metric({
         ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'fell_through_generic',
         orderingId: current?.orderingId, revision: current?.revision,
@@ -1112,7 +1172,9 @@ export async function tryHandleAiWhatsAppOrdering(
 
     const context = await customerContext(session, empresaId);
     let draft: OrderingDraft | null = null;
-    const query = buildCatalogSearchQuery(session.messages, text);
+    const query = routedIntoOrdering && route
+      ? routeCatalogQuery(route, buildCatalogSearchQuery(session.messages, text))
+      : buildCatalogSearchQuery(session.messages, text);
     // FIX 2026-09-09: nothing but framing was said, so there is no product to
     // look up. Searching the raw sentence instead is what answered "vc pode
     // mandar o cardapio?" with a portion of fries.
@@ -1144,19 +1206,21 @@ export async function tryHandleAiWhatsAppOrdering(
     // finding nothing means no product was named, so the generic assistant
     // answers what was actually said. "tem sushi?" still gets the plain
     // "hoje não temos isso" — that one really asked about the menu.
-    if (!catalog.total && !current && !hasPointer && !followUp && !isAvailabilityQuestion(text)) {
+    if (!catalog.total && !current && !hasPointer && !followUp && !isAvailabilityQuestion(text)
+      && !(routedIntoOrdering && route && route.items.length > 0)) {
       metric({ ...metricBase, stage: 'plan', outcome: entryDispatched ? 'entry_only' : 'keyword_no_catalog_match' });
       return { handled: entryDispatched };
     }
     // A customer who names what the store sells without asking about it is
     // ordering, keyword or not ("macarrão penne, molho vermelho, azeitona").
-    const wantsOrder = Boolean(current) || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp
+    const wantsOrder = Boolean(current) || (routedIntoOrdering && route?.intent === 'pedido') || /\b(quero|vou querer|manda|coloca|adiciona|pedir|pedido|o de sempre)\b/i.test(text) || followUp
       || (catalog.total > 0 && !isOrderingQuestion(text));
     // Candidate ambiguity is resolved in the conversation, never delegated to
     // the model: a valid ID is not enough to prove which sellable item the
     // customer meant. Several options of ONE product are a specification, not
     // an ambiguity — the planner still has only that product to choose.
-    const plannerConsulted = !draft && wantsOrder && (!catalog.ambiguous || isSingleProductCatalogAmbiguous(catalog));
+    const plannerConsulted = !draft && wantsOrder && (!catalog.ambiguous || isSingleProductCatalogAmbiguous(catalog))
+      && !(routedIntoOrdering && route?.items.length > 0 && !catalog.total);
     if (plannerConsulted) {
       draft = await (options.draftPlanner ?? planDraft)(session, text, catalog, current);
     }

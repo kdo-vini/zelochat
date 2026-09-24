@@ -69,11 +69,11 @@ console.log('\nerrorCode is carried through for escalate/suppress stages');
   assert.equal(line.errorCode, 'INDISPONIVEL');
 }
 
-console.log('\nORDERING_METRIC_STAGES documents exactly the 10 canonical stages, no more, no less');
+console.log('\nORDERING_METRIC_STAGES documents exactly the 11 canonical stages, no more, no less');
 {
   assert.deepEqual(
     [...ORDERING_METRIC_STAGES].sort(),
-    ['cancel', 'compose', 'confirm', 'entry', 'escalate', 'plan', 'requirement', 'suppress', 'summary', 'update'].sort(),
+    ['cancel', 'compose', 'confirm', 'entry', 'escalate', 'plan', 'requirement', 'route', 'suppress', 'summary', 'update'].sort(),
   );
 }
 

@@ -1,5 +1,12 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-24 — roteamento de texto livre no pedido conversacional
+
+Mensagens sem ponteiro de pedido agora passam pelo roteador LLM quando elegíveis:
+conversas comuns seguem para a IA genérica, pedidos de cardápio recebem o card
+de entrada e pedidos seguem para catálogo/planner. Falha, desligamento, ponteiro,
+confirmação, alteração, cancelamento e botões preservam os caminhos anteriores.
+
 ## Sessão 2026-09-19 — iFood: som de campainha
 
 Qualquer pedido novo na Produção toca `/sounds/ifood-arrival.mp3`

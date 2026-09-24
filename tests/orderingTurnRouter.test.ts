@@ -3,6 +3,7 @@ import {
   buildOrderingRouterMessages,
   isOrderingRouterEnabled,
   routeOrderingTurn,
+  failureReason,
 } from '../server/orderingTurnRouter.js';
 import { ORDERING_INTENTS } from '../src/domain/orderingTurnRoute.js';
 
@@ -12,6 +13,8 @@ assert.equal(isOrderingRouterEnabled({ ZELOCHAT_ORDERING_ROUTER: '1' }), true);
 assert.equal(isOrderingRouterEnabled({ ZELOCHAT_ORDERING_ROUTER: '0' }), false);
 assert.equal(isOrderingRouterEnabled({ ZELOCHAT_ORDERING_ROUTER: 'false' }), false);
 assert.equal(isOrderingRouterEnabled({ ZELOCHAT_ORDERING_ROUTER: ' OFF ' }), false);
+assert.equal(failureReason({ name: 'APIUserAbortError' }), 'timeout');
+assert.equal(failureReason({ name: 'APIConnectionTimeoutError' }), 'timeout');
 
 const messages = buildOrderingRouterMessages({
   storeName: 'Lanchonete do Vini',

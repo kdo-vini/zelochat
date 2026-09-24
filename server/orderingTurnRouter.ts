@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
+import { APIConnectionTimeoutError, APIUserAbortError } from 'openai';
 import { getOpenAIClient } from './openaiClient.js';
 import {
   ORDERING_INTENTS,
@@ -69,11 +70,18 @@ const orderingRouteSchema = {
   additionalProperties: false,
 };
 
-function failureReason(error: unknown): 'timeout' | 'request_failed' {
+export function failureReason(error: unknown): 'timeout' | 'request_failed' {
   const name = error !== null && typeof error === 'object' && 'name' in error
     ? String((error as { name?: unknown }).name)
     : '';
-  return name === 'AbortError' || name === 'TimeoutError' ? 'timeout' : 'request_failed';
+  return error instanceof APIUserAbortError
+    || error instanceof APIConnectionTimeoutError
+    || name === 'AbortError'
+    || name === 'TimeoutError'
+    || name === 'APIUserAbortError'
+    || name === 'APIConnectionTimeoutError'
+    ? 'timeout'
+    : 'request_failed';
 }
 
 export const routeOrderingTurn: OrderingTurnRouter = async (input) => {

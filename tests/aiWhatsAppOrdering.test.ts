@@ -49,6 +49,7 @@ import {
   nextOrderingStatePatch,
   type OrderingClient,
 } from '../server/aiWhatsAppOrdering.js';
+import type { OrderingTurnRouter } from '../server/orderingTurnRouter.js';
 import { buildPlannerHistory } from '../server/aiWhatsAppOrdering.js';
 import { composeOrderingTurn } from '../server/orderingTurnComposer.js';
 import type { StoredSession } from '../server/messageHandler.js';
@@ -306,7 +307,7 @@ const emptyCatalogClient: OrderingClient = {
     return { total: 0, ambiguous: false, results: [] };
   },
 };
-const askOrdering = async (text: string, storeOpen: boolean | null = true) => {
+const askOrdering = async (text: string, storeOpen: boolean | null = true, turnRouter?: OrderingTurnRouter | null) => {
   searchedQueries.length = 0;
   return tryHandleAiWhatsAppOrdering(
     fakePermit.remoteJid,
@@ -314,7 +315,7 @@ const askOrdering = async (text: string, storeOpen: boolean | null = true) => {
     sessionWith(text),
     fakePermit,
     { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen },
-    { dryRun: true, client: emptyCatalogClient },
+    { dryRun: true, client: emptyCatalogClient, turnRouter },
   );
 };
 
@@ -376,6 +377,19 @@ for (const storeOpen of [false, null] as const) {
   assert.equal(survey.handled, false, `storeOpen=${storeOpen}: a message naming no product goes to the generic assistant`);
   assert.ok(searchedQueries.every((query) => query.length <= CATALOG_QUERY_MAX_LENGTH), 'the query never exceeds what ZeloMenu accepts');
 }
+
+const surveyRoutedGeneric = await askOrdering(surveyText, true, async () => ({ intent: 'outro', confidence: 0.95, items: [] }));
+assert.equal(surveyRoutedGeneric.handled, false, 'router generic survey falls through without handling');
+assert.equal(surveyRoutedGeneric.response, undefined, 'router generic survey has no canonical response');
+assert.deepEqual(searchedQueries, [], 'router generic survey never searches the catalog');
+
+const routedConversation = await askOrdering(
+  'Bom dia, vocês fazem bolo de aniversário por encomenda?',
+  true,
+  async () => ({ intent: 'conversa', confidence: 0.9, items: [] }),
+);
+assert.equal(routedConversation.handled, false, 'router conversation falls through to generic AI');
+assert.equal(routedConversation.response, undefined, 'router conversation sends no entry card');
 // Same for short keyword turns that name nothing on the menu.
 for (const text of ['queria te pedir um favor', 'quero falar sobre o pedido de ontem']) {
   assert.equal((await askOrdering(text)).handled, false, `"${text}" is not an order`);
@@ -439,6 +453,96 @@ const oneResultClient: OrderingClient = {
     results: [{ productId: 211, publicName: 'Caldo verde', currentPrice: 17.99, matchReason: 'nome_publico', ambiguous: false }],
   }),
 };
+const routedDraftPlanner = async () => ({
+  items: [{ productId: 211, quantity: 1 }],
+  fulfillment: { type: 'pickup' as const, asap: true },
+});
+const routedQueries: string[] = [];
+const routedOrderClient: OrderingClient = {
+  ...oneResultClient,
+    searchCatalog: async ({ empresaId, query }) => {
+    routedQueries.push(query);
+    return oneResultClient.searchCatalog({ empresaId, query, limit: 12 });
+  },
+};
+const routedOrder = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('Macarrão, pene'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  {
+    dryRun: true,
+    client: routedOrderClient,
+    turnRouter: async () => ({ intent: 'pedido', confidence: 0.9, items: ['Macarrão', 'pene'] }),
+    draftPlanner: routedDraftPlanner,
+  },
+);
+assert.equal(routedOrder.handled, true, 'routed order reaches the dry-run draft preview');
+assert.match(routedOrder.response ?? '', /Caldo verde/);
+assert.deepEqual(routedQueries, ['Macarrão, pene'], 'router item names become the catalog query');
+
+const routedUnknown = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('sushi'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  {
+    dryRun: true,
+    client: emptyCatalogClient,
+    turnRouter: async () => ({ intent: 'pedido', confidence: 0.9, items: ['sushi'] }),
+  },
+);
+assert.equal(routedUnknown.handled, true, 'routed unknown item gets a catalog response');
+assert.match(routedUnknown.response ?? '', /hoje não temos isso/i);
+
+const routedMenu = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('manda o menu'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  {
+    dryRun: true,
+    client: emptyCatalogClient,
+    turnRouter: async () => ({ intent: 'pedir_cardapio', confidence: 0.9, items: [] }),
+  },
+);
+assert.equal(routedMenu.handled, true);
+assert.match(routedMenu.response ?? '', /Veja o cardápio/);
+
+const lowConfidence = await askOrdering('quero uma coxinha', true, async () => ({ intent: 'pedido', confidence: 0.4, items: ['coxinha'] }));
+assert.equal(lowConfidence.handled, false, 'low-confidence order falls through to generic AI');
+
+for (const failingRouter of [
+  async () => null,
+  async () => { throw new Error('router unavailable'); },
+] satisfies OrderingTurnRouter[]) {
+  for (const [text, storeOpen] of [[surveyText, false], ['tem sushi?', true]] as const) {
+    const noRouter = await askOrdering(text, storeOpen, null);
+    const failedRouter = await askOrdering(text, storeOpen, failingRouter);
+    assert.deepEqual(failedRouter, noRouter, 'router failure preserves the previous catalog behavior');
+  }
+}
+
+const greetingRouterCalls: string[] = [];
+const pureGreeting = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWith('Bom dia'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  {
+    dryRun: true,
+    client: emptyCatalogClient,
+    turnRouter: async ({ text }) => { greetingRouterCalls.push(text); return null; },
+  },
+);
+assert.equal(pureGreeting.handled, true);
+assert.match(pureGreeting.response ?? '', /Veja o cardápio/);
+assert.deepEqual(greetingRouterCalls, [], 'pure greetings stay on the deterministic entry path');
+
 const closedCatalogAnswer = await tryHandleAiWhatsAppOrdering(
   fakePermit.remoteJid,
   fakePermit.empresaId,
@@ -497,6 +601,23 @@ const sessionWithPointer = (text: string): StoredSession => {
   });
   return session;
 };
+const pointerRouterCalls: string[] = [];
+const pointerTurn = await tryHandleAiWhatsAppOrdering(
+  fakePermit.remoteJid,
+  fakePermit.empresaId,
+  sessionWithPointer('sim'),
+  fakePermit,
+  { menuUrl: 'https://menu.zelopdv.com.br/bemservido', storeOpen: true },
+  {
+    dryRun: true,
+    client: openDryRunClient,
+    turnRouter: async ({ text }) => { pointerRouterCalls.push(text); return null; },
+  },
+);
+assert.equal(pointerTurn.handled, true);
+assert.deepEqual(pointerRouterCalls, [], 'an existing ordering pointer bypasses the free-text router');
+getOrderingArgs.length = 0;
+
 const confirmationPreview = await tryHandleAiWhatsAppOrdering(
   fakePermit.remoteJid,
   fakePermit.empresaId,

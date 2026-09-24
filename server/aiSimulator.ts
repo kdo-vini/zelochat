@@ -25,6 +25,7 @@ import { detectEscalationIntentFromText } from '../src/domain/escalationIntent.j
 import type { StoredSession } from './messageHandler.js';
 import type { AiTurnPermit } from './conversationControl.js';
 import type { ChatMessage } from '../src/types.js';
+import { routeOrderingTurn, type OrderingTurnRouter } from './orderingTurnRouter.js';
 
 export interface SimulatePayload {
   customerMessage: string;
@@ -48,6 +49,8 @@ export interface SimulateDependencies {
   orderingClient?: OrderingClient;
   /** Optional deterministic planner used by focused tests. */
   orderingDraftPlanner?: OrderingDraftPlanner;
+  /** Optional ordering router; defaults to the real router even in dry-run. */
+  orderingTurnRouter?: OrderingTurnRouter | null;
 }
 
 const MAX_MESSAGE_CHARS = 2000;
@@ -165,6 +168,7 @@ export async function simulateAtendimento(
         dryRun: true,
         client: dependencies.orderingClient,
         draftPlanner: dependencies.orderingDraftPlanner,
+        turnRouter: dependencies.orderingTurnRouter !== undefined ? dependencies.orderingTurnRouter : routeOrderingTurn,
       },
     );
     if (ordering.handled) {
