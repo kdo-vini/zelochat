@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Despacho do motoboy antecipava a saída para entrega — 2026-09-25
+
+- ✅ ZCHAT-DELIVERY-001 — depois de enviar “Nova entrega” ao motoboy, a tela chamava o callback de sucesso que mudava automaticamente o pedido para `out_for_delivery`; essa segunda chamada acionava o aviso “saiu pra entrega” ao cliente antes de o motoboy buscar o pedido → removido o encadeamento de status entre Motoboys, `MainContent` e `AppShell`; o envio ao entregador fica separado da transição explícita no Kanban, que continua respeitando `notify_customer_out_for_delivery` — `src/components/views/DriversView.tsx:179`, `tests/driverDispatchStatusSeparation.test.ts:1`
+
 ## Retenção do log bruto de webhooks — 2026-09-25
 
 - ✅ ZCHAT-IO-004 — o sweeper do backend ainda competia com o banco (assinatura antiga da RPC) e o caminho original era `.from('zelochat_webhook_events_raw').delete()` sem LIMIT, o mesmo `WITH pgrst_source AS (DELETE …)` que queimou Disk IO no projeto compartilhado → retenção sai do processo e fica só no cron `purge-zelochat-webhook-events-raw` (ZeloPDV #53: lote 500, 3 dias, só processadas); `delete_account` por tenant não foi tocado — `server/webhookEventsSweeper.ts:1`, `server/index.ts:571`, `tests/webhookEventsSweeper.test.ts:1`

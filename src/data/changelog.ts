@@ -16,6 +16,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: '2026-09-25',
+    category: 'hotfix',
+    title: 'Aviso de entrega só na hora certa',
+    description: 'Chamar o motoboy agora apenas envia os dados para ele buscar o pedido. O cliente só recebe o aviso de que saiu para entrega quando a loja muda o pedido para essa etapa, conforme a configuração de notificações.',
+  },
+  {
     date: '2026-09-24',
     category: 'medium',
     title: 'Conversas e pedidos mais naturais',

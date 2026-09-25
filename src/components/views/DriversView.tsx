@@ -61,7 +61,6 @@ interface DriversViewProps {
   ) => Promise<DeliveryDriver>;
   deleteDriver: (id: string) => Promise<void>;
   token: string | null;
-  onDispatchSuccess?: (orderId: string) => void;
 }
 
 export const DriversView = ({
@@ -74,7 +73,6 @@ export const DriversView = ({
   updateDriver,
   deleteDriver,
   token,
-  onDispatchSuccess,
 }: DriversViewProps) => {
   const [draft, setDraft] = useState<DriverDraft>(EMPTY_DRAFT);
   const [submitting, setSubmitting] = useState(false);
@@ -178,8 +176,9 @@ export const DriversView = ({
     setDispatchingOrderId(order.id);
     try {
       await dispatchDriver(token, driver.id, order.id);
+      // Avisar o entregador só inicia a coleta. O cliente é notificado apenas
+      // quando a loja muda explicitamente o pedido para "saiu para entrega".
       setDispatchFeedback({ kind: 'ok', text: `Mensagem enviada para ${driver.name}.` });
-      onDispatchSuccess?.(order.id);
     } catch (err) {
       setDispatchFeedback({
         kind: 'err',

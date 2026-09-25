@@ -86,7 +86,6 @@ interface Props {
   createDriver: (...args: any[]) => any;
   updateDriver: (...args: any[]) => any;
   deleteDriver: (...args: any[]) => any;
-  onDispatchSuccess: (orderId: string) => void;
   // Orders for drivers view
   orders: Order[];
 }
@@ -107,7 +106,7 @@ export function MainContent({
   saveAiInstructions,
   empresa, saveEmpresa, zelochatMode,
   drivers, driversLoading, driversError, createDriver, updateDriver, deleteDriver,
-  onDispatchSuccess, orders,
+  orders,
 }: Props) {
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
@@ -224,7 +223,6 @@ export function MainContent({
                     updateDriver={updateDriver}
                     deleteDriver={deleteDriver}
                     token={token}
-                    onDispatchSuccess={onDispatchSuccess}
                   />
                 )}
                 {activeView === 'novidades' && (

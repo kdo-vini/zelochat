@@ -1,5 +1,13 @@
 # Incidentes e padrões conhecidos
 
+## Despachar motoboy avisava “saiu para entrega” cedo demais (2026-09-25)
+
+**Sintoma:** ao enviar os dados do pedido ao motoboy para ele ir buscar, o cliente já recebia a mensagem de que o pedido tinha saído para entrega.
+
+**Causa-raiz:** o sucesso de `dispatchDriver` chamava `onDispatchSuccess`, e o callback no `AppShell` executava `updateOrderStatus(orderId, 'out_for_delivery')`; o PATCH de status então disparava corretamente a automação configurada, mas a partir do evento errado.
+
+**Fix:** o despacho ao motoboy agora encerra depois de enviar “Nova entrega”; somente a mudança explícita do pedido para `out_for_delivery` dispara o aviso ao cliente quando `notify_customer_out_for_delivery` está ativo — `src/components/views/DriversView.tsx:179`, `tests/driverDispatchStatusSeparation.test.ts:1`.
+
 ## Delete sem limite no log bruto de webhooks queimava Disk IO (2026-09-25)
 
 **Sintoma:** o projeto compartilhado ZeloPDV voltou a gastar Disk IO Budget em `DELETE` PostgREST grande, sem `LIMIT`, contra `zelochat_webhook_events_raw` (`WITH pgrst_source AS (DELETE …)`).

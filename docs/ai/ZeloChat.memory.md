@@ -1,5 +1,9 @@
 # ZeloChat Memory
 
+### Despacho de entregador e status do pedido — 2026-09-25
+
+- Enviar “Nova entrega” ao motoboy e marcar o pedido como `out_for_delivery` são ações independentes. `DriversView` chama somente `dispatchDriver`; não deve existir callback pós-envio que altere o pedido. O cliente só recebe “saiu para entrega” pela transição explícita em `PATCH /api/orders/:id/status`, condicionada a entrega e `notify_customer_out_for_delivery`. Regressão: `tests/driverDispatchStatusSeparation.test.ts`.
+
 ### Revisão e publicação do roteador — 2026-09-24
 
 - A busca canônica pontua cobertura por consulta: juntar nomes de pratos pode perder todos os candidatos. `server/orderingCatalogSearch.ts` complementa consultas por item; validado com matcher e fixture real versionada da Bem Servido. Não inferir intenção nem completude do carrinho pelo total da busca composta.

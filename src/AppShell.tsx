@@ -833,10 +833,6 @@ export default function AppShell() {
     setActiveView('kanban');
   }, []);
 
-  const handleDispatchSuccess = useCallback((orderId: string) => {
-    updateOrderStatus(orderId, 'out_for_delivery');
-  }, [updateOrderStatus]);
-
   const firstNameOnly = useMemo(() => state.profile.name.split(' ')[0], [state.profile.name]);
 
   // P2.6 — keep non-chat views insulated from WhatsApp session churn. Incoming
@@ -1093,7 +1089,6 @@ export default function AppShell() {
         createDriver={createDriver}
         updateDriver={updateDriver}
         deleteDriver={deleteDriver}
-        onDispatchSuccess={handleDispatchSuccess}
         orders={state.orders}
       />
 
