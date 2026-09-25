@@ -1,5 +1,13 @@
 # Incidentes e padrões conhecidos
 
+## Delete sem limite no log bruto de webhooks queimava Disk IO (2026-09-25)
+
+**Sintoma:** o projeto compartilhado ZeloPDV voltou a gastar Disk IO Budget em `DELETE` PostgREST grande, sem `LIMIT`, contra `zelochat_webhook_events_raw` (`WITH pgrst_source AS (DELETE …)`).
+
+**Causa-raiz:** o sweeper original do ZeloChat fazia três `.from('zelochat_webhook_events_raw').delete()` em paralelo; a versão seguinte ainda rodava retenção no processo, agora com a assinatura antiga da RPC, em paralelo ao cron do banco.
+
+**Fix:** retenção sai do backend e fica só no cron `purge-zelochat-webhook-events-raw` (ZeloPDV #53) — `server/webhookEventsSweeper.ts`, `server/index.ts`.
+
 ## Pesquisa de satisfação virou transferência por conter "pedir" (2026-09-24)
 
 **Sintoma:** uma pesquisa de satisfação com "Queria te pedir uma ajuda" recebeu "Não consegui conferir o pedido com segurança agora; vou chamar um atendente".

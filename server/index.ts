@@ -32,7 +32,6 @@ import { startAccountDeletionSweepLoop } from './accountDeletionSweeper.js';
 import { startAbandonedCartRecoverySweeper } from './abandonedCartSweeper.js';
 import { startAutomationSweeper } from './automations/sweeper.js';
 import { startOnboardingFollowupLoop } from './onboardingFollowup.js';
-import { startWebhookEventsSweeper } from './webhookEventsSweeper.js';
 import { scheduleReply, stopPendingReplies } from './replyDebouncer.js';
 import { slowRequestLogger } from './observability.js';
 import { redactJid } from './redact.js';
@@ -568,9 +567,10 @@ httpServer.listen(PORT, () => {
   startAbandonedCartRecoverySweeper();
   startAutomationSweeper();
 
-  // Webhook events raw retention — bounded batches keep 7d of processed rows
-  // and 21d of stuck rows. The shorter success window preserves failed replay.
-  startWebhookEventsSweeper();
+  // Webhook raw retention is the pg_cron job `purge-zelochat-webhook-events-raw`
+  // (ZeloPDV #53). Do not start an app sweeper and do not issue PostgREST
+  // deletes against zelochat_webhook_events_raw — those were unbounded and
+  // burned Disk IO Budget on the shared project.
 
   // Onboarding follow-up — Day 3, 7, 14, 21, 28 nutrition + conversion sequence
   // (Day 0 fires synchronously via /api/onboarding/welcome). Idempotent: re-run

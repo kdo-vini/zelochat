@@ -1,5 +1,13 @@
 # ZeloChat — Foco atual
 
+## Sessão 2026-09-25 — retenção do log bruto de webhooks
+
+O backend deixou de varrer `zelochat_webhook_events_raw`. A retenção fica no
+cron do banco compartilhado (`purge-zelochat-webhook-events-raw`, ZeloPDV #53):
+lotes de 500, 3 dias, só linhas processadas. O delete PostgREST sem limite
+(e o sweeper do app que ainda chamava a RPC antiga) era o que queimava Disk IO.
+Purge de conta por `empresa_id` não muda. Ver [[FIXES_PROGRESS]] ZCHAT-IO-004.
+
 ## Roteador de respostas publicado — 2026-09-24
 
 Correções de continuidade, dúvida versus compra e busca de vários itens foram publicadas na `main`

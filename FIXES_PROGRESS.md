@@ -1,5 +1,9 @@
 # ZeloChat — Fixes Progress Tracker
 
+## Retenção do log bruto de webhooks — 2026-09-25
+
+- ✅ ZCHAT-IO-004 — o sweeper do backend ainda competia com o banco (assinatura antiga da RPC) e o caminho original era `.from('zelochat_webhook_events_raw').delete()` sem LIMIT, o mesmo `WITH pgrst_source AS (DELETE …)` que queimou Disk IO no projeto compartilhado → retenção sai do processo e fica só no cron `purge-zelochat-webhook-events-raw` (ZeloPDV #53: lote 500, 3 dias, só processadas); `delete_account` por tenant não foi tocado — `server/webhookEventsSweeper.ts:1`, `server/index.ts:571`, `tests/webhookEventsSweeper.test.ts:1`
+
 ## Revisão de código e produto — 2026-09-24 (produção)
 
 - ✅ ZCHAT-ORD-DEPLOY-01 — revisão integrada à `main` no release de código `3b01a4f`; backend e frontend concluíram o auto-deploy e serviram o SHA esperado; CI verde em lint, suíte completa, build, imagens, integração PostgreSQL e verificação de produção — `docs/audits/2026-09-24-ordering-router-review.md`
